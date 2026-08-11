@@ -1,115 +1,13 @@
 <!doctype html>
-<html lang="en">
+<html lang="de">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#f8f7fb" />
-    <title>Body Map · EDS Diary</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="styles.css" />
+    <meta name="theme-color" content="#f5f3f7" />
+    <title>EDS Diary</title>
   </head>
   <body>
-    <main class="app-shell">
-      <header class="topbar">
-        <button class="icon-button" aria-label="Go back">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
-        </button>
-        <div>
-          <p class="eyebrow">MONDAY, AUGUST 10</p>
-          <h1>Body map</h1>
-        </div>
-        <button class="icon-button" aria-label="More options">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
-        </button>
-      </header>
-
-      <section class="intro">
-        <div>
-          <h2>Where does it hurt?</h2>
-          <p>Choose a pain type, then tap the body to mark an area.</p>
-        </div>
-        <button class="help-button" aria-label="How body mapping works">?</button>
-      </section>
-
-      <section class="body-card" aria-label="Interactive body map">
-        <div class="view-toggle" role="tablist" aria-label="Body view">
-          <button class="active" role="tab" aria-selected="true" data-view="both">Both</button>
-          <button role="tab" aria-selected="false" data-view="front">Front</button>
-          <button role="tab" aria-selected="false" data-view="back">Back</button>
-        </div>
-
-        <div class="figures">
-          <figure class="figure" data-side="front">
-            <figcaption>FRONT</figcaption>
-            <svg class="body" viewBox="0 0 190 390" role="img" aria-label="Front view of female body with selectable regions">
-              <g class="body-base">
-                <ellipse cx="95" cy="29" rx="22" ry="26"/>
-                <path d="M82 54 C77 63 68 68 58 71 C47 74 42 80 39 94 L28 155 C27 162 31 166 37 164 L54 111 L59 171 C60 190 69 207 72 224 L67 302 L69 370 C70 380 84 380 86 370 L93 294 L95 229 L97 294 L104 370 C106 380 120 380 121 370 L123 302 L118 224 C121 207 130 190 131 171 L136 111 L153 164 C159 166 163 162 162 155 L151 94 C148 80 143 74 132 71 C122 68 113 63 108 54 C102 59 88 59 82 54 Z"/>
-              </g>
-              <g class="regions">
-                <ellipse data-region="head" cx="95" cy="29" rx="18" ry="22"/>
-                <path data-region="chest" d="M78 70 Q95 62 112 70 L119 117 Q95 129 71 117 Z"/>
-                <path data-region="abdomen" d="M72 120 Q95 130 118 120 L121 178 Q95 190 69 178 Z"/>
-                <path data-region="pelvis" d="M69 181 Q95 193 121 181 L116 224 Q95 237 74 224 Z"/>
-                <path data-region="left-arm" d="M58 76 Q47 78 43 94 L31 157 Q34 163 39 157 L57 108 Z"/>
-                <path data-region="right-arm" d="M132 76 Q143 78 147 94 L159 157 Q156 163 151 157 L133 108 Z"/>
-                <path data-region="left-leg" d="M75 226 L92 231 L88 300 L84 371 Q77 377 72 370 L70 302 Z"/>
-                <path data-region="right-leg" d="M98 231 L115 226 L120 302 L118 370 Q113 377 106 371 L102 300 Z"/>
-              </g>
-            </svg>
-          </figure>
-
-          <div class="divider"></div>
-
-          <figure class="figure" data-side="back">
-            <figcaption>BACK</figcaption>
-            <svg class="body" viewBox="0 0 190 390" role="img" aria-label="Back view of female body with selectable regions">
-              <g class="body-base">
-                <ellipse cx="95" cy="29" rx="22" ry="26"/>
-                <path d="M82 54 C77 63 68 68 58 71 C47 74 42 80 39 94 L28 155 C27 162 31 166 37 164 L54 111 L59 171 C60 190 69 207 72 224 L67 302 L69 370 C70 380 84 380 86 370 L93 294 L95 229 L97 294 L104 370 C106 380 120 380 121 370 L123 302 L118 224 C121 207 130 190 131 171 L136 111 L153 164 C159 166 163 162 162 155 L151 94 C148 80 143 74 132 71 C122 68 113 63 108 54 C102 59 88 59 82 54 Z"/>
-              </g>
-              <g class="regions">
-                <ellipse data-region="back-head" cx="95" cy="29" rx="18" ry="22"/>
-                <path data-region="upper-back" d="M78 70 Q95 62 112 70 L120 123 Q95 133 70 123 Z"/>
-                <path data-region="lower-back" d="M70 126 Q95 136 120 126 L121 182 Q95 191 69 182 Z"/>
-                <path data-region="back-pelvis" d="M69 185 Q95 194 121 185 L116 224 Q95 239 74 224 Z"/>
-                <path data-region="back-left-arm" d="M58 76 Q47 78 43 94 L31 157 Q34 163 39 157 L57 108 Z"/>
-                <path data-region="back-right-arm" d="M132 76 Q143 78 147 94 L159 157 Q156 163 151 157 L133 108 Z"/>
-                <path data-region="back-left-leg" d="M75 226 L92 231 L88 300 L84 371 Q77 377 72 370 L70 302 Z"/>
-                <path data-region="back-right-leg" d="M98 231 L115 226 L120 302 L118 370 Q113 377 106 371 L102 300 Z"/>
-              </g>
-            </svg>
-          </figure>
-        </div>
-        <p class="tap-hint"><span>✦</span> Tap an area again to clear it</p>
-      </section>
-
-      <section class="pain-section">
-        <div class="section-title">
-          <div><p class="eyebrow">COLOR KEY</p><h2>Pain types</h2></div>
-          <span class="selected-count">4 presets</span>
-        </div>
-        <div class="pain-list" id="pain-list"></div>
-        <button class="add-pain" id="add-pain" type="button">
-          <span>+</span> Add another pain type
-        </button>
-      </section>
-
-      <footer>
-        <button class="save-button" type="button">Save body map <span>→</span></button>
-      </footer>
-    </main>
-
-    <template id="pain-template">
-      <div class="pain-item">
-        <button class="swatch" aria-label="Select pain type"><span></span></button>
-        <div class="pain-copy"><input class="pain-name" aria-label="Pain type name" /><span class="pain-detail"></span></div>
-        <input class="color-input" type="color" aria-label="Change color" />
-        <button class="remove-button" aria-label="Remove pain type">×</button>
-      </div>
-    </template>
-    <script src="app.js"></script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

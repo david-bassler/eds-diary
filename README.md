@@ -1,9 +1,36 @@
-# EDS Diary — Body Map Mockup
+# EDS Diary
 
-A responsive, interactive mobile mockup for recording pain locations and types.
+Frisches React- und TypeScript-Projekt auf Basis von Vite.
 
-Open `index.html` in a browser, or serve the directory locally:
+## Voraussetzungen
+
+- Node.js 22 oder neuer
+- npm 10 oder neuer
+
+## Entwicklung
 
 ```bash
-python3 -m http.server 8000
+npm install
+npm run dev
+```
+
+## Qualitätssicherung
+
+```bash
+npm run lint
+npm run build
+npm run test:e2e
+```
+
+Für den ersten Playwright-Lauf muss Chromium installiert werden:
+
+```bash
+npx playwright install chromium
+```
+
+## Storybook
+
+```bash
+npm run storybook
+npm run build-storybook
 ```
