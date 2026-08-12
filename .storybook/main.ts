@@ -7,6 +7,13 @@ const config: StorybookConfig = {
     name: '@storybook/react-vite',
     options: {},
   },
+  staticDirs: ['../public'],
+  viteFinal: (config) => {
+    return {
+      ...config,
+      base: '/eds-diary/',
+    }
+  },
 }
 
 export default config
