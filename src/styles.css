@@ -1,6 +1,6 @@
 :root {
-  color: #282433;
-  background: #f5f3f7;
+  color: #25302b;
+  background: #edf2ef;
   font-family: Inter, ui-sans-serif, system-ui, sans-serif;
   font-synthesis: none;
   text-rendering: optimizelegibility;
@@ -24,57 +24,6 @@ input {
 .app {
   display: grid;
   min-height: 100vh;
-  padding: 24px;
+  padding: clamp(16px, 5vw, 56px);
   place-items: center;
-}
-
-.welcome {
-  width: min(100%, 680px);
-  padding: clamp(32px, 8vw, 72px);
-  border: 1px solid #e2dce8;
-  border-radius: 32px;
-  background: #fff;
-  box-shadow: 0 24px 80px rgb(50 38 65 / 10%);
-}
-
-.welcome__eyebrow {
-  color: #73588c;
-  font-size: 0.75rem;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
-
-.welcome h1 {
-  margin: 12px 0 16px;
-  font-size: clamp(2rem, 7vw, 4rem);
-  letter-spacing: -0.05em;
-  line-height: 1.02;
-}
-
-.welcome p {
-  margin: 0;
-  color: #71697a;
-  font-size: 1.05rem;
-  line-height: 1.7;
-}
-
-.welcome__link {
-  display: inline-block;
-  margin-top: 28px;
-  padding: 13px 18px;
-  border-radius: 12px;
-  color: #fff;
-  background: #59436d;
-  font-weight: 700;
-  text-decoration: none;
-}
-
-.welcome__link:hover {
-  background: #463356;
-}
-
-.welcome__link:focus-visible {
-  outline: 3px solid #bd9ed8;
-  outline-offset: 3px;
 }
