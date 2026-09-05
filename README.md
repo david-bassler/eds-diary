@@ -1,6 +1,6 @@
 # EDS Diary
 
-Frisches React- und TypeScript-Projekt auf Basis von Vite.
+React- und TypeScript-Projekt auf Basis von Vite für ein EDS-Schmerztagebuch.
 
 ## Voraussetzungen
 
@@ -13,6 +13,21 @@ Frisches React- und TypeScript-Projekt auf Basis von Vite.
 npm install
 npm run dev
 ```
+
+## PWA
+
+Die Anwendung enthält ein Web-App-Manifest und einen Service Worker. Der Service
+Worker wird nur im Production-Build registriert, damit die lokale Entwicklung
+keine veralteten Assets aus einem Browser-Cache verwendet.
+
+Zum lokalen Prüfen der installierbaren PWA:
+
+```bash
+npm run build
+npm run preview
+```
+
+Manifest, Service Worker und App-Icons liegen unter `public/`.
 
 ## Qualitätssicherung
 
