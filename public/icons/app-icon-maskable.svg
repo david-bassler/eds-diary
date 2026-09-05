@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">EDS Tagebuch</title>
+  <rect width="512" height="512" fill="#25302b"/>
+  <rect x="104" y="104" width="304" height="304" rx="72" fill="#edf2ef"/>
+  <path d="M168 232h52l24-52 40 152 28-100h32" fill="none" stroke="#25302b" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
