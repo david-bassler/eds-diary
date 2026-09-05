@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 640" role="img" aria-labelledby="title desc">
+  <title id="title">Schematische weibliche Körperansicht von hinten</title>
+  <desc id="desc">Neutrale, segmentierte Körperkarte zur Auswahl von Schmerzregionen.</desc>
+  <style>
+    .body-region {
+      fill: #f2d7c3;
+      stroke: #374151;
+      stroke-width: 3;
+      stroke-linejoin: round;
+      vector-effect: non-scaling-stroke;
+    }
+  </style>
+
+  <g id="back" data-view="back">
+    <ellipse id="back-head" data-region="head" class="body-region" cx="160" cy="58" rx="35" ry="44"/>
+    <path id="back-neck" data-region="neck" class="body-region" d="M145 96 L145 119 Q160 126 175 119 L175 96 Z"/>
+
+    <path id="back-upper-back" data-region="upper-back" class="body-region" d="M116 126 Q138 117 145 116 Q160 125 175 116 Q182 117 204 126 L196 215 Q177 222 160 222 Q143 222 124 215 Z"/>
+    <path id="back-lower-back" data-region="lower-back" class="body-region" d="M124 215 Q143 222 160 222 Q177 222 196 215 L200 286 Q180 295 160 295 Q140 295 120 286 Z"/>
+    <path id="back-left-glute" data-region="left-glute" class="body-region" d="M120 286 Q140 295 157 295 L157 343 Q132 348 109 329 Z"/>
+    <path id="back-right-glute" data-region="right-glute" class="body-region" d="M200 286 Q180 295 163 295 L163 343 Q188 348 211 329 Z"/>
+
+    <path id="back-left-shoulder" data-region="left-shoulder" class="body-region" d="M116 126 Q93 128 83 147 L79 177 Q94 176 108 185 L120 155 Z"/>
+    <path id="back-left-upper-arm" data-region="left-upper-arm" class="body-region" d="M79 177 Q94 176 108 185 L94 244 Q82 250 68 242 Z"/>
+    <ellipse id="back-left-elbow" data-region="left-elbow" class="body-region" cx="79" cy="252" rx="17" ry="16"/>
+    <path id="back-left-forearm" data-region="left-forearm" class="body-region" d="M67 263 Q80 270 91 262 L72 327 Q62 333 50 325 Z"/>
+    <path id="back-left-hand" data-region="left-hand" class="body-region" d="M50 325 Q62 333 72 327 L68 353 L58 382 Q53 392 47 386 L50 366 L43 386 Q39 395 33 389 L38 364 L30 382 Q26 390 21 384 L29 351 Q33 335 50 325 Z"/>
+
+    <path id="back-right-shoulder" data-region="right-shoulder" class="body-region" d="M204 126 Q227 128 237 147 L241 177 Q226 176 212 185 L200 155 Z"/>
+    <path id="back-right-upper-arm" data-region="right-upper-arm" class="body-region" d="M241 177 Q226 176 212 185 L226 244 Q238 250 252 242 Z"/>
+    <ellipse id="back-right-elbow" data-region="right-elbow" class="body-region" cx="241" cy="252" rx="17" ry="16"/>
+    <path id="back-right-forearm" data-region="right-forearm" class="body-region" d="M253 263 Q240 270 229 262 L248 327 Q258 333 270 325 Z"/>
+    <path id="back-right-hand" data-region="right-hand" class="body-region" d="M270 325 Q258 333 248 327 L252 353 L262 382 Q267 392 273 386 L270 366 L277 386 Q281 395 287 389 L282 364 L290 382 Q294 390 299 384 L291 351 Q287 335 270 325 Z"/>
+
+    <path id="back-left-thigh" data-region="left-thigh" class="body-region" d="M109 329 Q132 348 157 343 L148 441 Q129 449 108 440 Q99 387 109 329 Z"/>
+    <path id="back-right-thigh" data-region="right-thigh" class="body-region" d="M211 329 Q188 348 163 343 L172 441 Q191 449 212 440 Q221 387 211 329 Z"/>
+    <ellipse id="back-left-knee" data-region="left-knee" class="body-region" cx="128" cy="457" rx="19" ry="21"/>
+    <ellipse id="back-right-knee" data-region="right-knee" class="body-region" cx="192" cy="457" rx="19" ry="21"/>
+    <path id="back-left-calf" data-region="left-calf" class="body-region" d="M111 475 Q128 484 145 475 L141 563 Q128 571 115 563 Z"/>
+    <path id="back-right-calf" data-region="right-calf" class="body-region" d="M175 475 Q192 484 209 475 L205 563 Q192 571 179 563 Z"/>
+    <path id="back-left-ankle" data-region="left-ankle" class="body-region" d="M115 563 Q128 571 141 563 L140 587 Q128 593 116 587 Z"/>
+    <path id="back-right-ankle" data-region="right-ankle" class="body-region" d="M179 563 Q192 571 205 563 L204 587 Q192 593 180 587 Z"/>
+    <path id="back-left-foot" data-region="left-foot" class="body-region" d="M116 587 Q128 593 140 587 L146 615 Q147 625 136 626 L105 626 Q97 624 101 614 Z"/>
+    <path id="back-right-foot" data-region="right-foot" class="body-region" d="M180 587 Q192 593 204 587 L219 614 Q223 624 215 626 L184 626 Q173 625 174 615 Z"/>
+  </g>
+</svg>
