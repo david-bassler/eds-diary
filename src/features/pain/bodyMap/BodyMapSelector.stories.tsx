@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite'
 import { useState } from 'react'
 import type { PainLocation } from '../painEntry'
 import { BodyMapSelector } from './BodyMapSelector'
-import '../../../../../src/styles.css'
+import '../../../styles.css'
 
 const meta = {
   title: 'Features/Pain/BodyMapSelector',
