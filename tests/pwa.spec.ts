@@ -59,5 +59,22 @@ test('serves the service worker', async ({ page, request }) => {
   const serviceWorkerResponse = await request.get(serviceWorkerUrl)
 
   expect(serviceWorkerResponse.ok()).toBe(true)
-  expect(await serviceWorkerResponse.text()).toContain('eds-diary-shell-v4')
+  expect(await serviceWorkerResponse.text()).toContain('eds-diary-shell-v5')
+})
+
+test('serves generated PNG body maps', async ({ page, request }) => {
+  await page.goto('/')
+
+  for (const file of [
+    'front-gray.png',
+    'front-hitmap.png',
+    'back-gray.png',
+    'back-hitmap.png',
+  ]) {
+    const url = new URL(`body-map/${file}`, page.url()).toString()
+    const response = await request.get(url)
+
+    expect(response.ok()).toBe(true)
+    expect(response.headers()['content-type']).toContain('image/png')
+  }
 })
