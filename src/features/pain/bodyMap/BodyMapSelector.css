@@ -69,6 +69,10 @@
   touch-action: manipulation;
 }
 
+.body-map-selector__overlay[data-hit-map-ready='false'] {
+  cursor: wait;
+}
+
 .body-map-selector__selection {
   display: grid;
   gap: 4px;
