@@ -71,6 +71,8 @@ function normalizeQualities(value: unknown): string[] {
 function normalizeIntensity(value: unknown): number | null {
   if (value === null || value === undefined || value === '') return null
 
+  if (typeof value !== 'number' && typeof value !== 'string') return null
+
   const number = typeof value === 'number' ? value : Number(value)
   if (!Number.isFinite(number)) return null
 
