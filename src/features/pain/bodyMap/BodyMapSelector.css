@@ -35,9 +35,7 @@
   padding: 14px;
   border: 1px solid rgb(37 48 43 / 10%);
   border-radius: 20px;
-  background:
-    radial-gradient(circle at 50% 38%, rgb(255 255 255 / 88%), rgb(247 249 248 / 62%));
-  box-shadow: 0 10px 30px rgb(37 48 43 / 5%);
+  background: rgb(255 255 255 / 54%);
 }
 
 .body-map-selector__view[data-mobile-active='true'] {
@@ -50,53 +48,63 @@
 }
 
 .body-map-selector__svg {
-  width: min(100%, 260px);
+  width: min(100%, 250px);
   height: auto;
   overflow: visible;
-  filter: drop-shadow(0 7px 10px rgb(37 48 43 / 7%));
 }
 
-.body-map-selector__details {
+.body-map-selector__silhouette > path:not(.body-map-selector__hair) {
+  fill: #f1f1f0;
+  stroke: #202724;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.body-map-selector__hair {
+  fill: #919392;
+  stroke: #202724;
+  stroke-width: 2.2;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.body-map-selector__anatomy {
   fill: none;
-  stroke: rgb(55 65 81 / 22%);
-  stroke-width: 1.5;
+  stroke: #202724;
+  stroke-width: 2;
   stroke-linecap: round;
   pointer-events: none;
   vector-effect: non-scaling-stroke;
 }
 
-.body-map-selector__details circle {
-  fill: rgb(55 65 81 / 22%);
-  stroke: none;
-}
-
 .body-map-selector__region {
-  fill: #f3d9c6;
-  stroke: #59645f;
-  stroke-width: 2.2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  fill: transparent;
+  stroke: transparent;
+  stroke-width: 2;
   cursor: pointer;
   vector-effect: non-scaling-stroke;
   transition:
     fill 120ms ease,
-    stroke-width 120ms ease;
+    stroke 120ms ease;
 }
 
 .body-map-selector__region:hover {
-  fill: #efd1ba;
+  fill: rgb(63 111 91 / 12%);
 }
 
 .body-map-selector__region:focus {
   outline: none;
-  stroke: #1f3f34;
-  stroke-width: 4.5;
+  fill: rgb(63 111 91 / 16%);
+  stroke: #315b4a;
+  stroke-width: 4;
 }
 
 .body-map-selector__region[data-selected='true'] {
-  fill: #b9dacb;
-  stroke: #265846;
-  stroke-width: 4;
+  fill: rgb(90 153 126 / 48%);
+  stroke: #245443;
+  stroke-width: 3.5;
   stroke-dasharray: 5 2;
 }
 
