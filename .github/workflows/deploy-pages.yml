@@ -73,9 +73,10 @@ jobs:
             exit 1
           fi
           base_url="${{ steps.deployment.outputs.page_url }}"
-          curl --fail --show-error --silent --location \
-            --output /tmp/female-front.svg "${base_url}body-map/female-front.svg"
-          curl --fail --show-error --silent --location \
-            --output /tmp/female-back.svg "${base_url}body-map/female-back.svg"
-          grep -q 'viewBox="0 0 138.04 441.27"' /tmp/female-front.svg
-          grep -q 'viewBox="0 0 108.5 421.5"' /tmp/female-back.svg
+          for file in front-gray.png front-hitmap.png back-gray.png back-hitmap.png; do
+            curl --fail --show-error --silent --location \
+              --output "/tmp/${file}" "${base_url}body-map/${file}"
+            test -s "/tmp/${file}"
+            signature="$(od -An -t x1 -N 8 "/tmp/${file}" | tr -d ' \n')"
+            test "$signature" = "89504e470d0a1a0a"
+          done
