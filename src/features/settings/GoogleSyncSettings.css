@@ -1,0 +1,93 @@
+.google-sync-settings {
+  width: min(100%, 680px);
+  border: 1px solid rgb(37 48 43 / 18%);
+  border-radius: 16px;
+  background: rgb(255 255 255 / 62%);
+}
+
+.google-sync-settings__summary {
+  display: grid;
+  gap: 4px;
+  min-height: 52px;
+  padding: 14px 16px;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.google-sync-settings__state {
+  font-size: 0.82rem;
+  font-weight: 500;
+  opacity: 0.72;
+}
+
+.google-sync-settings__content {
+  display: grid;
+  gap: 16px;
+  padding: 0 16px 16px;
+}
+
+.google-sync-settings__privacy,
+.google-sync-settings__status {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.google-sync-settings__privacy {
+  font-size: 0.92rem;
+}
+
+.google-sync-settings__field {
+  display: grid;
+  gap: 6px;
+  font-weight: 650;
+}
+
+.google-sync-settings__field input {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid rgb(37 48 43 / 28%);
+  border-radius: 10px;
+  background: white;
+  color: inherit;
+}
+
+.google-sync-settings__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.google-sync-settings__actions button {
+  min-height: 44px;
+  padding: 9px 12px;
+  border: 1px solid rgb(37 48 43 / 24%);
+  border-radius: 10px;
+  background: white;
+  color: inherit;
+  cursor: pointer;
+}
+
+.google-sync-settings__actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.google-sync-settings__status {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgb(37 48 43 / 7%);
+}
+
+.google-sync-settings__status[data-kind='good'] {
+  border-inline-start: 4px solid #3f6f5b;
+}
+
+.google-sync-settings__status[data-kind='bad'] {
+  border-inline-start: 4px solid #9c3f3f;
+}
+
+.google-sync-settings__link {
+  width: fit-content;
+  color: inherit;
+}
