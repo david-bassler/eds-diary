@@ -336,6 +336,7 @@ function BodyViewMap({
         <canvas
           ref={overlayRef}
           className="body-map-selector__overlay"
+          data-hit-map-ready={hitMap !== null}
           aria-hidden="true"
           onPointerDown={selectAtPointer}
         />
