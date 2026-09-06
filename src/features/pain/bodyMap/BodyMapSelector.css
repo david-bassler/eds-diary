@@ -47,43 +47,33 @@
   font-size: 0.92rem;
 }
 
-.body-map-selector__svg {
+.body-map-selector__artwork {
+  position: relative;
   width: min(100%, 250px);
+}
+
+.body-map-selector__image {
+  display: block;
+  width: 100%;
   height: auto;
+  user-select: none;
+  pointer-events: none;
+}
+
+.body-map-selector__overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   overflow: visible;
 }
 
-.body-map-selector__silhouette > path:not(.body-map-selector__hair) {
-  fill: #f1f1f0;
-  stroke: #202724;
-  stroke-width: 2.2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  vector-effect: non-scaling-stroke;
-}
-
-.body-map-selector__hair {
-  fill: #919392;
-  stroke: #202724;
-  stroke-width: 2.2;
-  stroke-linejoin: round;
-  vector-effect: non-scaling-stroke;
-}
-
-.body-map-selector__anatomy {
-  fill: none;
-  stroke: #202724;
-  stroke-width: 2;
-  stroke-linecap: round;
-  pointer-events: none;
-  vector-effect: non-scaling-stroke;
-}
-
 .body-map-selector__region {
-  fill: transparent;
+  fill: rgb(255 255 255 / 0.001%);
   stroke: transparent;
-  stroke-width: 2;
+  stroke-width: 1.4;
   cursor: pointer;
+  pointer-events: all;
   vector-effect: non-scaling-stroke;
   transition:
     fill 120ms ease,
@@ -91,20 +81,20 @@
 }
 
 .body-map-selector__region:hover {
-  fill: rgb(63 111 91 / 12%);
+  fill: rgb(63 111 91 / 14%);
 }
 
 .body-map-selector__region:focus {
   outline: none;
-  fill: rgb(63 111 91 / 16%);
+  fill: rgb(63 111 91 / 18%);
   stroke: #315b4a;
-  stroke-width: 4;
+  stroke-width: 3.5;
 }
 
 .body-map-selector__region[data-selected='true'] {
-  fill: rgb(90 153 126 / 48%);
+  fill: rgb(90 153 126 / 46%);
   stroke: #245443;
-  stroke-width: 3.5;
+  stroke-width: 3;
   stroke-dasharray: 5 2;
 }
 
