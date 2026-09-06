@@ -1,59 +1,16 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 640" role="img" aria-labelledby="title desc">
-  <title id="title">Schematische weibliche Körperansicht von vorn</title>
-  <desc id="desc">Neutrale, weich gezeichnete und segmentierte Körperkarte zur Auswahl von Schmerzregionen.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 560" role="img" aria-labelledby="title desc">
+  <title id="title">Weibliche Körperansicht von vorn</title>
+  <desc id="desc">Auf der Public-Domain-Silhouette von nicubunu basierende Vorderansicht für die Schmerzkarte.</desc>
+  <!-- Design basis: nicubunu / OpenClipart 14567 / FreeSVG 143979, Public Domain / CC0. -->
   <style>
-    .body-region {
-      fill: #f3d9c6;
-      stroke: #59645f;
-      stroke-width: 2.2;
-      stroke-linecap: round;
-      stroke-linejoin: round;
-      vector-effect: non-scaling-stroke;
-    }
-    .body-detail {
-      fill: none;
-      stroke: rgb(55 65 81 / 22%);
-      stroke-width: 1.5;
-      stroke-linecap: round;
-      pointer-events: none;
-      vector-effect: non-scaling-stroke;
-    }
-    .body-detail circle {
-      fill: rgb(55 65 81 / 22%);
-      stroke: none;
-    }
+    .body { fill: #f1f1f0; stroke: #202724; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+    .hair { fill: #919392; stroke: #202724; stroke-width: 2.2; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+    .detail { fill: none; stroke: #202724; stroke-width: 2; stroke-linecap: round; vector-effect: non-scaling-stroke; }
   </style>
-
-  <g id="front" data-view="front">
-    <path id="front-head" data-region="head" class="body-region" d="head"/>
-    <path id="front-neck" data-region="neck" class="body-region" d="neck"/>
-    <path id="front-chest" data-region="chest" class="body-region" d="chest"/>
-    <path id="front-abdomen" data-region="abdomen" class="body-region" d="abdomen"/>
-    <path id="front-pelvis" data-region="pelvis" class="body-region" d="pelvis"/>
-    <path id="front-left-shoulder" data-region="left-shoulder" class="body-region" d="left-shoulder"/>
-    <path id="front-left-upper-arm" data-region="left-upper-arm" class="body-region" d="left-upper-arm"/>
-    <path id="front-left-elbow" data-region="left-elbow" class="body-region" d="left-elbow"/>
-    <path id="front-left-forearm" data-region="left-forearm" class="body-region" d="left-forearm"/>
-    <path id="front-left-hand" data-region="left-hand" class="body-region" d="left-hand"/>
-    <path id="front-right-shoulder" data-region="right-shoulder" class="body-region" d="right-shoulder"/>
-    <path id="front-right-upper-arm" data-region="right-upper-arm" class="body-region" d="right-upper-arm"/>
-    <path id="front-right-elbow" data-region="right-elbow" class="body-region" d="right-elbow"/>
-    <path id="front-right-forearm" data-region="right-forearm" class="body-region" d="right-forearm"/>
-    <path id="front-right-hand" data-region="right-hand" class="body-region" d="right-hand"/>
-    <path id="front-left-thigh" data-region="left-thigh" class="body-region" d="left-thigh"/>
-    <path id="front-right-thigh" data-region="right-thigh" class="body-region" d="right-thigh"/>
-    <path id="front-left-knee" data-region="left-knee" class="body-region" d="left-knee"/>
-    <path id="front-right-knee" data-region="right-knee" class="body-region" d="right-knee"/>
-    <path id="front-left-lower-leg" data-region="left-lower-leg" class="body-region" d="left-lower-leg"/>
-    <path id="front-right-lower-leg" data-region="right-lower-leg" class="body-region" d="right-lower-leg"/>
-    <path id="front-left-ankle" data-region="left-ankle" class="body-region" d="left-ankle"/>
-    <path id="front-right-ankle" data-region="right-ankle" class="body-region" d="right-ankle"/>
-    <path id="front-left-foot" data-region="left-foot" class="body-region" d="left-foot"/>
-    <path id="front-right-foot" data-region="right-foot" class="body-region" d="right-foot"/>
-    <g class="body-detail" aria-hidden="true">
-      <path d="M137 151 Q149 144 160 151 Q171 144 183 151"/>
-      <path d="M160 232 C157 246 157 263 160 279"/>
-      <circle cx="160" cy="263" r="2.6"/>
-    </g>
-  </g>
+  <path class="body" d="M76 105 C67 106 61 111 55 119 L8 188 C3 196 3 204 7 213 C18 241 34 268 51 288 C56 294 63 294 68 290 L80 259 C76 252 72 245 68 237 L38 201 L80 151 C85 143 86 132 83 121 C81 114 79 109 76 105 Z"/>
+  <path class="body" d="M154 105 C165 106 176 108 184 112 C189 115 191 122 192 132 C196 156 199 181 198 202 C202 210 201 224 199 236 L191 305 C194 319 191 331 183 340 C178 346 173 350 168 351 C164 349 165 344 169 339 L177 331 C173 332 169 333 166 332 L169 313 C170 287 171 262 170 238 C169 213 167 187 166 161 C163 142 160 123 154 105 Z"/>
+  <path class="body" d="M100 30 C94 38 94 58 100 70 C104 77 105 87 103 96 C95 101 84 103 74 104 C77 126 80 150 80 174 C80 195 78 216 81 232 C71 249 66 266 65 286 C63 320 69 355 78 390 C74 414 75 444 80 475 C77 495 79 514 86 530 C81 540 80 548 88 553 C96 558 108 557 112 552 C115 548 112 539 110 532 C113 494 115 454 112 416 C110 386 109 349 111 318 L112 288 C112 284 115 284 115 288 L118 318 C120 349 119 386 117 416 C114 454 116 494 120 532 C118 539 115 548 119 552 C123 557 135 558 143 553 C151 548 150 540 145 530 C152 514 154 495 151 475 C156 444 157 414 153 390 C162 355 168 320 166 286 C165 266 160 249 150 232 C153 216 151 195 151 174 C151 150 154 126 157 104 C147 103 136 101 128 96 C126 87 127 77 131 70 C137 58 137 38 131 30 C124 22 107 22 100 30 Z"/>
+  <path class="hair" d="M88 75 C83 54 85 20 100 7 C113 -4 137 0 147 15 C157 31 158 55 153 78 L137 75 C139 58 139 39 133 33 C126 26 106 26 100 33 C94 40 95 59 101 75 Z"/>
+  <path class="detail" d="M72 166 C82 173 91 171 98 163"/>
+  <path class="detail" d="M132 163 C139 171 149 173 158 166"/>
 </svg>
