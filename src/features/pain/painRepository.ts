@@ -23,60 +23,109 @@ function createId(): string {
   return `pain-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 }
 
-function normalizeLocations(
-  locations: readonly PainLocation[] | undefined,
-): PainLocation[] {
-  if (!locations) return []
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === 'string' ? value : ''
+}
+
+function normalizeLocations(value: unknown): PainLocation[] {
+  if (!Array.isArray(value)) return []
 
   const seen = new Set<string>()
   const result: PainLocation[] = []
 
-  for (const location of locations) {
-    const regionId = location.regionId.trim()
-    if (!regionId || !['front', 'back'].includes(location.view)) continue
+  for (const item of value) {
+    if (!isRecord(item)) continue
 
-    const key = `${location.view}:${regionId}`
+    const view = item.view
+    const regionId = stringValue(item.regionId).trim()
+
+    if ((view !== 'front' && view !== 'back') || !regionId) continue
+
+    const key = `${view}:${regionId}`
     if (seen.has(key)) continue
 
     seen.add(key)
-    result.push({ view: location.view, regionId })
+    result.push({ view, regionId })
   }
 
   return result
 }
 
-function normalizeQualities(qualities: readonly string[] | undefined): string[] {
-  if (!qualities) return []
+function normalizeQualities(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
 
-  return [...new Set(qualities.map((quality) => quality.trim()).filter(Boolean))]
+  return [
+    ...new Set(
+      value
+        .filter((quality): quality is string => typeof quality === 'string')
+        .map((quality) => quality.trim())
+        .filter(Boolean),
+    ),
+  ]
 }
 
-function normalizeIntensity(value: number | null | undefined): number | null {
-  if (value === null || value === undefined || !Number.isFinite(value)) return null
-  return Math.min(10, Math.max(0, value))
+function normalizeIntensity(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null
+
+  const number = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(number)) return null
+
+  return Math.min(10, Math.max(0, number))
+}
+
+function normalizeStoredEntry(value: unknown): PainEntry | null {
+  if (!isRecord(value)) return null
+
+  const id = stringValue(value.id).trim()
+  if (!id) return null
+
+  const fallbackTimestamp = nowIso()
+  const createdAt =
+    stringValue(value.createdAt).trim() ||
+    stringValue(value.updatedAt).trim() ||
+    fallbackTimestamp
+  const updatedAt =
+    stringValue(value.updatedAt).trim() ||
+    stringValue(value.createdAt).trim() ||
+    fallbackTimestamp
+
+  return {
+    id,
+    startedAt: stringValue(value.startedAt).trim() || createdAt,
+    endedAt: stringValue(value.endedAt).trim(),
+    locations: normalizeLocations(value.locations),
+    intensity: normalizeIntensity(value.intensity),
+    qualities: normalizeQualities(value.qualities),
+    note: stringValue(value.note).trim(),
+    status: value.status === 'deleted' ? 'deleted' : 'active',
+    createdAt,
+    updatedAt,
+  }
 }
 
 function normalizeEntry(entry: PainEntry): PainEntry {
-  return {
-    ...entry,
-    startedAt: entry.startedAt || entry.createdAt || nowIso(),
-    endedAt: entry.endedAt || '',
-    locations: normalizeLocations(entry.locations),
-    intensity: normalizeIntensity(entry.intensity),
-    qualities: normalizeQualities(entry.qualities),
-    note: entry.note.trim(),
-    status: entry.status === 'deleted' ? 'deleted' : 'active',
-    createdAt: entry.createdAt || entry.updatedAt || nowIso(),
-    updatedAt: entry.updatedAt || entry.createdAt || nowIso(),
-  }
+  return (
+    normalizeStoredEntry(entry) ?? {
+      ...entry,
+      locations: [],
+      intensity: null,
+      qualities: [],
+      note: '',
+      status: 'active',
+    }
+  )
 }
 
 export async function createPainEntry(input: NewPainEntry): Promise<PainEntry> {
   const timestamp = nowIso()
   const entry: PainEntry = {
     id: createId(),
-    startedAt: input.startedAt || timestamp,
-    endedAt: input.endedAt || '',
+    startedAt: input.startedAt?.trim() || timestamp,
+    endedAt: input.endedAt?.trim() || '',
     locations: normalizeLocations(input.locations),
     intensity: normalizeIntensity(input.intensity),
     qualities: normalizeQualities(input.qualities),
@@ -115,17 +164,20 @@ export async function deletePainEntry(id: string): Promise<void> {
 }
 
 export async function getPainEntry(id: string): Promise<PainEntry | undefined> {
-  const entry = await getRecord<PainEntry>(LOCAL_STORES.painEntries, id)
-  return entry ? normalizeEntry(entry) : undefined
+  const stored = await getRecord<unknown>(LOCAL_STORES.painEntries, id)
+  return normalizeStoredEntry(stored) ?? undefined
 }
 
 export async function listPainEntries(options?: {
   includeDeleted?: boolean
 }): Promise<PainEntry[]> {
-  const entries = await getAllRecords<PainEntry>(LOCAL_STORES.painEntries)
-  const normalized = entries.map(normalizeEntry)
+  const storedEntries = await getAllRecords<unknown>(LOCAL_STORES.painEntries)
+  const entries = storedEntries.flatMap((stored) => {
+    const entry = normalizeStoredEntry(stored)
+    return entry ? [entry] : []
+  })
 
-  return normalized
+  return entries
     .filter((entry) => options?.includeDeleted || entry.status !== 'deleted')
     .sort(
       (left, right) =>
