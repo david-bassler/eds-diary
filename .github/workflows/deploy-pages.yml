@@ -34,6 +34,29 @@ jobs:
       - name: Configure Pages
         uses: actions/configure-pages@v5
 
+      - name: Fetch original OpenClipart silhouettes
+        run: |
+          curl --fail --show-error --silent --location --retry 4 --retry-all-errors \
+            -H "Accept: image/svg+xml,*/*;q=0.8" \
+            -A "Mozilla/5.0" \
+            https://openclipart.org/download/14567 \
+            --output /tmp/female-front-original.svg
+          curl --fail --show-error --silent --location --retry 4 --retry-all-errors \
+            -H "Accept: image/svg+xml,*/*;q=0.8" \
+            -A "Mozilla/5.0" \
+            https://openclipart.org/download/14565 \
+            --output /tmp/female-back-original.svg
+          grep -q "<svg" /tmp/female-front-original.svg
+          grep -q "<svg" /tmp/female-back-original.svg
+          echo "-----FRONT-SVG-BEGIN-----"
+          cat /tmp/female-front-original.svg
+          echo
+          echo "-----FRONT-SVG-END-----"
+          echo "-----BACK-SVG-BEGIN-----"
+          cat /tmp/female-back-original.svg
+          echo
+          echo "-----BACK-SVG-END-----"
+
       - name: Build
         env:
           VITE_BASE_PATH: /eds-diary/
