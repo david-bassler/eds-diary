@@ -1,16 +1,123 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 560" role="img" aria-labelledby="title desc">
-  <title id="title">Weibliche Körperansicht von vorn</title>
-  <desc id="desc">Auf der Public-Domain-Silhouette von nicubunu basierende Vorderansicht für die Schmerzkarte.</desc>
-  <!-- Design basis: nicubunu / OpenClipart 14567 / FreeSVG 143979, Public Domain / CC0. -->
-  <style>
-    .body { fill: #f1f1f0; stroke: #202724; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
-    .hair { fill: #919392; stroke: #202724; stroke-width: 2.2; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
-    .detail { fill: none; stroke: #202724; stroke-width: 2; stroke-linecap: round; vector-effect: non-scaling-stroke; }
-  </style>
-  <path class="body" d="M76 105 C67 106 61 111 55 119 L8 188 C3 196 3 204 7 213 C18 241 34 268 51 288 C56 294 63 294 68 290 L80 259 C76 252 72 245 68 237 L38 201 L80 151 C85 143 86 132 83 121 C81 114 79 109 76 105 Z"/>
-  <path class="body" d="M154 105 C165 106 176 108 184 112 C189 115 191 122 192 132 C196 156 199 181 198 202 C202 210 201 224 199 236 L191 305 C194 319 191 331 183 340 C178 346 173 350 168 351 C164 349 165 344 169 339 L177 331 C173 332 169 333 166 332 L169 313 C170 287 171 262 170 238 C169 213 167 187 166 161 C163 142 160 123 154 105 Z"/>
-  <path class="body" d="M100 30 C94 38 94 58 100 70 C104 77 105 87 103 96 C95 101 84 103 74 104 C77 126 80 150 80 174 C80 195 78 216 81 232 C71 249 66 266 65 286 C63 320 69 355 78 390 C74 414 75 444 80 475 C77 495 79 514 86 530 C81 540 80 548 88 553 C96 558 108 557 112 552 C115 548 112 539 110 532 C113 494 115 454 112 416 C110 386 109 349 111 318 L112 288 C112 284 115 284 115 288 L118 318 C120 349 119 386 117 416 C114 454 116 494 120 532 C118 539 115 548 119 552 C123 557 135 558 143 553 C151 548 150 540 145 530 C152 514 154 495 151 475 C156 444 157 414 153 390 C162 355 168 320 166 286 C165 266 160 249 150 232 C153 216 151 195 151 174 C151 150 154 126 157 104 C147 103 136 101 128 96 C126 87 127 77 131 70 C137 58 137 38 131 30 C124 22 107 22 100 30 Z"/>
-  <path class="hair" d="M88 75 C83 54 85 20 100 7 C113 -4 137 0 147 15 C157 31 158 55 153 78 L137 75 C139 58 139 39 133 33 C126 26 106 26 100 33 C94 40 95 59 101 75 Z"/>
-  <path class="detail" d="M72 166 C82 173 91 171 98 163"/>
-  <path class="detail" d="M132 163 C139 171 149 173 158 166"/>
-</svg>
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+<svg
+    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+    xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+    xmlns="http://www.w3.org/2000/svg"
+    xmlns:cc="http://creativecommons.org/ns#"
+    xmlns:dc="http://purl.org/dc/elements/1.1/"
+    xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+    id="svg923"
+    sodipodi:docname="_svgclean2.svg"
+    viewBox="0 0 138.04 441.27"
+    sodipodi:version="0.32"
+    version="1.1"
+    inkscape:version="0.48.3.1 r9886"
+  >
+  <sodipodi:namedview
+      id="base"
+      bordercolor="#666666"
+      inkscape:pageshadow="2"
+      inkscape:window-y="0"
+      pagecolor="#ffffff"
+      inkscape:window-height="645"
+      inkscape:window-maximized="0"
+      inkscape:zoom="1"
+      inkscape:window-x="0"
+      showgrid="false"
+      borderopacity="1.0"
+      inkscape:current-layer="svg923"
+      inkscape:cx="94.58807"
+      inkscape:cy="-322.95415"
+      inkscape:window-width="674"
+      inkscape:pageopacity="0.0"
+  />
+  <g
+      id="g913"
+      transform="translate(-12.457 -3.0605)"
+    >
+    <g
+        id="g1532"
+      >
+      <path
+          id="path943"
+          inkscape:connector-curvature="0"
+          sodipodi:nodetypes="cccccccccccccccccccccccccccccccccccccccccccccc"
+          style="stroke-linejoin:round;fill-rule:evenodd;stroke:#000000;stroke-width:1pt;fill:#f0f0f0"
+          d="m80.464 50.062c2.879 5.759 1.241 10.697 0.521 16.455-7.475 6.998-25.394 2.083-29.207 8.332-7.947 12.037-38.452 49.291-38.696 60.201 0.292 9.58 20.009 44.25 31.403 56.01 2.711 0.6 6.194 1.03 7.916-0.39 2.342-6.17 1.784-5.66 3.858-14.33-1.445-2.48-2.364 2.06-6.087 1.64-5.79-7.04-16.866-34.74-17.953-41.36 5.266-9.52 16.998-20.69 25.913-34.71 7.15 11.54-8.01 16.28 4.891 24.28 1.225 11.3 2.336 29.65 1.165 35.15-30.456 39.95 0.878 133.85 1.874 146.32-8.511 29 8.043 89.35 8.442 94.91-0.428 5.15-3.491 9.77-1.546 12.95-2.602 11.04-5.321 15.44-3.161 21.92 2.159 6.48 17.766 8.09 20.767 4.1 0.934-6.07-0.608-21.38-2.767-24.26 1.148-2.46 2.541-11.11 0.197-18.52-2.757-9.48 5.825-63.07-0.775-78.04 0.841-3.4 2.173-14.49 2.187-19.44-0.804-2.97 0.48-35.1 2-60.19 1.527 25.12 2.807 57.43 2 60.41-2.879 2.88 0.106 16.45 2.188 19.44-2.053 6.29 3.635 68.56 7.906 75.56-2.34 7.41 0.29 14.82 1.44 17.28-2.16 2.88-4.53 19.84-3.6 25.91 3 4 19.44 0.73 21.6-5.75s-3.87-8.4-6.47-19.44c1.94-3.19-0.32-10.7-0.75-15.84 0.4-5.56 9.54-61.78 1.03-90.78 1-12.47 29.02-107.61 1.87-146.32-1.17-5.5 0.06-26.9 1.64-38.2 9.97-4.69-2.04-13.75 4.83-21.24 1.06 8.77 3.94 46.66 8.63 59-3.17 15.24 2.16 58.31-0.72 62.63s-3.89 15.29-3.59 20.16c3.6-2.16 4.28-5.01 6.47-3.6 2.6 5.13-8.29 10.58-8.32 15.13 5.76 0 18.96-6.81 14.82-30.97-0.02-9.69 12.71-62.59 5.03-75.56 2.65-8.43-4.29-60.152-9.35-70.535-3.81-6.249-24.21-3.814-31.68-10.813-0.72-5.758-3.6-11.522-0.72-17.281 6.47-9.359 6.71-40.118-11.316-40.283-23.263 0.013-20.359 30.705-13.88 40.062z"
+      />
+      <path
+          id="path946"
+          inkscape:connector-curvature="0"
+          sodipodi:nodetypes="cc"
+          style="stroke:#000000;stroke-width:1pt;fill:none"
+          d="m63.157 126.08c4.54 1.47 13.896 0.05 18.922-4.34"
+      />
+      <path
+          id="path947"
+          inkscape:connector-curvature="0"
+          sodipodi:nodetypes="cc"
+          style="stroke:#000000;stroke-width:1pt;fill:none"
+          d="m104.21 120.22c4.2 6.19 12.47 4.1 16.45 3.07"
+      />
+    </g
+    >
+    <path
+        id="path911"
+        inkscape:connector-curvature="0"
+        sodipodi:nodetypes="cccccccccccc"
+        style="fill-rule:evenodd;stroke:#000000;stroke-width:1pt;fill:#808080"
+        d="m92.565 3.7162c-7.105-0.3552-14.096 2.3556-16.938 8.7498-7.105 16.105-6.154 37.905-3.312 44.063 1.701-0.262 5.233-0.782 9.375-1.313-0.207-1.575-0.601-3.17-1.438-4.844-3.239-4.678-5.586-14.69-4.215-23.535 1.371-8.844 31.553-8.714 32.933 0.166 1.39 8.88-0.29 18.91-3.53 23.588-0.6 1.201-0.83 2.393-1 3.594 3.55 0.402 6.34 1.256 7.66 2.812 3.31-8.052 3.8-32.194-1.88-43.562-3.31-5.9208-10.55-9.3635-17.655-9.7188z"
+    />
+  </g
+  >
+  <metadata
+      id="metadata10"
+    >
+    <rdf:RDF
+      >
+      <cc:Work
+        >
+        <dc:format
+          >image/svg+xml</dc:format
+        >
+        <dc:type
+            rdf:resource="http://purl.org/dc/dcmitype/StillImage"
+        />
+        <cc:license
+            rdf:resource="http://creativecommons.org/licenses/publicdomain/"
+        />
+        <dc:publisher
+          >
+          <cc:Agent
+              rdf:about="http://openclipart.org/"
+            >
+            <dc:title
+              >Openclipart</dc:title
+            >
+          </cc:Agent
+          >
+        </dc:publisher
+        >
+      </cc:Work
+      >
+      <cc:License
+          rdf:about="http://creativecommons.org/licenses/publicdomain/"
+        >
+        <cc:permits
+            rdf:resource="http://creativecommons.org/ns#Reproduction"
+        />
+        <cc:permits
+            rdf:resource="http://creativecommons.org/ns#Distribution"
+        />
+        <cc:permits
+            rdf:resource="http://creativecommons.org/ns#DerivativeWorks"
+        />
+      </cc:License
+      >
+    </rdf:RDF
+    >
+  </metadata
+  >
+</svg
+>
