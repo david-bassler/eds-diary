@@ -30,6 +30,7 @@ const ENTRY_HEADERS = [
   'Erstellt',
   'Aktualisiert',
   'Moegliche_Ursache',
+  'Tritt_auf_wenn',
 ] as const
 
 const PAIN_TYPE_HEADERS = ['Name'] as const
@@ -113,6 +114,7 @@ function fromRow(row: SheetCell[]): PainEntry | null {
     createdAt,
     updatedAt,
     cause: text(row[10]).trim(),
+    occursWhen: text(row[11]).trim(),
   }
 }
 
@@ -129,6 +131,7 @@ function toRow(entry: PainEntry): readonly SheetCell[] {
     entry.createdAt,
     entry.updatedAt,
     entry.cause,
+    entry.occursWhen,
   ]
 }
 
