@@ -144,6 +144,10 @@ export function isGoogleConnected(): boolean {
   return Boolean(accessToken)
 }
 
+export function isGoogleSyncReady(): boolean {
+  return isGoogleConnected() && Boolean(config.sheetId)
+}
+
 export function onGoogleConnection(
   listener: (connected: boolean) => void,
 ): () => void {
@@ -375,9 +379,10 @@ export async function ensureSheets(sheetSpecs: SheetSpecs): Promise<void> {
     )
   }
 
+  const titles = knownTitles
   const missingTitles = pending
     .map(([title]) => title)
-    .filter((title) => !knownTitles?.has(title))
+    .filter((title) => !titles.has(title))
 
   if (missingTitles.length) {
     await api(sheetsUrl(':batchUpdate'), {
@@ -388,7 +393,7 @@ export async function ensureSheets(sheetSpecs: SheetSpecs): Promise<void> {
         })),
       }),
     })
-    for (const title of missingTitles) knownTitles.add(title)
+    for (const title of missingTitles) titles.add(title)
   }
 
   const ranges = pending.map(
