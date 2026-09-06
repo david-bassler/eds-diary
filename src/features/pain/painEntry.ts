@@ -13,6 +13,7 @@ export interface PainEntry {
   locations: PainLocation[]
   intensity: number | null
   qualities: string[]
+  cause: string
   note: string
   status: PainEntryStatus
   createdAt: string
@@ -25,5 +26,6 @@ export interface NewPainEntry {
   locations?: readonly PainLocation[]
   intensity?: number | null
   qualities?: readonly string[]
+  cause?: string
   note?: string
 }
