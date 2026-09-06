@@ -2,8 +2,8 @@
 
 ## Female body silhouettes
 
-The body-map design is based on public-domain artwork by **nicubunu**,
-originally published through OpenClipart and mirrored by FreeSVG.
+The visible body-map artwork uses the original SVG files by **nicubunu**,
+published through OpenClipart and mirrored by FreeSVG.
 
 ### Front view
 
@@ -12,6 +12,7 @@ originally published through OpenClipart and mirrored by FreeSVG.
 - FreeSVG: https://freesvg.org/female-body-silhouette-front
 - OpenClipart ID: 14567
 - FreeSVG ID: 143979
+- Vendored file: `public/body-map/female-front.svg`
 
 ### Back view
 
@@ -20,11 +21,15 @@ originally published through OpenClipart and mirrored by FreeSVG.
 - FreeSVG: https://freesvg.org/female-body-silhouette-back
 - OpenClipart ID: 14565
 - FreeSVG ID: 143977
+- Vendored file: `public/body-map/female-back.svg`
 
-FreeSVG identifies both files as **Public Domain** and states that its SVG
-content is available under **CC0 / public-domain terms**. The silhouettes in
-this application are adapted for segmentation and interactive pain-region
-selection.
+FreeSVG identifies both files as **Public Domain** and describes its SVG
+content as available under **CC0 / public-domain terms**.
+
+The two vendored SVG files are kept unchanged from the OpenClipart downloads.
+Interactive pain-region hit areas and selection highlights are implemented as
+a separate transparent overlay in the application and do not modify the
+vendored artwork.
 
 Attribution is not required by the stated license; this notice is retained for
 source provenance.
