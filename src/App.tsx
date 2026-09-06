@@ -3,8 +3,7 @@ import {
   BottomNavigation,
   type AppSection,
 } from './components/BottomNavigation/BottomNavigation'
-import { TimeRangeColumn } from './components/TimeRangeColumn/TimeRangeColumn'
-import type { TimeRange } from './components/TimeRangeColumn/TimeRangeColumn'
+import { PainEntryFlow } from './features/pain/PainEntryFlow'
 import { GoogleSyncSettings } from './features/settings/GoogleSyncSettings'
 import './App.css'
 
@@ -36,11 +35,6 @@ const PAGE_COPY: Record<
 
 export function App() {
   const [activeSection, setActiveSection] = useState<AppSection>('pain')
-  const [range, setRange] = useState<TimeRange>({
-    start: '09:00',
-    end: '10:30',
-  })
-
   const page = PAGE_COPY[activeSection]
 
   return (
@@ -59,16 +53,7 @@ export function App() {
               <p className="app__description">{page.description}</p>
             </header>
 
-            {activeSection === 'pain' ? (
-              <TimeRangeColumn
-                begin="06:00"
-                end="18:00"
-                resolution={15}
-                value={range}
-                onChange={setRange}
-                label="Zeitfenster planen"
-              />
-            ) : null}
+            {activeSection === 'pain' ? <PainEntryFlow /> : null}
 
             {activeSection === 'medication' ? (
               <div className="app__placeholder">
