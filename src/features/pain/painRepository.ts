@@ -102,6 +102,7 @@ function normalizeStoredEntry(value: unknown): PainEntry | null {
     locations: normalizeLocations(value.locations),
     intensity: normalizeIntensity(value.intensity),
     qualities: normalizeQualities(value.qualities),
+    cause: stringValue(value.cause).trim(),
     note: stringValue(value.note).trim(),
     status: value.status === 'deleted' ? 'deleted' : 'active',
     createdAt,
@@ -116,6 +117,7 @@ function normalizeEntry(entry: PainEntry): PainEntry {
       locations: [],
       intensity: null,
       qualities: [],
+      cause: '',
       note: '',
       status: 'active',
     }
@@ -131,6 +133,7 @@ export async function createPainEntry(input: NewPainEntry): Promise<PainEntry> {
     locations: normalizeLocations(input.locations),
     intensity: normalizeIntensity(input.intensity),
     qualities: normalizeQualities(input.qualities),
+    cause: input.cause?.trim() ?? '',
     note: input.note?.trim() ?? '',
     status: 'active',
     createdAt: timestamp,
