@@ -1,4 +1,9 @@
-import { useState } from 'react'
+import {
+  useEffect,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
 import type { BodyView, PainLocation } from '../painEntry'
 import './BodyMapSelector.css'
 
@@ -10,83 +15,90 @@ export interface BodyMapSelectorProps {
 interface RegionDefinition {
   id: string
   label: string
-  shape:
-    | { type: 'ellipse'; cx: number; cy: number; rx: number; ry: number }
-    | { type: 'path'; d: string }
+  color: readonly [number, number, number]
 }
 
 interface BodyMapDefinition {
-  image: string
-  viewBox: string
+  visibleImage: string
+  hitMapImage: string
   regions: readonly RegionDefinition[]
 }
 
+interface HitMapData {
+  width: number
+  height: number
+  regionAtPixel: Uint8Array
+  boundaryAtPixel: Uint8Array
+}
+
+const NO_REGION = 255
+
 const FRONT_REGIONS: readonly RegionDefinition[] = [
-  { id: 'head', label: 'Kopf', shape: { type: 'ellipse', cx: 80, cy: 31, rx: 18, ry: 27 } },
-  { id: 'neck', label: 'Nacken / Hals', shape: { type: 'path', d: 'M66 51 H95 L96 75 H64 Z' } },
-  { id: 'chest', label: 'Brustkorb', shape: { type: 'path', d: 'M39 72 Q80 61 118 72 L112 132 H47 Z' } },
-  { id: 'abdomen', label: 'Bauch', shape: { type: 'path', d: 'M47 126 H112 L108 184 H51 Z' } },
-  { id: 'pelvis', label: 'Becken / Hüfte', shape: { type: 'path', d: 'M50 178 H109 L114 226 H45 Z' } },
-  { id: 'left-shoulder', label: 'Linke Schulter', shape: { type: 'path', d: 'M36 71 Q48 65 59 71 L54 103 L31 104 Z' } },
-  { id: 'left-upper-arm', label: 'Linker Oberarm', shape: { type: 'path', d: 'M30 91 L53 100 L35 145 L10 139 Z' } },
-  { id: 'left-elbow', label: 'Linker Ellenbogen', shape: { type: 'ellipse', cx: 18, cy: 145, rx: 14, ry: 15 } },
-  { id: 'left-forearm', label: 'Linker Unterarm', shape: { type: 'path', d: 'M12 151 L36 142 L53 177 L33 188 Z' } },
-  { id: 'left-hand', label: 'Linke Hand', shape: { type: 'ellipse', cx: 37, cy: 187, rx: 13, ry: 15 } },
-  { id: 'right-shoulder', label: 'Rechte Schulter', shape: { type: 'path', d: 'M101 70 Q113 65 124 73 L128 105 L105 103 Z' } },
-  { id: 'right-upper-arm', label: 'Rechter Oberarm', shape: { type: 'path', d: 'M111 97 L130 94 L132 149 L113 150 Z' } },
-  { id: 'right-elbow', label: 'Rechter Ellenbogen', shape: { type: 'ellipse', cx: 122, cy: 153, rx: 12, ry: 14 } },
-  { id: 'right-forearm', label: 'Rechter Unterarm', shape: { type: 'path', d: 'M113 162 L132 160 L127 210 L108 209 Z' } },
-  { id: 'right-hand', label: 'Rechte Hand', shape: { type: 'ellipse', cx: 116, cy: 220, rx: 12, ry: 17 } },
-  { id: 'left-thigh', label: 'Linker Oberschenkel', shape: { type: 'path', d: 'M45 215 L80 218 L78 309 L57 310 Z' } },
-  { id: 'right-thigh', label: 'Rechter Oberschenkel', shape: { type: 'path', d: 'M81 218 L114 215 L104 310 L82 309 Z' } },
-  { id: 'left-knee', label: 'Linkes Knie', shape: { type: 'ellipse', cx: 67, cy: 315, rx: 13, ry: 14 } },
-  { id: 'right-knee', label: 'Rechtes Knie', shape: { type: 'ellipse', cx: 94, cy: 315, rx: 13, ry: 14 } },
-  { id: 'left-lower-leg', label: 'Linker Unterschenkel', shape: { type: 'path', d: 'M56 326 H78 L76 397 H59 Z' } },
-  { id: 'right-lower-leg', label: 'Rechter Unterschenkel', shape: { type: 'path', d: 'M82 326 H105 L101 397 H84 Z' } },
-  { id: 'left-ankle', label: 'Linkes Sprunggelenk', shape: { type: 'ellipse', cx: 68, cy: 400, rx: 10, ry: 10 } },
-  { id: 'right-ankle', label: 'Rechtes Sprunggelenk', shape: { type: 'ellipse', cx: 92, cy: 400, rx: 10, ry: 10 } },
-  { id: 'left-foot', label: 'Linker Fuß', shape: { type: 'path', d: 'M56 405 H78 L79 438 H54 Z' } },
-  { id: 'right-foot', label: 'Rechter Fuß', shape: { type: 'path', d: 'M82 405 H104 L107 438 H81 Z' } },
+  { id: 'head', label: 'Kopf', color: [216, 133, 159] },
+  { id: 'neck', label: 'Nacken / Hals', color: [219, 134, 144] },
+  { id: 'chest', label: 'Brustkorb', color: [218, 136, 129] },
+  { id: 'abdomen', label: 'Bauch', color: [213, 139, 116] },
+  { id: 'pelvis', label: 'Becken / Hüfte', color: [205, 144, 106] },
+  { id: 'left-shoulder', label: 'Linke Schulter', color: [195, 149, 98] },
+  { id: 'right-shoulder', label: 'Rechte Schulter', color: [182, 155, 95] },
+  { id: 'left-upper-arm', label: 'Linker Oberarm', color: [167, 159, 95] },
+  { id: 'right-upper-arm', label: 'Rechter Oberarm', color: [151, 164, 100] },
+  { id: 'left-elbow', label: 'Linker Ellenbogen', color: [134, 168, 108] },
+  { id: 'right-elbow', label: 'Rechter Ellenbogen', color: [116, 171, 120] },
+  { id: 'left-forearm', label: 'Linker Unterarm', color: [97, 173, 134] },
+  { id: 'right-forearm', label: 'Rechter Unterarm', color: [77, 174, 149] },
+  { id: 'left-hand', label: 'Linke Hand', color: [56, 175, 165] },
+  { id: 'right-hand', label: 'Rechte Hand', color: [36, 174, 180] },
+  { id: 'left-thigh', label: 'Linker Oberschenkel', color: [27, 173, 194] },
+  { id: 'right-thigh', label: 'Rechter Oberschenkel', color: [42, 171, 205] },
+  { id: 'left-knee', label: 'Linkes Knie', color: [67, 168, 214] },
+  { id: 'right-knee', label: 'Rechtes Knie', color: [93, 164, 219] },
+  { id: 'left-lower-leg', label: 'Linker Unterschenkel', color: [119, 160, 220] },
+  { id: 'right-lower-leg', label: 'Rechter Unterschenkel', color: [143, 154, 217] },
+  { id: 'left-ankle', label: 'Linkes Sprunggelenk', color: [165, 149, 211] },
+  { id: 'right-ankle', label: 'Rechtes Sprunggelenk', color: [183, 143, 201] },
+  { id: 'left-foot', label: 'Linker Fuß', color: [198, 139, 188] },
+  { id: 'right-foot', label: 'Rechter Fuß', color: [209, 135, 174] },
 ]
 
 const BACK_REGIONS: readonly RegionDefinition[] = [
-  { id: 'head', label: 'Hinterkopf', shape: { type: 'ellipse', cx: 56, cy: 29, rx: 18, ry: 26 } },
-  { id: 'neck', label: 'Nacken', shape: { type: 'path', d: 'M43 49 H69 L72 73 H40 Z' } },
-  { id: 'upper-back', label: 'Oberer Rücken', shape: { type: 'path', d: 'M27 68 Q55 59 84 70 L80 139 H31 Z' } },
-  { id: 'lower-back', label: 'Unterer Rücken', shape: { type: 'path', d: 'M31 132 H80 L78 194 H33 Z' } },
-  { id: 'left-glute', label: 'Linke Gesäß- / Hüftregion', shape: { type: 'path', d: 'M31 187 H55 L55 230 L27 226 Z' } },
-  { id: 'right-glute', label: 'Rechte Gesäß- / Hüftregion', shape: { type: 'path', d: 'M56 187 H80 L84 226 L56 230 Z' } },
-  { id: 'left-shoulder', label: 'Linke Schulter', shape: { type: 'path', d: 'M20 69 Q31 63 42 68 L40 102 L18 103 Z' } },
-  { id: 'left-upper-arm', label: 'Linker Oberarm', shape: { type: 'path', d: 'M17 94 H37 L36 153 H16 Z' } },
-  { id: 'left-elbow', label: 'Linker Ellenbogen', shape: { type: 'ellipse', cx: 25, cy: 157, rx: 11, ry: 13 } },
-  { id: 'left-forearm', label: 'Linker Unterarm', shape: { type: 'path', d: 'M16 166 H36 L37 219 H21 Z' } },
-  { id: 'left-hand', label: 'Linke Hand', shape: { type: 'ellipse', cx: 29, cy: 229, rx: 10, ry: 15 } },
-  { id: 'right-shoulder', label: 'Rechte Schulter', shape: { type: 'path', d: 'M69 68 Q80 63 91 69 L93 103 L71 102 Z' } },
-  { id: 'right-upper-arm', label: 'Rechter Oberarm', shape: { type: 'path', d: 'M74 94 H94 L95 153 H75 Z' } },
-  { id: 'right-elbow', label: 'Rechter Ellenbogen', shape: { type: 'ellipse', cx: 85, cy: 157, rx: 11, ry: 13 } },
-  { id: 'right-forearm', label: 'Rechter Unterarm', shape: { type: 'path', d: 'M75 166 H95 L89 219 H73 Z' } },
-  { id: 'right-hand', label: 'Rechte Hand', shape: { type: 'ellipse', cx: 80, cy: 229, rx: 10, ry: 15 } },
-  { id: 'left-thigh', label: 'Linker hinterer Oberschenkel', shape: { type: 'path', d: 'M27 218 L55 222 L54 304 L36 305 Z' } },
-  { id: 'right-thigh', label: 'Rechter hinterer Oberschenkel', shape: { type: 'path', d: 'M56 222 L84 218 L74 305 L56 304 Z' } },
-  { id: 'left-knee', label: 'Linke Kniekehle', shape: { type: 'ellipse', cx: 44, cy: 309, rx: 12, ry: 14 } },
-  { id: 'right-knee', label: 'Rechte Kniekehle', shape: { type: 'ellipse', cx: 66, cy: 309, rx: 12, ry: 14 } },
-  { id: 'left-calf', label: 'Linke Wade', shape: { type: 'path', d: 'M35 320 H54 L53 383 H38 Z' } },
-  { id: 'right-calf', label: 'Rechte Wade', shape: { type: 'path', d: 'M56 320 H75 L72 383 H57 Z' } },
-  { id: 'left-ankle', label: 'Linkes Sprunggelenk', shape: { type: 'ellipse', cx: 45, cy: 387, rx: 9, ry: 10 } },
-  { id: 'right-ankle', label: 'Rechtes Sprunggelenk', shape: { type: 'ellipse', cx: 65, cy: 387, rx: 9, ry: 10 } },
-  { id: 'left-foot', label: 'Linker Fuß', shape: { type: 'path', d: 'M36 392 H54 L55 419 H34 Z' } },
-  { id: 'right-foot', label: 'Rechter Fuß', shape: { type: 'path', d: 'M56 392 H74 L77 419 H55 Z' } },
+  { id: 'head', label: 'Hinterkopf', color: [216, 133, 159] },
+  { id: 'neck', label: 'Nacken', color: [219, 134, 144] },
+  { id: 'upper-back', label: 'Oberer Rücken', color: [218, 136, 130] },
+  { id: 'lower-back', label: 'Unterer Rücken', color: [214, 139, 118] },
+  { id: 'left-glute', label: 'Linke Gesäß- / Hüftregion', color: [207, 143, 107] },
+  { id: 'right-glute', label: 'Rechte Gesäß- / Hüftregion', color: [197, 148, 100] },
+  { id: 'left-shoulder', label: 'Linke Schulter', color: [185, 153, 95] },
+  { id: 'right-shoulder', label: 'Rechte Schulter', color: [171, 158, 95] },
+  { id: 'left-upper-arm', label: 'Linker Oberarm', color: [156, 163, 98] },
+  { id: 'right-upper-arm', label: 'Rechter Oberarm', color: [140, 166, 105] },
+  { id: 'left-elbow', label: 'Linker Ellenbogen', color: [123, 170, 115] },
+  { id: 'right-elbow', label: 'Rechter Ellenbogen', color: [105, 172, 128] },
+  { id: 'left-forearm', label: 'Linker Unterarm', color: [87, 174, 142] },
+  { id: 'right-forearm', label: 'Rechter Unterarm', color: [67, 174, 157] },
+  { id: 'left-hand', label: 'Linke Hand', color: [46, 175, 172] },
+  { id: 'right-hand', label: 'Rechte Hand', color: [30, 174, 186] },
+  { id: 'left-thigh', label: 'Linker hinterer Oberschenkel', color: [31, 172, 198] },
+  { id: 'right-thigh', label: 'Rechter hinterer Oberschenkel', color: [50, 170, 208] },
+  { id: 'left-knee', label: 'Linke Kniekehle', color: [75, 167, 216] },
+  { id: 'right-knee', label: 'Rechte Kniekehle', color: [100, 163, 219] },
+  { id: 'left-calf', label: 'Linke Wade', color: [125, 158, 220] },
+  { id: 'right-calf', label: 'Rechte Wade', color: [147, 153, 216] },
+  { id: 'left-ankle', label: 'Linkes Sprunggelenk', color: [168, 148, 209] },
+  { id: 'right-ankle', label: 'Rechtes Sprunggelenk', color: [185, 143, 200] },
+  { id: 'left-foot', label: 'Linker Fuß', color: [199, 138, 187] },
+  { id: 'right-foot', label: 'Rechter Fuß', color: [210, 135, 174] },
 ]
 
 const BODY_MAPS: Record<BodyView, BodyMapDefinition> = {
   front: {
-    image: `${import.meta.env.BASE_URL}body-map/female-front.svg`,
-    viewBox: '0 0 138.04 441.27',
+    visibleImage: `${import.meta.env.BASE_URL}body-map/front-gray.png`,
+    hitMapImage: `${import.meta.env.BASE_URL}body-map/front-hitmap.png`,
     regions: FRONT_REGIONS,
   },
   back: {
-    image: `${import.meta.env.BASE_URL}body-map/female-back.svg`,
-    viewBox: '0 0 108.5 421.5',
+    visibleImage: `${import.meta.env.BASE_URL}body-map/back-gray.png`,
+    hitMapImage: `${import.meta.env.BASE_URL}body-map/back-hitmap.png`,
     regions: BACK_REGIONS,
   },
 }
@@ -101,6 +113,68 @@ const LABELS = new Map(
     ),
   ],
 )
+
+function colorKey(red: number, green: number, blue: number): string {
+  return `${red},${green},${blue}`
+}
+
+function createHitMapData(
+  imageData: ImageData,
+  regions: readonly RegionDefinition[],
+): HitMapData {
+  const { width, height, data } = imageData
+  const regionAtPixel = new Uint8Array(width * height)
+  regionAtPixel.fill(NO_REGION)
+
+  const colorLookup = new Map(
+    regions.map((region, index) => [
+      colorKey(region.color[0], region.color[1], region.color[2]),
+      index,
+    ]),
+  )
+
+  for (let pixel = 0; pixel < width * height; pixel += 1) {
+    const offset = pixel * 4
+    if (data[offset + 3] === 0) continue
+
+    const regionIndex = colorLookup.get(
+      colorKey(data[offset], data[offset + 1], data[offset + 2]),
+    )
+    if (regionIndex !== undefined) regionAtPixel[pixel] = regionIndex
+  }
+
+  const boundaryAtPixel = new Uint8Array(width * height)
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const pixel = y * width + x
+      const region = regionAtPixel[pixel]
+      if (region === NO_REGION) continue
+
+      let boundary = false
+      for (let deltaY = -1; deltaY <= 1 && !boundary; deltaY += 1) {
+        for (let deltaX = -1; deltaX <= 1; deltaX += 1) {
+          if (deltaX === 0 && deltaY === 0) continue
+
+          const neighborX = x + deltaX
+          const neighborY = y + deltaY
+          if (
+            neighborX < 0 ||
+            neighborX >= width ||
+            neighborY < 0 ||
+            neighborY >= height ||
+            regionAtPixel[neighborY * width + neighborX] !== region
+          ) {
+            boundary = true
+            break
+          }
+        }
+      }
+      if (boundary) boundaryAtPixel[pixel] = 1
+    }
+  }
+
+  return { width, height, regionAtPixel, boundaryAtPixel }
+}
 
 export function painLocationLabel(location: PainLocation): string {
   return LABELS.get(`${location.view}:${location.regionId}`) ?? location.regionId
@@ -129,6 +203,116 @@ function BodyViewMap({
 }) {
   const title = view === 'front' ? 'Vorderseite' : 'Rückseite'
   const map = BODY_MAPS[view]
+  const overlayRef = useRef<HTMLCanvasElement>(null)
+  const [hitMap, setHitMap] = useState<HitMapData | null>(null)
+
+  useEffect(() => {
+    let active = true
+    const image = new Image()
+    image.decoding = 'async'
+
+    image.onload = () => {
+      if (!active) return
+
+      const canvas = document.createElement('canvas')
+      canvas.width = image.naturalWidth
+      canvas.height = image.naturalHeight
+      const context = canvas.getContext('2d', { willReadFrequently: true })
+      if (!context) return
+
+      context.drawImage(image, 0, 0)
+      setHitMap(
+        createHitMapData(
+          context.getImageData(0, 0, canvas.width, canvas.height),
+          map.regions,
+        ),
+      )
+    }
+
+    image.onerror = () => {
+      if (active) setHitMap(null)
+    }
+
+    image.src = map.hitMapImage
+
+    return () => {
+      active = false
+      image.onload = null
+      image.onerror = null
+    }
+  }, [map.hitMapImage, map.regions])
+
+  useEffect(() => {
+    const canvas = overlayRef.current
+    if (!canvas) return
+
+    if (!hitMap) {
+      const context = canvas.getContext('2d')
+      context?.clearRect(0, 0, canvas.width, canvas.height)
+      return
+    }
+
+    canvas.width = hitMap.width
+    canvas.height = hitMap.height
+    const context = canvas.getContext('2d')
+    if (!context) return
+
+    const selectedRegions = new Set<number>()
+    map.regions.forEach((region, index) => {
+      if (isSelected(value, view, region.id)) selectedRegions.add(index)
+    })
+
+    const overlay = context.createImageData(hitMap.width, hitMap.height)
+    for (let pixel = 0; pixel < hitMap.regionAtPixel.length; pixel += 1) {
+      const region = hitMap.regionAtPixel[pixel]
+      if (
+        region === NO_REGION ||
+        hitMap.boundaryAtPixel[pixel] === 1 ||
+        !selectedRegions.has(region)
+      ) {
+        continue
+      }
+
+      const offset = pixel * 4
+      overlay.data[offset] = 45
+      overlay.data[offset + 1] = 112
+      overlay.data[offset + 2] = 83
+      overlay.data[offset + 3] = 122
+    }
+
+    context.putImageData(overlay, 0, 0)
+  }, [hitMap, map.regions, value, view])
+
+  function selectAtPointer(event: ReactPointerEvent<HTMLCanvasElement>): void {
+    if (!hitMap) return
+
+    const rectangle = event.currentTarget.getBoundingClientRect()
+    if (rectangle.width === 0 || rectangle.height === 0) return
+
+    const x = Math.min(
+      hitMap.width - 1,
+      Math.max(
+        0,
+        Math.floor(
+          ((event.clientX - rectangle.left) / rectangle.width) * hitMap.width,
+        ),
+      ),
+    )
+    const y = Math.min(
+      hitMap.height - 1,
+      Math.max(
+        0,
+        Math.floor(
+          ((event.clientY - rectangle.top) / rectangle.height) * hitMap.height,
+        ),
+      ),
+    )
+    const regionIndex = hitMap.regionAtPixel[y * hitMap.width + x]
+    if (regionIndex === NO_REGION) return
+
+    const region = map.regions[regionIndex]
+    if (region) onToggle(view, region.id)
+  }
 
   return (
     <section
@@ -137,51 +321,24 @@ function BodyViewMap({
       aria-label={title}
     >
       <h3 className="body-map-selector__view-title">{title}</h3>
-      <div className="body-map-selector__artwork">
+      <div
+        className="body-map-selector__artwork"
+        role="img"
+        aria-label={`${title}: Körperregion antippen. Eine vollständige Auswahl als Checkbox-Liste folgt unter den Körperkarten.`}
+      >
         <img
           className="body-map-selector__image"
-          src={map.image}
+          src={map.visibleImage}
           alt=""
           aria-hidden="true"
+          draggable={false}
         />
-        <svg
+        <canvas
+          ref={overlayRef}
           className="body-map-selector__overlay"
-          viewBox={map.viewBox}
-          role="group"
-          aria-label={`Körperansicht ${title}`}
-          preserveAspectRatio="xMidYMid meet"
-        >
-          {map.regions.map((region) => {
-            const selected = isSelected(value, view, region.id)
-            const commonProps = {
-              className: 'body-map-selector__region',
-              'data-selected': selected,
-              role: 'button',
-              tabIndex: 0,
-              'aria-pressed': selected,
-              'aria-label': `${title}: ${region.label}`,
-              onClick: () => onToggle(view, region.id),
-              onKeyDown: (event: React.KeyboardEvent<SVGElement>) => {
-                if (event.key !== 'Enter' && event.key !== ' ') return
-                event.preventDefault()
-                onToggle(view, region.id)
-              },
-            }
-
-            return region.shape.type === 'ellipse' ? (
-              <ellipse
-                key={region.id}
-                {...commonProps}
-                cx={region.shape.cx}
-                cy={region.shape.cy}
-                rx={region.shape.rx}
-                ry={region.shape.ry}
-              />
-            ) : (
-              <path key={region.id} {...commonProps} d={region.shape.d} />
-            )
-          })}
-        </svg>
+          aria-hidden="true"
+          onPointerDown={selectAtPointer}
+        />
       </div>
     </section>
   )
@@ -259,9 +416,9 @@ export function BodyMapSelector({ value, onChange }: BodyMapSelectorProps) {
               ['front', 'Vorne', FRONT_REGIONS],
               ['back', 'Hinten', BACK_REGIONS],
             ] as const
-          ).map(([view, title, regions]) => (
+          ).map(([view, listTitle, regions]) => (
             <fieldset key={view}>
-              <legend>{title}</legend>
+              <legend>{listTitle}</legend>
               {regions.map((region) => {
                 const checked = isSelected(value, view, region.id)
                 return (
