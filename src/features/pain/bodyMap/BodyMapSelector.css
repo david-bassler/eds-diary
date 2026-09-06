@@ -65,37 +65,8 @@
   inset: 0;
   width: 100%;
   height: 100%;
-  overflow: visible;
-}
-
-.body-map-selector__region {
-  fill: rgb(255 255 255 / 0.001%);
-  stroke: transparent;
-  stroke-width: 1.4;
   cursor: pointer;
-  pointer-events: all;
-  vector-effect: non-scaling-stroke;
-  transition:
-    fill 120ms ease,
-    stroke 120ms ease;
-}
-
-.body-map-selector__region:hover {
-  fill: rgb(63 111 91 / 14%);
-}
-
-.body-map-selector__region:focus {
-  outline: none;
-  fill: rgb(63 111 91 / 18%);
-  stroke: #315b4a;
-  stroke-width: 3.5;
-}
-
-.body-map-selector__region[data-selected='true'] {
-  fill: rgb(90 153 126 / 46%);
-  stroke: #245443;
-  stroke-width: 3;
-  stroke-dasharray: 5 2;
+  touch-action: manipulation;
 }
 
 .body-map-selector__selection {
@@ -168,11 +139,5 @@
 
   .body-map-selector__list-grid {
     grid-template-columns: 1fr 1fr;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .body-map-selector__region {
-    transition: none;
   }
 }
