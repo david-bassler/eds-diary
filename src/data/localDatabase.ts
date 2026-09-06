@@ -71,8 +71,9 @@ export async function getAllRecords<T>(storeName: LocalStoreName): Promise<T[]> 
   const database = await openDatabase()
   const transaction = database.transaction(storeName, 'readonly')
   const request = transaction.objectStore(storeName).getAll()
+  const completion = transactionComplete(transaction)
   const result = await requestResult(request)
-  await transactionComplete(transaction)
+  await completion
   return result as T[]
 }
 
@@ -83,8 +84,9 @@ export async function getRecord<T>(
   const database = await openDatabase()
   const transaction = database.transaction(storeName, 'readonly')
   const request = transaction.objectStore(storeName).get(id)
+  const completion = transactionComplete(transaction)
   const result = await requestResult(request)
-  await transactionComplete(transaction)
+  await completion
   return result as T | undefined
 }
 
@@ -94,8 +96,9 @@ export async function putRecord<T extends { id: string }>(
 ): Promise<void> {
   const database = await openDatabase()
   const transaction = database.transaction(storeName, 'readwrite')
+  const completion = transactionComplete(transaction)
   transaction.objectStore(storeName).put(value)
-  await transactionComplete(transaction)
+  await completion
 }
 
 export async function putRecords<T extends { id: string }>(
@@ -107,8 +110,9 @@ export async function putRecords<T extends { id: string }>(
   const database = await openDatabase()
   const transaction = database.transaction(storeName, 'readwrite')
   const store = transaction.objectStore(storeName)
+  const completion = transactionComplete(transaction)
 
   for (const value of values) store.put(value)
 
-  await transactionComplete(transaction)
+  await completion
 }
