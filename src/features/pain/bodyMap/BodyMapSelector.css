@@ -32,10 +32,12 @@
   display: none;
   justify-items: center;
   gap: 8px;
-  padding: 12px;
-  border: 1px solid rgb(37 48 43 / 12%);
-  border-radius: 18px;
-  background: rgb(255 255 255 / 54%);
+  padding: 14px;
+  border: 1px solid rgb(37 48 43 / 10%);
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 50% 38%, rgb(255 255 255 / 88%), rgb(247 249 248 / 62%));
+  box-shadow: 0 10px 30px rgb(37 48 43 / 5%);
 }
 
 .body-map-selector__view[data-mobile-active='true'] {
@@ -51,12 +53,28 @@
   width: min(100%, 260px);
   height: auto;
   overflow: visible;
+  filter: drop-shadow(0 7px 10px rgb(37 48 43 / 7%));
+}
+
+.body-map-selector__details {
+  fill: none;
+  stroke: rgb(55 65 81 / 22%);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  pointer-events: none;
+  vector-effect: non-scaling-stroke;
+}
+
+.body-map-selector__details circle {
+  fill: rgb(55 65 81 / 22%);
+  stroke: none;
 }
 
 .body-map-selector__region {
-  fill: #f2d7c3;
-  stroke: #374151;
-  stroke-width: 3;
+  fill: #f3d9c6;
+  stroke: #59645f;
+  stroke-width: 2.2;
+  stroke-linecap: round;
   stroke-linejoin: round;
   cursor: pointer;
   vector-effect: non-scaling-stroke;
@@ -66,20 +84,20 @@
 }
 
 .body-map-selector__region:hover {
-  fill: #edd0b8;
+  fill: #efd1ba;
 }
 
 .body-map-selector__region:focus {
   outline: none;
   stroke: #1f3f34;
-  stroke-width: 6;
+  stroke-width: 4.5;
 }
 
 .body-map-selector__region[data-selected='true'] {
-  fill: #b8d8c9;
-  stroke: #1f4f3d;
-  stroke-width: 6;
-  stroke-dasharray: 4 2;
+  fill: #b9dacb;
+  stroke: #265846;
+  stroke-width: 4;
+  stroke-dasharray: 5 2;
 }
 
 .body-map-selector__selection {
