@@ -14,6 +14,7 @@ export interface PainEntry {
   intensity: number | null
   qualities: string[]
   cause: string
+  occursWhen: string
   note: string
   status: PainEntryStatus
   createdAt: string
@@ -27,5 +28,6 @@ export interface NewPainEntry {
   intensity?: number | null
   qualities?: readonly string[]
   cause?: string
+  occursWhen?: string
   note?: string
 }
