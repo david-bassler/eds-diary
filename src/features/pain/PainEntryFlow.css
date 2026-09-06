@@ -1,0 +1,220 @@
+.pain-entry-flow {
+  display: grid;
+  gap: 16px;
+}
+
+.pain-entry-flow__progress {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.pain-entry-flow__progress span {
+  padding: 8px 10px;
+  border-bottom: 3px solid rgb(37 48 43 / 12%);
+  font-size: 0.82rem;
+  font-weight: 650;
+  opacity: 0.55;
+}
+
+.pain-entry-flow__progress span[data-active='true'] {
+  border-bottom-color: #3f6f5b;
+  opacity: 1;
+}
+
+.pain-entry-flow__step {
+  display: grid;
+  gap: 22px;
+}
+
+.pain-entry-flow__intro {
+  display: grid;
+  gap: 5px;
+}
+
+.pain-entry-flow__intro h2,
+.pain-entry-flow__intro p {
+  margin: 0;
+}
+
+.pain-entry-flow__intro h2 {
+  font-size: clamp(1.35rem, 6vw, 1.8rem);
+}
+
+.pain-entry-flow__intro p:not(.pain-entry-flow__eyebrow) {
+  line-height: 1.5;
+  opacity: 0.72;
+}
+
+.pain-entry-flow__eyebrow {
+  font-size: 0.76rem;
+  font-weight: 750;
+  letter-spacing: 0.07em;
+  opacity: 0.6;
+  text-transform: uppercase;
+}
+
+.pain-entry-flow__fieldset {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  margin: 0;
+  padding: 16px;
+  border: 1px solid rgb(37 48 43 / 14%);
+  border-radius: 16px;
+  background: rgb(255 255 255 / 48%);
+}
+
+.pain-entry-flow__fieldset legend {
+  padding-inline: 6px;
+  font-weight: 750;
+}
+
+.pain-entry-flow__hint {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.4;
+  opacity: 0.65;
+}
+
+.pain-entry-flow__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pain-entry-flow__chip {
+  min-height: 44px;
+  padding: 9px 13px;
+  border: 1px solid rgb(37 48 43 / 20%);
+  border-radius: 999px;
+  background: white;
+  color: inherit;
+}
+
+.pain-entry-flow__chip[aria-pressed='true'] {
+  border: 2px solid #315b4a;
+  background: rgb(63 111 91 / 14%);
+  font-weight: 750;
+}
+
+.pain-entry-flow__add-type {
+  display: grid;
+  gap: 6px;
+  padding-top: 4px;
+}
+
+.pain-entry-flow__add-type > label,
+.pain-entry-flow__field > span,
+.pain-entry-flow__datetime label > span {
+  font-weight: 650;
+}
+
+.pain-entry-flow__add-type > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.pain-entry-flow__add-type input,
+.pain-entry-flow__field input,
+.pain-entry-flow__field textarea,
+.pain-entry-flow__datetime input {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid rgb(37 48 43 / 24%);
+  border-radius: 10px;
+  background: white;
+  color: inherit;
+}
+
+.pain-entry-flow__add-type button {
+  min-height: 44px;
+  padding-inline: 12px;
+  border: 1px solid rgb(37 48 43 / 20%);
+  border-radius: 10px;
+  background: white;
+  color: inherit;
+}
+
+.pain-entry-flow__field {
+  display: grid;
+  gap: 7px;
+}
+
+.pain-entry-flow__field small {
+  font-weight: 500;
+  opacity: 0.65;
+}
+
+.pain-entry-flow__field textarea {
+  min-height: 116px;
+  resize: vertical;
+}
+
+.pain-entry-flow__datetime {
+  display: grid;
+  gap: 12px;
+}
+
+.pain-entry-flow__datetime label {
+  display: grid;
+  gap: 6px;
+}
+
+.pain-entry-flow__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.pain-entry-flow__footer--split {
+  justify-content: space-between;
+}
+
+.pain-entry-flow__primary,
+.pain-entry-flow__secondary {
+  display: inline-flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 18px;
+  border-radius: 12px;
+  font-weight: 750;
+}
+
+.pain-entry-flow__primary {
+  border: 1px solid #315b4a;
+  background: #315b4a;
+  color: white;
+}
+
+.pain-entry-flow__secondary {
+  border: 1px solid rgb(37 48 43 / 22%);
+  background: white;
+  color: inherit;
+}
+
+.pain-entry-flow button {
+  cursor: pointer;
+}
+
+.pain-entry-flow button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.pain-entry-flow__status {
+  min-height: 1.4em;
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 650;
+}
+
+@media (min-width: 560px) {
+  .pain-entry-flow__datetime {
+    grid-template-columns: 1fr 1fr;
+  }
+}
