@@ -71,9 +71,10 @@ export async function getAllRecords<T>(storeName: LocalStoreName): Promise<T[]> 
   const database = await openDatabase()
   const transaction = database.transaction(storeName, 'readonly')
   const request = transaction.objectStore(storeName).getAll()
-  const completion = transactionComplete(transaction)
-  const result = await requestResult(request)
-  await completion
+  const [result] = await Promise.all([
+    requestResult(request),
+    transactionComplete(transaction),
+  ])
   return result as T[]
 }
 
@@ -84,9 +85,10 @@ export async function getRecord<T>(
   const database = await openDatabase()
   const transaction = database.transaction(storeName, 'readonly')
   const request = transaction.objectStore(storeName).get(id)
-  const completion = transactionComplete(transaction)
-  const result = await requestResult(request)
-  await completion
+  const [result] = await Promise.all([
+    requestResult(request),
+    transactionComplete(transaction),
+  ])
   return result as T | undefined
 }
 
