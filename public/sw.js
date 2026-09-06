@@ -1,4 +1,4 @@
-const CACHE_NAME = 'eds-diary-shell-v2'
+const CACHE_NAME = 'eds-diary-shell-v3'
 const APP_SHELL = [
   './',
   './manifest.webmanifest',
@@ -48,10 +48,18 @@ self.addEventListener('fetch', (event) => {
 
   if (request.mode === 'navigate') {
     event.respondWith(
-      fetch(request).catch(async () => {
-        const cachedPage = await caches.match(request)
-        return cachedPage ?? caches.match('./')
-      }),
+      fetch(request)
+        .then(async (networkResponse) => {
+          if (networkResponse.ok) {
+            const cache = await caches.open(CACHE_NAME)
+            await cache.put('./', networkResponse.clone())
+          }
+          return networkResponse
+        })
+        .catch(async () => {
+          const cachedPage = await caches.match(request)
+          return cachedPage ?? caches.match('./')
+        }),
     )
     return
   }
