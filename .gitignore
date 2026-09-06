@@ -6,3 +6,7 @@ test-results
 *.local
 *.tsbuildinfo
 .DS_Store
+public/body-map/front-gray.png
+public/body-map/front-hitmap.png
+public/body-map/back-gray.png
+public/body-map/back-hitmap.png
