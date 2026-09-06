@@ -1,4 +1,4 @@
-const CACHE_NAME = 'eds-diary-shell-v3'
+const CACHE_NAME = 'eds-diary-shell-v4'
 const APP_SHELL = [
   './',
   './manifest.webmanifest',
@@ -8,6 +8,8 @@ const APP_SHELL = [
   './icons/app-icon-maskable-192.png',
   './icons/app-icon-maskable-512.png',
   './icons/apple-touch-icon.png',
+  './body-map/female-front.svg',
+  './body-map/female-back.svg',
 ]
 
 self.addEventListener('install', (event) => {
