@@ -101,3 +101,35 @@ npx playwright install chromium
 npm run storybook
 npm run build-storybook
 ```
+
+
+## GitHub Pages
+
+Die App wird bei jedem Push auf `main` automatisch über GitHub Actions gebaut
+und als GitHub Pages Site veröffentlicht:
+
+```text
+https://david-bassler.github.io/eds-diary/
+```
+
+Der Workflow liegt unter:
+
+```text
+.github/workflows/deploy-pages.yml
+```
+
+Für den Pages-Build setzt der Workflow `VITE_BASE_PATH=/eds-diary/`. Lokale
+Entwicklung und Playwright bleiben dadurch weiterhin unter `/` erreichbar.
+Manifest, Icons und Service Worker verwenden den jeweiligen Vite-Base-Pfad und
+funktionieren deshalb auch unter dem GitHub-Pages-Unterpfad.
+
+Im Repository muss unter **Settings → Pages → Build and deployment → Source**
+einmalig **GitHub Actions** ausgewählt sein.
+
+Für Google OAuth ist als Authorized JavaScript Origin die Origin
+
+```text
+https://david-bassler.github.io
+```
+
+einzutragen; der Pfad `/eds-diary/` gehört nicht zur Origin.
