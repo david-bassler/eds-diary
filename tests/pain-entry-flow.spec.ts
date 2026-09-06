@@ -20,6 +20,7 @@ test('creates a pain entry with multiple body regions and details', async ({
 
   await page.getByRole('button', { name: 'Stechend' }).click()
   await page.getByLabel('Mögliche Ursache (optional)').fill('synthetische Ursache')
+  await page.getByLabel('Tritt auf, wenn (optional)').fill('synthetischer Auslöser')
   await page.getByLabel('Notizen (optional)').fill('synthetische Notiz')
 
   await expect(page.getByLabel('Datum')).not.toHaveValue('')
@@ -41,6 +42,7 @@ test('creates a pain entry with multiple body regions and details', async ({
     ],
     qualities: ['Stechend'],
     cause: 'synthetische Ursache',
+    occursWhen: 'synthetischer Auslöser',
     note: 'synthetische Notiz',
   })
 })
