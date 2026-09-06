@@ -1,0 +1,64 @@
+.app {
+  min-height: 100vh;
+  padding:
+    clamp(20px, 5vw, 48px)
+    clamp(16px, 5vw, 40px)
+    calc(96px + env(safe-area-inset-bottom));
+}
+
+.app__content {
+  display: grid;
+  width: min(100%, 760px);
+  gap: 24px;
+  margin-inline: auto;
+}
+
+.app__page {
+  display: grid;
+  gap: 24px;
+}
+
+.app__header {
+  display: grid;
+  gap: 4px;
+}
+
+.app__eyebrow {
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  opacity: 0.62;
+  text-transform: uppercase;
+}
+
+.app__title {
+  margin: 0;
+  font-size: clamp(1.8rem, 8vw, 2.6rem);
+  line-height: 1.05;
+}
+
+.app__description {
+  max-width: 58ch;
+  margin: 4px 0 0;
+  line-height: 1.5;
+  opacity: 0.72;
+}
+
+.app__placeholder {
+  display: grid;
+  min-height: 220px;
+  place-items: center;
+  padding: 28px;
+  border: 1px solid rgb(37 48 43 / 12%);
+  border-radius: 18px;
+  background: rgb(255 255 255 / 55%);
+  text-align: center;
+}
+
+.app__placeholder p {
+  max-width: 44ch;
+  margin: 0;
+  line-height: 1.55;
+  opacity: 0.72;
+}
