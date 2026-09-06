@@ -54,3 +54,13 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: Verify deployed page
+        run: |
+          echo "Checking ${{ steps.deployment.outputs.page_url }}"
+          curl --fail --show-error --silent --location \
+            --retry 6 --retry-delay 5 --retry-all-errors \
+            --output /tmp/eds-diary.html \
+            "${{ steps.deployment.outputs.page_url }}"
+          test -s /tmp/eds-diary.html
+          grep -q "EDS Schmerztagebuch" /tmp/eds-diary.html
