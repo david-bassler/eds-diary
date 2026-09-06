@@ -54,6 +54,7 @@ export function PainEntryFlow() {
   const [customPainTypes, setCustomPainTypes] = useState<string[]>([])
   const [newPainType, setNewPainType] = useState('')
   const [cause, setCause] = useState('')
+  const [occursWhen, setOccursWhen] = useState('')
   const [note, setNote] = useState('')
   const [when, setWhen] = useState<LocalDateTime>(localNow)
   const [status, setStatus] = useState('')
@@ -136,12 +137,14 @@ export function PainEntryFlow() {
         locations,
         qualities: selectedPainTypes,
         cause,
+        occursWhen,
         note,
       })
 
       setLocations([])
       setSelectedPainTypes([])
       setCause('')
+      setOccursWhen('')
       setNote('')
       setWhen(localNow())
       setStep(1)
@@ -247,8 +250,19 @@ export function PainEntryFlow() {
               type="text"
               value={cause}
               maxLength={240}
-              placeholder="z. B. längeres Sitzen, Spaziergang …"
+              placeholder="z. B. Überlastung, Fehlhaltung, unklare Ursache …"
               onChange={(event) => setCause(event.target.value)}
+            />
+          </label>
+
+          <label className="pain-entry-flow__field">
+            <span>Tritt auf, wenn <small>(optional)</small></span>
+            <input
+              type="text"
+              value={occursWhen}
+              maxLength={240}
+              placeholder="z. B. beim Aufstehen, nach langem Sitzen, bei Belastung …"
+              onChange={(event) => setOccursWhen(event.target.value)}
             />
           </label>
 
