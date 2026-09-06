@@ -29,6 +29,58 @@ npm run preview
 
 Manifest, Service Worker und App-Icons liegen unter `public/`.
 
+## Lokale Speicherung und Google Sheets
+
+Das Tagebuch arbeitet local-first:
+
+1. Gesundheitsdaten werden zuerst in IndexedDB im Browser gespeichert.
+2. Die Oberfläche ist dadurch unabhängig von einer Google-Verbindung nutzbar.
+3. Änderungen markieren das betroffene Feature als noch zu synchronisieren.
+4. Bei bestehender Google-Verbindung werden Änderungen gebündelt und seriell
+   an Google Sheets übertragen.
+5. Beim Verbinden wird ein vollständiger Abgleich ausgeführt. Datensätze werden
+   über stabile IDs und `updatedAt`-Zeitstempel zusammengeführt.
+
+Die zentrale Infrastruktur liegt unter:
+
+```text
+src/data/localDatabase.ts
+src/data/googleSheets.ts
+src/data/syncManager.ts
+src/features/pain/painRepository.ts
+src/features/pain/painSync.ts
+```
+
+Persönliche Tagebuchdaten werden nicht in `localStorage` gespeichert.
+`localStorage` enthält ausschließlich die nicht-sensiblen Google-
+Konfigurationswerte OAuth Client-ID und Spreadsheet-ID.
+
+Der Google Access Token wird nicht persistiert und bleibt nur im Arbeitsspeicher.
+Die App fordert den Scope
+
+```text
+https://www.googleapis.com/auth/drive.file
+```
+
+an. Google-API-Aufrufe laufen über eine gemeinsame serielle Queue. HTTP 429 und
+vorübergehende 5xx-Fehler werden mit Backoff erneut versucht.
+
+Das erste automatisch verwaltete Tabellenblatt heißt `Schmerzeintraege`.
+Fehlende Tabellenblätter und Header werden beim Synchronisieren angelegt.
+
+### Google einmalig einrichten
+
+1. Google Sheets API in einem Google-Cloud-Projekt aktivieren.
+2. OAuth-Zustimmungsbildschirm konfigurieren.
+3. OAuth-Client vom Typ **Web application** anlegen.
+4. Die URL der bereitgestellten PWA als Authorized JavaScript Origin eintragen.
+5. Client-ID in der App unter **Datenspeicherung** speichern.
+6. Mit Google verbinden.
+7. Ein neues privates EDS-Sheet anlegen oder eine bestehende Spreadsheet-ID
+   eintragen.
+
+Es wird kein Client Secret in der PWA verwendet.
+
 ## Qualitätssicherung
 
 ```bash
