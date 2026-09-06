@@ -1,8 +1,9 @@
 const DATABASE_NAME = 'eds-diary'
-const DATABASE_VERSION = 1
+const DATABASE_VERSION = 2
 
 export const LOCAL_STORES = {
   painEntries: 'painEntries',
+  settings: 'settings',
 } as const
 
 export type LocalStoreName = (typeof LOCAL_STORES)[keyof typeof LOCAL_STORES]
@@ -50,6 +51,9 @@ function openDatabase(): Promise<IDBDatabase> {
       const database = request.result
       if (!database.objectStoreNames.contains(LOCAL_STORES.painEntries)) {
         database.createObjectStore(LOCAL_STORES.painEntries, { keyPath: 'id' })
+      }
+      if (!database.objectStoreNames.contains(LOCAL_STORES.settings)) {
+        database.createObjectStore(LOCAL_STORES.settings, { keyPath: 'id' })
       }
     })
 
