@@ -1,5 +1,6 @@
 import {
   isGoogleConnected,
+  isGoogleSyncReady,
   onGoogleConnection,
 } from './googleSheets'
 
@@ -73,7 +74,7 @@ export function markDirty(name: string): void {
 
   if (timer !== null) window.clearTimeout(timer)
 
-  if (isGoogleConnected()) {
+  if (isGoogleSyncReady()) {
     timer = window.setTimeout(() => {
       void syncPending()
     }, 1400)
@@ -98,7 +99,7 @@ async function performPass(full: boolean): Promise<void> {
 }
 
 async function run(full: boolean): Promise<void> {
-  if (!isGoogleConnected()) {
+  if (!isGoogleSyncReady()) {
     emit(dirtyVersions.size ? 'pending' : 'local')
     return
   }
@@ -139,7 +140,7 @@ export function refreshSyncState(): void {
   emit(
     dirtyVersions.size
       ? 'pending'
-      : isGoogleConnected()
+      : isGoogleSyncReady()
         ? 'synced'
         : 'local',
   )
@@ -151,10 +152,10 @@ export function initializeSyncManager(): void {
 
   onGoogleConnection((connected) => {
     refreshSyncState()
-    if (connected) void syncAll().catch(() => {})
+    if (connected && isGoogleSyncReady()) void syncAll().catch(() => {})
   })
 
   window.addEventListener('online', () => {
-    if (isGoogleConnected()) void syncPending().catch(() => {})
+    if (isGoogleSyncReady()) void syncPending().catch(() => {})
   })
 }
