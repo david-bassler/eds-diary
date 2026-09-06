@@ -148,12 +148,15 @@ benutzerdefinierten Optionen werden in IndexedDB gespeichert und bei aktivierter
 Google-Synchronisierung über das Tabellenblatt `Schmerzarten` abgeglichen.
 
 Ein Schmerzeintrag speichert mehrere Körperregionen gemeinsam mit den gewählten
-Schmerzarten, der optionalen Ursache, typischen Auftretenssituation und Notiz sowie dem tatsächlichen
-Erfassungszeitpunkt. Die Body-Map besitzt zusätzlich eine vollständige
-Checkbox-Liste als barrierefreie Alternative zur grafischen Auswahl.
+Schmerzarten, der optionalen Ursache, typischen Auftretenssituation und Notiz
+sowie dem tatsächlichen Erfassungszeitpunkt. Die Body-Map besitzt zusätzlich
+eine vollständige Checkbox-Liste als barrierefreie Alternative zur grafischen
+Auswahl.
 
+Die grafische Körperkarte verwendet PNG-Pixelmasken. Sichtbar ist eine neutrale
+Graustufenkarte. Eine nicht sichtbare Farbhitmap mit nahezu gleicher
+CIELAB-Helligkeit für alle Regionsfarben ordnet Berührungen eindeutig den
+Körperregionen zu. Ausgewählte Regionen werden separat über ein Canvas-Overlay
+markiert. Die vier PNG-Dateien werden vor Entwicklung, Build und Storybook
+deterministisch mit `npm run body-map:generate` erzeugt.
 
-## Drittanbieter-Grafiken
-
-Quellen und Lizenzhinweise für die verwendeten Körpersilhouetten sind in
-`THIRD_PARTY_NOTICES.md` dokumentiert.
