@@ -64,3 +64,11 @@ jobs:
             "${{ steps.deployment.outputs.page_url }}"
           test -s /tmp/eds-diary.html
           grep -q "EDS Schmerztagebuch" /tmp/eds-diary.html
+          if grep -q "/src/main.tsx" /tmp/eds-diary.html; then
+            echo "GitHub Pages is serving repository source instead of the Vite build."
+            exit 1
+          fi
+          if grep -q "%BASE_URL%" /tmp/eds-diary.html; then
+            echo "GitHub Pages is serving unprocessed HTML."
+            exit 1
+          fi
