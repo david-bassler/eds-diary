@@ -17,13 +17,30 @@ body {
 }
 
 button,
-input {
+input,
+select,
+textarea {
   font: inherit;
 }
 
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+summary:focus-visible,
+a:focus-visible {
+  outline: 3px solid currentcolor;
+  outline-offset: 3px;
+}
+
 .app {
-  display: grid;
   min-height: 100vh;
   padding: clamp(16px, 5vw, 56px);
-  place-items: center;
+}
+
+.app__content {
+  display: grid;
+  width: min(100%, 760px);
+  gap: 24px;
+  margin-inline: auto;
 }
