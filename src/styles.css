@@ -33,14 +33,3 @@ a:focus-visible {
   outline-offset: 3px;
 }
 
-.app {
-  min-height: 100vh;
-  padding: clamp(16px, 5vw, 56px);
-}
-
-.app__content {
-  display: grid;
-  width: min(100%, 760px);
-  gap: 24px;
-  margin-inline: auto;
-}
