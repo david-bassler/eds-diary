@@ -151,3 +151,9 @@ Ein Schmerzeintrag speichert mehrere Körperregionen gemeinsam mit den gewählte
 Schmerzarten, der optionalen Ursache, typischen Auftretenssituation und Notiz sowie dem tatsächlichen
 Erfassungszeitpunkt. Die Body-Map besitzt zusätzlich eine vollständige
 Checkbox-Liste als barrierefreie Alternative zur grafischen Auswahl.
+
+
+## Drittanbieter-Grafiken
+
+Quellen und Lizenzhinweise für die verwendeten Körpersilhouetten sind in
+`THIRD_PARTY_NOTICES.md` dokumentiert.
