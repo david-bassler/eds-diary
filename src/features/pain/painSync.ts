@@ -1,6 +1,6 @@
 import {
-  loadTable,
-  replaceTable,
+  loadTables,
+  replaceTables,
   type SheetCell,
   type SheetSpecs,
 } from '../../data/googleSheets'
@@ -10,9 +10,15 @@ import {
   listPainEntries,
   storePainEntriesFromSync,
 } from './painRepository'
+import {
+  listCustomPainTypes,
+  storeCustomPainTypesFromSync,
+} from './painTypeOptions'
 
-const SHEET_TITLE = 'Schmerzeintraege'
-const HEADERS = [
+const ENTRY_SHEET_TITLE = 'Schmerzeintraege'
+const PAIN_TYPES_SHEET_TITLE = 'Schmerzarten'
+
+const ENTRY_HEADERS = [
   'ID',
   'Beginn',
   'Ende',
@@ -23,10 +29,14 @@ const HEADERS = [
   'Status',
   'Erstellt',
   'Aktualisiert',
+  'Moegliche_Ursache',
 ] as const
 
+const PAIN_TYPE_HEADERS = ['Name'] as const
+
 export const painSheetSpecs: SheetSpecs = {
-  [SHEET_TITLE]: HEADERS,
+  [ENTRY_SHEET_TITLE]: ENTRY_HEADERS,
+  [PAIN_TYPES_SHEET_TITLE]: PAIN_TYPE_HEADERS,
 }
 
 function text(cell: SheetCell | undefined): string {
@@ -102,6 +112,7 @@ function fromRow(row: SheetCell[]): PainEntry | null {
     status: text(row[7]) === 'deleted' ? 'deleted' : 'active',
     createdAt,
     updatedAt,
+    cause: text(row[10]).trim(),
   }
 }
 
@@ -117,6 +128,7 @@ function toRow(entry: PainEntry): readonly SheetCell[] {
     entry.status,
     entry.createdAt,
     entry.updatedAt,
+    entry.cause,
   ]
 }
 
@@ -136,27 +148,87 @@ function mergeById(
   return [...merged.values()]
 }
 
-async function pushPainEntries(): Promise<void> {
-  const entries = await listPainEntries({ includeDeleted: true })
-  await replaceTable(SHEET_TITLE, HEADERS, entries.map(toRow))
+function mergePainTypes(
+  localTypes: readonly string[],
+  remoteRows: readonly SheetCell[][],
+): string[] {
+  const seen = new Set<string>()
+  const merged: string[] = []
+
+  for (const value of [
+    ...localTypes,
+    ...remoteRows.map((row) => text(row[0]).trim()),
+  ]) {
+    const key = value.toLocaleLowerCase('de')
+    if (!value || seen.has(key)) continue
+    seen.add(key)
+    merged.push(value)
+  }
+
+  return merged
+}
+
+async function currentTables(): Promise<{
+  entries: PainEntry[]
+  painTypes: string[]
+}> {
+  const [entries, painTypes] = await Promise.all([
+    listPainEntries({ includeDeleted: true }),
+    listCustomPainTypes(),
+  ])
+  return { entries, painTypes }
+}
+
+async function pushPainData(): Promise<void> {
+  const { entries, painTypes } = await currentTables()
+
+  await replaceTables({
+    [ENTRY_SHEET_TITLE]: {
+      headers: ENTRY_HEADERS,
+      rows: entries.map(toRow),
+    },
+    [PAIN_TYPES_SHEET_TITLE]: {
+      headers: PAIN_TYPE_HEADERS,
+      rows: painTypes.map((name) => [name]),
+    },
+  })
 }
 
 export async function syncPainEntries(): Promise<void> {
-  const localEntries = await listPainEntries({ includeDeleted: true })
-  const remoteRows = await loadTable(SHEET_TITLE, HEADERS)
-  const remoteEntries = remoteRows.flatMap((row) => {
+  const local = await currentTables()
+  const tables = await loadTables(painSheetSpecs)
+
+  const remoteEntries = (tables[ENTRY_SHEET_TITLE] ?? []).flatMap((row) => {
     const entry = fromRow(row)
     return entry ? [entry] : []
   })
 
-  const merged = mergeById(localEntries, remoteEntries)
-  await storePainEntriesFromSync(merged)
-  await replaceTable(SHEET_TITLE, HEADERS, merged.map(toRow))
+  const mergedEntries = mergeById(local.entries, remoteEntries)
+  const mergedPainTypes = mergePainTypes(
+    local.painTypes,
+    tables[PAIN_TYPES_SHEET_TITLE] ?? [],
+  )
+
+  await Promise.all([
+    storePainEntriesFromSync(mergedEntries),
+    storeCustomPainTypesFromSync(mergedPainTypes),
+  ])
+
+  await replaceTables({
+    [ENTRY_SHEET_TITLE]: {
+      headers: ENTRY_HEADERS,
+      rows: mergedEntries.map(toRow),
+    },
+    [PAIN_TYPES_SHEET_TITLE]: {
+      headers: PAIN_TYPE_HEADERS,
+      rows: mergedPainTypes.map((name) => [name]),
+    },
+  })
 }
 
 export function initializePainSync(): void {
   registerSyncFeature('painEntries', {
-    push: pushPainEntries,
+    push: pushPainData,
     full: syncPainEntries,
   })
 }
