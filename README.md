@@ -133,3 +133,21 @@ https://david-bassler.github.io
 ```
 
 einzutragen; der Pfad `/eds-diary/` gehört nicht zur Origin.
+
+
+## Schmerzerfassung
+
+Der Bereich **Schmerzen** verwendet einen zweistufigen Flow:
+
+1. Eine oder mehrere Körperregionen auf Vorder- oder Rückseite auswählen.
+2. Schmerzart, mögliche Ursache, Notiz sowie Datum und Uhrzeit erfassen.
+
+Datum und Uhrzeit werden beim Öffnen mit dem aktuellen lokalen Zeitpunkt
+vorbelegt. Eigene Schmerzarten können als Chips hinzugefügt werden. Diese
+benutzerdefinierten Optionen werden in IndexedDB gespeichert und bei aktivierter
+Google-Synchronisierung über das Tabellenblatt `Schmerzarten` abgeglichen.
+
+Ein Schmerzeintrag speichert mehrere Körperregionen gemeinsam mit den gewählten
+Schmerzarten, der optionalen Ursache und Notiz sowie dem tatsächlichen
+Erfassungszeitpunkt. Die Body-Map besitzt zusätzlich eine vollständige
+Checkbox-Liste als barrierefreie Alternative zur grafischen Auswahl.
