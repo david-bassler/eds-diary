@@ -49,6 +49,8 @@ src/data/googleSheets.ts
 src/data/syncManager.ts
 src/features/pain/painRepository.ts
 src/features/pain/painSync.ts
+src/features/medication/medicationRepository.ts
+src/features/medication/medicationSync.ts
 ```
 
 Persönliche Tagebuchdaten werden nicht in `localStorage` gespeichert.
@@ -65,7 +67,8 @@ https://www.googleapis.com/auth/drive.file
 an. Google-API-Aufrufe laufen über eine gemeinsame serielle Queue. HTTP 429 und
 vorübergehende 5xx-Fehler werden mit Backoff erneut versucht.
 
-Das erste automatisch verwaltete Tabellenblatt heißt `Schmerzeintraege`.
+Automatisch verwaltete Tabellenblätter sind unter anderem
+`Schmerzeintraege`, `Schmerzarten` und `Medikamenteneinnahmen`.
 Fehlende Tabellenblätter und Header werden beim Synchronisieren angelegt.
 
 ### Google einmalig einrichten
@@ -160,3 +163,18 @@ Körperregionen zu. Ausgewählte Regionen werden separat über ein Canvas-Overla
 markiert. Die vier PNG-Dateien werden vor Entwicklung, Build und Storybook
 deterministisch mit `npm run body-map:generate` erzeugt.
 
+
+
+## Medikamentenerfassung
+
+Im Bereich **Medikamente** kann eine Einnahme mit Medikamentenname, Dosis,
+Datum und Uhrzeit gespeichert werden. Datum und Uhrzeit sind beim Öffnen mit
+dem aktuellen lokalen Zeitpunkt vorbelegt.
+
+Der Medikamentenname ist ein Eingabefeld mit Vorschlagsliste. Bereits zuvor
+erfasste Namen werden aus den lokalen Einnahmeeinträgen abgeleitet und bei
+weiteren Eingaben automatisch angeboten.
+
+Medikamenteneinnahmen werden im eigenen IndexedDB-Store
+`medicationEntries` gespeichert. Bei aktiver Google-Synchronisierung werden
+sie über das Tabellenblatt `Medikamenteneinnahmen` abgeglichen.
