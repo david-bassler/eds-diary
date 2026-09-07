@@ -11,9 +11,14 @@ export type TimeRangeColumnProps = {
   begin: string;
   end: string;
   resolution: number;
-  value?: TimeRange;
-  onChange?: (range: TimeRange) => void;
+  value?: readonly TimeRange[];
+  onChange?: (ranges: TimeRange[]) => void;
   label?: string;
+};
+
+type MinuteRange = {
+  start: number;
+  end: number;
 };
 
 type DragState = {
@@ -21,7 +26,14 @@ type DragState = {
   originX: number;
   side: "left" | "right";
   anchor: number;
-  coarseTime: number;
+  current: number;
+  baseRanges: MinuteRange[];
+};
+
+type LayoutRange = MinuteRange & {
+  index: number;
+  column: number;
+  columns: number;
 };
 
 const MINUTES_PER_DAY = 24 * 60;
@@ -58,6 +70,31 @@ function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
 }
 
+function normalizeMinuteRange(
+  range: MinuteRange,
+  begin: number,
+  end: number,
+): MinuteRange {
+  const start = clamp(range.start, begin, end);
+  const finish = clamp(range.end, begin, end);
+  return start <= finish
+    ? { start, end: finish }
+    : { start: finish, end: start };
+}
+
+function parseRanges(
+  ranges: readonly TimeRange[],
+  begin: number,
+  end: number,
+): MinuteRange[] {
+  return ranges.flatMap((range) => {
+    const start = parseTime(range.start);
+    const finish = parseTime(range.end);
+    if (!Number.isFinite(start) || !Number.isFinite(finish)) return [];
+    return [normalizeMinuteRange({ start, end: finish }, begin, end)];
+  });
+}
+
 function timeFromPointer(
   clientY: number,
   bounds: DOMRect,
@@ -79,13 +116,80 @@ function createTicks(begin: number, end: number) {
   return ticks;
 }
 
+function layoutRanges(
+  ranges: readonly MinuteRange[],
+  resolution: number,
+  end: number,
+): LayoutRange[] {
+  const sorted = ranges
+    .map((range, index) => ({
+      ...range,
+      index,
+      layoutEnd: Math.max(
+        range.end,
+        Math.min(end, range.start + Math.max(1, resolution)),
+      ),
+    }))
+    .sort(
+      (left, right) =>
+        left.start - right.start ||
+        left.layoutEnd - right.layoutEnd ||
+        left.index - right.index,
+    );
+
+  const result: LayoutRange[] = [];
+  let cluster: typeof sorted = [];
+  let clusterEnd = -1;
+
+  const flushCluster = () => {
+    if (!cluster.length) return;
+
+    let active: Array<{ end: number; column: number }> = [];
+    const assignments = new Map<number, number>();
+    let columns = 1;
+
+    for (const item of cluster) {
+      active = active.filter((entry) => entry.end > item.start);
+      const usedColumns = new Set(active.map((entry) => entry.column));
+      let column = 0;
+      while (usedColumns.has(column)) column += 1;
+
+      assignments.set(item.index, column);
+      active.push({ end: item.layoutEnd, column });
+      columns = Math.max(columns, active.length, column + 1);
+    }
+
+    for (const item of cluster) {
+      result.push({
+        start: item.start,
+        end: item.end,
+        index: item.index,
+        column: assignments.get(item.index) ?? 0,
+        columns,
+      });
+    }
+
+    cluster = [];
+    clusterEnd = -1;
+  };
+
+  for (const item of sorted) {
+    if (cluster.length && item.start >= clusterEnd) flushCluster();
+    cluster.push(item);
+    clusterEnd = Math.max(clusterEnd, item.layoutEnd);
+  }
+  flushCluster();
+
+  return result.sort((left, right) => left.index - right.index);
+}
+
 export function TimeRangeColumn({
   begin,
   end,
   resolution,
   value,
   onChange,
-  label = "Zeitraum auswählen",
+  label = "Zeiträume auswählen",
 }: TimeRangeColumnProps) {
   const beginMinutes = parseTime(begin);
   const endMinutes = parseTime(end);
@@ -94,26 +198,7 @@ export function TimeRangeColumn({
     Number.isFinite(endMinutes) &&
     endMinutes > beginMinutes &&
     resolution > 0;
-  const defaultStart = valid
-    ? snap(
-        beginMinutes + (endMinutes - beginMinutes) * 0.32,
-        resolution,
-        beginMinutes,
-        endMinutes,
-      )
-    : 0;
-  const defaultEnd = valid
-    ? snap(
-        beginMinutes + (endMinutes - beginMinutes) * 0.48,
-        resolution,
-        beginMinutes,
-        endMinutes,
-      )
-    : 0;
-  const [internalRange, setInternalRange] = useState({
-    start: defaultStart,
-    end: defaultEnd,
-  });
+  const [internalRanges, setInternalRanges] = useState<MinuteRange[]>([]);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [fineMode, setFineMode] = useState(false);
   const surfaceRef = useRef<HTMLDivElement>(null);
@@ -131,41 +216,37 @@ export function TimeRangeColumn({
     );
   }
 
-  const controlledRange = value
-    ? { start: parseTime(value.start), end: parseTime(value.end) }
-    : internalRange;
-  const range = {
-    start: clamp(
-      Number.isFinite(controlledRange.start)
-        ? controlledRange.start
-        : defaultStart,
-      beginMinutes,
-      endMinutes,
-    ),
-    end: clamp(
-      Number.isFinite(controlledRange.end) ? controlledRange.end : defaultEnd,
-      beginMinutes,
-      endMinutes,
-    ),
-  };
-  const normalizedRange =
-    range.start <= range.end ? range : { start: range.end, end: range.start };
-  const duration = normalizedRange.end - normalizedRange.start;
+  const ranges =
+    value === undefined
+      ? internalRanges.map((range) =>
+          normalizeMinuteRange(range, beginMinutes, endMinutes),
+        )
+      : parseRanges(value, beginMinutes, endMinutes);
+  const layout = layoutRanges(ranges, resolution, endMinutes);
   const ticks = createTicks(beginMinutes, endMinutes);
   const fineResolution = Math.max(1, Math.floor(resolution / 5));
+  const totalDuration = ranges.reduce(
+    (total, range) => total + Math.max(0, range.end - range.start),
+    0,
+  );
 
-  const emitRange = (next: { start: number; end: number }) => {
-    const normalized =
-      next.start <= next.end ? next : { start: next.end, end: next.start };
-    if (!value) setInternalRange(normalized);
-    onChange?.({
-      start: formatTime(normalized.start),
-      end: formatTime(normalized.end),
-    });
+  const emitRanges = (next: readonly MinuteRange[]) => {
+    const normalized = next.map((range) =>
+      normalizeMinuteRange(range, beginMinutes, endMinutes),
+    );
+
+    if (value === undefined) setInternalRanges(normalized);
+    onChange?.(
+      normalized.map((range) => ({
+        start: formatTime(range.start),
+        end: formatTime(range.end),
+      })),
+    );
   };
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 || !surfaceRef.current) return;
+
     const bounds = surfaceRef.current.getBoundingClientRect();
     const time = timeFromPointer(
       event.clientY,
@@ -176,6 +257,7 @@ export function TimeRangeColumn({
     );
     const side =
       event.clientX < bounds.left + bounds.width / 2 ? "left" : "right";
+
     event.currentTarget.setPointerCapture(event.pointerId);
     setFineMode(false);
     setDrag({
@@ -183,14 +265,16 @@ export function TimeRangeColumn({
       originX: event.clientX,
       side,
       anchor: time,
-      coarseTime: time,
+      current: time,
+      baseRanges: ranges,
     });
-    emitRange({ start: time, end: time });
+    emitRanges([...ranges, { start: time, end: time }]);
   };
 
   const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (!drag || drag.pointerId !== event.pointerId || !surfaceRef.current)
       return;
+
     const bounds = surfaceRef.current.getBoundingClientRect();
     const lateralDistance =
       drag.side === "left"
@@ -205,20 +289,50 @@ export function TimeRangeColumn({
       endMinutes,
       step,
     );
+
     setFineMode(isFine);
-    setDrag({ ...drag, coarseTime: isFine ? drag.coarseTime : current });
-    emitRange({ start: drag.anchor, end: isFine ? current : current });
+    setDrag({ ...drag, current });
+    emitRanges([
+      ...drag.baseRanges,
+      { start: drag.anchor, end: current },
+    ]);
   };
 
   const finishDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (!drag || drag.pointerId !== event.pointerId) return;
+
+    if (drag.current === drag.anchor) {
+      const endCandidate =
+        drag.anchor + resolution <= endMinutes
+          ? drag.anchor + resolution
+          : drag.anchor - resolution;
+      emitRanges([
+        ...drag.baseRanges,
+        { start: drag.anchor, end: endCandidate },
+      ]);
+    }
+
     event.currentTarget.releasePointerCapture(event.pointerId);
     setDrag(null);
     setFineMode(false);
   };
 
-  const updateBoundary = (boundary: "start" | "end", nextValue: number) => {
-    emitRange({ ...normalizedRange, [boundary]: nextValue });
+  const updateBoundary = (
+    index: number,
+    boundary: "start" | "end",
+    nextValue: number,
+  ) => {
+    emitRanges(
+      ranges.map((range, rangeIndex) =>
+        rangeIndex === index
+          ? { ...range, [boundary]: nextValue }
+          : range,
+      ),
+    );
+  };
+
+  const removeRange = (index: number) => {
+    emitRanges(ranges.filter((_, rangeIndex) => rangeIndex !== index));
   };
 
   return (
@@ -230,17 +344,24 @@ export function TimeRangeColumn({
         </div>
         <output className="timerange__summary" aria-live="polite">
           <strong>
-            {formatTime(normalizedRange.start)}–
-            {formatTime(normalizedRange.end)}
+            {ranges.length
+              ? `${ranges.length} ${ranges.length === 1 ? "Zeitraum" : "Zeiträume"}`
+              : "Keine Auswahl"}
           </strong>
-          <span>{duration} Minuten</span>
+          <span>
+            {ranges.length
+              ? `${totalDuration} Minuten gesamt`
+              : "Zum Hinzufügen ziehen"}
+          </span>
         </output>
       </header>
 
       <p id={descriptionId} className="timerange__hint">
-        Ziehe senkrecht für {resolution}-Minuten-Schritte. Ziehe von einer Seite
-        zur Mitte, um lokal auf {fineResolution} Minute
-        {fineResolution === 1 ? "" : "n"} zu verfeinern.
+        Ziehe senkrecht, um einen weiteren Zeitraum in {resolution}-Minuten-
+        Schritten hinzuzufügen. Überschneidungen werden gleich breit
+        nebeneinander dargestellt. Ziehe von einer Seite zur Mitte, um lokal
+        auf {fineResolution} Minute{fineResolution === 1 ? "" : "n"} zu
+        verfeinern.
       </p>
 
       <div className="timerange__workspace">
@@ -267,31 +388,32 @@ export function TimeRangeColumn({
           data-testid="time-range-surface"
         >
           <div className="timerange__grid" aria-hidden="true" />
-          <div
-            className="timerange__lane timerange__lane--left"
-            aria-hidden="true"
-          >
-            Start links
-          </div>
-          <div
-            className="timerange__lane timerange__lane--right"
-            aria-hidden="true"
-          >
-            Start rechts
-          </div>
-          <div
-            className="timerange__selection"
-            style={{
-              top: `${((normalizedRange.start - beginMinutes) / (endMinutes - beginMinutes)) * 100}%`,
-              height: `${Math.max(1.2, (duration / (endMinutes - beginMinutes)) * 100)}%`,
-            }}
-            aria-hidden="true"
-          >
-            <span>{formatTime(normalizedRange.start)}</span>
-            <span className="timerange__selectionend">
-              {formatTime(normalizedRange.end)}
-            </span>
-          </div>
+          {layout.map((range) => {
+            const duration = Math.max(0, range.end - range.start);
+            const left = (range.column / range.columns) * 100;
+            const width = 100 / range.columns;
+
+            return (
+              <div
+                key={range.index}
+                className="timerange__selection"
+                style={{
+                  top: `${((range.start - beginMinutes) / (endMinutes - beginMinutes)) * 100}%`,
+                  height: `${Math.max(1.2, (duration / (endMinutes - beginMinutes)) * 100)}%`,
+                  left: `calc(${left}% + 2px)`,
+                  width: `calc(${width}% - 4px)`,
+                }}
+                aria-hidden="true"
+                data-range-index={range.index}
+                data-overlap-columns={range.columns}
+              >
+                <span>{formatTime(range.start)}</span>
+                <span className="timerange__selectionend">
+                  {formatTime(range.end)}
+                </span>
+              </div>
+            );
+          })}
           {fineMode && (
             <div className="timerange__finelabel" role="status">
               Feinmodus · {fineResolution} min
@@ -300,41 +422,59 @@ export function TimeRangeColumn({
         </div>
       </div>
 
-      <fieldset className="timerange__controls">
-        <legend>Präzise Auswahl per Tastatur</legend>
-        <label>
-          <span>
-            Beginn <output>{formatTime(normalizedRange.start)}</output>
-          </span>
-          <input
-            aria-label="Beginn anpassen"
-            type="range"
-            min={beginMinutes}
-            max={endMinutes}
-            step={resolution}
-            value={normalizedRange.start}
-            onChange={(event) =>
-              updateBoundary("start", Number(event.target.value))
-            }
-          />
-        </label>
-        <label>
-          <span>
-            Ende <output>{formatTime(normalizedRange.end)}</output>
-          </span>
-          <input
-            aria-label="Ende anpassen"
-            type="range"
-            min={beginMinutes}
-            max={endMinutes}
-            step={resolution}
-            value={normalizedRange.end}
-            onChange={(event) =>
-              updateBoundary("end", Number(event.target.value))
-            }
-          />
-        </label>
-      </fieldset>
+      {ranges.length ? (
+        <fieldset className="timerange__controls">
+          <legend>Zeiträume präzise bearbeiten</legend>
+          <div className="timerange__control-list">
+            {ranges.map((range, index) => (
+              <div className="timerange__control" key={index}>
+                <div className="timerange__control-header">
+                  <strong>Zeitraum {index + 1}</strong>
+                  <button type="button" onClick={() => removeRange(index)}>
+                    Entfernen
+                  </button>
+                </div>
+                <label>
+                  <span>
+                    Beginn <output>{formatTime(range.start)}</output>
+                  </span>
+                  <input
+                    aria-label={`Beginn Zeitraum ${index + 1} anpassen`}
+                    type="range"
+                    min={beginMinutes}
+                    max={endMinutes}
+                    step={resolution}
+                    value={range.start}
+                    onChange={(event) =>
+                      updateBoundary(
+                        index,
+                        "start",
+                        Number(event.target.value),
+                      )
+                    }
+                  />
+                </label>
+                <label>
+                  <span>
+                    Ende <output>{formatTime(range.end)}</output>
+                  </span>
+                  <input
+                    aria-label={`Ende Zeitraum ${index + 1} anpassen`}
+                    type="range"
+                    min={beginMinutes}
+                    max={endMinutes}
+                    step={resolution}
+                    value={range.end}
+                    onChange={(event) =>
+                      updateBoundary(index, "end", Number(event.target.value))
+                    }
+                  />
+                </label>
+              </div>
+            ))}
+          </div>
+        </fieldset>
+      ) : null}
     </section>
   );
 }
