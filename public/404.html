@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex" />
+    <title>EDS Schmerztagebuch</title>
+  </head>
+  <body>
+    <script>
+      ;(() => {
+        const key = 'eds-diary-route-redirect'
+        const base = '/eds-diary/'
+        const requestedPath =
+          window.location.pathname +
+          window.location.search +
+          window.location.hash
+
+        try {
+          window.sessionStorage.setItem(key, requestedPath)
+        } catch {
+          // The base page remains usable even without sessionStorage.
+        }
+
+        window.location.replace(base)
+      })()
+    </script>
+  </body>
+</html>
