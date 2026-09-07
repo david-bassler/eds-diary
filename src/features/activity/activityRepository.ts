@@ -1,0 +1,187 @@
+import {
+  getAllRecords,
+  LOCAL_STORES,
+  putRecords,
+} from '../../data/localDatabase'
+import { markDirty } from '../../data/syncManager'
+import type { ActivityEntry, NewActivityEntry } from './activityEntry'
+
+const SYNC_FEATURE = 'activityEntries'
+const MAX_NAME_LENGTH = 120
+const MAX_NOTE_LENGTH = 2000
+
+function nowIso(): string {
+  return new Date().toISOString()
+}
+
+function createId(): string {
+  if (crypto.randomUUID) return `activity-${crypto.randomUUID()}`
+  return `activity-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function normalizedText(value: unknown, maxLength: number): string {
+  return typeof value === 'string' ? value.trim().slice(0, maxLength) : ''
+}
+
+function normalizedDate(value: unknown): string {
+  if (typeof value !== 'string') return ''
+  const trimmed = value.trim()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return ''
+
+  const parsed = new Date(`${trimmed}T00:00:00`)
+  return Number.isNaN(parsed.getTime()) ? '' : trimmed
+}
+
+function normalizedTime(value: unknown): string {
+  if (typeof value !== 'string') return ''
+  const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim())
+  if (!match) return ''
+
+  const hours = Number(match[1])
+  const minutes = Number(match[2])
+  if (
+    hours > 24 ||
+    minutes > 59 ||
+    (hours === 24 && minutes !== 0)
+  ) {
+    return ''
+  }
+
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
+}
+
+function timeMinutes(value: string): number {
+  const [hours, minutes] = value.split(':').map(Number)
+  return hours * 60 + minutes
+}
+
+function normalizedTimestamp(value: unknown, fallback: string): string {
+  if (typeof value !== 'string' || !value.trim()) return fallback
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? fallback : parsed.toISOString()
+}
+
+function normalizeStoredEntry(value: unknown): ActivityEntry | null {
+  if (!isRecord(value)) return null
+
+  const id = normalizedText(value.id, 180)
+  const date = normalizedDate(value.date)
+  const startTime = normalizedTime(value.startTime)
+  const endTime = normalizedTime(value.endTime)
+  const activityName = normalizedText(value.activityName, MAX_NAME_LENGTH)
+
+  if (
+    !id ||
+    !date ||
+    !startTime ||
+    !endTime ||
+    !activityName ||
+    timeMinutes(startTime) >= timeMinutes(endTime)
+  ) {
+    return null
+  }
+
+  const fallbackTimestamp = nowIso()
+  const createdAt = normalizedTimestamp(
+    value.createdAt,
+    normalizedTimestamp(value.updatedAt, fallbackTimestamp),
+  )
+  const updatedAt = normalizedTimestamp(value.updatedAt, createdAt)
+
+  return {
+    id,
+    date,
+    startTime,
+    endTime,
+    activityName,
+    note: normalizedText(value.note, MAX_NOTE_LENGTH),
+    status: value.status === 'deleted' ? 'deleted' : 'active',
+    createdAt,
+    updatedAt,
+  }
+}
+
+export async function createActivityEntries(
+  inputs: readonly NewActivityEntry[],
+): Promise<ActivityEntry[]> {
+  if (!inputs.length) return []
+
+  const timestamp = nowIso()
+  const entries = inputs.map((input) => {
+    const date = normalizedDate(input.date)
+    const startTime = normalizedTime(input.startTime)
+    const endTime = normalizedTime(input.endTime)
+    const activityName = normalizedText(input.activityName, MAX_NAME_LENGTH)
+
+    if (!date) throw new Error('Datum fehlt.')
+    if (!startTime || !endTime || timeMinutes(startTime) >= timeMinutes(endTime)) {
+      throw new Error('Ungültiger Aktivitätszeitraum.')
+    }
+    if (!activityName) throw new Error('Aktivität fehlt.')
+
+    return {
+      id: createId(),
+      date,
+      startTime,
+      endTime,
+      activityName,
+      note: normalizedText(input.note, MAX_NOTE_LENGTH),
+      status: 'active' as const,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }
+  })
+
+  await putRecords(LOCAL_STORES.activityEntries, entries)
+  markDirty(SYNC_FEATURE)
+  return entries
+}
+
+export async function listActivityEntries(options?: {
+  includeDeleted?: boolean
+}): Promise<ActivityEntry[]> {
+  const stored = await getAllRecords<unknown>(LOCAL_STORES.activityEntries)
+  const entries = stored.flatMap((value) => {
+    const entry = normalizeStoredEntry(value)
+    return entry ? [entry] : []
+  })
+
+  return entries
+    .filter((entry) => options?.includeDeleted || entry.status !== 'deleted')
+    .sort(
+      (left, right) =>
+        right.date.localeCompare(left.date) ||
+        right.startTime.localeCompare(left.startTime) ||
+        right.updatedAt.localeCompare(left.updatedAt),
+    )
+}
+
+export async function listActivityNames(): Promise<string[]> {
+  const entries = await listActivityEntries()
+  const seen = new Set<string>()
+  const names: string[] = []
+
+  for (const entry of entries) {
+    const key = entry.activityName.toLocaleLowerCase('de')
+    if (seen.has(key)) continue
+    seen.add(key)
+    names.push(entry.activityName)
+  }
+
+  return names.sort((left, right) => left.localeCompare(right, 'de'))
+}
+
+export async function storeActivityEntriesFromSync(
+  entries: readonly ActivityEntry[],
+): Promise<void> {
+  const normalized = entries.flatMap((entry) => {
+    const value = normalizeStoredEntry(entry)
+    return value ? [value] : []
+  })
+
+  await putRecords(LOCAL_STORES.activityEntries, normalized)
+}
