@@ -68,7 +68,8 @@ an. Google-API-Aufrufe laufen über eine gemeinsame serielle Queue. HTTP 429 und
 vorübergehende 5xx-Fehler werden mit Backoff erneut versucht.
 
 Automatisch verwaltete Tabellenblätter sind unter anderem
-`Schmerzeintraege`, `Schmerzarten` und `Medikamenteneinnahmen`.
+`Schmerzeintraege`, `Schmerzarten`, `Medikamenteneinnahmen` und
+`Medikamentenverordnungen`.
 Fehlende Tabellenblätter und Header werden beim Synchronisieren angelegt.
 
 ### Google einmalig einrichten
@@ -176,5 +177,13 @@ erfasste Namen werden aus den lokalen Einnahmeeinträgen abgeleitet und bei
 weiteren Eingaben automatisch angeboten.
 
 Medikamenteneinnahmen werden im eigenen IndexedDB-Store
-`medicationEntries` gespeichert. Bei aktiver Google-Synchronisierung werden
-sie über das Tabellenblatt `Medikamenteneinnahmen` abgeglichen.
+`medicationEntries` gespeichert. Unterhalb der Einnahmeerfassung können
+zusätzlich Verordnungen mit Medikament, Verordnungsdatum, verschreibender
+Person oder Praxis und Grund dokumentiert werden. Für unvollständige ältere
+Informationen sind verschreibende Stelle und Grund optional.
+
+Verordnungen liegen getrennt im IndexedDB-Store `medicationPrescriptions`.
+Bei aktiver Google-Synchronisierung werden Einnahmen über
+`Medikamenteneinnahmen` und Verordnungen über
+`Medikamentenverordnungen` abgeglichen. Beide Bereiche verwenden gemeinsam
+die aus bisherigen Einträgen gelernte Medikamenten-Vorschlagsliste.
