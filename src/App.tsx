@@ -3,6 +3,7 @@ import {
   BottomNavigation,
   type AppSection,
 } from './components/BottomNavigation/BottomNavigation'
+import { MedicationEntryForm } from './features/medication/MedicationEntryForm'
 import { PainEntryFlow } from './features/pain/PainEntryFlow'
 import { GoogleSyncSettings } from './features/settings/GoogleSyncSettings'
 import './App.css'
@@ -19,7 +20,7 @@ const PAGE_COPY: Record<
   medication: {
     eyebrow: 'Schmerztagebuch',
     title: 'Medikamente',
-    description: 'Medikamente und ihre Einnahme werden hier verwaltet.',
+    description: 'Eingenommene Medikamente mit Dosis und Zeitpunkt dokumentieren.',
   },
   activity: {
     eyebrow: 'Schmerztagebuch',
@@ -55,14 +56,7 @@ export function App() {
 
             {activeSection === 'pain' ? <PainEntryFlow /> : null}
 
-            {activeSection === 'medication' ? (
-              <div className="app__placeholder">
-                <p>
-                  Die Medikamentenerfassung kommt als eigener Bereich auf diese
-                  Grundnavigation.
-                </p>
-              </div>
-            ) : null}
+            {activeSection === 'medication' ? <MedicationEntryForm /> : null}
 
             {activeSection === 'activity' ? (
               <div className="app__placeholder">
