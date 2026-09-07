@@ -30,14 +30,29 @@ type Story = StoryObj<typeof meta>;
 function ControlledExample(
   props: React.ComponentProps<typeof TimeRangeColumn>,
 ) {
-  const [value, setValue] = useState<TimeRange>(
-    props.value ?? { start: "09:00", end: "10:30" },
+  const [value, setValue] = useState<TimeRange[]>(
+    props.value
+      ? [...props.value]
+      : [{ start: "09:00", end: "10:30" }],
   );
   return <TimeRangeColumn {...props} value={value} onChange={setValue} />;
 }
 
 export const Default: Story = {
   render: (args) => <ControlledExample {...args} />,
+};
+
+export const Overlapping: Story = {
+  render: (args) => (
+    <ControlledExample
+      {...args}
+      value={[
+        { start: "09:00", end: "11:30" },
+        { start: "10:00", end: "12:00" },
+        { start: "10:30", end: "11:00" },
+      ]}
+    />
+  ),
 };
 
 export const FineResolution: Story = {
@@ -48,7 +63,10 @@ export const FineResolution: Story = {
     label: "Kurzes Zeitfenster",
   },
   render: (args) => (
-    <ControlledExample {...args} value={{ start: "10:10", end: "11:00" }} />
+    <ControlledExample
+      {...args}
+      value={[{ start: "10:10", end: "11:00" }]}
+    />
   ),
 };
 
@@ -60,7 +78,13 @@ export const FullDay: Story = {
     label: "Ganztägige Planung",
   },
   render: (args) => (
-    <ControlledExample {...args} value={{ start: "07:30", end: "09:00" }} />
+    <ControlledExample
+      {...args}
+      value={[
+        { start: "07:30", end: "09:00" },
+        { start: "17:00", end: "18:30" },
+      ]}
+    />
   ),
 };
 
