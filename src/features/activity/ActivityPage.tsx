@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useState } from 'react'
+import { type FormEvent, useEffect, useRef, useState } from 'react'
 import {
   TimeRangeColumn,
   type TimeRange,
@@ -34,8 +34,10 @@ export function ActivityPage() {
   const [timeRanges, setTimeRanges] = useState<TimeRange[]>([])
   const [rangeDetails, setRangeDetails] = useState<RangeDetails[]>([])
   const [knownActivityNames, setKnownActivityNames] = useState<string[]>([])
+  const [activeRangeIndex, setActiveRangeIndex] = useState<number | null>(null)
   const [status, setStatus] = useState('')
   const [saving, setSaving] = useState(false)
+  const detailsDialogRef = useRef<HTMLDialogElement>(null)
 
   useEffect(() => {
     let active = true
@@ -48,6 +50,18 @@ export function ActivityPage() {
       active = false
     }
   }, [])
+
+  useEffect(() => {
+    const dialog = detailsDialogRef.current
+    if (!dialog) return
+
+    if (activeRangeIndex === null) {
+      if (dialog.open) dialog.close()
+      return
+    }
+
+    if (!dialog.open) dialog.showModal()
+  }, [activeRangeIndex])
 
   function changeRanges(nextRanges: TimeRange[]): void {
     setTimeRanges(nextRanges)
@@ -68,6 +82,15 @@ export function ActivityPage() {
     )
   }
 
+  function openRangeDetails(index: number): void {
+    setActiveRangeIndex(index)
+    setStatus('')
+  }
+
+  function closeRangeDetails(): void {
+    setActiveRangeIndex(null)
+  }
+
   function removeRange(index: number): void {
     setTimeRanges((current) =>
       current.filter((_, rangeIndex) => rangeIndex !== index),
@@ -75,6 +98,7 @@ export function ActivityPage() {
     setRangeDetails((current) =>
       current.filter((_, detailsIndex) => detailsIndex !== index),
     )
+    setActiveRangeIndex(null)
     setStatus('')
   }
 
@@ -96,7 +120,7 @@ export function ActivityPage() {
     )
     if (missingActivityIndex >= 0) {
       setStatus(
-        `Bitte für Zeitraum ${missingActivityIndex + 1} eine Aktivität eintragen.`,
+        `Bitte für Zeitraum ${missingActivityIndex + 1} eine Aktivität eintragen. Öffne dazu die rechte Hälfte des Zeitraums.`,
       )
       return
     }
@@ -118,6 +142,7 @@ export function ActivityPage() {
       setKnownActivityNames(await listActivityNames())
       setTimeRanges([])
       setRangeDetails([])
+      setActiveRangeIndex(null)
       setStatus(
         timeRanges.length === 1
           ? 'Aktivität gespeichert.'
@@ -129,6 +154,13 @@ export function ActivityPage() {
       setSaving(false)
     }
   }
+
+  const activeRange =
+    activeRangeIndex === null ? null : timeRanges[activeRangeIndex] ?? null
+  const activeDetails =
+    activeRangeIndex === null
+      ? null
+      : rangeDetails[activeRangeIndex] ?? emptyDetails()
 
   return (
     <form className="activity-page" onSubmit={(event) => void submit(event)}>
@@ -149,8 +181,9 @@ export function ActivityPage() {
         <div>
           <h2 id="activity-time-title">Zeiträume der Aktivität</h2>
           <p>
-            Wähle einen oder mehrere Zeiträume aus. Für jeden Zeitraum kannst
-            du anschließend eine eigene Aktivität und Notiz eintragen.
+            Wähle einen oder mehrere Zeiträume aus. Nach dem Erstellen öffnet
+            sich die Aktivität. Später kannst du sie über die rechte Hälfte des
+            Zeitraums wieder öffnen.
           </p>
         </div>
       </section>
@@ -161,6 +194,8 @@ export function ActivityPage() {
         resolution={15}
         value={timeRanges}
         onChange={changeRanges}
+        onRangeActivate={openRangeDetails}
+        onRangeCreated={openRangeDetails}
         label="Aktivitätszeiträume"
       />
 
@@ -171,93 +206,110 @@ export function ActivityPage() {
       </datalist>
 
       {timeRanges.length ? (
-        <section
-          className="activity-page__details"
-          aria-labelledby="activity-details-title"
-        >
-          <div className="activity-page__details-intro">
-            <h2 id="activity-details-title">Aktivitäten eintragen</h2>
-            <p>
-              Jede ausgewählte Zeitspanne bekommt ihre eigene Aktivität und
-              optionale Notiz.
-            </p>
-          </div>
-
-          {timeRanges.map((range, index) => {
-            const details = rangeDetails[index] ?? emptyDetails()
-
-            return (
-              <fieldset className="activity-page__range" key={index}>
-                <legend>
-                  Zeitraum {index + 1} · {range.start}–{range.end}
-                </legend>
-
-                <label className="activity-page__field">
-                  <span>Aktivität</span>
-                  <input
-                    type="text"
-                    list="activity-name-options"
-                    value={details.activityName}
-                    maxLength={120}
-                    autoComplete="off"
-                    required
-                    aria-label={`Aktivität für Zeitraum ${index + 1}`}
-                    placeholder="z. B. Spaziergang"
-                    onChange={(event) =>
-                      updateDetails(index, {
-                        activityName: event.target.value,
-                      })
-                    }
-                  />
-                </label>
-
-                <label className="activity-page__field">
-                  <span>
-                    Notiz <small>(optional)</small>
-                  </span>
-                  <textarea
-                    value={details.note}
-                    maxLength={2000}
-                    rows={3}
-                    aria-label={`Notiz für Zeitraum ${index + 1}`}
-                    placeholder="Was möchtest du zu dieser Aktivität festhalten?"
-                    onChange={(event) =>
-                      updateDetails(index, { note: event.target.value })
-                    }
-                  />
-                </label>
-
-                <div className="activity-page__range-actions">
-                  <button
-                    type="button"
-                    onClick={() => removeRange(index)}
-                  >
-                    Zeitraum entfernen
-                  </button>
-                </div>
-              </fieldset>
-            )
-          })}
-
-          <div className="activity-page__footer">
-            <button
-              className="activity-page__primary"
-              type="submit"
-              disabled={saving}
-            >
-              {saving
-                ? 'Speichert …'
-                : timeRanges.length === 1
-                  ? 'Aktivität speichern'
-                  : 'Aktivitäten speichern'}
-            </button>
-          </div>
-        </section>
+        <div className="activity-page__footer">
+          <button
+            className="activity-page__primary"
+            type="submit"
+            disabled={saving}
+          >
+            {saving
+              ? 'Speichert …'
+              : timeRanges.length === 1
+                ? 'Aktivität speichern'
+                : 'Aktivitäten speichern'}
+          </button>
+        </div>
       ) : null}
 
       <p className="activity-page__status" aria-live="polite">
         {status}
       </p>
+
+      <dialog
+        ref={detailsDialogRef}
+        className="activity-page__dialog"
+        aria-labelledby="activity-details-title"
+        onClose={closeRangeDetails}
+      >
+        {activeRange && activeDetails && activeRangeIndex !== null ? (
+          <div className="activity-page__dialog-card">
+            <header className="activity-page__dialog-header">
+              <div>
+                <span className="activity-page__dialog-eyebrow">
+                  Zeitraum {activeRangeIndex + 1} · {activeRange.start}–
+                  {activeRange.end}
+                </span>
+                <h2 id="activity-details-title">Aktivität eintragen</h2>
+              </div>
+              <button
+                type="button"
+                className="activity-page__dialog-close"
+                aria-label="Details schließen"
+                onClick={closeRangeDetails}
+              >
+                Schließen
+              </button>
+            </header>
+
+            <div className="activity-page__dialog-body">
+              <label className="activity-page__field">
+                <span>Aktivität</span>
+                <input
+                  type="text"
+                  list="activity-name-options"
+                  value={activeDetails.activityName}
+                  maxLength={120}
+                  autoComplete="off"
+                  required
+                  autoFocus
+                  aria-label={`Aktivität für Zeitraum ${activeRangeIndex + 1}`}
+                  placeholder="z. B. Spaziergang"
+                  onChange={(event) =>
+                    updateDetails(activeRangeIndex, {
+                      activityName: event.target.value,
+                    })
+                  }
+                />
+              </label>
+
+              <label className="activity-page__field">
+                <span>
+                  Notiz <small>(optional)</small>
+                </span>
+                <textarea
+                  value={activeDetails.note}
+                  maxLength={2000}
+                  rows={5}
+                  aria-label={`Notiz für Zeitraum ${activeRangeIndex + 1}`}
+                  placeholder="Was möchtest du zu dieser Aktivität festhalten?"
+                  onChange={(event) =>
+                    updateDetails(activeRangeIndex, {
+                      note: event.target.value,
+                    })
+                  }
+                />
+              </label>
+
+              <div className="activity-page__dialog-actions">
+                <button
+                  type="button"
+                  className="activity-page__remove"
+                  onClick={() => removeRange(activeRangeIndex)}
+                >
+                  Zeitraum entfernen
+                </button>
+                <button
+                  type="button"
+                  className="activity-page__primary"
+                  onClick={closeRangeDetails}
+                >
+                  Fertig
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </dialog>
     </form>
   )
 }
