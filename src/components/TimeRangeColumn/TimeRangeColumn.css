@@ -132,36 +132,18 @@
   pointer-events: none;
 }
 
-.timerange__lane {
-  position: absolute;
-  top: 12px;
-  z-index: 1;
-  color: #8b9691;
-  font-size: 0.62rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  pointer-events: none;
-}
-
-.timerange__lane--left {
-  left: 12px;
-}
-
-.timerange__lane--right {
-  right: 12px;
-}
-
 .timerange__selection {
   position: absolute;
-  right: 12px;
-  left: 12px;
   z-index: 2;
   display: flex;
+  min-width: 0;
   min-height: 10px;
+  flex-direction: column;
   justify-content: space-between;
-  padding: 8px 10px;
+  overflow: hidden;
+  padding: 6px 7px;
   border: 1px solid #7ab29f;
-  border-radius: 10px;
+  border-radius: 8px;
   background: linear-gradient(
     135deg,
     rgb(190 227 214 / 92%),
@@ -169,9 +151,10 @@
   );
   box-shadow: 0 8px 20px rgb(22 107 82 / 12%);
   color: #0e5a43;
-  font-size: 0.72rem;
+  font-size: 0.7rem;
   font-weight: 750;
   font-variant-numeric: tabular-nums;
+  line-height: 1.15;
   pointer-events: none;
 }
 
@@ -210,7 +193,43 @@
   font-weight: 700;
 }
 
-.timerange__controls label {
+.timerange__control-list {
+  display: grid;
+  gap: 12px;
+}
+
+.timerange__control {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--time-line);
+  border-radius: 12px;
+  background: #f9fbfa;
+}
+
+.timerange__control-header {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.timerange__control-header strong {
+  font-size: 0.82rem;
+}
+
+.timerange__control-header button {
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid #cfd8d3;
+  border-radius: 10px;
+  background: white;
+  color: inherit;
+  cursor: pointer;
+}
+
+.timerange__control label {
   display: grid;
   grid-template-columns: 120px 1fr;
   align-items: center;
@@ -218,7 +237,7 @@
   min-height: 44px;
 }
 
-.timerange__controls label > span {
+.timerange__control label > span {
   display: flex;
   justify-content: space-between;
   gap: 8px;
@@ -237,7 +256,8 @@
   cursor: pointer;
 }
 
-.timerange__controls input:focus-visible {
+.timerange__controls input:focus-visible,
+.timerange__control-header button:focus-visible {
   outline: 3px solid #8ec9b5;
   outline-offset: 4px;
 }
@@ -259,7 +279,7 @@
     margin-left: 0;
   }
 
-  .timerange__controls label {
+  .timerange__control label {
     grid-template-columns: 1fr;
     gap: 0;
   }
