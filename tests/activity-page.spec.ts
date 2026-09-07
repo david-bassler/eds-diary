@@ -9,10 +9,20 @@ test.beforeEach(async ({ page }) => {
     .click()
 })
 
+async function closeRangeDetails(
+  page: import('@playwright/test').Page,
+): Promise<void> {
+  await page.getByRole('button', { name: 'Details schließen' }).click()
+  await expect(
+    page.getByRole('dialog', { name: 'Aktivität eintragen' }),
+  ).not.toBeVisible()
+}
+
 async function addRange(
   page: import('@playwright/test').Page,
   startHour: number,
   endHour: number,
+  closeDetails = true,
 ): Promise<void> {
   const surface = page.getByTestId('time-range-surface')
   const bounds = await surface.boundingBox()
@@ -25,6 +35,30 @@ async function addRange(
   await page.mouse.down()
   await page.mouse.move(x, y(endHour))
   await page.mouse.up()
+
+  await expect(
+    page.getByRole('dialog', { name: 'Aktivität eintragen' }),
+  ).toBeVisible()
+
+  if (closeDetails) await closeRangeDetails(page)
+}
+
+async function openRangeDetails(
+  page: import('@playwright/test').Page,
+  index: number,
+): Promise<void> {
+  const selection = page.locator('.timerange__selection').nth(index)
+  const bounds = await selection.boundingBox()
+  if (!bounds) throw new Error('Zeitraum ist nicht sichtbar.')
+
+  await page.mouse.click(
+    bounds.x + bounds.width * 0.75,
+    bounds.y + bounds.height / 2,
+  )
+
+  await expect(
+    page.getByRole('dialog', { name: 'Aktivität eintragen' }),
+  ).toBeVisible()
 }
 
 test('shows date and the time range picker on the activity page', async ({
@@ -39,6 +73,37 @@ test('shows date and the time range picker on the activity page', async ({
   ).toBeVisible()
   await expect(page.getByTestId('time-range-surface')).toBeVisible()
   await expect(page.locator('.timerange__selection')).toHaveCount(0)
+  await expect(
+    page.getByRole('dialog', { name: 'Aktivität eintragen' }),
+  ).not.toBeVisible()
+})
+
+test('opens details after creation and from the right half of a range', async ({
+  page,
+  isMobile,
+}) => {
+  await addRange(page, 8, 10, false)
+
+  const dialog = page.getByRole('dialog', { name: 'Aktivität eintragen' })
+  await expect(page.getByLabel('Aktivität für Zeitraum 1')).toBeVisible()
+
+  const dialogBounds = await dialog.boundingBox()
+  const viewport = page.viewportSize()
+  if (!dialogBounds || !viewport) {
+    throw new Error('Dialog oder Viewport ist nicht messbar.')
+  }
+
+  if (isMobile) {
+    expect(Math.abs(dialogBounds.width - viewport.width)).toBeLessThan(2)
+    expect(Math.abs(dialogBounds.height - viewport.height)).toBeLessThan(2)
+  } else {
+    expect(dialogBounds.width).toBeLessThan(viewport.width)
+    expect(dialogBounds.height).toBeLessThan(viewport.height)
+  }
+
+  await closeRangeDetails(page)
+  await openRangeDetails(page, 0)
+  await expect(page.getByLabel('Aktivität für Zeitraum 1')).toBeVisible()
 })
 
 test('keeps multiple ranges and lays overlapping ranges out equally', async ({
@@ -59,7 +124,9 @@ test('keeps multiple ranges and lays overlapping ranges out equally', async ({
   ])
 
   await expect(page.locator('input[type="range"]')).toHaveCount(0)
-  await expect(page.getByLabel('Aktivität für Zeitraum 1')).toBeVisible()
+  await expect(page.getByLabel('Aktivität für Zeitraum 1')).not.toBeVisible()
+
+  await openRangeDetails(page, 1)
   await expect(page.getByLabel('Aktivität für Zeitraum 2')).toBeVisible()
 })
 
@@ -67,21 +134,24 @@ test('stores activity and note separately for each selected range', async ({
   page,
 }) => {
   await page.getByLabel('Datum').fill('2026-09-07')
-  await addRange(page, 8, 10)
-  await addRange(page, 12, 13)
 
+  await addRange(page, 8, 10, false)
   await page
     .getByLabel('Aktivität für Zeitraum 1')
     .fill('Spaziergang')
   await page
     .getByLabel('Notiz für Zeitraum 1')
     .fill('synthetische Notiz eins')
+  await closeRangeDetails(page)
+
+  await addRange(page, 12, 13, false)
   await page
     .getByLabel('Aktivität für Zeitraum 2')
     .fill('Physiotherapie')
   await page
     .getByLabel('Notiz für Zeitraum 2')
     .fill('synthetische Notiz zwei')
+  await closeRangeDetails(page)
 
   await page.getByRole('button', { name: 'Aktivitäten speichern' }).click()
   await expect(page.getByText('Aktivitäten gespeichert.')).toBeVisible()
@@ -128,19 +198,23 @@ test('stores activity and note separately for each selected range', async ({
 test('can remove one selected range together with its details', async ({
   page,
 }) => {
-  await addRange(page, 8, 10)
-  await addRange(page, 12, 13)
-
+  await addRange(page, 8, 10, false)
   await page.getByLabel('Aktivität für Zeitraum 1').fill('Erste Aktivität')
-  await page.getByLabel('Aktivität für Zeitraum 2').fill('Zweite Aktivität')
+  await closeRangeDetails(page)
 
-  await page
-    .locator('.activity-page__range')
-    .first()
-    .getByRole('button', { name: 'Zeitraum entfernen' })
-    .click()
+  await addRange(page, 12, 13, false)
+  await page.getByLabel('Aktivität für Zeitraum 2').fill('Zweite Aktivität')
+  await closeRangeDetails(page)
+
+  await openRangeDetails(page, 0)
+  await page.getByRole('button', { name: 'Zeitraum entfernen' }).click()
 
   await expect(page.locator('.timerange__selection')).toHaveCount(1)
+  await expect(
+    page.getByRole('dialog', { name: 'Aktivität eintragen' }),
+  ).not.toBeVisible()
+
+  await openRangeDetails(page, 0)
   await expect(page.getByLabel('Aktivität für Zeitraum 1')).toHaveValue(
     'Zweite Aktivität',
   )
