@@ -51,6 +51,8 @@ src/features/pain/painRepository.ts
 src/features/pain/painSync.ts
 src/features/medication/medicationRepository.ts
 src/features/medication/medicationSync.ts
+src/features/activity/activityRepository.ts
+src/features/activity/activitySync.ts
 ```
 
 Persönliche Tagebuchdaten werden nicht in `localStorage` gespeichert.
@@ -68,8 +70,8 @@ an. Google-API-Aufrufe laufen über eine gemeinsame serielle Queue. HTTP 429 und
 vorübergehende 5xx-Fehler werden mit Backoff erneut versucht.
 
 Automatisch verwaltete Tabellenblätter sind unter anderem
-`Schmerzeintraege`, `Schmerzarten`, `Medikamenteneinnahmen` und
-`Medikamentenverordnungen`.
+`Schmerzeintraege`, `Schmerzarten`, `Medikamenteneinnahmen`,
+`Medikamentenverordnungen` und `Aktivitaeten`.
 Fehlende Tabellenblätter und Header werden beim Synchronisieren angelegt.
 
 ### Google einmalig einrichten
@@ -201,3 +203,20 @@ Im GitHub-Pages-Build liegen diese Routen unter `/eds-diary/`. Eine
 zurück und stellt den ursprünglichen Pfad vor dem React-Rendern wieder her. Der
 Service Worker liefert bei Navigations-404 zusätzlich den gecachten App-Einstieg
 aus, damit History-Routen auch in der installierten PWA funktionieren.
+
+
+## Aktivitätserfassung
+
+Im Bereich **Aktivitäten** wird zunächst ein Datum gewählt; standardmäßig ist
+der aktuelle lokale Tag eingestellt. Im Zeitpicker können beliebig viele
+Zeitspannen ausgewählt werden. Für jede Zeitspanne werden separat eine
+Aktivität und eine optionale Notiz erfasst.
+
+Die Aktivität ist ein freies Eingabefeld mit Vorschlagsliste. Bereits
+gespeicherte Aktivitätsnamen werden aus den lokalen Einträgen abgeleitet und
+bei späteren Eingaben wieder angeboten.
+
+Jede Zeitspanne wird als eigener Datensatz im IndexedDB-Store
+`activityEntries` gespeichert. Bei aktiver Google-Synchronisierung werden die
+Einträge über das Tabellenblatt `Aktivitaeten` mit Datum, Beginn, Ende,
+Aktivität und Notiz abgeglichen.
