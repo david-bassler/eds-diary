@@ -1,6 +1,32 @@
 .activity-page {
   display: grid;
-  gap: 18px;
+  gap: 20px;
+}
+
+.activity-page__date {
+  display: grid;
+  gap: 7px;
+}
+
+.activity-page__date > span,
+.activity-page__field > span {
+  font-weight: 650;
+}
+
+.activity-page__date input,
+.activity-page__field input,
+.activity-page__field textarea {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid rgb(37 48 43 / 24%);
+  border-radius: 10px;
+  background: white;
+  color: inherit;
+}
+
+.activity-page__date input {
+  max-width: 240px;
 }
 
 .activity-page__intro {
@@ -9,15 +35,19 @@
 }
 
 .activity-page__intro h2,
-.activity-page__intro p {
+.activity-page__intro p,
+.activity-page__details-intro h2,
+.activity-page__details-intro p {
   margin: 0;
 }
 
-.activity-page__intro h2 {
+.activity-page__intro h2,
+.activity-page__details-intro h2 {
   font-size: clamp(1.35rem, 6vw, 1.8rem);
 }
 
-.activity-page__intro p {
+.activity-page__intro p,
+.activity-page__details-intro p {
   max-width: 58ch;
   line-height: 1.5;
   opacity: 0.72;
@@ -25,4 +55,94 @@
 
 .activity-page .timerange {
   width: 100%;
+}
+
+.activity-page__details {
+  display: grid;
+  gap: 16px;
+}
+
+.activity-page__details-intro {
+  display: grid;
+  gap: 5px;
+}
+
+.activity-page__range {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  margin: 0;
+  padding: 16px;
+  border: 1px solid rgb(37 48 43 / 14%);
+  border-radius: 16px;
+  background: rgb(255 255 255 / 48%);
+}
+
+.activity-page__range legend {
+  padding-inline: 6px;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+}
+
+.activity-page__field {
+  display: grid;
+  gap: 7px;
+}
+
+.activity-page__field small {
+  font-weight: 500;
+  opacity: 0.65;
+}
+
+.activity-page__field textarea {
+  min-height: 96px;
+  resize: vertical;
+}
+
+.activity-page__range-actions,
+.activity-page__footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.activity-page__range-actions button {
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid rgb(37 48 43 / 20%);
+  border-radius: 10px;
+  background: white;
+  color: inherit;
+  cursor: pointer;
+}
+
+.activity-page__primary {
+  min-height: 48px;
+  padding: 10px 18px;
+  border: 1px solid #315b4a;
+  border-radius: 12px;
+  background: #315b4a;
+  color: white;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.activity-page__primary:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.activity-page__range-actions button:focus-visible,
+.activity-page__primary:focus-visible,
+.activity-page__date input:focus-visible,
+.activity-page__field input:focus-visible,
+.activity-page__field textarea:focus-visible {
+  outline: 3px solid #8ec9b5;
+  outline-offset: 3px;
+}
+
+.activity-page__status {
+  min-height: 1.4em;
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 650;
 }
