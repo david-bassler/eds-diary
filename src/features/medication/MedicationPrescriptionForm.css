@@ -1,0 +1,91 @@
+.medication-prescription-form {
+  display: grid;
+  gap: 18px;
+  padding-top: 28px;
+  border-top: 1px solid rgb(37 48 43 / 14%);
+}
+
+.medication-prescription-form__intro {
+  display: grid;
+  gap: 5px;
+}
+
+.medication-prescription-form__intro h2,
+.medication-prescription-form__intro p {
+  margin: 0;
+}
+
+.medication-prescription-form__intro h2 {
+  font-size: clamp(1.35rem, 6vw, 1.8rem);
+}
+
+.medication-prescription-form__intro p {
+  line-height: 1.5;
+  opacity: 0.72;
+}
+
+.medication-prescription-form__form {
+  display: grid;
+  gap: 20px;
+}
+
+.medication-prescription-form__field {
+  display: grid;
+  gap: 7px;
+}
+
+.medication-prescription-form__field > span {
+  font-weight: 650;
+}
+
+.medication-prescription-form__field small {
+  font-weight: 500;
+  opacity: 0.65;
+}
+
+.medication-prescription-form__field input,
+.medication-prescription-form__field textarea {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid rgb(37 48 43 / 24%);
+  border-radius: 10px;
+  background: white;
+  color: inherit;
+}
+
+.medication-prescription-form__field textarea {
+  min-height: 100px;
+  resize: vertical;
+}
+
+.medication-prescription-form__footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.medication-prescription-form__primary {
+  display: inline-flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 18px;
+  border: 1px solid #315b4a;
+  border-radius: 12px;
+  background: #315b4a;
+  color: white;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.medication-prescription-form__primary:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.medication-prescription-form__status {
+  min-height: 1.4em;
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 650;
+}
