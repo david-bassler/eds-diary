@@ -187,3 +187,17 @@ Bei aktiver Google-Synchronisierung werden Einnahmen über
 `Medikamenteneinnahmen` und Verordnungen über
 `Medikamentenverordnungen` abgeglichen. Beide Bereiche verwenden gemeinsam
 die aus bisherigen Einträgen gelernte Medikamenten-Vorschlagsliste.
+
+
+## Routing
+
+Die vier Hauptbereiche verwenden die native Browser History API. Navigation
+schreibt mit `history.pushState()` sprechende Pfade wie `/schmerzen`,
+`/medikamente`, `/aktivitaeten` und `/konfiguration`; Zurück/Vorwärts wird
+über `popstate` verarbeitet.
+
+Im GitHub-Pages-Build liegen diese Routen unter `/eds-diary/`. Eine
+`404.html` leitet direkte Aufrufe einer Unterroute zunächst auf den App-Einstieg
+zurück und stellt den ursprünglichen Pfad vor dem React-Rendern wieder her. Der
+Service Worker liefert bei Navigations-404 zusätzlich den gecachten App-Einstieg
+aus, damit History-Routen auch in der installierten PWA funktionieren.
