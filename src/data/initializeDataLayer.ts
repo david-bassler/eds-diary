@@ -1,3 +1,4 @@
+import { initializeActivitySync } from '../features/activity/activitySync'
 import { initializeMedicationSync } from '../features/medication/medicationSync'
 import { initializePainSync } from '../features/pain/painSync'
 import { initializeSyncManager } from './syncManager'
@@ -10,5 +11,6 @@ export function initializeDataLayer(): void {
 
   initializePainSync()
   initializeMedicationSync()
+  initializeActivitySync()
   initializeSyncManager()
 }
