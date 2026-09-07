@@ -178,55 +178,6 @@
   pointer-events: none;
 }
 
-.timerange__range-list {
-  display: grid;
-  gap: 8px;
-  margin: 18px 0 0 52px;
-}
-
-.timerange__range-item {
-  display: flex;
-  min-height: 52px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 8px 10px 8px 12px;
-  border: 1px solid var(--time-line);
-  border-radius: 12px;
-  background: #f9fbfa;
-}
-
-.timerange__range-item > span {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.timerange__range-item strong {
-  font-size: 0.8rem;
-}
-
-.timerange__range-item > span > span {
-  color: var(--time-muted);
-  font-size: 0.78rem;
-  font-variant-numeric: tabular-nums;
-}
-
-.timerange__range-item button {
-  min-height: 44px;
-  padding: 8px 12px;
-  border: 1px solid #cfd8d3;
-  border-radius: 10px;
-  background: white;
-  color: inherit;
-  cursor: pointer;
-}
-
-.timerange__range-item button:focus-visible {
-  outline: 3px solid #8ec9b5;
-  outline-offset: 4px;
-}
-
 @media (width <= 520px) {
   .timerange__header {
     display: grid;
@@ -240,9 +191,6 @@
     grid-template-columns: 45px 1fr;
   }
 
-  .timerange__range-list {
-    margin-left: 0;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
