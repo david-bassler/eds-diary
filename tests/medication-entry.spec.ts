@@ -63,3 +63,38 @@ test('uses previously entered medication names as suggestions', async ({
     ),
   ).toHaveCount(1)
 })
+
+test('stores medication prescription details', async ({ page }) => {
+  const section = page.locator(
+    'section[aria-labelledby="medication-prescription-form-title"]',
+  )
+
+  await expect(section.getByLabel('Datum der Verordnung')).not.toHaveValue('')
+  await section.getByLabel('Medikament').fill('Verordnungs-Testmedikament')
+  await section
+    .getByLabel('Verschrieben von (optional)')
+    .fill('Synthetische Testpraxis')
+  await section
+    .getByLabel('Grund / Anlass (optional)')
+    .fill('synthetischer Verordnungsgrund')
+  await section.getByRole('button', { name: 'Verordnung speichern' }).click()
+
+  await expect(
+    section.getByText('Medikamentenverordnung gespeichert.'),
+  ).toBeVisible()
+
+  const prescriptions = await page.evaluate(async () => {
+    const repository = await import(
+      '/src/features/medication/medicationPrescriptionRepository.ts'
+    )
+    return repository.listMedicationPrescriptions()
+  })
+
+  expect(prescriptions).toHaveLength(1)
+  expect(prescriptions[0]).toMatchObject({
+    medicationName: 'Verordnungs-Testmedikament',
+    prescriber: 'Synthetische Testpraxis',
+    reason: 'synthetischer Verordnungsgrund',
+    status: 'active',
+  })
+})
