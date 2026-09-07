@@ -42,6 +42,36 @@ export const Default: Story = {
   render: (args) => <ControlledExample {...args} />,
 };
 
+function RangeActionExample(
+  props: React.ComponentProps<typeof TimeRangeColumn>,
+) {
+  const [value, setValue] = useState<TimeRange[]>([
+    { start: "09:00", end: "10:30" },
+  ]);
+  const [activeRange, setActiveRange] = useState<number | null>(null);
+
+  return (
+    <div>
+      <TimeRangeColumn
+        {...props}
+        value={value}
+        onChange={setValue}
+        onRangeActivate={setActiveRange}
+        onRangeCreated={setActiveRange}
+      />
+      <output aria-live="polite">
+        {activeRange === null
+          ? "Noch kein Zeitraum geöffnet"
+          : `Zeitraum ${activeRange + 1} geöffnet`}
+      </output>
+    </div>
+  );
+}
+
+export const WithRangeActions: Story = {
+  render: (args) => <RangeActionExample {...args} />,
+};
+
 export const Overlapping: Story = {
   render: (args) => (
     <ControlledExample
