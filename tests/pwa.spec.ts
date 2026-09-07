@@ -59,7 +59,7 @@ test('serves the service worker', async ({ page, request }) => {
   const serviceWorkerResponse = await request.get(serviceWorkerUrl)
 
   expect(serviceWorkerResponse.ok()).toBe(true)
-  expect(await serviceWorkerResponse.text()).toContain('eds-diary-shell-v5')
+  expect(await serviceWorkerResponse.text()).toContain('eds-diary-shell-v6')
 })
 
 test('serves generated PNG body maps', async ({ page, request }) => {
