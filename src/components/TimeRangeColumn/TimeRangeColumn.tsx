@@ -13,6 +13,8 @@ export type TimeRangeColumnProps = {
   resolution: number;
   value?: readonly TimeRange[];
   onChange?: (ranges: TimeRange[]) => void;
+  onRangeActivate?: (index: number) => void;
+  onRangeCreated?: (index: number) => void;
   label?: string;
 };
 
@@ -189,6 +191,8 @@ export function TimeRangeColumn({
   resolution,
   value,
   onChange,
+  onRangeActivate,
+  onRangeCreated,
   label = "Zeiträume auswählen",
 }: TimeRangeColumnProps) {
   const beginMinutes = parseTime(begin);
@@ -312,6 +316,17 @@ export function TimeRangeColumn({
       ]);
     }
 
+    const createdIndex = drag.baseRanges.length;
+    event.currentTarget.releasePointerCapture(event.pointerId);
+    setDrag(null);
+    setFineMode(false);
+    onRangeCreated?.(createdIndex);
+  };
+
+  const cancelDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!drag || drag.pointerId !== event.pointerId) return;
+
+    emitRanges(drag.baseRanges);
     event.currentTarget.releasePointerCapture(event.pointerId);
     setDrag(null);
     setFineMode(false);
@@ -344,6 +359,9 @@ export function TimeRangeColumn({
         nebeneinander dargestellt. Ziehe von einer Seite zur Mitte, um lokal
         auf {fineResolution} Minute{fineResolution === 1 ? "" : "n"} zu
         verfeinern.
+        {onRangeActivate
+          ? " Die rechte Hälfte eines Zeitraums öffnet seine Details."
+          : ""}
       </p>
 
       <div className="timerange__workspace">
@@ -366,7 +384,7 @@ export function TimeRangeColumn({
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={finishDrag}
-          onPointerCancel={finishDrag}
+          onPointerCancel={cancelDrag}
           data-testid="time-range-surface"
         >
           <div className="timerange__grid" aria-hidden="true" />
@@ -385,14 +403,29 @@ export function TimeRangeColumn({
                   left: `calc(${left}% + 2px)`,
                   width: `calc(${width}% - 4px)`,
                 }}
-                aria-hidden="true"
+                aria-hidden={onRangeActivate ? undefined : true}
                 data-range-index={range.index}
                 data-overlap-columns={range.columns}
               >
-                <span>{formatTime(range.start)}</span>
-                <span className="timerange__selectionend">
+                <span aria-hidden="true">{formatTime(range.start)}</span>
+                <span
+                  className="timerange__selectionend"
+                  aria-hidden="true"
+                >
                   {formatTime(range.end)}
                 </span>
+                {onRangeActivate ? (
+                  <button
+                    type="button"
+                    className="timerange__selectionaction"
+                    aria-label={`Zeitraum ${range.index + 1} · ${formatTime(range.start)}–${formatTime(range.end)} öffnen`}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onRangeActivate(range.index);
+                    }}
+                  />
+                ) : null}
               </div>
             );
           })}
