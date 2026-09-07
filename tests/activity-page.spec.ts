@@ -53,9 +53,6 @@ test('keeps multiple ranges and lays overlapping ranges out equally', async ({
 
   await expect(page.locator('input[type="range"]')).toHaveCount(0)
   await expect(
-    page.getByRole('button', { name: 'Zeitraum 1 entfernen' }),
-  ).toBeVisible()
-  await expect(
-    page.getByRole('button', { name: 'Zeitraum 2 entfernen' }),
-  ).toBeVisible()
+    page.getByLabel('Ausgewählte Zeiträume'),
+  ).toHaveCount(0)
 })
