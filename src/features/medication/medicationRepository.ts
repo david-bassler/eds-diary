@@ -126,15 +126,27 @@ export async function listMedicationEntries(options?: {
 }
 
 export async function listMedicationNames(): Promise<string[]> {
-  const entries = await listMedicationEntries()
+  const [entries, storedPrescriptions] = await Promise.all([
+    listMedicationEntries(),
+    getAllRecords<unknown>(LOCAL_STORES.medicationPrescriptions),
+  ])
   const seen = new Set<string>()
   const names: string[] = []
 
-  for (const entry of entries) {
-    const key = entry.medicationName.toLocaleLowerCase('de')
+  const candidates = [
+    ...entries.map((entry) => entry.medicationName),
+    ...storedPrescriptions.flatMap((value) => {
+      if (!isRecord(value)) return []
+      const name = normalizedText(value.medicationName, MAX_NAME_LENGTH)
+      return name ? [name] : []
+    }),
+  ]
+
+  for (const name of candidates) {
+    const key = name.toLocaleLowerCase('de')
     if (seen.has(key)) continue
     seen.add(key)
-    names.push(entry.medicationName)
+    names.push(name)
   }
 
   return names.sort((left, right) => left.localeCompare(right, 'de'))
