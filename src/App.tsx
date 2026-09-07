@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   BottomNavigation,
   type AppSection,
@@ -7,6 +7,10 @@ import { ActivityPage } from './features/activity/ActivityPage'
 import { MedicationPage } from './features/medication/MedicationPage'
 import { PainEntryFlow } from './features/pain/PainEntryFlow'
 import { GoogleSyncSettings } from './features/settings/GoogleSyncSettings'
+import {
+  pathForSection,
+  sectionFromPathname,
+} from './routing/appHistory'
 import './App.css'
 
 const PAGE_COPY: Record<
@@ -36,8 +40,38 @@ const PAGE_COPY: Record<
 }
 
 export function App() {
-  const [activeSection, setActiveSection] = useState<AppSection>('pain')
+  const [activeSection, setActiveSection] = useState<AppSection>(() =>
+    sectionFromPathname(window.location.pathname),
+  )
   const page = PAGE_COPY[activeSection]
+
+  useEffect(() => {
+    const canonicalPath = pathForSection(activeSection)
+    if (window.location.pathname !== canonicalPath) {
+      window.history.replaceState(
+        window.history.state,
+        '',
+        `${canonicalPath}${window.location.search}${window.location.hash}`,
+      )
+    }
+
+    const handlePopState = () => {
+      setActiveSection(sectionFromPathname(window.location.pathname))
+    }
+
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [])
+
+  function navigate(section: AppSection): void {
+    const nextPath = pathForSection(section)
+
+    if (window.location.pathname !== nextPath) {
+      window.history.pushState({ section }, '', nextPath)
+    }
+
+    setActiveSection(section)
+  }
 
   return (
     <>
@@ -68,7 +102,7 @@ export function App() {
 
       <BottomNavigation
         activeSection={activeSection}
-        onChange={setActiveSection}
+        onChange={navigate}
       />
     </>
   )
