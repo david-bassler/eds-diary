@@ -317,10 +317,6 @@ export function TimeRangeColumn({
     setFineMode(false);
   };
 
-  const removeRange = (index: number) => {
-    emitRanges(ranges.filter((_, rangeIndex) => rangeIndex !== index));
-  };
-
   return (
     <section className="timerange" aria-label={label}>
       <header className="timerange__header">
@@ -408,30 +404,7 @@ export function TimeRangeColumn({
         </div>
       </div>
 
-      {ranges.length ? (
-        <div
-          className="timerange__range-list"
-          aria-label="Ausgewählte Zeiträume"
-        >
-          {ranges.map((range, index) => (
-            <div className="timerange__range-item" key={index}>
-              <span>
-                <strong>Zeitraum {index + 1}</strong>
-                <span>
-                  {formatTime(range.start)}–{formatTime(range.end)}
-                </span>
-              </span>
-              <button
-                type="button"
-                aria-label={`Zeitraum ${index + 1} entfernen`}
-                onClick={() => removeRange(index)}
-              >
-                Entfernen
-              </button>
-            </div>
-          ))}
-        </div>
-      ) : null}
+
     </section>
   );
 }
