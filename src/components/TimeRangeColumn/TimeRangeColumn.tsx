@@ -317,20 +317,6 @@ export function TimeRangeColumn({
     setFineMode(false);
   };
 
-  const updateBoundary = (
-    index: number,
-    boundary: "start" | "end",
-    nextValue: number,
-  ) => {
-    emitRanges(
-      ranges.map((range, rangeIndex) =>
-        rangeIndex === index
-          ? { ...range, [boundary]: nextValue }
-          : range,
-      ),
-    );
-  };
-
   const removeRange = (index: number) => {
     emitRanges(ranges.filter((_, rangeIndex) => rangeIndex !== index));
   };
@@ -423,57 +409,28 @@ export function TimeRangeColumn({
       </div>
 
       {ranges.length ? (
-        <fieldset className="timerange__controls">
-          <legend>Zeiträume präzise bearbeiten</legend>
-          <div className="timerange__control-list">
-            {ranges.map((range, index) => (
-              <div className="timerange__control" key={index}>
-                <div className="timerange__control-header">
-                  <strong>Zeitraum {index + 1}</strong>
-                  <button type="button" onClick={() => removeRange(index)}>
-                    Entfernen
-                  </button>
-                </div>
-                <label>
-                  <span>
-                    Beginn <output>{formatTime(range.start)}</output>
-                  </span>
-                  <input
-                    aria-label={`Beginn Zeitraum ${index + 1} anpassen`}
-                    type="range"
-                    min={beginMinutes}
-                    max={endMinutes}
-                    step={resolution}
-                    value={range.start}
-                    onChange={(event) =>
-                      updateBoundary(
-                        index,
-                        "start",
-                        Number(event.target.value),
-                      )
-                    }
-                  />
-                </label>
-                <label>
-                  <span>
-                    Ende <output>{formatTime(range.end)}</output>
-                  </span>
-                  <input
-                    aria-label={`Ende Zeitraum ${index + 1} anpassen`}
-                    type="range"
-                    min={beginMinutes}
-                    max={endMinutes}
-                    step={resolution}
-                    value={range.end}
-                    onChange={(event) =>
-                      updateBoundary(index, "end", Number(event.target.value))
-                    }
-                  />
-                </label>
-              </div>
-            ))}
-          </div>
-        </fieldset>
+        <div
+          className="timerange__range-list"
+          aria-label="Ausgewählte Zeiträume"
+        >
+          {ranges.map((range, index) => (
+            <div className="timerange__range-item" key={index}>
+              <span>
+                <strong>Zeitraum {index + 1}</strong>
+                <span>
+                  {formatTime(range.start)}–{formatTime(range.end)}
+                </span>
+              </span>
+              <button
+                type="button"
+                aria-label={`Zeitraum ${index + 1} entfernen`}
+                onClick={() => removeRange(index)}
+              >
+                Entfernen
+              </button>
+            </div>
+          ))}
+        </div>
       ) : null}
     </section>
   );
