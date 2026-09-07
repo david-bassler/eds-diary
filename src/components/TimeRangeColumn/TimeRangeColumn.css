@@ -162,6 +162,29 @@
   align-self: flex-end;
 }
 
+.timerange__selectionaction {
+  position: absolute;
+  inset-block: 0;
+  right: 0;
+  width: 50%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0 7px 7px 0;
+  background: transparent;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.timerange__selectionaction:hover {
+  background: rgb(14 90 67 / 8%);
+}
+
+.timerange__selectionaction:focus-visible {
+  outline: 3px solid #0e5a43;
+  outline-offset: -3px;
+}
+
 .timerange__finelabel {
   position: absolute;
   top: 50%;
