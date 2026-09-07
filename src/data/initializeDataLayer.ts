@@ -1,3 +1,4 @@
+import { initializeMedicationSync } from '../features/medication/medicationSync'
 import { initializePainSync } from '../features/pain/painSync'
 import { initializeSyncManager } from './syncManager'
 
@@ -8,5 +9,6 @@ export function initializeDataLayer(): void {
   initialized = true
 
   initializePainSync()
+  initializeMedicationSync()
   initializeSyncManager()
 }
