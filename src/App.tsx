@@ -3,7 +3,7 @@ import {
   BottomNavigation,
   type AppSection,
 } from './components/BottomNavigation/BottomNavigation'
-import { MedicationEntryForm } from './features/medication/MedicationEntryForm'
+import { MedicationPage } from './features/medication/MedicationPage'
 import { PainEntryFlow } from './features/pain/PainEntryFlow'
 import { GoogleSyncSettings } from './features/settings/GoogleSyncSettings'
 import './App.css'
@@ -56,7 +56,7 @@ export function App() {
 
             {activeSection === 'pain' ? <PainEntryFlow /> : null}
 
-            {activeSection === 'medication' ? <MedicationEntryForm /> : null}
+            {activeSection === 'medication' ? <MedicationPage /> : null}
 
             {activeSection === 'activity' ? (
               <div className="app__placeholder">
