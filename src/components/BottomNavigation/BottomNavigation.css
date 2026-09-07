@@ -31,6 +31,7 @@
   background: transparent;
   color: rgb(37 48 43 / 62%);
   cursor: pointer;
+  text-decoration: none;
 }
 
 .bottom-navigation__item[aria-current='page'] {
