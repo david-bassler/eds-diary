@@ -5,7 +5,7 @@ test.beforeEach(async ({ page }) => {
 
   await page
     .getByRole('navigation', { name: 'Hauptnavigation' })
-    .getByRole('button', { name: 'Aktivitäten' })
+    .getByRole('link', { name: 'Aktivitäten' })
     .click()
 })
 
@@ -51,6 +51,11 @@ test('keeps multiple ranges and lays overlapping ranges out equally', async ({
     'calc(50% - 4px)',
   ])
 
-  await expect(page.getByLabel('Beginn Zeitraum 1 anpassen')).toBeVisible()
-  await expect(page.getByLabel('Beginn Zeitraum 2 anpassen')).toBeVisible()
+  await expect(page.locator('input[type="range"]')).toHaveCount(0)
+  await expect(
+    page.getByRole('button', { name: 'Zeitraum 1 entfernen' }),
+  ).toBeVisible()
+  await expect(
+    page.getByRole('button', { name: 'Zeitraum 2 entfernen' }),
+  ).toBeVisible()
 })
