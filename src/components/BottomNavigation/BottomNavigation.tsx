@@ -1,3 +1,4 @@
+import { pathForSection } from '../../routing/appHistory'
 import './BottomNavigation.css'
 
 export type AppSection =
@@ -68,18 +69,31 @@ export function BottomNavigation({
           const active = item.id === activeSection
 
           return (
-            <button
+            <a
               key={item.id}
               className="bottom-navigation__item"
-              type="button"
+              href={pathForSection(item.id)}
               aria-current={active ? 'page' : undefined}
-              onClick={() => onChange(item.id)}
+              onClick={(event) => {
+                if (
+                  event.button !== 0 ||
+                  event.metaKey ||
+                  event.ctrlKey ||
+                  event.shiftKey ||
+                  event.altKey
+                ) {
+                  return
+                }
+
+                event.preventDefault()
+                onChange(item.id)
+              }}
             >
               <span className="bottom-navigation__icon">
                 <NavigationIcon icon={item.icon} />
               </span>
               <span className="bottom-navigation__label">{item.label}</span>
-            </button>
+            </a>
           )
         })}
       </div>
