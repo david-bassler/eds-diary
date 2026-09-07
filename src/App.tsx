@@ -3,6 +3,7 @@ import {
   BottomNavigation,
   type AppSection,
 } from './components/BottomNavigation/BottomNavigation'
+import { ActivityPage } from './features/activity/ActivityPage'
 import { MedicationPage } from './features/medication/MedicationPage'
 import { PainEntryFlow } from './features/pain/PainEntryFlow'
 import { GoogleSyncSettings } from './features/settings/GoogleSyncSettings'
@@ -58,14 +59,7 @@ export function App() {
 
             {activeSection === 'medication' ? <MedicationPage /> : null}
 
-            {activeSection === 'activity' ? (
-              <div className="app__placeholder">
-                <p>
-                  Die Aktivitätserfassung kommt als eigener Bereich auf diese
-                  Grundnavigation.
-                </p>
-              </div>
-            ) : null}
+            {activeSection === 'activity' ? <ActivityPage /> : null}
 
             {activeSection === 'configuration' ? <GoogleSyncSettings /> : null}
           </section>
