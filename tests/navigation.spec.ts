@@ -45,6 +45,9 @@ test('switches between the primary app sections', async ({ page }) => {
   await expect(
     page.getByRole('heading', { level: 1, name: 'Konfiguration' }),
   ).toBeVisible()
+  await expect(
+    page.getByRole('heading', { level: 2, name: 'App installieren' }),
+  ).toBeVisible()
   await expect(page.getByText('Datenspeicherung', { exact: true })).toBeVisible()
 
   await expect(
