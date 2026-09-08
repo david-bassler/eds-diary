@@ -232,6 +232,41 @@ test('stores activity and note separately for each selected range', async ({
   ).toHaveCount(1)
 })
 
+test('assigns pastel colors by activity type and lets them be changed', async ({
+  page,
+}) => {
+  await page.getByLabel('Datum').fill('2026-09-07')
+
+  await addRange(page, 8, 9, false)
+  await page.getByLabel('Aktivität für Zeitraum 1').fill('Spaziergang')
+  await applyNewRangeDetails(page)
+
+  await addRange(page, 10, 11, false)
+  await page.getByLabel('Aktivität für Zeitraum 2').fill('Physiotherapie')
+  await applyNewRangeDetails(page)
+
+  const selections = page.locator('.timerange__selection')
+  const colors = await selections.evaluateAll((elements) =>
+    elements.map((element) => element.getAttribute('data-range-color')),
+  )
+  expect(colors[0]).toBeTruthy()
+  expect(colors[1]).toBeTruthy()
+  expect(colors[0]).not.toBe(colors[1])
+
+  await openRangeDetails(page, 0)
+  await page.getByRole('button', { name: 'Pastellfarbe 1' }).click()
+  await expect(page.locator('.timerange__selection--active')).toHaveAttribute(
+    'data-range-color',
+    '#f6cbd0',
+  )
+  await applyNewRangeDetails(page)
+
+  await expect(selections.nth(0)).toHaveAttribute(
+    'data-range-color',
+    '#f6cbd0',
+  )
+})
+
 test('edits start and end in the dialog with preview and persistence', async ({
   page,
 }) => {
