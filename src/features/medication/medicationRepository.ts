@@ -72,29 +72,40 @@ function normalizeEntry(entry: MedicationEntry): MedicationEntry {
   }
 }
 
+export async function createMedicationEntries(
+  inputs: readonly NewMedicationEntry[],
+): Promise<MedicationEntry[]> {
+  if (!inputs.length) return []
+
+  const timestamp = nowIso()
+  const entries = inputs.map((input) => {
+    const medicationName = normalizedText(input.medicationName, MAX_NAME_LENGTH)
+    const dose = normalizedText(input.dose, MAX_DOSE_LENGTH)
+
+    if (!medicationName) throw new Error('Medikamentenname fehlt.')
+    if (!dose) throw new Error('Dosis fehlt.')
+
+    return {
+      id: createId(),
+      medicationName,
+      dose,
+      takenAt: normalizedTimestamp(input.takenAt, timestamp),
+      status: 'active' as const,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }
+  })
+
+  await putRecords(LOCAL_STORES.medicationEntries, entries)
+  markDirty(SYNC_FEATURE)
+  return entries
+}
+
 export async function createMedicationEntry(
   input: NewMedicationEntry,
 ): Promise<MedicationEntry> {
-  const medicationName = normalizedText(input.medicationName, MAX_NAME_LENGTH)
-  const dose = normalizedText(input.dose, MAX_DOSE_LENGTH)
-
-  if (!medicationName) throw new Error('Medikamentenname fehlt.')
-  if (!dose) throw new Error('Dosis fehlt.')
-
-  const timestamp = nowIso()
-  const takenAt = normalizedTimestamp(input.takenAt, timestamp)
-  const entry: MedicationEntry = {
-    id: createId(),
-    medicationName,
-    dose,
-    takenAt,
-    status: 'active',
-    createdAt: timestamp,
-    updatedAt: timestamp,
-  }
-
-  await putRecord(LOCAL_STORES.medicationEntries, entry)
-  markDirty(SYNC_FEATURE)
+  const [entry] = await createMedicationEntries([input])
+  if (!entry) throw new Error('Medikamenteneinnahme konnte nicht erstellt werden.')
   return entry
 }
 
