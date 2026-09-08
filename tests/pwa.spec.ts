@@ -52,6 +52,36 @@ test('exposes an installable web app manifest', async ({ page, request }) => {
   expect(appleTouchResponse.ok()).toBe(true)
 })
 
+test('offers the browser PWA install prompt from configuration', async ({
+  page,
+}) => {
+  await page.goto('/')
+
+  await page.evaluate(() => {
+    const event = new Event('beforeinstallprompt')
+    Object.defineProperty(event, 'prompt', {
+      value: () => Promise.resolve(),
+    })
+    Object.defineProperty(event, 'userChoice', {
+      value: Promise.resolve({
+        outcome: 'accepted',
+        platform: 'web',
+      }),
+    })
+    window.dispatchEvent(event)
+  })
+
+  await page
+    .getByRole('navigation', { name: 'Hauptnavigation' })
+    .getByRole('link', { name: 'Konfiguration' })
+    .click()
+
+  const installButton = page.getByRole('button', { name: 'App installieren' })
+  await expect(installButton).toBeVisible()
+  await installButton.click()
+  await expect(page.getByText('Installation wurde gestartet.')).toBeVisible()
+})
+
 test('serves the service worker', async ({ page, request }) => {
   await page.goto('/')
 
