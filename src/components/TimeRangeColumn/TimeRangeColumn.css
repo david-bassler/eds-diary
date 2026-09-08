@@ -142,15 +142,11 @@
   justify-content: space-between;
   overflow: hidden;
   padding: 6px 7px;
-  border: 1px solid #7ab29f;
+  border: 1px solid rgb(37 48 43 / 18%);
   border-radius: 8px;
-  background: linear-gradient(
-    135deg,
-    rgb(190 227 214 / 92%),
-    rgb(218 239 231 / 88%)
-  );
-  box-shadow: 0 8px 20px rgb(22 107 82 / 12%);
-  color: #0e5a43;
+  background-color: #d9eee6;
+  box-shadow: 0 8px 20px rgb(37 48 43 / 10%);
+  color: #25302b;
   font-size: 0.7rem;
   font-weight: 750;
   font-variant-numeric: tabular-nums;
