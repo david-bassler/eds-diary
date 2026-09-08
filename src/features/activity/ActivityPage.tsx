@@ -545,6 +545,40 @@ export function ActivityPage() {
             </header>
 
             <div className="activity-page__dialog-body">
+              <label className="activity-page__field">
+                <span>Aktivität</span>
+                <input
+                  type="text"
+                  list="activity-name-options"
+                  value={activeDraft.activityName}
+                  maxLength={120}
+                  autoComplete="off"
+                  required
+                  autoFocus
+                  aria-label={`Aktivität für Zeitraum ${activeRangeIndex + 1}`}
+                  placeholder="z. B. Spaziergang"
+                  onChange={(event) =>
+                    updateDraft({ activityName: event.target.value })
+                  }
+                />
+              </label>
+
+              <label className="activity-page__field">
+                <span>
+                  Notiz <small>(optional)</small>
+                </span>
+                <textarea
+                  value={activeDraft.note}
+                  maxLength={2000}
+                  rows={5}
+                  aria-label={`Notiz für Zeitraum ${activeRangeIndex + 1}`}
+                  placeholder="Was möchtest du zu dieser Aktivität festhalten?"
+                  onChange={(event) =>
+                    updateDraft({ note: event.target.value })
+                  }
+                />
+              </label>
+
               <fieldset className="activity-page__time-editor">
                 <legend>Zeitraum</legend>
 
@@ -637,40 +671,6 @@ export function ActivityPage() {
                   {draftValidationMessage}
                 </p>
               </fieldset>
-
-              <label className="activity-page__field">
-                <span>Aktivität</span>
-                <input
-                  type="text"
-                  list="activity-name-options"
-                  value={activeDraft.activityName}
-                  maxLength={120}
-                  autoComplete="off"
-                  required
-                  autoFocus
-                  aria-label={`Aktivität für Zeitraum ${activeRangeIndex + 1}`}
-                  placeholder="z. B. Spaziergang"
-                  onChange={(event) =>
-                    updateDraft({ activityName: event.target.value })
-                  }
-                />
-              </label>
-
-              <label className="activity-page__field">
-                <span>
-                  Notiz <small>(optional)</small>
-                </span>
-                <textarea
-                  value={activeDraft.note}
-                  maxLength={2000}
-                  rows={5}
-                  aria-label={`Notiz für Zeitraum ${activeRangeIndex + 1}`}
-                  placeholder="Was möchtest du zu dieser Aktivität festhalten?"
-                  onChange={(event) =>
-                    updateDraft({ note: event.target.value })
-                  }
-                />
-              </label>
 
               <div className="activity-page__dialog-actions">
                 <button
