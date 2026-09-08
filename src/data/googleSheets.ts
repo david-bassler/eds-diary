@@ -56,6 +56,8 @@ interface BatchGetResponse {
 }
 
 const CONFIG_KEY = 'eds-diary-google-config-v1'
+const CLIENT_ID =
+  '708446377117-vhj86jrhngsj0i289vffdl4q1nfri7c3.apps.googleusercontent.com'
 const SCOPE = 'https://www.googleapis.com/auth/drive.file'
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504])
 
@@ -76,18 +78,20 @@ let currentStatus = {
 function loadConfig(): GoogleConfig {
   try {
     const raw = localStorage.getItem(CONFIG_KEY)
-    if (!raw) return { clientId: '', sheetId: '' }
+    if (!raw) return { clientId: CLIENT_ID, sheetId: '' }
 
     const parsed: unknown = JSON.parse(raw)
-    if (!parsed || typeof parsed !== 'object') return { clientId: '', sheetId: '' }
+    if (!parsed || typeof parsed !== 'object') {
+      return { clientId: CLIENT_ID, sheetId: '' }
+    }
 
     const value = parsed as Record<string, unknown>
     return {
-      clientId: typeof value.clientId === 'string' ? value.clientId : '',
+      clientId: CLIENT_ID,
       sheetId: typeof value.sheetId === 'string' ? value.sheetId : '',
     }
   } catch {
-    return { clientId: '', sheetId: '' }
+    return { clientId: CLIENT_ID, sheetId: '' }
   }
 }
 
@@ -119,21 +123,14 @@ export function getGoogleConfig(): GoogleConfig {
 }
 
 export function setGoogleConfig(next: GoogleConfig): GoogleConfig {
-  const previousClientId = config.clientId
   const previousSheetId = config.sheetId
 
   config = {
-    clientId: next.clientId.trim(),
+    clientId: CLIENT_ID,
     sheetId: normalizeSheetId(next.sheetId),
   }
 
   localStorage.setItem(CONFIG_KEY, JSON.stringify(config))
-
-  if (config.clientId !== previousClientId) {
-    tokenClient = null
-    accessToken = ''
-    emitConnection()
-  }
 
   if (config.sheetId !== previousSheetId) resetSheetCache()
 
@@ -165,10 +162,6 @@ export function onGoogleStatus(
 }
 
 export function connectGoogle(): void {
-  if (!config.clientId) {
-    throw new Error('Bitte zuerst eine OAuth Client-ID speichern.')
-  }
-
   const oauth2 = window.google?.accounts?.oauth2
   if (!oauth2) {
     throw new Error('Google Identity ist noch nicht geladen. Bitte kurz warten und erneut versuchen.')
