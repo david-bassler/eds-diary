@@ -66,7 +66,7 @@ export function GoogleSyncSettings() {
     const saved = setGoogleConfig(form)
     setForm(saved)
     setStatus({
-      message: 'Client-ID und Spreadsheet-ID wurden lokal gespeichert.',
+      message: 'Spreadsheet-ID wurde lokal gespeichert.',
       kind: 'good',
     })
   }
@@ -153,22 +153,6 @@ export function GoogleSyncSettings() {
         </p>
 
         <label className="google-sync-settings__field">
-          <span>OAuth Client-ID</span>
-          <input
-            type="text"
-            autoComplete="off"
-            value={form.clientId}
-            placeholder="…apps.googleusercontent.com"
-            onChange={(event) =>
-              setForm((current) => ({
-                ...current,
-                clientId: event.target.value,
-              }))
-            }
-          />
-        </label>
-
-        <label className="google-sync-settings__field">
           <span>Spreadsheet-ID</span>
           <input
             type="text"
@@ -188,7 +172,7 @@ export function GoogleSyncSettings() {
           <button type="button" onClick={saveConfig} disabled={busy}>
             Einstellungen speichern
           </button>
-          <button type="button" onClick={connect} disabled={busy || !form.clientId.trim()}>
+          <button type="button" onClick={connect} disabled={busy}>
             Mit Google verbinden
           </button>
           <button type="button" onClick={() => void createSheet()} disabled={busy || !connected}>
