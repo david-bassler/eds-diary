@@ -554,7 +554,6 @@ export function ActivityPage() {
                     <input
                       id="activity-start-time"
                       type="text"
-                      inputMode="numeric"
                       pattern="(?:[01][0-9]|2[0-3]):[0-5][0-9]"
                       value={activeDraft.start}
                       aria-invalid={Boolean(draftValidationMessage)}
@@ -590,7 +589,6 @@ export function ActivityPage() {
                     <input
                       id="activity-end-time"
                       type="text"
-                      inputMode="numeric"
                       pattern="(?:(?:[01][0-9]|2[0-3]):[0-5][0-9]|24:00)"
                       value={activeDraft.end}
                       aria-invalid={Boolean(draftValidationMessage)}
