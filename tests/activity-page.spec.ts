@@ -18,6 +18,15 @@ async function closeRangeDetails(
   ).not.toBeVisible()
 }
 
+async function applyNewRangeDetails(
+  page: import('@playwright/test').Page,
+): Promise<void> {
+  await page.getByRole('button', { name: 'Fertig' }).click()
+  await expect(
+    page.getByRole('dialog', { name: 'Aktivität eintragen' }),
+  ).not.toBeVisible()
+}
+
 async function addRange(
   page: import('@playwright/test').Page,
   startHour: number,
@@ -142,7 +151,7 @@ test('stores activity and note separately for each selected range', async ({
   await page
     .getByLabel('Notiz für Zeitraum 1')
     .fill('synthetische Notiz eins')
-  await closeRangeDetails(page)
+  await applyNewRangeDetails(page)
 
   await addRange(page, 12, 13, false)
   await page
@@ -151,7 +160,7 @@ test('stores activity and note separately for each selected range', async ({
   await page
     .getByLabel('Notiz für Zeitraum 2')
     .fill('synthetische Notiz zwei')
-  await closeRangeDetails(page)
+  await applyNewRangeDetails(page)
 
   await page.getByRole('button', { name: 'Aktivitäten speichern' }).click()
   await expect(page.getByText('Aktivitäten gespeichert.')).toBeVisible()
@@ -210,6 +219,75 @@ test('stores activity and note separately for each selected range', async ({
   ).toHaveCount(1)
 })
 
+test('edits start and end in the dialog with preview and persistence', async ({
+  page,
+}) => {
+  await page.getByLabel('Datum').fill('2026-09-07')
+  await addRange(page, 8, 10, false)
+  await page.getByLabel('Aktivität für Zeitraum 1').fill('Spaziergang')
+
+  await page.getByLabel('Beginn').fill('08:30')
+  await page.getByLabel('Ende').fill('09:45')
+
+  const activeSelection = page.locator('.timerange__selection--active')
+  await expect(activeSelection).toContainText('08:30')
+  await expect(activeSelection).toContainText('09:45')
+  await expect(page.getByText('1 h 15 min')).toBeVisible()
+
+  await closeRangeDetails(page)
+  await expect(page.locator('.timerange__selection').first()).toContainText(
+    '08:00',
+  )
+  await expect(page.locator('.timerange__selection').first()).toContainText(
+    '10:00',
+  )
+
+  await openRangeDetails(page, 0)
+  await page.getByLabel('Aktivität für Zeitraum 1').fill('Spaziergang')
+  await page.getByRole('button', { name: 'Beginn 15 Minuten später' }).click()
+  await page.getByRole('button', { name: 'Ende 15 Minuten früher' }).click()
+  await expect(page.getByLabel('Beginn')).toHaveValue('08:15')
+  await expect(page.getByLabel('Ende')).toHaveValue('09:45')
+  await applyNewRangeDetails(page)
+
+  await page.getByRole('button', { name: 'Aktivität speichern' }).click()
+  await expect(page.getByText('Aktivität gespeichert.')).toBeVisible()
+  await expect(page.locator('.timerange__selection')).toContainText('08:15')
+  await expect(page.locator('.timerange__selection')).toContainText('09:45')
+
+  await openRangeDetails(page, 0)
+  await page.getByLabel('Beginn').fill('08:30')
+  await page.getByLabel('Ende').fill('09:30')
+  await page
+    .getByRole('button', { name: 'Änderungen speichern' })
+    .click()
+  await expect(page.getByText('Aktivität aktualisiert.')).toBeVisible()
+
+  await page.getByLabel('Datum').fill('2026-09-08')
+  await expect(page.locator('.timerange__selection')).toHaveCount(0)
+  await page.getByLabel('Datum').fill('2026-09-07')
+  await expect(page.locator('.timerange__selection')).toContainText('08:30')
+  await expect(page.locator('.timerange__selection')).toContainText('09:30')
+
+  const entries = await page.evaluate(async () => {
+    const repository = await import(
+      '/src/features/activity/activityRepository.ts'
+    )
+    return repository.listActivityEntries()
+  })
+
+  expect(entries).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        date: '2026-09-07',
+        startTime: '08:30',
+        endTime: '09:30',
+        activityName: 'Spaziergang',
+      }),
+    ]),
+  )
+})
+
 test('can remove a saved range without it returning for the date', async ({
   page,
 }) => {
@@ -217,11 +295,11 @@ test('can remove a saved range without it returning for the date', async ({
 
   await addRange(page, 8, 10, false)
   await page.getByLabel('Aktivität für Zeitraum 1').fill('Erste Aktivität')
-  await closeRangeDetails(page)
+  await applyNewRangeDetails(page)
 
   await addRange(page, 12, 13, false)
   await page.getByLabel('Aktivität für Zeitraum 2').fill('Zweite Aktivität')
-  await closeRangeDetails(page)
+  await applyNewRangeDetails(page)
 
   await page.getByRole('button', { name: 'Aktivitäten speichern' }).click()
   await expect(page.locator('.timerange__selection')).toHaveCount(2)
