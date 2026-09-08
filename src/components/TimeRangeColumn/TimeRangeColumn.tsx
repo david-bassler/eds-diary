@@ -15,6 +15,7 @@ export type TimeRangeColumnProps = {
   onChange?: (ranges: TimeRange[]) => void;
   onRangeActivate?: (index: number) => void;
   onRangeCreated?: (index: number) => void;
+  activeRangeIndex?: number | null;
   label?: string;
 };
 
@@ -193,6 +194,7 @@ export function TimeRangeColumn({
   onChange,
   onRangeActivate,
   onRangeCreated,
+  activeRangeIndex = null,
   label = "Zeiträume auswählen",
 }: TimeRangeColumnProps) {
   const beginMinutes = parseTime(begin);
@@ -396,7 +398,7 @@ export function TimeRangeColumn({
             return (
               <div
                 key={range.index}
-                className="timerange__selection"
+                className={`timerange__selection${activeRangeIndex === range.index ? " timerange__selection--active" : ""}`}
                 style={{
                   top: `${((range.start - beginMinutes) / (endMinutes - beginMinutes)) * 100}%`,
                   height: `${Math.max(1.2, (duration / (endMinutes - beginMinutes)) * 100)}%`,
