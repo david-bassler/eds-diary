@@ -23,6 +23,17 @@
   gap: 4px;
 }
 
+.app__header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.app__heading-copy {
+  min-width: 0;
+}
+
 .app__eyebrow {
   margin: 0;
   font-size: 0.78rem;
