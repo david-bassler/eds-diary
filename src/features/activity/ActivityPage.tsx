@@ -291,18 +291,23 @@ export function ActivityPage() {
         })),
       )
 
-      const createdByIndex = new Map(
-        unsavedIndexes.map((index, createdIndex) => [
-          index,
-          createdEntries[createdIndex],
-        ]),
+      const storedEntries = entriesForDate(
+        await listActivityEntries(),
+        date,
       )
-
-      setRangeRecords((current) =>
-        current.map(
-          (record, index) => record ?? createdByIndex.get(index) ?? null,
-        ),
+      setTimeRanges(
+        storedEntries.map((entry) => ({
+          start: entry.startTime,
+          end: entry.endTime,
+        })),
       )
+      setRangeDetails(
+        storedEntries.map((entry) => ({
+          activityName: entry.activityName,
+          note: entry.note,
+        })),
+      )
+      setRangeRecords(storedEntries)
       setKnownActivityNames(await listActivityNames())
       setActiveRangeIndex(null)
       setStatus(
