@@ -7,6 +7,7 @@ import { ActivityPage } from './features/activity/ActivityPage'
 import { MedicationPage } from './features/medication/MedicationPage'
 import { PainEntryFlow } from './features/pain/PainEntryFlow'
 import { GoogleSyncSettings } from './features/settings/GoogleSyncSettings'
+import { InstallAppSettings } from './features/settings/InstallAppSettings'
 import {
   pathForSection,
   sectionFromPathname,
@@ -95,7 +96,12 @@ export function App() {
 
             {activeSection === 'activity' ? <ActivityPage /> : null}
 
-            {activeSection === 'configuration' ? <GoogleSyncSettings /> : null}
+            {activeSection === 'configuration' ? (
+              <>
+                <InstallAppSettings />
+                <GoogleSyncSettings />
+              </>
+            ) : null}
           </section>
         </div>
       </main>
