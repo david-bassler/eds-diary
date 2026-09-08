@@ -3,9 +3,13 @@ import {
   TimeRangeColumn,
   type TimeRange,
 } from '../../components/TimeRangeColumn/TimeRangeColumn'
+import type { ActivityEntry } from './activityEntry'
 import {
   createActivityEntries,
+  deleteActivityEntry,
+  listActivityEntries,
   listActivityNames,
+  saveActivityEntry,
 } from './activityRepository'
 import './ActivityPage.css'
 
@@ -29,14 +33,32 @@ function localToday(): string {
   return `${year}-${month}-${day}`
 }
 
+function entriesForDate(
+  entries: readonly ActivityEntry[],
+  date: string,
+): ActivityEntry[] {
+  return entries
+    .filter((entry) => entry.date === date)
+    .sort(
+      (left, right) =>
+        left.startTime.localeCompare(right.startTime) ||
+        left.endTime.localeCompare(right.endTime) ||
+        left.updatedAt.localeCompare(right.updatedAt),
+    )
+}
+
 export function ActivityPage() {
   const [date, setDate] = useState(localToday)
   const [timeRanges, setTimeRanges] = useState<TimeRange[]>([])
   const [rangeDetails, setRangeDetails] = useState<RangeDetails[]>([])
+  const [rangeRecords, setRangeRecords] = useState<Array<ActivityEntry | null>>(
+    [],
+  )
   const [knownActivityNames, setKnownActivityNames] = useState<string[]>([])
   const [activeRangeIndex, setActiveRangeIndex] = useState<number | null>(null)
   const [status, setStatus] = useState('')
   const [saving, setSaving] = useState(false)
+  const [detailsSaving, setDetailsSaving] = useState(false)
   const detailsDialogRef = useRef<HTMLDialogElement>(null)
 
   useEffect(() => {
@@ -50,6 +72,44 @@ export function ActivityPage() {
       active = false
     }
   }, [])
+
+  useEffect(() => {
+    let active = true
+
+    setActiveRangeIndex(null)
+    setTimeRanges([])
+    setRangeDetails([])
+    setRangeRecords([])
+
+    void listActivityEntries()
+      .then((entries) => {
+        if (!active) return
+
+        const selectedEntries = entriesForDate(entries, date)
+        setTimeRanges(
+          selectedEntries.map((entry) => ({
+            start: entry.startTime,
+            end: entry.endTime,
+          })),
+        )
+        setRangeDetails(
+          selectedEntries.map((entry) => ({
+            activityName: entry.activityName,
+            note: entry.note,
+          })),
+        )
+        setRangeRecords(selectedEntries)
+      })
+      .catch(() => {
+        if (active) {
+          setStatus('Die gespeicherten Aktivitäten konnten nicht geladen werden.')
+        }
+      })
+
+    return () => {
+      active = false
+    }
+  }, [date])
 
   useEffect(() => {
     const dialog = detailsDialogRef.current
@@ -67,6 +127,9 @@ export function ActivityPage() {
     setTimeRanges(nextRanges)
     setRangeDetails((current) =>
       nextRanges.map((_, index) => current[index] ?? emptyDetails()),
+    )
+    setRangeRecords((current) =>
+      nextRanges.map((_, index) => current[index] ?? null),
     )
     setStatus('')
   }
@@ -88,18 +151,103 @@ export function ActivityPage() {
   }
 
   function closeRangeDetails(): void {
+    if (activeRangeIndex !== null) {
+      const storedRecord = rangeRecords[activeRangeIndex]
+      if (storedRecord) {
+        setRangeDetails((current) =>
+          current.map((details, index) =>
+            index === activeRangeIndex
+              ? {
+                  activityName: storedRecord.activityName,
+                  note: storedRecord.note,
+                }
+              : details,
+          ),
+        )
+      }
+    }
+
     setActiveRangeIndex(null)
   }
 
-  function removeRange(index: number): void {
+  async function removeRange(index: number): Promise<void> {
+    const storedRecord = rangeRecords[index]
+
+    if (storedRecord) {
+      setDetailsSaving(true)
+
+      try {
+        await deleteActivityEntry(storedRecord.id)
+      } catch {
+        setStatus('Die Aktivität konnte nicht entfernt werden.')
+        setDetailsSaving(false)
+        return
+      }
+
+      setDetailsSaving(false)
+    }
+
     setTimeRanges((current) =>
       current.filter((_, rangeIndex) => rangeIndex !== index),
     )
     setRangeDetails((current) =>
       current.filter((_, detailsIndex) => detailsIndex !== index),
     )
+    setRangeRecords((current) =>
+      current.filter((_, recordIndex) => recordIndex !== index),
+    )
     setActiveRangeIndex(null)
+    setStatus(storedRecord ? 'Aktivität entfernt.' : '')
+  }
+
+  async function saveActiveDetails(): Promise<void> {
+    if (activeRangeIndex === null) return
+
+    const storedRecord = rangeRecords[activeRangeIndex]
+    if (!storedRecord) {
+      setActiveRangeIndex(null)
+      return
+    }
+
+    const details = rangeDetails[activeRangeIndex] ?? emptyDetails()
+    if (!details.activityName.trim()) {
+      setStatus('Bitte eine Aktivität eintragen.')
+      return
+    }
+
+    setDetailsSaving(true)
     setStatus('')
+
+    try {
+      const saved = await saveActivityEntry({
+        ...storedRecord,
+        activityName: details.activityName,
+        note: details.note,
+      })
+
+      setRangeRecords((current) =>
+        current.map((record, index) =>
+          index === activeRangeIndex ? saved : record,
+        ),
+      )
+      setRangeDetails((current) =>
+        current.map((entryDetails, index) =>
+          index === activeRangeIndex
+            ? {
+                activityName: saved.activityName,
+                note: saved.note,
+              }
+            : entryDetails,
+        ),
+      )
+      setKnownActivityNames(await listActivityNames())
+      setActiveRangeIndex(null)
+      setStatus('Aktivität aktualisiert.')
+    } catch {
+      setStatus('Die Aktivität konnte nicht aktualisiert werden.')
+    } finally {
+      setDetailsSaving(false)
+    }
   }
 
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -110,15 +258,19 @@ export function ActivityPage() {
       return
     }
 
-    if (!timeRanges.length) {
-      setStatus('Bitte mindestens einen Zeitraum auswählen.')
+    const unsavedIndexes = rangeRecords.flatMap((record, index) =>
+      record ? [] : [index],
+    )
+
+    if (!unsavedIndexes.length) {
+      setStatus('Alle Aktivitäten für dieses Datum sind bereits gespeichert.')
       return
     }
 
-    const missingActivityIndex = rangeDetails.findIndex(
-      (details) => !details.activityName.trim(),
+    const missingActivityIndex = unsavedIndexes.find(
+      (index) => !rangeDetails[index]?.activityName.trim(),
     )
-    if (missingActivityIndex >= 0) {
+    if (missingActivityIndex !== undefined) {
       setStatus(
         `Bitte für Zeitraum ${missingActivityIndex + 1} eine Aktivität eintragen. Öffne dazu die rechte Hälfte des Zeitraums.`,
       )
@@ -129,22 +281,32 @@ export function ActivityPage() {
     setStatus('')
 
     try {
-      await createActivityEntries(
-        timeRanges.map((range, index) => ({
+      const createdEntries = await createActivityEntries(
+        unsavedIndexes.map((index) => ({
           date,
-          startTime: range.start,
-          endTime: range.end,
+          startTime: timeRanges[index]?.start ?? '',
+          endTime: timeRanges[index]?.end ?? '',
           activityName: rangeDetails[index]?.activityName ?? '',
           note: rangeDetails[index]?.note ?? '',
         })),
       )
 
+      const createdByIndex = new Map(
+        unsavedIndexes.map((index, createdIndex) => [
+          index,
+          createdEntries[createdIndex],
+        ]),
+      )
+
+      setRangeRecords((current) =>
+        current.map(
+          (record, index) => record ?? createdByIndex.get(index) ?? null,
+        ),
+      )
       setKnownActivityNames(await listActivityNames())
-      setTimeRanges([])
-      setRangeDetails([])
       setActiveRangeIndex(null)
       setStatus(
-        timeRanges.length === 1
+        createdEntries.length === 1
           ? 'Aktivität gespeichert.'
           : 'Aktivitäten gespeichert.',
       )
@@ -161,6 +323,9 @@ export function ActivityPage() {
     activeRangeIndex === null
       ? null
       : rangeDetails[activeRangeIndex] ?? emptyDetails()
+  const activeRecord =
+    activeRangeIndex === null ? null : rangeRecords[activeRangeIndex] ?? null
+  const unsavedCount = rangeRecords.filter((record) => record === null).length
 
   return (
     <form className="activity-page" onSubmit={(event) => void submit(event)}>
@@ -181,9 +346,9 @@ export function ActivityPage() {
         <div>
           <h2 id="activity-time-title">Zeiträume der Aktivität</h2>
           <p>
-            Wähle einen oder mehrere Zeiträume aus. Nach dem Erstellen öffnet
-            sich die Aktivität. Später kannst du sie über die rechte Hälfte des
-            Zeitraums wieder öffnen.
+            Gespeicherte Aktivitäten bleiben für das gewählte Datum sichtbar.
+            Neue Zeiträume öffnen sich direkt; bestehende öffnest du über ihre
+            rechte Hälfte.
           </p>
         </div>
       </section>
@@ -205,7 +370,7 @@ export function ActivityPage() {
         ))}
       </datalist>
 
-      {timeRanges.length ? (
+      {unsavedCount ? (
         <div className="activity-page__footer">
           <button
             className="activity-page__primary"
@@ -214,7 +379,7 @@ export function ActivityPage() {
           >
             {saving
               ? 'Speichert …'
-              : timeRanges.length === 1
+              : unsavedCount === 1
                 ? 'Aktivität speichern'
                 : 'Aktivitäten speichern'}
           </button>
@@ -245,6 +410,7 @@ export function ActivityPage() {
                 type="button"
                 className="activity-page__dialog-close"
                 aria-label="Details schließen"
+                disabled={detailsSaving}
                 onClick={closeRangeDetails}
               >
                 Schließen
@@ -294,16 +460,26 @@ export function ActivityPage() {
                 <button
                   type="button"
                   className="activity-page__remove"
-                  onClick={() => removeRange(activeRangeIndex)}
+                  disabled={detailsSaving}
+                  onClick={() => void removeRange(activeRangeIndex)}
                 >
                   Zeitraum entfernen
                 </button>
                 <button
                   type="button"
                   className="activity-page__primary"
-                  onClick={closeRangeDetails}
+                  disabled={detailsSaving}
+                  onClick={() =>
+                    activeRecord
+                      ? void saveActiveDetails()
+                      : setActiveRangeIndex(null)
+                  }
                 >
-                  Fertig
+                  {detailsSaving
+                    ? 'Speichert …'
+                    : activeRecord
+                      ? 'Änderungen speichern'
+                      : 'Fertig'}
                 </button>
               </div>
             </div>
