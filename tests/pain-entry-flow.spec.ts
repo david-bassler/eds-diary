@@ -23,8 +23,8 @@ test('creates a pain entry with multiple body regions and details', async ({
   await page.getByLabel('Tritt auf, wenn (optional)').fill('synthetischer Auslöser')
   await page.getByLabel('Notizen (optional)').fill('synthetische Notiz')
 
-  await expect(page.getByLabel('Datum')).not.toHaveValue('')
-  await expect(page.getByLabel('Uhrzeit')).not.toHaveValue('')
+  await expect(page.getByLabel('Beginndatum')).not.toHaveValue('')
+  await expect(page.getByLabel('Beginnzeit')).not.toHaveValue('')
 
   await page.getByRole('button', { name: 'Speichern' }).click()
   await expect(page.getByText('Schmerzeintrag gespeichert.')).toBeVisible()
@@ -45,6 +45,68 @@ test('creates a pain entry with multiple body regions and details', async ({
     occursWhen: 'synthetischer Auslöser',
     note: 'synthetische Notiz',
   })
+})
+
+test('stores an optional explicit pain end time', async ({ page }) => {
+  await page.getByText('Regionen alternativ als Liste auswählen').click()
+  await page.getByRole('checkbox', { name: 'Bauch', exact: true }).check()
+  await page.getByRole('button', { name: 'Weiter' }).click()
+  await page.getByRole('button', { name: 'Dumpf' }).click()
+
+  await page.getByLabel('Beginndatum').fill('2026-09-08')
+  await page.getByLabel('Beginnzeit').fill('08:00')
+  await page.getByRole('checkbox', { name: 'Endzeitpunkt angeben' }).check()
+  await page.getByLabel('Enddatum').fill('2026-09-08')
+  await page.getByLabel('Endzeit').fill('10:30')
+
+  await page.getByRole('button', { name: 'Speichern' }).click()
+  await expect(page.getByText('Schmerzeintrag gespeichert.')).toBeVisible()
+
+  const entry = await page.evaluate(async () => {
+    const repository = await import('/src/features/pain/painRepository.ts')
+    return (await repository.listPainEntries())[0]
+  })
+
+  expect(entry.startedAt).toBe(new Date('2026-09-08T08:00').toISOString())
+  expect(entry.endedAt).toBe(new Date('2026-09-08T10:30').toISOString())
+})
+
+test('asks about an ongoing pain entry older than one hour on app open', async ({
+  page,
+}) => {
+  await page.evaluate(async () => {
+    const repository = await import('/src/features/pain/painRepository.ts')
+    await repository.createPainEntry({
+      startedAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+      locations: [{ view: 'front', regionId: 'abdomen' }],
+      qualities: ['Dumpf'],
+      note: 'synthetischer offener Schmerz',
+    })
+  })
+
+  await page.reload()
+
+  const dialog = page.getByRole('dialog', {
+    name: 'Sind diese Schmerzen noch aktuell?',
+  })
+  await expect(dialog).toBeVisible()
+  await expect(dialog.getByText('Dumpf')).toBeVisible()
+
+  await dialog.getByRole('button', { name: 'Nein, beendet' }).click()
+  await expect(dialog.getByLabel('Enddatum')).not.toHaveValue('')
+  await expect(dialog.getByLabel('Endzeit')).not.toHaveValue('')
+  await dialog.getByRole('button', { name: 'Ende speichern' }).click()
+
+  await expect(dialog).not.toBeVisible()
+
+  const entry = await page.evaluate(async () => {
+    const repository = await import('/src/features/pain/painRepository.ts')
+    return (await repository.listPainEntries())[0]
+  })
+  expect(entry.endedAt).not.toBe('')
+
+  await page.reload()
+  await expect(dialog).not.toBeVisible()
 })
 
 test('adds and keeps a custom pain type chip', async ({ page }) => {
