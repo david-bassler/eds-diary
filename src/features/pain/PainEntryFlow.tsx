@@ -57,6 +57,8 @@ export function PainEntryFlow() {
   const [occursWhen, setOccursWhen] = useState('')
   const [note, setNote] = useState('')
   const [when, setWhen] = useState<LocalDateTime>(localNow)
+  const [hasEnd, setHasEnd] = useState(false)
+  const [endWhen, setEndWhen] = useState<LocalDateTime>(localNow)
   const [status, setStatus] = useState('')
   const [saving, setSaving] = useState(false)
 
@@ -113,8 +115,22 @@ export function PainEntryFlow() {
     const startedAt = toIso(when.date, when.time)
 
     if (!startedAt) {
-      setStatus('Bitte ein gültiges Datum und eine gültige Uhrzeit wählen.')
+      setStatus('Bitte einen gültigen Beginn eintragen.')
       return
+    }
+
+    let endedAt = ''
+    if (hasEnd) {
+      const endValue = toIso(endWhen.date, endWhen.time)
+      if (!endValue) {
+        setStatus('Bitte einen gültigen Endzeitpunkt eintragen.')
+        return
+      }
+      if (Date.parse(endValue) <= Date.parse(startedAt)) {
+        setStatus('Der Endzeitpunkt muss nach dem Beginn liegen.')
+        return
+      }
+      endedAt = endValue
     }
 
     if (!locations.length) {
@@ -134,6 +150,7 @@ export function PainEntryFlow() {
     try {
       await createPainEntry({
         startedAt,
+        endedAt,
         locations,
         qualities: selectedPainTypes,
         cause,
@@ -147,6 +164,8 @@ export function PainEntryFlow() {
       setOccursWhen('')
       setNote('')
       setWhen(localNow())
+      setHasEnd(false)
+      setEndWhen(localNow())
       setStep(1)
       setStatus('Schmerzeintrag gespeichert.')
     } catch {
@@ -278,40 +297,93 @@ export function PainEntryFlow() {
           </label>
 
           <fieldset className="pain-entry-flow__fieldset">
-            <legend>Zeitpunkt</legend>
+            <legend>Zeitraum</legend>
             <p className="pain-entry-flow__hint">
-              Standardmäßig ist der aktuelle Zeitpunkt eingestellt.
+              Der Beginn ist erforderlich. Ein Endzeitpunkt ist optional.
             </p>
-            <div className="pain-entry-flow__datetime">
-              <label>
-                <span>Datum</span>
-                <input
-                  type="date"
-                  required
-                  value={when.date}
-                  onChange={(event) =>
-                    setWhen((current) => ({
-                      ...current,
-                      date: event.target.value,
-                    }))
-                  }
-                />
-              </label>
-              <label>
-                <span>Uhrzeit</span>
-                <input
-                  type="time"
-                  required
-                  value={when.time}
-                  onChange={(event) =>
-                    setWhen((current) => ({
-                      ...current,
-                      time: event.target.value,
-                    }))
-                  }
-                />
-              </label>
+
+            <div className="pain-entry-flow__time-section">
+              <strong>Beginn</strong>
+              <div className="pain-entry-flow__datetime">
+                <label>
+                  <span>Beginndatum</span>
+                  <input
+                    type="date"
+                    required
+                    value={when.date}
+                    onChange={(event) =>
+                      setWhen((current) => ({
+                        ...current,
+                        date: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <label>
+                  <span>Beginnzeit</span>
+                  <input
+                    type="time"
+                    required
+                    value={when.time}
+                    onChange={(event) =>
+                      setWhen((current) => ({
+                        ...current,
+                        time: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+              </div>
             </div>
+
+            <label className="pain-entry-flow__end-toggle">
+              <input
+                type="checkbox"
+                checked={hasEnd}
+                onChange={(event) => {
+                  const checked = event.target.checked
+                  setHasEnd(checked)
+                  if (checked) setEndWhen(localNow())
+                }}
+              />
+              <span>Endzeitpunkt angeben</span>
+            </label>
+
+            {hasEnd ? (
+              <div className="pain-entry-flow__time-section">
+                <strong>Ende</strong>
+                <div className="pain-entry-flow__datetime">
+                  <label>
+                    <span>Enddatum</span>
+                    <input
+                      type="date"
+                      required
+                      value={endWhen.date}
+                      onChange={(event) =>
+                        setEndWhen((current) => ({
+                          ...current,
+                          date: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                  <label>
+                    <span>Endzeit</span>
+                    <input
+                      type="time"
+                      required
+                      value={endWhen.time}
+                      onChange={(event) =>
+                        setEndWhen((current) => ({
+                          ...current,
+                          time: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                </div>
+              </div>
+            ) : null}
           </fieldset>
 
           <div className="pain-entry-flow__footer pain-entry-flow__footer--split">
