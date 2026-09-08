@@ -68,6 +68,108 @@
   resize: vertical;
 }
 
+.activity-page__time-editor {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  margin: 0;
+  padding: 16px;
+  border: 1px solid rgb(37 48 43 / 14%);
+  border-radius: 14px;
+  background: rgb(244 248 246 / 72%);
+}
+
+.activity-page__time-editor legend {
+  padding-inline: 6px;
+  font-weight: 750;
+}
+
+.activity-page__time-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.activity-page__time-field {
+  display: grid;
+  gap: 8px;
+}
+
+.activity-page__time-field label {
+  font-weight: 650;
+}
+
+.activity-page__time-field input {
+  width: 100%;
+  min-height: 52px;
+  padding: 10px 12px;
+  border: 1px solid rgb(37 48 43 / 24%);
+  border-radius: 10px;
+  background: white;
+  color: inherit;
+  font: inherit;
+  font-size: 1.2rem;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.activity-page__time-field input[aria-invalid="true"] {
+  border-color: #9b4b42;
+}
+
+.activity-page__time-buttons {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.activity-page__time-buttons button {
+  min-height: 44px;
+  padding: 8px;
+  border: 1px solid rgb(37 48 43 / 20%);
+  border-radius: 10px;
+  background: white;
+  color: inherit;
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.activity-page__duration {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.activity-page__duration span {
+  color: rgb(37 48 43 / 68%);
+  font-size: 0.85rem;
+}
+
+.activity-page__duration output {
+  font-weight: 750;
+}
+
+.activity-page__time-help,
+.activity-page__time-error {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.activity-page__time-help {
+  color: rgb(37 48 43 / 68%);
+}
+
+.activity-page__time-error {
+  min-height: 1.2em;
+  color: #7c332d;
+  font-weight: 650;
+}
+
 .activity-page__footer {
   display: flex;
   justify-content: flex-end;
@@ -180,6 +282,8 @@
 .activity-page__primary:focus-visible,
 .activity-page__remove:focus-visible,
 .activity-page__dialog-close:focus-visible,
+.activity-page__time-field input:focus-visible,
+.activity-page__time-buttons button:focus-visible,
 .activity-page__date input:focus-visible,
 .activity-page__field input:focus-visible,
 .activity-page__field textarea:focus-visible {
@@ -214,6 +318,10 @@
       20px
       18px
       max(24px, env(safe-area-inset-bottom));
+  }
+
+  .activity-page__time-grid {
+    grid-template-columns: 1fr;
   }
 
   .activity-page__dialog-actions {
