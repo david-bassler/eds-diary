@@ -1,4 +1,4 @@
-import { useId, useRef, useState } from "react";
+import { Fragment, useId, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import "./TimeRangeColumn.css";
 
@@ -401,31 +401,43 @@ export function TimeRangeColumn({
             const left = (range.column / range.columns) * 100;
             const width = 100 / range.columns;
 
+            const top =
+              ((range.start - beginMinutes) / (endMinutes - beginMinutes)) * 100;
+            const height = Math.max(
+              1.2,
+              (duration / (endMinutes - beginMinutes)) * 100,
+            );
+            const center = top + height / 2;
+
             return (
-              <div
-                key={range.index}
-                className={`timerange__selection${activeRangeIndex === range.index ? " timerange__selection--active" : ""}`}
-                style={{
-                  top: `${((range.start - beginMinutes) / (endMinutes - beginMinutes)) * 100}%`,
-                  height: `${Math.max(1.2, (duration / (endMinutes - beginMinutes)) * 100)}%`,
-                  left: `calc(${left}% + 2px)`,
-                  width: `calc(${width}% - 4px)`,
-                }}
-                aria-hidden={onRangeActivate ? undefined : true}
-                data-range-index={range.index}
-                data-overlap-columns={range.columns}
-              >
-                <span aria-hidden="true">{formatTime(range.start)}</span>
-                <span
-                  className="timerange__selectionend"
+              <Fragment key={range.index}>
+                <div
+                  className={`timerange__selection${activeRangeIndex === range.index ? " timerange__selection--active" : ""}`}
+                  style={{
+                    top: `${top}%`,
+                    height: `${height}%`,
+                    left: `calc(${left}% + 2px)`,
+                    width: `calc(${width}% - 4px)`,
+                  }}
                   aria-hidden="true"
+                  data-range-index={range.index}
+                  data-overlap-columns={range.columns}
                 >
-                  {formatTime(range.end)}
-                </span>
+                  <span>{formatTime(range.start)}</span>
+                  <span className="timerange__selectionend">
+                    {formatTime(range.end)}
+                  </span>
+                </div>
                 {onRangeActivate ? (
                   <button
                     type="button"
                     className="timerange__selectionaction"
+                    style={{
+                      top: `clamp(22px, ${center}%, calc(100% - 22px))`,
+                      height: `max(44px, ${height}%)`,
+                      left: `calc(${left + width / 2}% + 2px)`,
+                      width: `calc(${width / 2}% - 4px)`,
+                    }}
                     aria-label={`Zeitraum ${range.index + 1} · ${formatTime(range.start)}–${formatTime(range.end)} öffnen`}
                     onPointerDown={(event) => event.stopPropagation()}
                     onClick={(event) => {
@@ -434,7 +446,7 @@ export function TimeRangeColumn({
                     }}
                   />
                 ) : null}
-              </div>
+              </Fragment>
             );
           })}
           {fineMode && (
