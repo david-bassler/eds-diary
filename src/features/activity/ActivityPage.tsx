@@ -660,6 +660,11 @@ export function ActivityPage() {
       ? activeDraft.color
       : rangeDetails[index]?.color ?? defaultActivityColor(''),
   )
+  const previewLabels = previewRanges.map((_, index) =>
+    activeRangeIndex === index && activeDraft
+      ? activeDraft.activityName
+      : rangeDetails[index]?.activityName ?? '',
+  )
   const unsavedCount = rangeRecords.filter((record) => record === null).length
   const activitySearch =
     activeDraft?.activityName.trim().toLocaleLowerCase('de') ?? ''
@@ -720,6 +725,7 @@ export function ActivityPage() {
         resolution={15}
         value={previewRanges}
         rangeColors={previewColors}
+        rangeLabels={previewLabels}
         onChange={changeRanges}
         onRangeActivate={openRangeDetails}
         onRangeCreated={openCreatedRange}
