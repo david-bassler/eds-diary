@@ -58,6 +58,7 @@ function RangeActionExample(
         onChange={setValue}
         onRangeActivate={setActiveRange}
         onRangeCreated={setActiveRange}
+        activeRangeIndex={activeRange}
       />
       <output aria-live="polite">
         {activeRange === null
