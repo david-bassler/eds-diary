@@ -2,3 +2,10 @@
   display: grid;
   gap: 28px;
 }
+
+.medication-page__copy-status {
+  min-height: 1.4em;
+  margin: -12px 0 0;
+  font-size: 0.9rem;
+  font-weight: 650;
+}
