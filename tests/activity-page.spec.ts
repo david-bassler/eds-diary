@@ -191,6 +191,27 @@ test('stores activity and note separately for each selected range', async ({
   await expect(page.getByLabel('Aktivität für Zeitraum 1')).toHaveValue(
     'Spaziergang',
   )
+
+  const activityCombobox = page.getByRole('combobox', {
+    name: 'Aktivität für Zeitraum 1',
+  })
+  await expect(activityCombobox).toHaveAttribute('aria-expanded', 'true')
+  const activityOptions = page.getByRole('listbox', {
+    name: 'Gespeicherte Aktivitäten',
+  })
+  await expect(activityOptions).toBeVisible()
+  await expect(
+    activityOptions.getByRole('option', { name: 'Spaziergang' }),
+  ).toBeVisible()
+  await expect(
+    activityOptions.getByRole('option', { name: 'Physiotherapie' }),
+  ).toBeVisible()
+
+  await page
+    .getByRole('button', { name: 'Gespeicherte Aktivitäten anzeigen' })
+    .click()
+  await expect(activityCombobox).toHaveAttribute('aria-expanded', 'false')
+  await expect(activityOptions).not.toBeVisible()
   await closeRangeDetails(page)
 
   const entries = await page.evaluate(async () => {
@@ -222,14 +243,6 @@ test('stores activity and note separately for each selected range', async ({
     ]),
   )
 
-  await expect(
-    page.locator('datalist#activity-name-options option[value="Spaziergang"]'),
-  ).toHaveCount(1)
-  await expect(
-    page.locator(
-      'datalist#activity-name-options option[value="Physiotherapie"]',
-    ),
-  ).toHaveCount(1)
 })
 
 test('assigns pastel colors by activity type and lets them be changed', async ({
