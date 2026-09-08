@@ -4,6 +4,7 @@
   right: 0;
   bottom: 0;
   left: 0;
+  height: var(--bottom-navigation-height);
   border-top: 1px solid rgb(37 48 43 / 14%);
   background: rgb(249 251 250 / 96%);
   box-shadow: 0 -8px 28px rgb(37 48 43 / 8%);
