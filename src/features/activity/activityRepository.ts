@@ -7,6 +7,10 @@ import {
 } from '../../data/localDatabase'
 import { markDirty } from '../../data/syncManager'
 import type { ActivityEntry, NewActivityEntry } from './activityEntry'
+import {
+  normalizeActivityColor,
+  sameActivityType,
+} from './activityColors'
 
 const SYNC_FEATURE = 'activityEntries'
 const MAX_NAME_LENGTH = 120
@@ -100,6 +104,7 @@ function normalizeStoredEntry(value: unknown): ActivityEntry | null {
     startTime,
     endTime,
     activityName,
+    color: normalizeActivityColor(value.color, activityName),
     note: normalizedText(value.note, MAX_NOTE_LENGTH),
     status: value.status === 'deleted' ? 'deleted' : 'active',
     createdAt,
@@ -131,6 +136,7 @@ export async function createActivityEntries(
       startTime,
       endTime,
       activityName,
+      color: normalizeActivityColor(input.color, activityName),
       note: normalizedText(input.note, MAX_NOTE_LENGTH),
       status: 'active' as const,
       createdAt: timestamp,
@@ -196,19 +202,58 @@ export async function listActivityEntries(options?: {
     )
 }
 
-export async function listActivityNames(): Promise<string[]> {
+export interface ActivityType {
+  name: string
+  color: string
+}
+
+export async function listActivityTypes(): Promise<ActivityType[]> {
   const entries = await listActivityEntries()
   const seen = new Set<string>()
-  const names: string[] = []
+  const types: ActivityType[] = []
 
   for (const entry of entries) {
-    const key = entry.activityName.toLocaleLowerCase('de')
+    const key = entry.activityName.trim().toLocaleLowerCase('de')
     if (seen.has(key)) continue
     seen.add(key)
-    names.push(entry.activityName)
+    types.push({
+      name: entry.activityName,
+      color: normalizeActivityColor(entry.color, entry.activityName),
+    })
   }
 
-  return names.sort((left, right) => left.localeCompare(right, 'de'))
+  return types.sort((left, right) => left.name.localeCompare(right.name, 'de'))
+}
+
+export async function listActivityNames(): Promise<string[]> {
+  return (await listActivityTypes()).map((type) => type.name)
+}
+
+export async function saveActivityTypeColor(
+  activityName: string,
+  color: string,
+): Promise<void> {
+  const normalizedName = normalizedText(activityName, MAX_NAME_LENGTH)
+  if (!normalizedName) return
+
+  const normalizedColor = normalizeActivityColor(color, normalizedName)
+  const entries = await listActivityEntries({ includeDeleted: true })
+  const matchingEntries = entries.filter((entry) =>
+    sameActivityType(entry.activityName, normalizedName),
+  )
+
+  if (!matchingEntries.length) return
+
+  const timestamp = nowIso()
+  await putRecords(
+    LOCAL_STORES.activityEntries,
+    matchingEntries.map((entry) => ({
+      ...entry,
+      color: normalizedColor,
+      updatedAt: timestamp,
+    })),
+  )
+  markDirty(SYNC_FEATURE)
 }
 
 export async function storeActivityEntriesFromSync(
