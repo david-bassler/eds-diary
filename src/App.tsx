@@ -7,6 +7,7 @@ import { ActivityPage } from './features/activity/ActivityPage'
 import { MedicationPage } from './features/medication/MedicationPage'
 import { PainEntryFlow } from './features/pain/PainEntryFlow'
 import { PainStatusPrompt } from './features/pain/PainStatusPrompt'
+import { QrShareButton } from './features/share/QrShareButton'
 import { GoogleSyncSettings } from './features/settings/GoogleSyncSettings'
 import { InstallAppSettings } from './features/settings/InstallAppSettings'
 import {
@@ -84,10 +85,15 @@ export function App() {
             aria-labelledby={`page-title-${activeSection}`}
           >
             <header className="app__header">
-              <p className="app__eyebrow">{page.eyebrow}</p>
-              <h1 className="app__title" id={`page-title-${activeSection}`}>
-                {page.title}
-              </h1>
+              <div className="app__header-row">
+                <div className="app__heading-copy">
+                  <p className="app__eyebrow">{page.eyebrow}</p>
+                  <h1 className="app__title" id={`page-title-${activeSection}`}>
+                    {page.title}
+                  </h1>
+                </div>
+                <QrShareButton />
+              </div>
               <p className="app__description">{page.description}</p>
             </header>
 
