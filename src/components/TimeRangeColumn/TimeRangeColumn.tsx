@@ -14,7 +14,7 @@ export type TimeRangeColumnProps = {
   value?: readonly TimeRange[];
   onChange?: (ranges: TimeRange[]) => void;
   onRangeActivate?: (index: number) => void;
-  onRangeCreated?: (index: number) => void;
+  onRangeCreated?: (index: number, range: TimeRange) => void;
   activeRangeIndex?: number | null;
   label?: string;
 };
@@ -307,22 +307,28 @@ export function TimeRangeColumn({
   const finishDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (!drag || drag.pointerId !== event.pointerId) return;
 
-    if (drag.current === drag.anchor) {
-      const endCandidate =
-        drag.anchor + resolution <= endMinutes
+    const endCandidate =
+      drag.current === drag.anchor
+        ? drag.anchor + resolution <= endMinutes
           ? drag.anchor + resolution
-          : drag.anchor - resolution;
-      emitRanges([
-        ...drag.baseRanges,
-        { start: drag.anchor, end: endCandidate },
-      ]);
-    }
+          : drag.anchor - resolution
+        : drag.current;
+    const createdRange = normalizeMinuteRange(
+      { start: drag.anchor, end: endCandidate },
+      beginMinutes,
+      endMinutes,
+    );
+
+    emitRanges([...drag.baseRanges, createdRange]);
 
     const createdIndex = drag.baseRanges.length;
     event.currentTarget.releasePointerCapture(event.pointerId);
     setDrag(null);
     setFineMode(false);
-    onRangeCreated?.(createdIndex);
+    onRangeCreated?.(createdIndex, {
+      start: formatTime(createdRange.start),
+      end: formatTime(createdRange.end),
+    });
   };
 
   const cancelDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
