@@ -1,5 +1,9 @@
 import { type FormEvent, useEffect, useRef, useState } from 'react'
 import {
+  CopyDayDialog,
+  type CopyDayItem,
+} from '../../components/CopyDayDialog/CopyDayDialog'
+import {
   TimeRangeColumn,
   type TimeRange,
 } from '../../components/TimeRangeColumn/TimeRangeColumn'
@@ -30,12 +34,22 @@ function emptyDetails(): RangeDetails {
   }
 }
 
-function localToday(): string {
-  const now = new Date()
-  const year = String(now.getFullYear())
-  const month = String(now.getMonth() + 1).padStart(2, '0')
-  const day = String(now.getDate()).padStart(2, '0')
+function formatLocalDate(date: Date): string {
+  const year = String(date.getFullYear())
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
+}
+
+function localToday(): string {
+  return formatLocalDate(new Date())
+}
+
+function previousDate(date: string): string {
+  const parsed = new Date(`${date}T12:00:00`)
+  if (Number.isNaN(parsed.getTime())) return date
+  parsed.setDate(parsed.getDate() - 1)
+  return formatLocalDate(parsed)
 }
 
 function entriesForDate(
@@ -120,6 +134,17 @@ export function ActivityPage() {
   const [status, setStatus] = useState('')
   const [saving, setSaving] = useState(false)
   const [detailsSaving, setDetailsSaving] = useState(false)
+  const [copyOpen, setCopyOpen] = useState(false)
+  const [copySourceDate, setCopySourceDate] = useState(() =>
+    previousDate(localToday()),
+  )
+  const [copyEntries, setCopyEntries] = useState<ActivityEntry[]>([])
+  const [copySelectedIds, setCopySelectedIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  )
+  const [copyLoading, setCopyLoading] = useState(false)
+  const [copyBusy, setCopyBusy] = useState(false)
+  const [copyError, setCopyError] = useState('')
   const detailsDialogRef = useRef<HTMLDialogElement>(null)
 
   useEffect(() => {
@@ -184,6 +209,35 @@ export function ActivityPage() {
 
     if (!dialog.open) dialog.showModal()
   }, [activeRangeIndex, activeDraft])
+
+  useEffect(() => {
+    if (!copyOpen || !copySourceDate) return
+
+    let active = true
+    setCopyLoading(true)
+    setCopyError('')
+
+    void listActivityEntries()
+      .then((entries) => {
+        if (!active) return
+        const sourceEntries = entriesForDate(entries, copySourceDate)
+        setCopyEntries(sourceEntries)
+        setCopySelectedIds(new Set(sourceEntries.map((entry) => entry.id)))
+      })
+      .catch(() => {
+        if (!active) return
+        setCopyEntries([])
+        setCopySelectedIds(new Set())
+        setCopyError('Die Aktivitäten dieses Tages konnten nicht geladen werden.')
+      })
+      .finally(() => {
+        if (active) setCopyLoading(false)
+      })
+
+    return () => {
+      active = false
+    }
+  }, [copyOpen, copySourceDate])
 
   function changeRanges(nextRanges: TimeRange[]): void {
     setTimeRanges(nextRanges)
@@ -362,6 +416,89 @@ export function ActivityPage() {
     }
   }
 
+  function openCopyDay(): void {
+    setCopySourceDate(previousDate(date))
+    setCopyEntries([])
+    setCopySelectedIds(new Set())
+    setCopyError('')
+    setStatus('')
+    setCopyOpen(true)
+  }
+
+  function toggleCopyEntry(id: string, selected: boolean): void {
+    setCopySelectedIds((current) => {
+      const next = new Set(current)
+      if (selected) next.add(id)
+      else next.delete(id)
+      return next
+    })
+  }
+
+  async function confirmCopyDay(): Promise<void> {
+    const selectedEntries = copyEntries.filter((entry) =>
+      copySelectedIds.has(entry.id),
+    )
+    if (!selectedEntries.length || copySourceDate === date) return
+
+    const pendingEntries = rangeRecords.flatMap((record, index) => {
+      if (record) return []
+      const range = timeRanges[index]
+      if (!range) return []
+      return [
+        {
+          range,
+          details: rangeDetails[index] ?? emptyDetails(),
+        },
+      ]
+    })
+
+    setCopyBusy(true)
+    setCopyError('')
+
+    try {
+      await createActivityEntries(
+        selectedEntries.map((entry) => ({
+          date,
+          startTime: entry.startTime,
+          endTime: entry.endTime,
+          activityName: entry.activityName,
+          note: entry.note,
+        })),
+      )
+
+      const storedEntries = entriesForDate(await listActivityEntries(), date)
+      setTimeRanges([
+        ...storedEntries.map((entry) => ({
+          start: entry.startTime,
+          end: entry.endTime,
+        })),
+        ...pendingEntries.map((entry) => entry.range),
+      ])
+      setRangeDetails([
+        ...storedEntries.map((entry) => ({
+          activityName: entry.activityName,
+          note: entry.note,
+        })),
+        ...pendingEntries.map((entry) => entry.details),
+      ])
+      setRangeRecords([
+        ...storedEntries,
+        ...pendingEntries.map(() => null),
+      ])
+      setKnownActivityNames(await listActivityNames())
+      setCopyOpen(false)
+      setStatus(
+        selectedEntries.length === 1
+          ? '1 Aktivität wurde auf den aktuellen Tag übernommen.'
+          : `${selectedEntries.length} Aktivitäten wurden auf den aktuellen Tag übernommen.`,
+      )
+    } catch {
+      setCopyError('Die ausgewählten Aktivitäten konnten nicht übernommen werden.')
+    } finally {
+      setCopyBusy(false)
+    }
+  }
+
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault()
 
@@ -450,17 +587,32 @@ export function ActivityPage() {
   const canApplyDraft =
     Boolean(activeDraft?.activityName.trim()) && !draftValidationMessage
 
+  const copyItems: CopyDayItem[] = copyEntries.map((entry) => ({
+    id: entry.id,
+    primary: `${entry.startTime}–${entry.endTime} · ${entry.activityName}`,
+    secondary: entry.note || undefined,
+  }))
+
   return (
     <form className="activity-page" onSubmit={(event) => void submit(event)}>
-      <label className="activity-page__date">
-        <span>Datum</span>
-        <input
-          type="date"
-          required
-          value={date}
-          onChange={(event) => setDate(event.target.value)}
-        />
-      </label>
+      <div className="activity-page__day-controls">
+        <label className="activity-page__date">
+          <span>Datum</span>
+          <input
+            type="date"
+            required
+            value={date}
+            onChange={(event) => setDate(event.target.value)}
+          />
+        </label>
+        <button
+          className="activity-page__copy-day"
+          type="button"
+          onClick={openCopyDay}
+        >
+          Tag kopieren
+        </button>
+      </div>
 
       <section
         className="activity-page__intro"
@@ -698,6 +850,27 @@ export function ActivityPage() {
           </div>
         ) : null}
       </dialog>
+
+      <CopyDayDialog
+        open={copyOpen}
+        sourceDate={copySourceDate}
+        targetDate={date}
+        items={copyItems}
+        selectedIds={copySelectedIds}
+        loading={copyLoading}
+        busy={copyBusy}
+        emptyMessage="Für diesen Tag sind keine Aktivitäten gespeichert."
+        errorMessage={copyError}
+        onSourceDateChange={(nextDate) => {
+          setCopySourceDate(nextDate)
+          setCopyError('')
+        }}
+        onSelectionChange={toggleCopyEntry}
+        onCancel={() => {
+          if (!copyBusy) setCopyOpen(false)
+        }}
+        onConfirm={() => void confirmCopyDay()}
+      />
     </form>
   )
 }
