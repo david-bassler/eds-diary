@@ -155,6 +155,21 @@ test('stores activity and note separately for each selected range', async ({
 
   await page.getByRole('button', { name: 'Aktivitäten speichern' }).click()
   await expect(page.getByText('Aktivitäten gespeichert.')).toBeVisible()
+  await expect(page.locator('.timerange__selection')).toHaveCount(2)
+  await expect(
+    page.getByRole('button', { name: 'Aktivitäten speichern' }),
+  ).not.toBeVisible()
+
+  await page.getByLabel('Datum').fill('2026-09-08')
+  await expect(page.locator('.timerange__selection')).toHaveCount(0)
+
+  await page.getByLabel('Datum').fill('2026-09-07')
+  await expect(page.locator('.timerange__selection')).toHaveCount(2)
+  await openRangeDetails(page, 0)
+  await expect(page.getByLabel('Aktivität für Zeitraum 1')).toHaveValue(
+    'Spaziergang',
+  )
+  await closeRangeDetails(page)
 
   const entries = await page.evaluate(async () => {
     const repository = await import(
@@ -195,9 +210,11 @@ test('stores activity and note separately for each selected range', async ({
   ).toHaveCount(1)
 })
 
-test('can remove one selected range together with its details', async ({
+test('can remove a saved range without it returning for the date', async ({
   page,
 }) => {
+  await page.getByLabel('Datum').fill('2026-09-07')
+
   await addRange(page, 8, 10, false)
   await page.getByLabel('Aktivität für Zeitraum 1').fill('Erste Aktivität')
   await closeRangeDetails(page)
@@ -206,6 +223,9 @@ test('can remove one selected range together with its details', async ({
   await page.getByLabel('Aktivität für Zeitraum 2').fill('Zweite Aktivität')
   await closeRangeDetails(page)
 
+  await page.getByRole('button', { name: 'Aktivitäten speichern' }).click()
+  await expect(page.locator('.timerange__selection')).toHaveCount(2)
+
   await openRangeDetails(page, 0)
   await page.getByRole('button', { name: 'Zeitraum entfernen' }).click()
 
@@ -213,6 +233,11 @@ test('can remove one selected range together with its details', async ({
   await expect(
     page.getByRole('dialog', { name: 'Aktivität eintragen' }),
   ).not.toBeVisible()
+
+  await page.getByLabel('Datum').fill('2026-09-08')
+  await expect(page.locator('.timerange__selection')).toHaveCount(0)
+  await page.getByLabel('Datum').fill('2026-09-07')
+  await expect(page.locator('.timerange__selection')).toHaveCount(1)
 
   await openRangeDetails(page, 0)
   await expect(page.getByLabel('Aktivität für Zeitraum 1')).toHaveValue(
