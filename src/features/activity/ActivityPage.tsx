@@ -9,16 +9,25 @@ import {
 } from '../../components/TimeRangeColumn/TimeRangeColumn'
 import type { ActivityEntry } from './activityEntry'
 import {
+  ACTIVITY_PASTEL_COLORS,
+  defaultActivityColor,
+  normalizeActivityColor,
+  sameActivityType,
+} from './activityColors'
+import {
   createActivityEntries,
   deleteActivityEntry,
   listActivityEntries,
-  listActivityNames,
+  listActivityTypes,
   saveActivityEntry,
+  saveActivityTypeColor,
+  type ActivityType,
 } from './activityRepository'
 import './ActivityPage.css'
 
 interface RangeDetails {
   activityName: string
+  color: string
   note: string
 }
 
@@ -30,6 +39,7 @@ const TIME_STEP_MINUTES = 15
 function emptyDetails(): RangeDetails {
   return {
     activityName: '',
+    color: defaultActivityColor(''),
     note: '',
   }
 }
@@ -128,7 +138,7 @@ export function ActivityPage() {
   const [rangeRecords, setRangeRecords] = useState<Array<ActivityEntry | null>>(
     [],
   )
-  const [knownActivityNames, setKnownActivityNames] = useState<string[]>([])
+  const [knownActivityTypes, setKnownActivityTypes] = useState<ActivityType[]>([])
   const [activeRangeIndex, setActiveRangeIndex] = useState<number | null>(null)
   const [activeDraft, setActiveDraft] = useState<RangeDraft | null>(null)
   const [status, setStatus] = useState('')
@@ -150,8 +160,8 @@ export function ActivityPage() {
   useEffect(() => {
     let active = true
 
-    void listActivityNames().then((names) => {
-      if (active) setKnownActivityNames(names)
+    void listActivityTypes().then((types) => {
+      if (active) setKnownActivityTypes(types)
     })
 
     return () => {
@@ -182,6 +192,7 @@ export function ActivityPage() {
         setRangeDetails(
           selectedEntries.map((entry) => ({
             activityName: entry.activityName,
+            color: entry.color,
             note: entry.note,
           })),
         )
@@ -260,6 +271,7 @@ export function ActivityPage() {
       start: range.start,
       end: range.end,
       activityName: details.activityName,
+      color: details.color,
       note: details.note,
     })
     setStatus('')
@@ -282,6 +294,29 @@ export function ActivityPage() {
 
   function updateDraft(patch: Partial<RangeDraft>): void {
     setActiveDraft((current) => (current ? { ...current, ...patch } : current))
+  }
+
+  function colorForActivityName(activityName: string): string {
+    if (!activityName.trim()) return defaultActivityColor(activityName)
+
+    const localType = rangeDetails.find(
+      (details) =>
+        details.activityName.trim() &&
+        sameActivityType(details.activityName, activityName),
+    )
+    if (localType) return localType.color
+
+    const knownType = knownActivityTypes.find((type) =>
+      sameActivityType(type.name, activityName),
+    )
+    return knownType?.color ?? defaultActivityColor(activityName)
+  }
+
+  function updateDraftActivityName(activityName: string): void {
+    updateDraft({
+      activityName,
+      color: colorForActivityName(activityName),
+    })
   }
 
   function adjustDraftTime(field: 'start' | 'end', delta: number): void {
@@ -355,27 +390,46 @@ export function ActivityPage() {
 
     const storedRecord = rangeRecords[activeRangeIndex]
 
+    const activityName = activeDraft.activityName.trim()
+    const activityColor = normalizeActivityColor(activeDraft.color, activityName)
+
     if (!storedRecord) {
-      setTimeRanges((current) =>
-        current.map((range, index) =>
-          index === activeRangeIndex
-            ? { start: activeDraft.start, end: activeDraft.end }
-            : range,
-        ),
-      )
-      setRangeDetails((current) =>
-        current.map((details, index) =>
-          index === activeRangeIndex
-            ? {
-                activityName: activeDraft.activityName,
+      setDetailsSaving(true)
+      setStatus('')
+
+      try {
+        await saveActivityTypeColor(activityName, activityColor)
+
+        setTimeRanges((current) =>
+          current.map((range, index) =>
+            index === activeRangeIndex
+              ? { start: activeDraft.start, end: activeDraft.end }
+              : range,
+          ),
+        )
+        setRangeDetails((current) =>
+          current.map((details, index) => {
+            if (index === activeRangeIndex) {
+              return {
+                activityName,
+                color: activityColor,
                 note: activeDraft.note,
               }
-            : details,
-        ),
-      )
-      setActiveDraft(null)
-      setActiveRangeIndex(null)
-      setStatus('')
+            }
+            return sameActivityType(details.activityName, activityName)
+              ? { ...details, color: activityColor }
+              : details
+          }),
+        )
+        setKnownActivityTypes(await listActivityTypes())
+        setActiveDraft(null)
+        setActiveRangeIndex(null)
+        setStatus('')
+      } catch {
+        setStatus('Die Aktivitätsfarbe konnte nicht gespeichert werden.')
+      } finally {
+        setDetailsSaving(false)
+      }
       return
     }
 
@@ -387,9 +441,11 @@ export function ActivityPage() {
         ...storedRecord,
         startTime: activeDraft.start,
         endTime: activeDraft.end,
-        activityName: activeDraft.activityName,
+        activityName,
+        color: activityColor,
         note: activeDraft.note,
       })
+      await saveActivityTypeColor(activityName, activityColor)
 
       const storedEntries = entriesForDate(await listActivityEntries(), date)
       setTimeRanges(
@@ -401,11 +457,12 @@ export function ActivityPage() {
       setRangeDetails(
         storedEntries.map((entry) => ({
           activityName: entry.activityName,
+          color: entry.color,
           note: entry.note,
         })),
       )
       setRangeRecords(storedEntries)
-      setKnownActivityNames(await listActivityNames())
+      setKnownActivityTypes(await listActivityTypes())
       setActiveDraft(null)
       setActiveRangeIndex(null)
       setStatus('Aktivität aktualisiert.')
@@ -462,6 +519,7 @@ export function ActivityPage() {
           startTime: entry.startTime,
           endTime: entry.endTime,
           activityName: entry.activityName,
+          color: entry.color,
           note: entry.note,
         })),
       )
@@ -477,6 +535,7 @@ export function ActivityPage() {
       setRangeDetails([
         ...storedEntries.map((entry) => ({
           activityName: entry.activityName,
+          color: entry.color,
           note: entry.note,
         })),
         ...pendingEntries.map((entry) => entry.details),
@@ -485,7 +544,7 @@ export function ActivityPage() {
         ...storedEntries,
         ...pendingEntries.map(() => null),
       ])
-      setKnownActivityNames(await listActivityNames())
+      setKnownActivityTypes(await listActivityTypes())
       setCopyOpen(false)
       setStatus(
         selectedEntries.length === 1
@@ -536,6 +595,7 @@ export function ActivityPage() {
           startTime: timeRanges[index]?.start ?? '',
           endTime: timeRanges[index]?.end ?? '',
           activityName: rangeDetails[index]?.activityName ?? '',
+          color: rangeDetails[index]?.color,
           note: rangeDetails[index]?.note ?? '',
         })),
       )
@@ -553,11 +613,12 @@ export function ActivityPage() {
       setRangeDetails(
         storedEntries.map((entry) => ({
           activityName: entry.activityName,
+          color: entry.color,
           note: entry.note,
         })),
       )
       setRangeRecords(storedEntries)
-      setKnownActivityNames(await listActivityNames())
+      setKnownActivityTypes(await listActivityTypes())
       setActiveDraft(null)
       setActiveRangeIndex(null)
       setStatus(
@@ -583,6 +644,11 @@ export function ActivityPage() {
             : range,
         )
       : timeRanges
+  const previewColors = previewRanges.map((_, index) =>
+    activeRangeIndex === index && activeDraft
+      ? activeDraft.color
+      : rangeDetails[index]?.color ?? defaultActivityColor(''),
+  )
   const unsavedCount = rangeRecords.filter((record) => record === null).length
   const canApplyDraft =
     Boolean(activeDraft?.activityName.trim()) && !draftValidationMessage
@@ -633,6 +699,7 @@ export function ActivityPage() {
         end="24:00"
         resolution={15}
         value={previewRanges}
+        rangeColors={previewColors}
         onChange={changeRanges}
         onRangeActivate={openRangeDetails}
         onRangeCreated={openCreatedRange}
@@ -641,8 +708,8 @@ export function ActivityPage() {
       />
 
       <datalist id="activity-name-options">
-        {knownActivityNames.map((name) => (
-          <option key={name.toLocaleLowerCase('de')} value={name} />
+        {knownActivityTypes.map((type) => (
+          <option key={type.name.toLocaleLowerCase('de')} value={type.name} />
         ))}
       </datalist>
 
@@ -710,10 +777,42 @@ export function ActivityPage() {
                   aria-label={`Aktivität für Zeitraum ${activeRangeIndex + 1}`}
                   placeholder="z. B. Spaziergang"
                   onChange={(event) =>
-                    updateDraft({ activityName: event.target.value })
+                    updateDraftActivityName(event.target.value)
                   }
                 />
               </label>
+
+              <fieldset className="activity-page__color-picker">
+                <legend>Farbe</legend>
+                <div className="activity-page__color-swatches">
+                  {ACTIVITY_PASTEL_COLORS.map((color, index) => (
+                    <button
+                      key={color}
+                      type="button"
+                      className="activity-page__color-swatch"
+                      style={{ backgroundColor: color }}
+                      aria-label={`Pastellfarbe ${index + 1}`}
+                      aria-pressed={activeDraft.color === color}
+                      title={`Pastellfarbe ${index + 1}`}
+                      onClick={() => updateDraft({ color })}
+                    />
+                  ))}
+                  <button
+                    type="button"
+                    className="activity-page__color-auto"
+                    onClick={() =>
+                      updateDraft({
+                        color: defaultActivityColor(activeDraft.activityName),
+                      })
+                    }
+                  >
+                    Automatisch
+                  </button>
+                </div>
+                <small>
+                  Die Farbe gilt für alle Einträge mit demselben Aktivitätsnamen.
+                </small>
+              </fieldset>
 
               <label className="activity-page__field">
                 <span>
