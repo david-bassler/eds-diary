@@ -100,6 +100,58 @@
   resize: vertical;
 }
 
+.activity-page__color-picker {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+  padding: 14px;
+  border: 1px solid rgb(37 48 43 / 14%);
+  background: rgb(244 248 246 / 72%);
+}
+
+.activity-page__color-picker legend {
+  padding-inline: 6px;
+  font-weight: 750;
+}
+
+.activity-page__color-picker > small {
+  font-size: 0.8rem;
+  line-height: 1.4;
+  opacity: 0.68;
+}
+
+.activity-page__color-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.activity-page__color-swatch {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 1px solid rgb(37 48 43 / 20%);
+  cursor: pointer;
+}
+
+.activity-page__color-swatch[aria-pressed="true"] {
+  outline: 3px solid #315b4a;
+  outline-offset: 2px;
+}
+
+.activity-page__color-auto {
+  min-height: 38px;
+  padding: 7px 11px;
+  border: 1px solid rgb(37 48 43 / 20%);
+  background: white;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+
 .activity-page__time-editor {
   display: grid;
   gap: 14px;
@@ -318,7 +370,9 @@
 .activity-page__time-buttons button:focus-visible,
 .activity-page__date input:focus-visible,
 .activity-page__field input:focus-visible,
-.activity-page__field textarea:focus-visible {
+.activity-page__field textarea:focus-visible,
+.activity-page__color-swatch:focus-visible,
+.activity-page__color-auto:focus-visible {
   outline: 3px solid #8ec9b5;
   outline-offset: 3px;
 }
