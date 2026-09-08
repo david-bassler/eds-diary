@@ -60,6 +60,8 @@ function latestStaleOpenEntry(
 export function PainStatusPrompt() {
   const [entry, setEntry] = useState<PainEntry | null>(null)
   const [ending, setEnding] = useState(false)
+  const [notingChange, setNotingChange] = useState(false)
+  const [changeNote, setChangeNote] = useState('')
   const [endWhen, setEndWhen] = useState<LocalDateTime>(() =>
     localDateTime(new Date()),
   )
@@ -100,13 +102,56 @@ export function PainStatusPrompt() {
   function keepCurrent(): void {
     setEntry(null)
     setEnding(false)
+    setNotingChange(false)
+    setChangeNote('')
+    setError('')
+  }
+
+  function startChangeNote(): void {
+    setNotingChange(true)
+    setEnding(false)
+    setChangeNote('')
     setError('')
   }
 
   function startEnding(): void {
     setEndWhen(localDateTime(new Date()))
     setEnding(true)
+    setNotingChange(false)
     setError('')
+  }
+
+  async function saveChangeNote(): Promise<void> {
+    if (!entry) return
+
+    const trimmed = changeNote.trim()
+    if (!trimmed) {
+      setError('Bitte die Veränderung kurz beschreiben.')
+      return
+    }
+
+    const timestamp = new Intl.DateTimeFormat('de-DE', {
+      dateStyle: 'short',
+      timeStyle: 'short',
+    }).format(new Date())
+    const addition = `Veränderung am ${timestamp}: ${trimmed}`
+    const note = entry.note.trim()
+      ? `${entry.note.trim()}\n\n${addition}`
+      : addition
+
+    setSaving(true)
+    setError('')
+
+    try {
+      await savePainEntry({ ...entry, note })
+      setEntry(null)
+      setNotingChange(false)
+      setChangeNote('')
+    } catch {
+      setError('Die Veränderung konnte nicht gespeichert werden.')
+    } finally {
+      setSaving(false)
+    }
   }
 
   async function saveEnd(): Promise<void> {
@@ -129,6 +174,8 @@ export function PainStatusPrompt() {
       await savePainEntry({ ...entry, endedAt })
       setEntry(null)
       setEnding(false)
+      setNotingChange(false)
+      setChangeNote('')
     } catch {
       setError('Der Endzeitpunkt konnte nicht gespeichert werden.')
     } finally {
@@ -223,6 +270,54 @@ export function PainStatusPrompt() {
                 </button>
               </div>
             </div>
+          ) : notingChange ? (
+            <div className="pain-status-prompt__body">
+              <p>
+                Beschreibe kurz, was sich verändert hat. Der Text wird mit
+                Zeitstempel an die vorhandenen Notizen angehängt.
+              </p>
+
+              <label className="pain-status-prompt__change">
+                <span>Veränderung der Schmerzen</span>
+                <textarea
+                  value={changeNote}
+                  maxLength={1000}
+                  rows={4}
+                  disabled={saving}
+                  placeholder="z. B. stärker geworden, andere Region, Schmerzart verändert …"
+                  onChange={(event) => setChangeNote(event.target.value)}
+                />
+              </label>
+
+              <p
+                className="pain-status-prompt__error"
+                aria-live="polite"
+              >
+                {error}
+              </p>
+
+              <div className="pain-status-prompt__actions">
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => {
+                    setNotingChange(false)
+                    setChangeNote('')
+                    setError('')
+                  }}
+                >
+                  Zurück
+                </button>
+                <button
+                  type="button"
+                  className="pain-status-prompt__primary"
+                  disabled={saving || !changeNote.trim()}
+                  onClick={() => void saveChangeNote()}
+                >
+                  {saving ? 'Speichert …' : 'Veränderung speichern'}
+                </button>
+              </div>
+            </div>
           ) : (
             <div className="pain-status-prompt__body">
               <p>
@@ -234,6 +329,12 @@ export function PainStatusPrompt() {
                   onClick={startEnding}
                 >
                   Nein, beendet
+                </button>
+                <button
+                  type="button"
+                  onClick={startChangeNote}
+                >
+                  Verändert
                 </button>
                 <button
                   type="button"
