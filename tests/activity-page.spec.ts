@@ -81,6 +81,14 @@ test('shows date and the time range picker on the activity page', async ({
     page.getByRole('heading', { level: 2, name: 'Aktivitätszeiträume' }),
   ).toBeVisible()
   await expect(page.getByTestId('time-range-surface')).toBeVisible()
+
+  const workspaceBounds = await page.locator('.timerange__workspace').boundingBox()
+  const viewport = page.viewportSize()
+  if (!workspaceBounds || !viewport) {
+    throw new Error('Zeitachse oder Viewport ist nicht messbar.')
+  }
+  expect(Math.abs(workspaceBounds.height - viewport.height)).toBeLessThan(2)
+
   await expect(page.locator('.timerange__selection')).toHaveCount(0)
   await expect(
     page.getByRole('dialog', { name: 'Aktivität eintragen' }),
