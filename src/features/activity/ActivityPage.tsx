@@ -139,6 +139,7 @@ export function ActivityPage() {
     [],
   )
   const [knownActivityTypes, setKnownActivityTypes] = useState<ActivityType[]>([])
+  const [activitySuggestionsOpen, setActivitySuggestionsOpen] = useState(false)
   const [activeRangeIndex, setActiveRangeIndex] = useState<number | null>(null)
   const [activeDraft, setActiveDraft] = useState<RangeDraft | null>(null)
   const [status, setStatus] = useState('')
@@ -288,6 +289,7 @@ export function ActivityPage() {
   }
 
   function discardRangeDetails(): void {
+    setActivitySuggestionsOpen(false)
     setActiveDraft(null)
     setActiveRangeIndex(null)
   }
@@ -317,6 +319,15 @@ export function ActivityPage() {
       activityName,
       color: colorForActivityName(activityName),
     })
+    setActivitySuggestionsOpen(true)
+  }
+
+  function selectActivityType(type: ActivityType): void {
+    updateDraft({
+      activityName: type.name,
+      color: type.color,
+    })
+    setActivitySuggestionsOpen(false)
   }
 
   function adjustDraftTime(field: 'start' | 'end', delta: number): void {
@@ -650,6 +661,15 @@ export function ActivityPage() {
       : rangeDetails[index]?.color ?? defaultActivityColor(''),
   )
   const unsavedCount = rangeRecords.filter((record) => record === null).length
+  const activitySearch =
+    activeDraft?.activityName.trim().toLocaleLowerCase('de') ?? ''
+  const activitySuggestions = knownActivityTypes
+    .filter(
+      (type) =>
+        !activitySearch ||
+        type.name.toLocaleLowerCase('de').includes(activitySearch),
+    )
+    .slice(0, 12)
   const canApplyDraft =
     Boolean(activeDraft?.activityName.trim()) && !draftValidationMessage
 
@@ -707,12 +727,6 @@ export function ActivityPage() {
         label="Aktivitätszeiträume"
       />
 
-      <datalist id="activity-name-options">
-        {knownActivityTypes.map((type) => (
-          <option key={type.name.toLocaleLowerCase('de')} value={type.name} />
-        ))}
-      </datalist>
-
       {unsavedCount ? (
         <div className="activity-page__footer">
           <button
@@ -764,23 +778,95 @@ export function ActivityPage() {
             </header>
 
             <div className="activity-page__dialog-body">
-              <label className="activity-page__field">
-                <span>Aktivität</span>
-                <input
-                  type="text"
-                  list="activity-name-options"
-                  value={activeDraft.activityName}
-                  maxLength={120}
-                  autoComplete="off"
-                  required
-                  autoFocus
-                  aria-label={`Aktivität für Zeitraum ${activeRangeIndex + 1}`}
-                  placeholder="z. B. Spaziergang"
-                  onChange={(event) =>
-                    updateDraftActivityName(event.target.value)
+              <div
+                className="activity-page__field activity-page__activity-combobox"
+                onBlur={(event) => {
+                  const nextFocus = event.relatedTarget
+                  if (
+                    !(nextFocus instanceof Node) ||
+                    !event.currentTarget.contains(nextFocus)
+                  ) {
+                    setActivitySuggestionsOpen(false)
                   }
-                />
-              </label>
+                }}
+              >
+                <label htmlFor="activity-name-input">Aktivität</label>
+                <div className="activity-page__combobox-control">
+                  <input
+                    id="activity-name-input"
+                    type="text"
+                    role="combobox"
+                    aria-autocomplete="list"
+                    aria-expanded={activitySuggestionsOpen}
+                    aria-controls="activity-name-options"
+                    value={activeDraft.activityName}
+                    maxLength={120}
+                    autoComplete="off"
+                    required
+                    autoFocus
+                    aria-label={`Aktivität für Zeitraum ${activeRangeIndex + 1}`}
+                    placeholder="z. B. Spaziergang"
+                    onFocus={() => setActivitySuggestionsOpen(true)}
+                    onChange={(event) =>
+                      updateDraftActivityName(event.target.value)
+                    }
+                    onKeyDown={(event) => {
+                      if (event.key === 'Escape') {
+                        setActivitySuggestionsOpen(false)
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="activity-page__combobox-toggle"
+                    aria-label="Gespeicherte Aktivitäten anzeigen"
+                    aria-expanded={activitySuggestionsOpen}
+                    aria-controls="activity-name-options"
+                    onClick={() =>
+                      setActivitySuggestionsOpen((current) => !current)
+                    }
+                  >
+                    <span aria-hidden="true">▾</span>
+                  </button>
+                </div>
+
+                {activitySuggestionsOpen ? (
+                  <div
+                    id="activity-name-options"
+                    className="activity-page__combobox-options"
+                    role="listbox"
+                    aria-label="Gespeicherte Aktivitäten"
+                  >
+                    {activitySuggestions.length ? (
+                      activitySuggestions.map((type) => (
+                        <button
+                          key={type.name.toLocaleLowerCase('de')}
+                          type="button"
+                          role="option"
+                          aria-selected={sameActivityType(
+                            type.name,
+                            activeDraft.activityName,
+                          )}
+                          className="activity-page__combobox-option"
+                          onClick={() => selectActivityType(type)}
+                        >
+                          <span
+                            className="activity-page__combobox-option-color"
+                            style={{ backgroundColor: type.color }}
+                            aria-hidden="true"
+                          />
+                          <span>{type.name}</span>
+                        </button>
+                      ))
+                    ) : (
+                      <p className="activity-page__combobox-empty">
+                        Keine gespeicherte Aktivität gefunden. Der eingegebene
+                        Name wird als neue Aktivität gespeichert.
+                      </p>
+                    )}
+                  </div>
+                ) : null}
+              </div>
 
               <fieldset className="activity-page__color-picker">
                 <legend>Farbe</legend>
