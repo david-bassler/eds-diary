@@ -162,6 +162,14 @@
   align-self: flex-end;
 }
 
+.timerange__selection--active {
+  outline: 3px solid #315b4a;
+  outline-offset: 2px;
+  box-shadow:
+    0 0 0 5px rgb(49 91 74 / 12%),
+    0 8px 20px rgb(22 107 82 / 16%);
+}
+
 .timerange__selectionaction {
   position: absolute;
   inset-block: 0;
