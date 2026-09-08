@@ -1,0 +1,124 @@
+.qr-share__button {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid rgb(37 48 43 / 18%);
+  background: rgb(255 255 255 / 55%);
+  color: inherit;
+  cursor: pointer;
+}
+
+.qr-share__button svg {
+  width: 22px;
+  height: 22px;
+  fill: currentcolor;
+}
+
+.qr-share__dialog {
+  width: min(420px, calc(100vw - 32px));
+  max-width: none;
+  margin: auto;
+  padding: 0;
+  border: 1px solid rgb(37 48 43 / 18%);
+  background: #fcfdfc;
+  color: inherit;
+  box-shadow: 0 28px 80px rgb(20 35 29 / 28%);
+}
+
+.qr-share__dialog::backdrop {
+  background: rgb(23 32 28 / 48%);
+}
+
+.qr-share__card {
+  display: grid;
+  padding: 16px 18px 22px;
+}
+
+.qr-share__close {
+  width: 44px;
+  height: 44px;
+  justify-self: end;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 1.8rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.qr-share__body {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding-inline: 4px;
+  text-align: center;
+}
+
+.qr-share__eyebrow {
+  margin: 0;
+  font-size: 0.76rem;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  opacity: 0.62;
+  text-transform: uppercase;
+}
+
+.qr-share__body h2 {
+  margin: 0;
+  font-size: clamp(1.35rem, 5vw, 1.7rem);
+}
+
+.qr-share__code {
+  display: grid;
+  width: min(280px, 100%);
+  min-height: 280px;
+  margin-top: 6px;
+  padding: 12px;
+  place-items: center;
+  border: 1px solid rgb(37 48 43 / 18%);
+  background: white;
+}
+
+.qr-share__code canvas,
+.qr-share__code img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.qr-share__message,
+.qr-share__url {
+  max-width: 100%;
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.qr-share__message {
+  padding: 10px;
+  background: rgb(37 48 43 / 6%);
+}
+
+.qr-share__url {
+  opacity: 0.68;
+  overflow-wrap: anywhere;
+}
+
+.qr-share__button:focus-visible,
+.qr-share__close:focus-visible {
+  outline: 3px solid currentcolor;
+  outline-offset: 3px;
+}
+
+@media (width <= 360px) {
+  .qr-share__dialog {
+    width: calc(100vw - 20px);
+  }
+
+  .qr-share__code {
+    min-height: auto;
+    aspect-ratio: 1;
+  }
+}
