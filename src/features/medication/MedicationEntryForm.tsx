@@ -10,6 +10,13 @@ interface LocalDateTime {
   time: string
 }
 
+export interface MedicationEntryFormProps {
+  date: string
+  refreshNamesKey?: number
+  onDateChange: (date: string) => void
+  onCopyDay: () => void
+}
+
 function localNow(): LocalDateTime {
   const now = new Date()
   const year = String(now.getFullYear())
@@ -29,10 +36,15 @@ function toIso(date: string, time: string): string | null {
   return Number.isNaN(value.getTime()) ? null : value.toISOString()
 }
 
-export function MedicationEntryForm() {
+export function MedicationEntryForm({
+  date,
+  refreshNamesKey = 0,
+  onDateChange,
+  onCopyDay,
+}: MedicationEntryFormProps) {
   const [medicationName, setMedicationName] = useState('')
   const [dose, setDose] = useState('')
-  const [when, setWhen] = useState<LocalDateTime>(localNow)
+  const [time, setTime] = useState(() => localNow().time)
   const [knownMedicationNames, setKnownMedicationNames] = useState<string[]>([])
   const [status, setStatus] = useState('')
   const [saving, setSaving] = useState(false)
@@ -47,12 +59,12 @@ export function MedicationEntryForm() {
     return () => {
       active = false
     }
-  }, [])
+  }, [refreshNamesKey])
 
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault()
 
-    const takenAt = toIso(when.date, when.time)
+    const takenAt = toIso(date, time)
     if (!takenAt) {
       setStatus('Bitte ein gültiges Datum und eine gültige Uhrzeit wählen.')
       return
@@ -82,7 +94,7 @@ export function MedicationEntryForm() {
       setKnownMedicationNames(await listMedicationNames())
       setMedicationName('')
       setDose('')
-      setWhen(localNow())
+      setTime(localNow().time)
       setStatus('Medikamenteneinnahme gespeichert.')
     } catch {
       setStatus('Die Medikamenteneinnahme konnte lokal nicht gespeichert werden.')
@@ -153,13 +165,8 @@ export function MedicationEntryForm() {
               <input
                 type="date"
                 required
-                value={when.date}
-                onChange={(event) =>
-                  setWhen((current) => ({
-                    ...current,
-                    date: event.target.value,
-                  }))
-                }
+                value={date}
+                onChange={(event) => onDateChange(event.target.value)}
               />
             </label>
             <label>
@@ -167,15 +174,16 @@ export function MedicationEntryForm() {
               <input
                 type="time"
                 required
-                value={when.time}
-                onChange={(event) =>
-                  setWhen((current) => ({
-                    ...current,
-                    time: event.target.value,
-                  }))
-                }
+                value={time}
+                onChange={(event) => setTime(event.target.value)}
               />
             </label>
+          </div>
+
+          <div className="medication-entry-form__day-actions">
+            <button type="button" onClick={onCopyDay}>
+              Tag kopieren
+            </button>
           </div>
         </fieldset>
 
