@@ -1,0 +1,210 @@
+.copy-day-dialog {
+  width: min(520px, calc(100vw - 32px));
+  max-width: none;
+  max-height: min(82dvh, 680px);
+  margin: auto;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid rgb(37 48 43 / 18%);
+  border-radius: 20px;
+  background: #fcfdfc;
+  color: inherit;
+  box-shadow: 0 28px 80px rgb(20 35 29 / 28%);
+}
+
+.copy-day-dialog::backdrop {
+  background: rgb(23 32 28 / 48%);
+}
+
+.copy-day-dialog__card {
+  display: grid;
+  max-height: inherit;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.copy-day-dialog__header {
+  padding: 20px 22px 16px;
+  border-bottom: 1px solid rgb(37 48 43 / 12%);
+  background: #f4f8f6;
+}
+
+.copy-day-dialog__header h2,
+.copy-day-dialog__header p {
+  margin: 0;
+}
+
+.copy-day-dialog__header h2 {
+  font-size: clamp(1.35rem, 5vw, 1.7rem);
+}
+
+.copy-day-dialog__header p {
+  margin-top: 5px;
+  font-size: 0.88rem;
+  line-height: 1.4;
+  opacity: 0.7;
+}
+
+.copy-day-dialog__body {
+  display: grid;
+  align-content: start;
+  gap: 16px;
+  overflow: auto;
+  padding: 20px 22px;
+}
+
+.copy-day-dialog__date {
+  display: grid;
+  gap: 7px;
+  font-weight: 650;
+}
+
+.copy-day-dialog__date input {
+  width: min(100%, 240px);
+  min-height: 44px;
+  padding: 9px 11px;
+  border: 1px solid rgb(37 48 43 / 24%);
+  border-radius: 10px;
+  background: white;
+  color: inherit;
+}
+
+.copy-day-dialog__list {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.copy-day-dialog__list legend {
+  margin-bottom: 7px;
+  font-size: 0.84rem;
+  font-weight: 750;
+  opacity: 0.72;
+}
+
+.copy-day-dialog__item {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 7px 9px;
+  border: 1px solid rgb(37 48 43 / 12%);
+  border-radius: 10px;
+  background: rgb(255 255 255 / 68%);
+  cursor: pointer;
+}
+
+.copy-day-dialog__item input {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+}
+
+.copy-day-dialog__item-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.copy-day-dialog__item-copy strong,
+.copy-day-dialog__item-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.copy-day-dialog__item-copy strong {
+  font-size: 0.9rem;
+}
+
+.copy-day-dialog__item-copy small {
+  font-size: 0.78rem;
+  opacity: 0.66;
+}
+
+.copy-day-dialog__message {
+  margin: 0;
+  padding: 12px;
+  border-radius: 10px;
+  background: rgb(37 48 43 / 6%);
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.copy-day-dialog__message--error {
+  color: #7c332d;
+  background: rgb(156 63 63 / 8%);
+  font-weight: 650;
+}
+
+.copy-day-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 22px max(16px, env(safe-area-inset-bottom));
+  border-top: 1px solid rgb(37 48 43 / 12%);
+  background: #fcfdfc;
+}
+
+.copy-day-dialog__actions button {
+  min-height: 44px;
+  padding: 9px 14px;
+  border: 1px solid rgb(37 48 43 / 20%);
+  border-radius: 10px;
+  background: white;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.copy-day-dialog__actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.copy-day-dialog__actions .copy-day-dialog__confirm {
+  border-color: #315b4a;
+  background: #315b4a;
+  color: white;
+}
+
+.copy-day-dialog__date input:focus-visible,
+.copy-day-dialog__item input:focus-visible,
+.copy-day-dialog__actions button:focus-visible {
+  outline: 3px solid #8ec9b5;
+  outline-offset: 3px;
+}
+
+@media (width <= 640px) {
+  .copy-day-dialog {
+    width: 100vw;
+    height: 100dvh;
+    max-height: none;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .copy-day-dialog__card {
+    height: 100%;
+  }
+
+  .copy-day-dialog__header {
+    padding:
+      max(18px, env(safe-area-inset-top))
+      18px
+      16px;
+  }
+
+  .copy-day-dialog__body {
+    padding: 18px;
+  }
+
+  .copy-day-dialog__actions {
+    padding-inline: 18px;
+  }
+}
