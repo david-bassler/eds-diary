@@ -17,7 +17,8 @@
 }
 
 .activity-page__date > span,
-.activity-page__field > span {
+.activity-page__field > span,
+.activity-page__field > label {
   font-weight: 650;
 }
 
@@ -99,6 +100,83 @@
   min-height: 132px;
   resize: vertical;
 }
+
+.activity-page__activity-combobox {
+  position: relative;
+}
+
+.activity-page__combobox-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 48px;
+}
+
+.activity-page__combobox-control input {
+  min-width: 0;
+}
+
+.activity-page__combobox-toggle {
+  min-width: 48px;
+  min-height: 44px;
+  padding: 0;
+  border: 1px solid rgb(37 48 43 / 24%);
+  border-left: 0;
+  background: #f4f8f6;
+  color: inherit;
+  font: inherit;
+  font-size: 1.15rem;
+  cursor: pointer;
+}
+
+.activity-page__combobox-options {
+  display: grid;
+  max-height: min(260px, 34dvh);
+  overflow-y: auto;
+  border: 1px solid rgb(37 48 43 / 18%);
+  border-top: 0;
+  background: white;
+  box-shadow: 0 12px 28px rgb(20 35 29 / 14%);
+}
+
+.activity-page__combobox-option {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 46px;
+  padding: 9px 12px;
+  border: 0;
+  border-bottom: 1px solid rgb(37 48 43 / 10%);
+  background: white;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.activity-page__combobox-option:last-child {
+  border-bottom: 0;
+}
+
+.activity-page__combobox-option:hover,
+.activity-page__combobox-option[aria-selected="true"] {
+  background: #eef4f1;
+}
+
+.activity-page__combobox-option-color {
+  width: 20px;
+  height: 20px;
+  border: 1px solid rgb(37 48 43 / 16%);
+}
+
+.activity-page__combobox-empty {
+  margin: 0;
+  padding: 12px;
+  font-size: 0.84rem;
+  line-height: 1.4;
+  opacity: 0.72;
+}
+
 
 .activity-page__color-picker {
   display: grid;
@@ -371,6 +449,8 @@
 .activity-page__date input:focus-visible,
 .activity-page__field input:focus-visible,
 .activity-page__field textarea:focus-visible,
+.activity-page__combobox-toggle:focus-visible,
+.activity-page__combobox-option:focus-visible,
 .activity-page__color-swatch:focus-visible,
 .activity-page__color-auto:focus-visible {
   outline: 3px solid #8ec9b5;
