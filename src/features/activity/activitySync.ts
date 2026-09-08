@@ -6,6 +6,7 @@ import {
 } from '../../data/googleSheets'
 import { registerSyncFeature } from '../../data/syncManager'
 import type { ActivityEntry } from './activityEntry'
+import { normalizeActivityColor } from './activityColors'
 import {
   listActivityEntries,
   storeActivityEntriesFromSync,
@@ -23,6 +24,7 @@ const ENTRY_HEADERS = [
   'Status',
   'Erstellt',
   'Aktualisiert',
+  'Farbe',
 ] as const
 
 export const activitySheetSpecs: SheetSpecs = {
@@ -50,6 +52,7 @@ function fromRow(row: SheetCell[]): ActivityEntry | null {
     startTime,
     endTime,
     activityName,
+    color: normalizeActivityColor(text(row[9]).trim(), activityName),
     note: text(row[5]).trim(),
     status: text(row[6]) === 'deleted' ? 'deleted' : 'active',
     createdAt,
@@ -68,6 +71,7 @@ function toRow(entry: ActivityEntry): readonly SheetCell[] {
     entry.status,
     entry.createdAt,
     entry.updatedAt,
+    entry.color,
   ]
 }
 
