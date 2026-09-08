@@ -86,6 +86,19 @@ export const Overlapping: Story = {
   ),
 };
 
+export const WithRangeLabels: Story = {
+  render: (args) => (
+    <ControlledExample
+      {...args}
+      value={[
+        { start: "07:00", end: "11:00" },
+        { start: "13:00", end: "14:00" },
+      ]}
+      rangeLabels={["Spaziergang", "Kurzer Termin"]}
+    />
+  ),
+};
+
 export const FineResolution: Story = {
   args: {
     begin: "08:00",
