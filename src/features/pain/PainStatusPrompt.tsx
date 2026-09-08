@@ -51,7 +51,7 @@ function latestStaleOpenEntry(
       const startedAt = Date.parse(entry.startedAt)
       return (
         Number.isFinite(startedAt) &&
-        now - startedAt >= STALE_PAIN_THRESHOLD_MS
+        now - startedAt > STALE_PAIN_THRESHOLD_MS
       )
     }) ?? null
   )
