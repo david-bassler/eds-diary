@@ -54,8 +54,8 @@
 }
 
 .activity-page .timerange__workspace {
-  height: 100vh;
-  height: 100dvh;
+  height: calc(100vh - var(--bottom-navigation-height));
+  height: calc(100dvh - var(--bottom-navigation-height));
   min-height: 0;
 }
 
