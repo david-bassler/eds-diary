@@ -152,6 +152,27 @@ test('keeps multiple ranges and lays overlapping ranges out equally', async ({
   await expect(page.getByLabel('Aktivität für Zeitraum 2')).toBeVisible()
 })
 
+
+test('shows the activity name inside a range when there is enough room', async ({
+  page,
+}) => {
+  await addRange(page, 8, 11, false)
+  await page.getByLabel('Aktivität für Zeitraum 1').fill('Spaziergang')
+  await applyNewRangeDetails(page)
+
+  await expect(
+    page.locator('.timerange__selectionlabel', { hasText: 'Spaziergang' }),
+  ).toBeVisible()
+
+  await addRange(page, 13, 14, false)
+  await page.getByLabel('Aktivität für Zeitraum 2').fill('Kurzer Termin')
+  await applyNewRangeDetails(page)
+
+  await expect(
+    page.locator('.timerange__selectionlabel', { hasText: 'Kurzer Termin' }),
+  ).toHaveCount(0)
+})
+
 test('stores activity and note separately for each selected range', async ({
   page,
 }) => {
