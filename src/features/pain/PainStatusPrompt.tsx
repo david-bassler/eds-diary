@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import type { PainEntry } from './painEntry'
+import { painLocationLabel } from './bodyMap/BodyMapSelector'
 import {
   listPainEntries,
   savePainEntry,
@@ -183,6 +184,8 @@ export function PainStatusPrompt() {
     }
   }
 
+  const locations =
+    entry?.locations.map((location) => painLocationLabel(location)).join(', ') ?? ''
   const qualities = entry?.qualities.join(', ') ?? ''
 
   return (
@@ -200,8 +203,14 @@ export function PainStatusPrompt() {
               Der letzte offene Schmerzeintrag begann am{' '}
               <strong>{formatStartedAt(entry.startedAt)}</strong>.
             </p>
+            <p className="pain-status-prompt__summary">
+              <strong>Wo:</strong>{' '}
+              {locations || 'Keine Körperregion gespeichert'}
+            </p>
             {qualities ? (
-              <p className="pain-status-prompt__summary">{qualities}</p>
+              <p className="pain-status-prompt__summary">
+                <strong>Art:</strong> {qualities}
+              </p>
             ) : null}
           </header>
 
