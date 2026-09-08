@@ -53,6 +53,12 @@
   width: 100%;
 }
 
+.activity-page .timerange__workspace {
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+}
+
 .activity-page__field {
   display: grid;
   gap: 7px;
