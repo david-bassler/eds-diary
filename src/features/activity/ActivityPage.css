@@ -3,6 +3,14 @@
   gap: 20px;
 }
 
+.activity-page__day-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .activity-page__date {
   display: grid;
   gap: 7px;
@@ -28,6 +36,24 @@
 .activity-page__date input {
   max-width: 240px;
 }
+
+.activity-page__copy-day {
+  min-height: 44px;
+  padding: 9px 14px;
+  border: 1px solid rgb(37 48 43 / 20%);
+  border-radius: 10px;
+  background: white;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.activity-page__copy-day:focus-visible {
+  outline: 3px solid #8ec9b5;
+  outline-offset: 3px;
+}
+
 
 .activity-page__intro {
   display: grid;
