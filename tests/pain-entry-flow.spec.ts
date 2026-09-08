@@ -109,6 +109,46 @@ test('asks about an ongoing pain entry older than one hour on app open', async (
   await expect(dialog).not.toBeVisible()
 })
 
+test('appends a pain change to the existing note', async ({ page }) => {
+  await page.evaluate(async () => {
+    const repository = await import('/src/features/pain/painRepository.ts')
+    await repository.createPainEntry({
+      startedAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+      locations: [{ view: 'front', regionId: 'abdomen' }],
+      qualities: ['Dumpf'],
+      note: 'Ausgangsnotiz',
+    })
+  })
+
+  await page.reload()
+
+  const dialog = page.getByRole('dialog', {
+    name: 'Sind diese Schmerzen noch aktuell?',
+  })
+  await dialog.getByRole('button', { name: 'Verändert' }).click()
+
+  const changeField = dialog.getByLabel('Veränderung der Schmerzen')
+  await expect(changeField).toBeVisible()
+  await changeField.fill('Stärker geworden und weiter nach rechts gezogen.')
+  await dialog
+    .getByRole('button', { name: 'Veränderung speichern' })
+    .click()
+
+  await expect(dialog).not.toBeVisible()
+
+  const entry = await page.evaluate(async () => {
+    const repository = await import('/src/features/pain/painRepository.ts')
+    return (await repository.listPainEntries())[0]
+  })
+
+  expect(entry.endedAt).toBe('')
+  expect(entry.note).toContain('Ausgangsnotiz')
+  expect(entry.note).toContain('Veränderung am')
+  expect(entry.note).toContain(
+    'Stärker geworden und weiter nach rechts gezogen.',
+  )
+})
+
 test('adds and keeps a custom pain type chip', async ({ page }) => {
   await page.getByText('Regionen alternativ als Liste auswählen').click()
   await page.getByRole('checkbox', { name: 'Bauch', exact: true }).check()
