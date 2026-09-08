@@ -82,6 +82,28 @@
   gap: 6px;
 }
 
+.medication-entry-form__day-actions {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.medication-entry-form__day-actions button {
+  min-height: 44px;
+  padding: 9px 14px;
+  border: 1px solid rgb(37 48 43 / 20%);
+  border-radius: 10px;
+  background: white;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.medication-entry-form__day-actions button:focus-visible {
+  outline: 3px solid #8ec9b5;
+  outline-offset: 3px;
+}
+
 .medication-entry-form__footer {
   display: flex;
   justify-content: flex-end;
