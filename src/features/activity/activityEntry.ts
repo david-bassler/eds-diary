@@ -6,6 +6,7 @@ export interface ActivityEntry {
   startTime: string
   endTime: string
   activityName: string
+  color: string
   note: string
   status: ActivityEntryStatus
   createdAt: string
@@ -17,5 +18,6 @@ export interface NewActivityEntry {
   startTime: string
   endTime: string
   activityName: string
+  color?: string
   note?: string
 }
