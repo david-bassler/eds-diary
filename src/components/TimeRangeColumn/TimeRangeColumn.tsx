@@ -13,6 +13,7 @@ export type TimeRangeColumnProps = {
   resolution: number;
   value?: readonly TimeRange[];
   rangeColors?: readonly string[];
+  rangeLabels?: readonly string[];
   onChange?: (ranges: TimeRange[]) => void;
   onRangeActivate?: (index: number) => void;
   onRangeCreated?: (index: number, range: TimeRange) => void;
@@ -42,6 +43,7 @@ type LayoutRange = MinuteRange & {
 
 const MINUTES_PER_DAY = 24 * 60;
 const FINE_GESTURE_DISTANCE = 52;
+const MIN_LABEL_DURATION_MINUTES = 150;
 
 function parseTime(value: string) {
   const match = /^(\d{1,2}):(\d{2})$/.exec(value);
@@ -193,6 +195,7 @@ export function TimeRangeColumn({
   resolution,
   value,
   rangeColors,
+  rangeLabels,
   onChange,
   onRangeActivate,
   onRangeCreated,
@@ -402,6 +405,9 @@ export function TimeRangeColumn({
             const duration = Math.max(0, range.end - range.start);
             const left = (range.column / range.columns) * 100;
             const width = 100 / range.columns;
+            const rangeLabel = rangeLabels?.[range.index]?.trim() ?? "";
+            const showRangeLabel =
+              Boolean(rangeLabel) && duration >= MIN_LABEL_DURATION_MINUTES;
 
             const top =
               ((range.start - beginMinutes) / (endMinutes - beginMinutes)) * 100;
@@ -428,6 +434,11 @@ export function TimeRangeColumn({
                   data-range-color={rangeColors?.[range.index]}
                 >
                   <span>{formatTime(range.start)}</span>
+                  {showRangeLabel ? (
+                    <span className="timerange__selectionlabel" title={rangeLabel}>
+                      {rangeLabel}
+                    </span>
+                  ) : null}
                   <span className="timerange__selectionend">
                     {formatTime(range.end)}
                   </span>
@@ -442,7 +453,7 @@ export function TimeRangeColumn({
                       left: `calc(${left + width / 2}% + 2px)`,
                       width: `calc(${width / 2}% - 4px)`,
                     }}
-                    aria-label={`Zeitraum ${range.index + 1} · ${formatTime(range.start)}–${formatTime(range.end)} öffnen`}
+                    aria-label={`Zeitraum ${range.index + 1} · ${formatTime(range.start)}–${formatTime(range.end)}${rangeLabel ? ` · ${rangeLabel}` : ""} öffnen`}
                     onPointerDown={(event) => event.stopPropagation()}
                     onClick={(event) => {
                       event.stopPropagation();
