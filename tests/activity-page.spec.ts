@@ -301,6 +301,83 @@ test('edits start and end in the dialog with preview and persistence', async ({
   )
 })
 
+test('copies selected activities from the previous day and supports cancel', async ({
+  page,
+}) => {
+  await page.getByLabel('Datum').fill('2026-09-08')
+
+  await page.evaluate(async () => {
+    const repository = await import(
+      '/src/features/activity/activityRepository.ts'
+    )
+    await repository.createActivityEntries([
+      {
+        date: '2026-09-07',
+        startTime: '08:00',
+        endTime: '09:00',
+        activityName: 'Spaziergang',
+        note: 'synthetisch eins',
+      },
+      {
+        date: '2026-09-07',
+        startTime: '12:00',
+        endTime: '13:30',
+        activityName: 'Ruhepause',
+        note: 'synthetisch zwei',
+      },
+    ])
+  })
+
+  await page.getByRole('button', { name: 'Tag kopieren' }).click()
+
+  const dialog = page.getByRole('dialog', { name: 'Tag kopieren' })
+  await expect(dialog).toBeVisible()
+  await expect(dialog.getByLabel('Einträge von')).toHaveValue('2026-09-07')
+  await expect(dialog.getByRole('checkbox')).toHaveCount(2)
+  await expect(dialog.getByRole('checkbox').nth(0)).toBeChecked()
+  await expect(dialog.getByRole('checkbox').nth(1)).toBeChecked()
+
+  await dialog.getByRole('button', { name: 'Abbrechen' }).click()
+  await expect(dialog).not.toBeVisible()
+
+  let targetEntries = await page.evaluate(async () => {
+    const repository = await import(
+      '/src/features/activity/activityRepository.ts'
+    )
+    return (await repository.listActivityEntries()).filter(
+      (entry) => entry.date === '2026-09-08',
+    )
+  })
+  expect(targetEntries).toHaveLength(0)
+
+  await page.getByRole('button', { name: 'Tag kopieren' }).click()
+  await dialog.getByRole('checkbox').nth(1).uncheck()
+  await dialog.getByRole('button', { name: 'OK' }).click()
+
+  await expect(dialog).not.toBeVisible()
+  await expect(
+    page.getByText('1 Aktivität wurde auf den aktuellen Tag übernommen.'),
+  ).toBeVisible()
+  await expect(page.locator('.timerange__selection')).toHaveCount(1)
+
+  targetEntries = await page.evaluate(async () => {
+    const repository = await import(
+      '/src/features/activity/activityRepository.ts'
+    )
+    return (await repository.listActivityEntries()).filter(
+      (entry) => entry.date === '2026-09-08',
+    )
+  })
+
+  expect(targetEntries).toHaveLength(1)
+  expect(targetEntries[0]).toMatchObject({
+    startTime: '08:00',
+    endTime: '09:00',
+    activityName: 'Spaziergang',
+    note: 'synthetisch eins',
+  })
+})
+
 test('can remove a saved range without it returning for the date', async ({
   page,
 }) => {
