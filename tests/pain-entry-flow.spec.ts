@@ -91,6 +91,7 @@ test('asks about an ongoing pain entry older than one hour on app open', async (
   })
   await expect(dialog).toBeVisible()
   await expect(dialog.getByText('Dumpf')).toBeVisible()
+  await expect(dialog.getByText(/Wo:.*Vorne: Bauch/)).toBeVisible()
 
   await dialog.getByRole('button', { name: 'Nein, beendet' }).click()
   await expect(dialog.getByLabel('Enddatum')).not.toHaveValue('')
