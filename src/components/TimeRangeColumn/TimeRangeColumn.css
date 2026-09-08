@@ -154,6 +154,17 @@
   pointer-events: none;
 }
 
+.timerange__selectionlabel {
+  align-self: center;
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 0.72rem;
+  line-height: 1.2;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .timerange__selectionend {
   align-self: flex-end;
 }
