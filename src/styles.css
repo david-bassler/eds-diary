@@ -1,4 +1,6 @@
 :root {
+  --bottom-navigation-height: calc(69px + env(safe-area-inset-bottom));
+
   color: #25302b;
   background: #edf2ef;
   font-family: Inter, ui-sans-serif, system-ui, sans-serif;
