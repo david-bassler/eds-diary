@@ -2,7 +2,6 @@ import {
   getAllRecords,
   getRecord,
   LOCAL_STORES,
-  putRecord,
   putRecords,
 } from '../../data/localDatabase'
 import { markDirty } from '../../data/syncManager'
