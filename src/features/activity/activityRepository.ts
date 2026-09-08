@@ -13,6 +13,7 @@ import {
 } from './activityColors'
 
 const SYNC_FEATURE = 'activityEntries'
+const ACTIVITY_TYPES_KEY = 'eds-diary-activity-types-v1'
 const MAX_NAME_LENGTH = 120
 const MAX_NOTE_LENGTH = 2000
 
@@ -32,6 +33,63 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function normalizedText(value: unknown, maxLength: number): string {
   return typeof value === 'string' ? value.trim().slice(0, maxLength) : ''
 }
+
+function loadStoredActivityTypes(): ActivityType[] {
+  try {
+    const raw = localStorage.getItem(ACTIVITY_TYPES_KEY)
+    if (!raw) return []
+
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+
+    const seen = new Set<string>()
+    const types: ActivityType[] = []
+
+    for (const item of parsed) {
+      if (!isRecord(item)) continue
+
+      const name = normalizedText(item.name, MAX_NAME_LENGTH)
+      if (!name) continue
+
+      const key = name.toLocaleLowerCase('de')
+      if (seen.has(key)) continue
+
+      seen.add(key)
+      types.push({
+        name,
+        color: normalizeActivityColor(item.color, name),
+      })
+    }
+
+    return types
+  } catch {
+    return []
+  }
+}
+
+function storeActivityTypes(types: readonly ActivityType[]): void {
+  try {
+    localStorage.setItem(ACTIVITY_TYPES_KEY, JSON.stringify(types))
+  } catch {
+    // Die Aktivitätseinträge selbst bleiben weiterhin über IndexedDB nutzbar.
+  }
+}
+
+function upsertStoredActivityType(activityName: string, color: string): void {
+  const name = normalizedText(activityName, MAX_NAME_LENGTH)
+  if (!name) return
+
+  const nextType: ActivityType = {
+    name,
+    color: normalizeActivityColor(color, name),
+  }
+  const existing = loadStoredActivityTypes().filter(
+    (type) => !sameActivityType(type.name, name),
+  )
+
+  storeActivityTypes([...existing, nextType])
+}
+
 
 function normalizedDate(value: unknown): string {
   if (typeof value !== 'string') return ''
@@ -209,20 +267,26 @@ export interface ActivityType {
 
 export async function listActivityTypes(): Promise<ActivityType[]> {
   const entries = await listActivityEntries()
-  const seen = new Set<string>()
-  const types: ActivityType[] = []
+  const storedTypes = loadStoredActivityTypes()
+  const types = new Map<string, ActivityType>()
 
   for (const entry of entries) {
     const key = entry.activityName.trim().toLocaleLowerCase('de')
-    if (seen.has(key)) continue
-    seen.add(key)
-    types.push({
-      name: entry.activityName,
-      color: normalizeActivityColor(entry.color, entry.activityName),
-    })
+    if (!types.has(key)) {
+      types.set(key, {
+        name: entry.activityName,
+        color: normalizeActivityColor(entry.color, entry.activityName),
+      })
+    }
   }
 
-  return types.sort((left, right) => left.name.localeCompare(right.name, 'de'))
+  for (const type of storedTypes) {
+    types.set(type.name.trim().toLocaleLowerCase('de'), type)
+  }
+
+  return [...types.values()].sort((left, right) =>
+    left.name.localeCompare(right.name, 'de'),
+  )
 }
 
 export async function listActivityNames(): Promise<string[]> {
@@ -237,6 +301,8 @@ export async function saveActivityTypeColor(
   if (!normalizedName) return
 
   const normalizedColor = normalizeActivityColor(color, normalizedName)
+  upsertStoredActivityType(normalizedName, normalizedColor)
+
   const entries = await listActivityEntries({ includeDeleted: true })
   const matchingEntries = entries.filter((entry) =>
     sameActivityType(entry.activityName, normalizedName),
