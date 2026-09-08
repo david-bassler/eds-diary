@@ -245,6 +245,34 @@ test('stores activity and note separately for each selected range', async ({
 
 })
 
+test('offers a just-entered activity again before the day is saved', async ({
+  page,
+}) => {
+  await page.getByLabel('Datum').fill('2026-09-07')
+
+  await addRange(page, 8, 9, false)
+  await page.getByLabel('Aktivität für Zeitraum 1').fill('Morgenroutine')
+  await applyNewRangeDetails(page)
+
+  await expect(
+    page.getByRole('button', { name: 'Aktivität speichern' }),
+  ).toBeVisible()
+
+  await addRange(page, 10, 11, false)
+
+  const options = page.getByRole('listbox', {
+    name: 'Gespeicherte Aktivitäten',
+  })
+  await expect(
+    options.getByRole('option', { name: 'Morgenroutine' }),
+  ).toBeVisible()
+
+  await options.getByRole('option', { name: 'Morgenroutine' }).click()
+  await expect(page.getByLabel('Aktivität für Zeitraum 2')).toHaveValue(
+    'Morgenroutine',
+  )
+})
+
 test('assigns pastel colors by activity type and lets them be changed', async ({
   page,
 }) => {
