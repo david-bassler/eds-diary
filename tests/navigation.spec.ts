@@ -56,6 +56,20 @@ test('switches between the primary app sections', async ({ page }) => {
 })
 
 
+test('uses the configured OAuth client without asking for a client ID', async ({
+  page,
+}) => {
+  const navigation = page.getByRole('navigation', { name: 'Hauptnavigation' })
+
+  await navigation.getByRole('link', { name: 'Konfiguration' }).click()
+  await page.getByText('Datenspeicherung', { exact: true }).click()
+
+  await expect(page.getByLabel('OAuth Client-ID')).toHaveCount(0)
+  await expect(
+    page.getByRole('button', { name: 'Mit Google verbinden' }),
+  ).toBeEnabled()
+})
+
 test('uses browser history for primary navigation', async ({ page }) => {
   const navigation = page.getByRole('navigation', { name: 'Hauptnavigation' })
 
