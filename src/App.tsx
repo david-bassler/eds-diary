@@ -6,6 +6,7 @@ import {
 import { ActivityPage } from './features/activity/ActivityPage'
 import { MedicationPage } from './features/medication/MedicationPage'
 import { PainEntryFlow } from './features/pain/PainEntryFlow'
+import { PainStatusPrompt } from './features/pain/PainStatusPrompt'
 import { GoogleSyncSettings } from './features/settings/GoogleSyncSettings'
 import { InstallAppSettings } from './features/settings/InstallAppSettings'
 import {
@@ -105,6 +106,8 @@ export function App() {
           </section>
         </div>
       </main>
+
+      <PainStatusPrompt />
 
       <BottomNavigation
         activeSection={activeSection}
