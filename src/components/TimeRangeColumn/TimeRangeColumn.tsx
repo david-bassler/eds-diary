@@ -12,6 +12,7 @@ export type TimeRangeColumnProps = {
   end: string;
   resolution: number;
   value?: readonly TimeRange[];
+  rangeColors?: readonly string[];
   onChange?: (ranges: TimeRange[]) => void;
   onRangeActivate?: (index: number) => void;
   onRangeCreated?: (index: number, range: TimeRange) => void;
@@ -191,6 +192,7 @@ export function TimeRangeColumn({
   end,
   resolution,
   value,
+  rangeColors,
   onChange,
   onRangeActivate,
   onRangeCreated,
@@ -418,10 +420,12 @@ export function TimeRangeColumn({
                     height: `${height}%`,
                     left: `calc(${left}% + 2px)`,
                     width: `calc(${width}% - 4px)`,
+                    backgroundColor: rangeColors?.[range.index],
                   }}
                   aria-hidden="true"
                   data-range-index={range.index}
                   data-overlap-columns={range.columns}
+                  data-range-color={rangeColors?.[range.index]}
                 >
                   <span>{formatTime(range.start)}</span>
                   <span className="timerange__selectionend">
