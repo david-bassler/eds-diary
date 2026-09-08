@@ -1,6 +1,8 @@
 import {
   getAllRecords,
+  getRecord,
   LOCAL_STORES,
+  putRecord,
   putRecords,
 } from '../../data/localDatabase'
 import { markDirty } from '../../data/syncManager'
@@ -139,6 +141,40 @@ export async function createActivityEntries(
   await putRecords(LOCAL_STORES.activityEntries, entries)
   markDirty(SYNC_FEATURE)
   return entries
+}
+
+export async function getActivityEntry(
+  id: string,
+): Promise<ActivityEntry | undefined> {
+  const stored = await getRecord<unknown>(LOCAL_STORES.activityEntries, id)
+  return normalizeStoredEntry(stored) ?? undefined
+}
+
+export async function saveActivityEntry(
+  entry: ActivityEntry,
+): Promise<ActivityEntry> {
+  const normalized = normalizeStoredEntry({
+    ...entry,
+    updatedAt: nowIso(),
+  })
+
+  if (!normalized) throw new Error('Ungültige Aktivität.')
+
+  await putRecord(LOCAL_STORES.activityEntries, normalized)
+  markDirty(SYNC_FEATURE)
+  return normalized
+}
+
+export async function deleteActivityEntry(id: string): Promise<void> {
+  const existing = await getActivityEntry(id)
+  if (!existing) return
+
+  await putRecord(LOCAL_STORES.activityEntries, {
+    ...existing,
+    status: 'deleted',
+    updatedAt: nowIso(),
+  })
+  markDirty(SYNC_FEATURE)
 }
 
 export async function listActivityEntries(options?: {
