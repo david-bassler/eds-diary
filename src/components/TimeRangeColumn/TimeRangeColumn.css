@@ -173,6 +173,14 @@
   align-self: flex-end;
 }
 
+.timerange__selection--ongoing {
+  border-style: dashed;
+}
+
+.timerange__selection--ongoing .timerange__selectionend {
+  font-style: italic;
+}
+
 .timerange__selection--active {
   outline: 3px solid #315b4a;
   outline-offset: 2px;
