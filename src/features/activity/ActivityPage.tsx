@@ -524,9 +524,11 @@ export function ActivityPage() {
     setDetailsSaving(true)
     setStatus('')
 
-    const before = await captureActivityState()
+    let before: ActivityHistorySnapshot | null = null
 
     try {
+      before = await captureActivityState()
+
       if (storedRecord) {
         await saveActivityEntry({
           ...storedRecord,
@@ -556,10 +558,12 @@ export function ActivityPage() {
       setActiveRangeIndex(null)
       setStatus(storedRecord ? 'Aktivität aktualisiert.' : 'Aktivität gespeichert.')
     } catch {
-      try {
-        await restoreActivityState(before)
-      } catch {
-        // Der ursprüngliche Fehlerstatus bleibt aussagekräftiger.
+      if (before) {
+        try {
+          await restoreActivityState(before)
+        } catch {
+          // Der ursprüngliche Fehlerstatus bleibt aussagekräftiger.
+        }
       }
       setStatus(
         storedRecord
@@ -598,9 +602,10 @@ export function ActivityPage() {
     setCopyBusy(true)
     setCopyError('')
 
-    const before = await captureActivityState()
+    let before: ActivityHistorySnapshot | null = null
 
     try {
+      before = await captureActivityState()
       await createActivityEntries(
         selectedEntries.map((entry) => ({
           date,
@@ -621,10 +626,12 @@ export function ActivityPage() {
           : `${selectedEntries.length} Aktivitäten wurden auf den aktuellen Tag übernommen.`,
       )
     } catch {
-      try {
-        await restoreActivityState(before)
-      } catch {
-        // Der Kopierfehler bleibt die relevante Meldung.
+      if (before) {
+        try {
+          await restoreActivityState(before)
+        } catch {
+          // Der Kopierfehler bleibt die relevante Meldung.
+        }
       }
       setCopyError('Die ausgewählten Aktivitäten konnten nicht übernommen werden.')
     } finally {
@@ -703,9 +710,10 @@ export function ActivityPage() {
         <div>
           <h2 id="activity-time-title">Zeiträume der Aktivität</h2>
           <p>
-            Gespeicherte Aktivitäten bleiben für das gewählte Datum sichtbar.
+            Aktivitäten werden beim Abschluss des Editors automatisch gespeichert.
             Neue Zeiträume öffnen sich direkt; bestehende öffnest du über ihre
-            rechte Hälfte. Beginn und Ende bearbeitest du zuverlässig im Editor.
+            rechte Hälfte. Änderungen kannst du anschließend mit Undo und Redo
+            zurücknehmen oder wiederherstellen.
           </p>
         </div>
       </section>
@@ -1030,11 +1038,7 @@ export function ActivityPage() {
                   disabled={detailsSaving || !canApplyDraft}
                   onClick={() => void applyActiveDraft()}
                 >
-                  {detailsSaving
-                    ? 'Speichert …'
-                    : activeRecord
-                      ? 'Änderungen speichern'
-                      : 'Fertig'}
+                  {detailsSaving ? 'Speichert …' : 'Fertig'}
                 </button>
               </div>
             </div>
