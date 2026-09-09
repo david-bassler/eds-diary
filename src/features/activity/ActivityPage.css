@@ -492,6 +492,12 @@
 }
 
 @media (width <= 640px) {
+  .activity-page__autosave-note {
+    width: 100%;
+    margin-left: 0;
+  }
+
+
   .activity-page__dialog {
     width: 100vw;
     height: 100dvh;
