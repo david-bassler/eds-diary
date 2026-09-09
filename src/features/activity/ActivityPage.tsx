@@ -31,6 +31,7 @@ interface RangeDetails {
   activityName: string
   color: string
   note: string
+  isOngoing: boolean
 }
 
 interface RangeDraft extends RangeDetails, TimeRange {}
@@ -52,6 +53,7 @@ function emptyDetails(): RangeDetails {
     activityName: '',
     color: defaultActivityColor(''),
     note: '',
+    isOngoing: false,
   }
 }
 
@@ -64,6 +66,32 @@ function formatLocalDate(date: Date): string {
 
 function localToday(): string {
   return formatLocalDate(new Date())
+}
+
+function localNowTime(): string {
+  const now = new Date()
+  return `${String(now.getHours()).padStart(2, '0')}:${String(
+    now.getMinutes(),
+  ).padStart(2, '0')}`
+}
+
+function ongoingDisplayEnd(startTime: string, entryDate: string, nowTime: string): string {
+  const start = parseTime(startTime) ?? 0
+  let end = MINUTES_PER_DAY
+
+  if (entryDate === localToday()) {
+    end = parseTime(nowTime) ?? start + 1
+  } else if (entryDate > localToday()) {
+    end = start + TIME_STEP_MINUTES
+  }
+
+  return formatTime(Math.max(start + 1, Math.min(MINUTES_PER_DAY, end)))
+}
+
+function endNowAfter(startTime: string): string {
+  const start = parseTime(startTime) ?? 0
+  const now = parseTime(localNowTime()) ?? start + 1
+  return formatTime(Math.max(start + 1, Math.min(MINUTES_PER_DAY, now)))
 }
 
 function previousDate(date: string): string {
@@ -115,9 +143,14 @@ function rangeError(draft: RangeDraft | null): string {
   if (!draft) return ''
 
   const start = parseTime(draft.start)
+  if (start === null) {
+    return 'Bitte den Beginn im Format HH:MM eintragen.'
+  }
+  if (draft.isOngoing) return ''
+
   const end = parseTime(draft.end)
-  if (start === null || end === null) {
-    return 'Bitte Beginn und Ende im Format HH:MM eintragen.'
+  if (end === null) {
+    return 'Bitte das Ende im Format HH:MM eintragen.'
   }
   if (end <= start) {
     return 'Das Ende muss nach dem Beginn liegen.'
@@ -128,6 +161,7 @@ function rangeError(draft: RangeDraft | null): string {
 
 function durationLabel(draft: RangeDraft | null): string {
   if (!draft || rangeError(draft)) return 'Dauer noch nicht verfügbar'
+  if (draft.isOngoing) return `Läuft seit ${draft.start}`
 
   const start = parseTime(draft.start)
   const end = parseTime(draft.end)
@@ -144,6 +178,7 @@ function durationLabel(draft: RangeDraft | null): string {
 
 export function ActivityPage() {
   const [date, setDate] = useState(localToday)
+  const [nowTime, setNowTime] = useState(localNowTime)
   const [timeRanges, setTimeRanges] = useState<TimeRange[]>([])
   const [rangeDetails, setRangeDetails] = useState<RangeDetails[]>([])
   const [rangeRecords, setRangeRecords] = useState<Array<ActivityEntry | null>>(
@@ -176,7 +211,9 @@ export function ActivityPage() {
     setTimeRanges(
       storedEntries.map((entry) => ({
         start: entry.startTime,
-        end: entry.endTime,
+        end: entry.isOngoing
+          ? ongoingDisplayEnd(entry.startTime, entry.date, nowTime)
+          : entry.endTime,
       })),
     )
     setRangeDetails(
@@ -184,6 +221,7 @@ export function ActivityPage() {
         activityName: entry.activityName,
         color: entry.color,
         note: entry.note,
+        isOngoing: entry.isOngoing,
       })),
     )
     setRangeRecords([...storedEntries])
@@ -313,6 +351,14 @@ export function ActivityPage() {
   }, [])
 
   useEffect(() => {
+    const timer = window.setInterval(() => {
+      setNowTime(localNowTime())
+    }, 30_000)
+
+    return () => window.clearInterval(timer)
+  }, [])
+
+  useEffect(() => {
     let active = true
 
     void listActivityTypes().then((types) => {
@@ -417,6 +463,7 @@ export function ActivityPage() {
       activityName: details.activityName,
       color: details.color,
       note: details.note,
+      isOngoing: details.isOngoing,
     })
     setStatus('')
   }
@@ -427,6 +474,34 @@ export function ActivityPage() {
       start: range.start,
       end: range.end,
       ...emptyDetails(),
+    })
+    setStatus('')
+  }
+
+  function startOngoingActivity(): void {
+    if (date !== localToday()) {
+      setStatus('Eine laufende Aktivität kann nur für heute gestartet werden.')
+      return
+    }
+
+    const start = localNowTime()
+    const startMinutes = parseTime(start) ?? 0
+    const end = formatTime(Math.min(MINUTES_PER_DAY, startMinutes + TIME_STEP_MINUTES))
+    const index = timeRanges.length
+
+    setNowTime(start)
+    setTimeRanges((current) => [...current, { start, end }])
+    setRangeDetails((current) => [
+      ...current,
+      { ...emptyDetails(), isOngoing: true },
+    ])
+    setRangeRecords((current) => [...current, null])
+    setActiveRangeIndex(index)
+    setActiveDraft({
+      start,
+      end,
+      ...emptyDetails(),
+      isOngoing: true,
     })
     setStatus('')
   }
@@ -535,22 +610,23 @@ export function ActivityPage() {
     }
   }
 
-  async function applyActiveDraft(): Promise<void> {
-    if (activeRangeIndex === null || !activeDraft) return
+  async function applyActiveDraft(draftOverride?: RangeDraft): Promise<void> {
+    const draft = draftOverride ?? activeDraft
+    if (activeRangeIndex === null || !draft) return
 
-    const validationMessage = rangeError(activeDraft)
+    const validationMessage = rangeError(draft)
     if (validationMessage) {
       setStatus(validationMessage)
       return
     }
-    if (!activeDraft.activityName.trim()) {
+    if (!draft.activityName.trim()) {
       setStatus('Bitte eine Aktivität eintragen.')
       return
     }
 
     const storedRecord = rangeRecords[activeRangeIndex]
-    const activityName = activeDraft.activityName.trim()
-    const activityColor = normalizeActivityColor(activeDraft.color, activityName)
+    const activityName = draft.activityName.trim()
+    const activityColor = normalizeActivityColor(draft.color, activityName)
 
     setDetailsSaving(true)
     setStatus('')
@@ -563,21 +639,23 @@ export function ActivityPage() {
       if (storedRecord) {
         await saveActivityEntry({
           ...storedRecord,
-          startTime: activeDraft.start,
-          endTime: activeDraft.end,
+          startTime: draft.start,
+          endTime: draft.isOngoing ? '' : draft.end,
+          isOngoing: draft.isOngoing,
           activityName,
           color: activityColor,
-          note: activeDraft.note,
+          note: draft.note,
         })
       } else {
         await createActivityEntries([
           {
             date,
-            startTime: activeDraft.start,
-            endTime: activeDraft.end,
+            startTime: draft.start,
+            endTime: draft.isOngoing ? '' : draft.end,
+            isOngoing: draft.isOngoing,
             activityName,
             color: activityColor,
-            note: activeDraft.note,
+            note: draft.note,
           },
         ])
       }
@@ -604,6 +682,16 @@ export function ActivityPage() {
     } finally {
       setDetailsSaving(false)
     }
+  }
+
+  function finishOngoingNow(): void {
+    if (!activeDraft || date !== localToday()) return
+
+    void applyActiveDraft({
+      ...activeDraft,
+      isOngoing: false,
+      end: endNowAfter(activeDraft.start),
+    })
   }
 
   function openCopyDay(): void {
@@ -642,6 +730,7 @@ export function ActivityPage() {
           date,
           startTime: entry.startTime,
           endTime: entry.endTime,
+          isOngoing: entry.isOngoing,
           activityName: entry.activityName,
           color: entry.color,
           note: entry.note,
@@ -671,14 +760,23 @@ export function ActivityPage() {
   }
 
   const draftValidationMessage = rangeError(activeDraft)
-  const previewRanges =
-    activeRangeIndex !== null && activeDraft && !draftValidationMessage
-      ? timeRanges.map((range, index) =>
-          index === activeRangeIndex
-            ? { start: activeDraft.start, end: activeDraft.end }
-            : range,
-        )
-      : timeRanges
+  const previewRanges = timeRanges.map((range, index) => {
+    if (activeRangeIndex === index && activeDraft && !draftValidationMessage) {
+      return {
+        start: activeDraft.start,
+        end: activeDraft.isOngoing
+          ? ongoingDisplayEnd(activeDraft.start, date, nowTime)
+          : activeDraft.end,
+      }
+    }
+
+    return rangeDetails[index]?.isOngoing
+      ? {
+          start: range.start,
+          end: ongoingDisplayEnd(range.start, date, nowTime),
+        }
+      : range
+  })
   const previewColors = previewRanges.map((_, index) =>
     activeRangeIndex === index && activeDraft
       ? activeDraft.color
@@ -688,6 +786,11 @@ export function ActivityPage() {
     activeRangeIndex === index && activeDraft
       ? activeDraft.activityName
       : rangeDetails[index]?.activityName ?? '',
+  )
+  const previewOngoing = previewRanges.map((_, index) =>
+    activeRangeIndex === index && activeDraft
+      ? activeDraft.isOngoing
+      : rangeDetails[index]?.isOngoing ?? false,
   )
   const historyLocked =
     historyBusy || detailsSaving || copyBusy || activeRangeIndex !== null || copyOpen
@@ -707,7 +810,7 @@ export function ActivityPage() {
 
   const copyItems: CopyDayItem[] = copyEntries.map((entry) => ({
     id: entry.id,
-    primary: `${entry.startTime}–${entry.endTime} · ${entry.activityName}`,
+    primary: `${entry.startTime}–${entry.isOngoing ? 'läuft' : entry.endTime} · ${entry.activityName}`,
     secondary: entry.note || undefined,
   }))
 
@@ -723,13 +826,28 @@ export function ActivityPage() {
             onChange={(event) => setDate(event.target.value)}
           />
         </label>
-        <button
-          className="activity-page__copy-day"
-          type="button"
-          onClick={openCopyDay}
-        >
-          Tag kopieren
-        </button>
+        <div className="activity-page__day-actions">
+          <button
+            className="activity-page__start-running"
+            type="button"
+            disabled={date !== localToday()}
+            title={
+              date === localToday()
+                ? 'Neue laufende Aktivität ab jetzt erfassen'
+                : 'Laufende Aktivitäten können nur für heute gestartet werden'
+            }
+            onClick={startOngoingActivity}
+          >
+            Aktivität starten
+          </button>
+          <button
+            className="activity-page__copy-day"
+            type="button"
+            onClick={openCopyDay}
+          >
+            Tag kopieren
+          </button>
+        </div>
       </div>
 
       <section
@@ -754,6 +872,7 @@ export function ActivityPage() {
         value={previewRanges}
         rangeColors={previewColors}
         rangeLabels={previewLabels}
+        rangeOngoing={previewOngoing}
         onChange={changeRanges}
         onRangeActivate={openRangeDetails}
         onRangeCreated={openCreatedRange}
@@ -962,6 +1081,22 @@ export function ActivityPage() {
               <fieldset className="activity-page__time-editor">
                 <legend>Zeitraum</legend>
 
+                <label className="activity-page__ongoing-toggle">
+                  <input
+                    type="checkbox"
+                    checked={activeDraft.isOngoing}
+                    onChange={(event) =>
+                      updateDraft({
+                        isOngoing: event.target.checked,
+                        end: event.target.checked
+                          ? ongoingDisplayEnd(activeDraft.start, date, nowTime)
+                          : activeDraft.end,
+                      })
+                    }
+                  />
+                  <span>Läuft noch</span>
+                </label>
+
                 <div className="activity-page__time-grid">
                   <div className="activity-page__time-field">
                     <label htmlFor="activity-start-time">Beginn</label>
@@ -999,38 +1134,49 @@ export function ActivityPage() {
                   </div>
 
                   <div className="activity-page__time-field">
-                    <label htmlFor="activity-end-time">Ende</label>
-                    <input
-                      id="activity-end-time"
-                      type="text"
-                      pattern="(?:(?:[01][0-9]|2[0-3]):[0-5][0-9]|24:00)"
-                      value={activeDraft.end}
-                      aria-invalid={Boolean(draftValidationMessage)}
-                      aria-describedby="activity-time-help activity-time-error"
-                      onChange={(event) =>
-                        updateDraft({ end: event.target.value })
-                      }
-                    />
-                    <div className="activity-page__time-buttons">
-                      <button
-                        type="button"
-                        aria-label="Ende 15 Minuten früher"
-                        onClick={() =>
-                          adjustDraftTime('end', -TIME_STEP_MINUTES)
-                        }
-                      >
-                        −15 min
-                      </button>
-                      <button
-                        type="button"
-                        aria-label="Ende 15 Minuten später"
-                        onClick={() =>
-                          adjustDraftTime('end', TIME_STEP_MINUTES)
-                        }
-                      >
-                        +15 min
-                      </button>
-                    </div>
+                    {activeDraft.isOngoing ? (
+                      <>
+                        <span>Ende</span>
+                        <output className="activity-page__ongoing-end">
+                          läuft noch
+                        </output>
+                      </>
+                    ) : (
+                      <>
+                        <label htmlFor="activity-end-time">Ende</label>
+                        <input
+                          id="activity-end-time"
+                          type="text"
+                          pattern="(?:(?:[01][0-9]|2[0-3]):[0-5][0-9]|24:00)"
+                          value={activeDraft.end}
+                          aria-invalid={Boolean(draftValidationMessage)}
+                          aria-describedby="activity-time-help activity-time-error"
+                          onChange={(event) =>
+                            updateDraft({ end: event.target.value })
+                          }
+                        />
+                        <div className="activity-page__time-buttons">
+                          <button
+                            type="button"
+                            aria-label="Ende 15 Minuten früher"
+                            onClick={() =>
+                              adjustDraftTime('end', -TIME_STEP_MINUTES)
+                            }
+                          >
+                            −15 min
+                          </button>
+                          <button
+                            type="button"
+                            aria-label="Ende 15 Minuten später"
+                            onClick={() =>
+                              adjustDraftTime('end', TIME_STEP_MINUTES)
+                            }
+                          >
+                            +15 min
+                          </button>
+                        </div>
+                      </>
+                    )}
                   </div>
                 </div>
 
@@ -1041,7 +1187,7 @@ export function ActivityPage() {
 
                 <p id="activity-time-help" className="activity-page__time-help">
                   Uhrzeiten als HH:MM eingeben. Für das Tagesende ist 24:00
-                  möglich.
+                  möglich. Bei „Läuft noch“ bleibt das Ende offen.
                 </p>
                 <p
                   id="activity-time-error"
@@ -1061,14 +1207,26 @@ export function ActivityPage() {
                 >
                   Zeitraum entfernen
                 </button>
-                <button
-                  type="button"
-                  className="activity-page__primary"
-                  disabled={detailsSaving || !canApplyDraft}
-                  onClick={() => void applyActiveDraft()}
-                >
-                  {detailsSaving ? 'Speichert …' : 'Fertig'}
-                </button>
+                <div className="activity-page__dialog-primary-actions">
+                  {activeDraft.isOngoing && date === localToday() ? (
+                    <button
+                      type="button"
+                      className="activity-page__finish-running"
+                      disabled={detailsSaving || !canApplyDraft}
+                      onClick={finishOngoingNow}
+                    >
+                      Jetzt beenden
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="activity-page__primary"
+                    disabled={detailsSaving || !canApplyDraft}
+                    onClick={() => void applyActiveDraft()}
+                  >
+                    {detailsSaving ? 'Speichert …' : 'Fertig'}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
