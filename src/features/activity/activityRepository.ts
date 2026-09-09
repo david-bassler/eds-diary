@@ -322,6 +322,50 @@ export async function saveActivityTypeColor(
   markDirty(SYNC_FEATURE)
 }
 
+export async function replaceActivityEntries(
+  entries: readonly ActivityEntry[],
+): Promise<void> {
+  const timestamp = nowIso()
+  const targetEntries = entries.flatMap((entry) => {
+    const normalized = normalizeStoredEntry({
+      ...entry,
+      status: 'active',
+      updatedAt: timestamp,
+    })
+    return normalized ? [normalized] : []
+  })
+  const targetIds = new Set(targetEntries.map((entry) => entry.id))
+  const currentEntries = await listActivityEntries({ includeDeleted: true })
+  const deletedEntries = currentEntries
+    .filter((entry) => entry.status === 'active' && !targetIds.has(entry.id))
+    .map((entry) => ({
+      ...entry,
+      status: 'deleted' as const,
+      updatedAt: timestamp,
+    }))
+
+  await putRecords(LOCAL_STORES.activityEntries, [
+    ...deletedEntries,
+    ...targetEntries,
+  ])
+  markDirty(SYNC_FEATURE)
+}
+
+export function replaceActivityTypes(types: readonly ActivityType[]): void {
+  const normalizedTypes = types.flatMap((type) => {
+    const name = normalizedText(type.name, MAX_NAME_LENGTH)
+    if (!name) return []
+    return [
+      {
+        name,
+        color: normalizeActivityColor(type.color, name),
+      },
+    ]
+  })
+
+  storeActivityTypes(normalizedTypes)
+}
+
 export async function storeActivityEntriesFromSync(
   entries: readonly ActivityEntry[],
 ): Promise<void> {
