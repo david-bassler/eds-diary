@@ -332,9 +332,42 @@
   font-weight: 650;
 }
 
-.activity-page__footer {
+.activity-page__history {
   display: flex;
-  justify-content: flex-end;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.activity-page__history-button {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 14px;
+  border: 1px solid rgb(37 48 43 / 20%);
+  background: white;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.activity-page__history-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.activity-page__history-button span {
+  font-size: 1.15rem;
+  line-height: 1;
+}
+
+.activity-page__autosave-note {
+  margin-left: auto;
+  font-size: 0.82rem;
+  line-height: 1.35;
+  opacity: 0.68;
 }
 
 .activity-page__primary,
@@ -442,6 +475,7 @@
 }
 
 .activity-page__primary:focus-visible,
+.activity-page__history-button:focus-visible,
 .activity-page__remove:focus-visible,
 .activity-page__dialog-close:focus-visible,
 .activity-page__time-field input:focus-visible,
