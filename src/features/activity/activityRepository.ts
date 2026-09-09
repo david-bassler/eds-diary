@@ -135,6 +135,7 @@ function normalizeStoredEntry(value: unknown): ActivityEntry | null {
   const id = normalizedText(value.id, 180)
   const date = normalizedDate(value.date)
   const startTime = normalizedTime(value.startTime)
+  const isOngoing = value.isOngoing === true
   const endTime = normalizedTime(value.endTime)
   const activityName = normalizedText(value.activityName, MAX_NAME_LENGTH)
 
@@ -142,9 +143,8 @@ function normalizeStoredEntry(value: unknown): ActivityEntry | null {
     !id ||
     !date ||
     !startTime ||
-    !endTime ||
     !activityName ||
-    timeMinutes(startTime) >= timeMinutes(endTime)
+    (!isOngoing && (!endTime || timeMinutes(startTime) >= timeMinutes(endTime)))
   ) {
     return null
   }
@@ -160,7 +160,8 @@ function normalizeStoredEntry(value: unknown): ActivityEntry | null {
     id,
     date,
     startTime,
-    endTime,
+    endTime: isOngoing ? '' : endTime,
+    isOngoing,
     activityName,
     color: normalizeActivityColor(value.color, activityName),
     note: normalizedText(value.note, MAX_NOTE_LENGTH),
@@ -179,11 +180,15 @@ export async function createActivityEntries(
   const entries = inputs.map((input) => {
     const date = normalizedDate(input.date)
     const startTime = normalizedTime(input.startTime)
+    const isOngoing = input.isOngoing === true
     const endTime = normalizedTime(input.endTime)
     const activityName = normalizedText(input.activityName, MAX_NAME_LENGTH)
 
     if (!date) throw new Error('Datum fehlt.')
-    if (!startTime || !endTime || timeMinutes(startTime) >= timeMinutes(endTime)) {
+    if (
+      !startTime ||
+      (!isOngoing && (!endTime || timeMinutes(startTime) >= timeMinutes(endTime)))
+    ) {
       throw new Error('Ungültiger Aktivitätszeitraum.')
     }
     if (!activityName) throw new Error('Aktivität fehlt.')
@@ -192,7 +197,8 @@ export async function createActivityEntries(
       id: createId(),
       date,
       startTime,
-      endTime,
+      endTime: isOngoing ? '' : endTime,
+      isOngoing,
       activityName,
       color: normalizeActivityColor(input.color, activityName),
       note: normalizedText(input.note, MAX_NOTE_LENGTH),
