@@ -41,6 +41,8 @@ interface ActivityHistorySnapshot {
 }
 
 const HISTORY_LIMIT = 40
+const ACTIVITY_SCROLL_SNAP_DISTANCE = 120
+const ACTIVITY_SCROLL_SNAP_DELAY_MS = 100
 const MINUTES_PER_DAY = 24 * 60
 const TIME_STEP_MINUTES = 15
 const ACTIVITY_DAY_START_ANCHOR = 'activity-day-start'
@@ -168,6 +170,7 @@ export function ActivityPage() {
   const [copyBusy, setCopyBusy] = useState(false)
   const [copyError, setCopyError] = useState('')
   const detailsDialogRef = useRef<HTMLDialogElement>(null)
+  const scrollSnapTimerRef = useRef<number | null>(null)
 
   function applyStoredEntries(storedEntries: readonly ActivityEntry[]): void {
     setTimeRanges(
@@ -278,7 +281,35 @@ export function ActivityPage() {
       })
     })
 
-    return () => window.cancelAnimationFrame(frame)
+    function handleScroll(): void {
+      if (scrollSnapTimerRef.current !== null) {
+        window.clearTimeout(scrollSnapTimerRef.current)
+      }
+
+      scrollSnapTimerRef.current = window.setTimeout(() => {
+        scrollSnapTimerRef.current = null
+        const anchor = document.getElementById(ACTIVITY_DAY_START_ANCHOR)
+        if (!anchor) return
+
+        const distance = anchor.getBoundingClientRect().top
+        if (Math.abs(distance) > ACTIVITY_SCROLL_SNAP_DISTANCE) return
+
+        window.scrollTo({
+          top: window.scrollY + distance,
+          behavior: 'smooth',
+        })
+      }, ACTIVITY_SCROLL_SNAP_DELAY_MS)
+    }
+
+    window.addEventListener('scroll', handleScroll, { passive: true })
+
+    return () => {
+      window.cancelAnimationFrame(frame)
+      window.removeEventListener('scroll', handleScroll)
+      if (scrollSnapTimerRef.current !== null) {
+        window.clearTimeout(scrollSnapTimerRef.current)
+      }
+    }
   }, [])
 
   useEffect(() => {
