@@ -35,6 +35,7 @@ interface RangeDraft extends RangeDetails, TimeRange {}
 
 const MINUTES_PER_DAY = 24 * 60
 const TIME_STEP_MINUTES = 15
+const ACTIVITY_DAY_START_ANCHOR = 'activity-day-start'
 
 function emptyDetails(): RangeDetails {
   return {
@@ -157,6 +158,17 @@ export function ActivityPage() {
   const [copyBusy, setCopyBusy] = useState(false)
   const [copyError, setCopyError] = useState('')
   const detailsDialogRef = useRef<HTMLDialogElement>(null)
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById(ACTIVITY_DAY_START_ANCHOR)?.scrollIntoView({
+        block: 'start',
+        behavior: 'auto',
+      })
+    })
+
+    return () => window.cancelAnimationFrame(frame)
+  }, [])
 
   useEffect(() => {
     let active = true
@@ -731,6 +743,7 @@ export function ActivityPage() {
         onRangeCreated={openCreatedRange}
         activeRangeIndex={activeRangeIndex}
         label="Aktivitätszeiträume"
+        workspaceAnchorId={ACTIVITY_DAY_START_ANCHOR}
       />
 
       {unsavedCount ? (
