@@ -4,6 +4,65 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/')
 })
 
+
+test('swipes between front and back on mobile without treating the swipe as a tap', async ({
+  page,
+  isMobile,
+}) => {
+  test.skip(!isMobile, 'Swipe navigation is only active in the mobile body map.')
+
+  const frontTab = page.getByRole('button', { name: 'Vorne' })
+  const backTab = page.getByRole('button', { name: 'Hinten' })
+
+  await expect(frontTab).toHaveAttribute('aria-pressed', 'true')
+  await expect(backTab).toHaveAttribute('aria-pressed', 'false')
+
+  const frontCanvas = page
+    .getByRole('region', { name: 'Vorderseite' })
+    .locator('.body-map-selector__overlay')
+  const frontBounds = await frontCanvas.boundingBox()
+  if (!frontBounds) throw new Error('Vorderseite ist nicht sichtbar.')
+
+  const y = frontBounds.y + frontBounds.height / 2
+  await frontCanvas.dispatchEvent('pointerdown', {
+    pointerId: 21,
+    pointerType: 'touch',
+    clientX: frontBounds.x + frontBounds.width * 0.8,
+    clientY: y,
+  })
+  await frontCanvas.dispatchEvent('pointerup', {
+    pointerId: 21,
+    pointerType: 'touch',
+    clientX: frontBounds.x + frontBounds.width * 0.2,
+    clientY: y + 4,
+  })
+
+  await expect(backTab).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByText('Noch keine Region ausgewählt')).toBeVisible()
+
+  const backCanvas = page
+    .getByRole('region', { name: 'Rückseite' })
+    .locator('.body-map-selector__overlay')
+  const backBounds = await backCanvas.boundingBox()
+  if (!backBounds) throw new Error('Rückseite ist nicht sichtbar.')
+
+  const backY = backBounds.y + backBounds.height / 2
+  await backCanvas.dispatchEvent('pointerdown', {
+    pointerId: 22,
+    pointerType: 'touch',
+    clientX: backBounds.x + backBounds.width * 0.2,
+    clientY: backY,
+  })
+  await backCanvas.dispatchEvent('pointerup', {
+    pointerId: 22,
+    pointerType: 'touch',
+    clientX: backBounds.x + backBounds.width * 0.8,
+    clientY: backY + 3,
+  })
+
+  await expect(frontTab).toHaveAttribute('aria-pressed', 'true')
+})
+
 test('creates a pain entry with multiple body regions and details', async ({
   page,
 }) => {
