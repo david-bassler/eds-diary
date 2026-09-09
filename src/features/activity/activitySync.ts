@@ -25,6 +25,7 @@ const ENTRY_HEADERS = [
   'Erstellt',
   'Aktualisiert',
   'Farbe',
+  'Laeuft noch',
 ] as const
 
 export const activitySheetSpecs: SheetSpecs = {
@@ -41,7 +42,10 @@ function fromRow(row: SheetCell[]): ActivityEntry | null {
   const startTime = text(row[2]).trim()
   const endTime = text(row[3]).trim()
   const activityName = text(row[4]).trim()
-  if (!id || !date || !startTime || !endTime || !activityName) return null
+  const isOngoing = text(row[10]).trim().toLocaleLowerCase('de') === 'ja'
+  if (!id || !date || !startTime || (!isOngoing && !endTime) || !activityName) {
+    return null
+  }
 
   const createdAt = text(row[7]).trim() || new Date(0).toISOString()
   const updatedAt = text(row[8]).trim() || createdAt
@@ -50,7 +54,8 @@ function fromRow(row: SheetCell[]): ActivityEntry | null {
     id,
     date,
     startTime,
-    endTime,
+    endTime: isOngoing ? '' : endTime,
+    isOngoing,
     activityName,
     color: normalizeActivityColor(text(row[9]).trim(), activityName),
     note: text(row[5]).trim(),
@@ -72,6 +77,7 @@ function toRow(entry: ActivityEntry): readonly SheetCell[] {
     entry.createdAt,
     entry.updatedAt,
     entry.color,
+    entry.isOngoing ? 'ja' : 'nein',
   ]
 }
 
