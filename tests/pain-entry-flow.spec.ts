@@ -85,6 +85,25 @@ test('keeps short taps selectable on the body map', async ({ page }) => {
   )
 })
 
+test('scrolls instantly to the top when continuing to pain details', async ({
+  page,
+}) => {
+  await page.getByText('Regionen alternativ als Liste auswählen').click()
+  await page.getByRole('checkbox', { name: 'Bauch', exact: true }).check()
+
+  await page.evaluate(() => {
+    window.scrollTo(0, document.documentElement.scrollHeight)
+  })
+  await expect.poll(async () => page.evaluate(() => window.scrollY)).toBeGreaterThan(0)
+
+  await page.getByRole('button', { name: 'Weiter' }).click()
+
+  await expect(
+    page.getByRole('heading', { level: 2, name: 'Schmerzdetails' }),
+  ).toBeVisible()
+  await expect.poll(async () => page.evaluate(() => window.scrollY)).toBe(0)
+})
+
 test('creates a pain entry with multiple body regions and details', async ({
   page,
 }) => {
