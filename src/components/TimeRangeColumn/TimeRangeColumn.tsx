@@ -46,7 +46,6 @@ type TouchGestureState = {
   baseRanges: MinuteRange[];
   mode: "pending" | "scrolling" | "creating";
   holdTimer: number;
-  target: HTMLDivElement;
 };
 
 type LayoutRange = MinuteRange & {
@@ -295,7 +294,6 @@ export function TimeRangeColumn({
 
     if (event.pointerType === "touch") {
       const pointerId = event.pointerId;
-      const target = event.currentTarget;
       const gesture: TouchGestureState = {
         pointerId,
         startX: event.clientX,
@@ -306,7 +304,6 @@ export function TimeRangeColumn({
         baseRanges: ranges,
         mode: "pending",
         holdTimer: 0,
-        target,
       };
 
       gesture.holdTimer = window.setTimeout(() => {
@@ -321,7 +318,6 @@ export function TimeRangeColumn({
 
         activeGesture.mode = "creating";
         setTouchCreateMode(true);
-        activeGesture.target.setPointerCapture(pointerId);
         emitRanges([
           ...activeGesture.baseRanges,
           { start: activeGesture.anchor, end: activeGesture.anchor },
@@ -422,9 +418,6 @@ export function TimeRangeColumn({
       if (touchGesture.mode !== "creating") return;
 
       setTouchCreateMode(false);
-      if (touchGesture.target.hasPointerCapture(event.pointerId)) {
-        touchGesture.target.releasePointerCapture(event.pointerId);
-      }
 
       if (touchGesture.current === touchGesture.anchor) {
         emitRanges(touchGesture.baseRanges);
