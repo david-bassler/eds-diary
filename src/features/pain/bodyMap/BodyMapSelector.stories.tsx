@@ -40,8 +40,15 @@ export const MultipleSelected: Story = {
 }
 
 export const NarrowViewport: Story = {
+  name: 'Mobile swipe and tap',
   parameters: {
     viewport: { defaultViewport: 'mobile1' },
+    docs: {
+      description: {
+        story:
+          'Auf kleinen Bildschirmen wechselt ein horizontaler Swipe zwischen Vorder- und Rückseite. Kurze Taps wählen weiterhin Körperregionen aus.',
+      },
+    },
   },
   render: () => <ControlledExample />,
 }
