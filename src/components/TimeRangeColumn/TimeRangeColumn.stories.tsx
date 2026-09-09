@@ -138,7 +138,7 @@ export const NarrowViewport: Story = {
     docs: {
       description: {
         story:
-          "Auf Touchscreens scrollt eine vertikale Wischgeste durch den Tag. Ein kurzer Tap legt stattdessen einen einzelnen Zeitraum an.",
+          "Auf Touchscreens scrollt eine direkte Wischgeste. Kurzes Halten aktiviert die Auswahl; anschließendes vertikales Ziehen legt den Zeitraum fest. Ein bloßer Tap erzeugt nichts.",
       },
     },
   },
