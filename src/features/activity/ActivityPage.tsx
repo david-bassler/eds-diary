@@ -640,8 +640,6 @@ export function ActivityPage() {
   }
 
   const draftValidationMessage = rangeError(activeDraft)
-  const activeRecord =
-    activeRangeIndex === null ? null : rangeRecords[activeRangeIndex] ?? null
   const previewRanges =
     activeRangeIndex !== null && activeDraft && !draftValidationMessage
       ? timeRanges.map((range, index) =>
