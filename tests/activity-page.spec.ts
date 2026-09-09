@@ -105,6 +105,25 @@ test('shows date and the time range picker on the activity page', async ({
 })
 
 
+test('snaps magnetically to the midnight anchor when scrolling near it', async ({
+  page,
+}) => {
+  const anchor = page.locator('#activity-day-start')
+  await expect(anchor).toBeVisible()
+
+  await page.evaluate(() => {
+    const element = document.getElementById('activity-day-start')
+    if (!element) throw new Error('Scrollanker fehlt.')
+    const anchorTop = window.scrollY + element.getBoundingClientRect().top
+    window.scrollTo(0, Math.max(0, anchorTop - 70))
+  })
+
+  await expect.poll(async () => {
+    const bounds = await anchor.boundingBox()
+    return Math.abs(bounds?.y ?? Number.POSITIVE_INFINITY)
+  }).toBeLessThan(2)
+})
+
 test('does not create an activity range while scrolling on touch', async ({
   page,
   isMobile,
