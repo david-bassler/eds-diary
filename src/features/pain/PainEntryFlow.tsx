@@ -110,6 +110,14 @@ export function PainEntryFlow() {
     )
   }
 
+  function continueToDetails(): void {
+    setStatus('')
+    setStep(2)
+    window.requestAnimationFrame(() => {
+      window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
+    })
+  }
+
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault()
     const startedAt = toIso(when.date, when.time)
@@ -201,10 +209,7 @@ export function PainEntryFlow() {
               className="pain-entry-flow__primary"
               type="button"
               disabled={!locations.length}
-              onClick={() => {
-                setStatus('')
-                setStep(2)
-              }}
+              onClick={continueToDetails}
             >
               Weiter
               <span aria-hidden="true">→</span>
