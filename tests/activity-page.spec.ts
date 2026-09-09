@@ -104,6 +104,78 @@ test('shows date and the time range picker on the activity page', async ({
   ).not.toBeVisible()
 })
 
+
+test('does not create an activity range while scrolling on touch', async ({
+  page,
+  isMobile,
+}) => {
+  test.skip(!isMobile, 'Touch scrolling is covered in the mobile project.')
+
+  const surface = page.getByTestId('time-range-surface')
+  const bounds = await surface.boundingBox()
+  if (!bounds) throw new Error('Zeitpicker ist nicht sichtbar.')
+
+  const x = bounds.x + bounds.width / 2
+  const startY = bounds.y + bounds.height * 0.55
+  const endY = startY - 120
+
+  await surface.dispatchEvent('pointerdown', {
+    pointerId: 31,
+    pointerType: 'touch',
+    clientX: x,
+    clientY: startY,
+  })
+  await surface.dispatchEvent('pointermove', {
+    pointerId: 31,
+    pointerType: 'touch',
+    clientX: x + 3,
+    clientY: endY,
+  })
+  await surface.dispatchEvent('pointerup', {
+    pointerId: 31,
+    pointerType: 'touch',
+    clientX: x + 3,
+    clientY: endY,
+  })
+
+  await expect(page.locator('.timerange__selection')).toHaveCount(0)
+  await expect(
+    page.getByRole('dialog', { name: 'Aktivität eintragen' }),
+  ).not.toBeVisible()
+})
+
+test('creates one short activity range from a deliberate touch tap', async ({
+  page,
+  isMobile,
+}) => {
+  test.skip(!isMobile, 'Touch tapping is covered in the mobile project.')
+
+  const surface = page.getByTestId('time-range-surface')
+  const bounds = await surface.boundingBox()
+  if (!bounds) throw new Error('Zeitpicker ist nicht sichtbar.')
+
+  const x = bounds.x + bounds.width / 2
+  const y = bounds.y + bounds.height * 0.4
+
+  await surface.dispatchEvent('pointerdown', {
+    pointerId: 32,
+    pointerType: 'touch',
+    clientX: x,
+    clientY: y,
+  })
+  await surface.dispatchEvent('pointerup', {
+    pointerId: 32,
+    pointerType: 'touch',
+    clientX: x + 2,
+    clientY: y + 2,
+  })
+
+  await expect(page.locator('.timerange__selection')).toHaveCount(1)
+  await expect(
+    page.getByRole('dialog', { name: 'Aktivität eintragen' }),
+  ).toBeVisible()
+})
+
 test('opens details after creation and from the right half of a range', async ({
   page,
   isMobile,
