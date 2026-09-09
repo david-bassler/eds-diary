@@ -5,6 +5,7 @@ export interface ActivityEntry {
   date: string
   startTime: string
   endTime: string
+  isOngoing: boolean
   activityName: string
   color: string
   note: string
@@ -16,7 +17,8 @@ export interface ActivityEntry {
 export interface NewActivityEntry {
   date: string
   startTime: string
-  endTime: string
+  endTime?: string
+  isOngoing?: boolean
   activityName: string
   color?: string
   note?: string
