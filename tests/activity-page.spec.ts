@@ -556,7 +556,7 @@ test('edits start and end in the dialog with preview and persistence', async ({
   await page.getByLabel('Beginn').fill('08:30')
   await page.getByLabel('Ende').fill('09:30')
   await page
-    .getByRole('button', { name: 'Änderungen speichern' })
+    .getByRole('button', { name: 'Fertig' })
     .click()
   await expect(page.getByText('Aktivität aktualisiert.')).toBeVisible()
 
