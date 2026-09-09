@@ -135,6 +135,12 @@ export const FullDay: Story = {
 export const NarrowViewport: Story = {
   parameters: {
     viewport: { defaultViewport: "mobile1" },
+    docs: {
+      description: {
+        story:
+          "Auf Touchscreens scrollt eine vertikale Wischgeste durch den Tag. Ein kurzer Tap legt stattdessen einen einzelnen Zeitraum an.",
+      },
+    },
   },
   render: (args) => <ControlledExample {...args} />,
 };
