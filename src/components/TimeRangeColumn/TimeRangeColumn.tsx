@@ -1,4 +1,4 @@
-import { Fragment, useId, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import "./TimeRangeColumn.css";
 
@@ -40,8 +40,13 @@ type TouchGestureState = {
   pointerId: number;
   startX: number;
   startY: number;
+  lastY: number;
   anchor: number;
+  current: number;
   baseRanges: MinuteRange[];
+  mode: "pending" | "scrolling" | "creating";
+  holdTimer: number;
+  target: HTMLDivElement;
 };
 
 type LayoutRange = MinuteRange & {
@@ -52,7 +57,8 @@ type LayoutRange = MinuteRange & {
 
 const MINUTES_PER_DAY = 24 * 60;
 const FINE_GESTURE_DISTANCE = 52;
-const TOUCH_TAP_MAX_MOVEMENT = 14;
+const TOUCH_SCROLL_THRESHOLD = 10;
+const TOUCH_HOLD_DELAY_MS = 300;
 const MIN_LABEL_DURATION_MINUTES = 150;
 
 function parseTime(value: string) {
@@ -223,9 +229,17 @@ export function TimeRangeColumn({
   const [internalRanges, setInternalRanges] = useState<MinuteRange[]>([]);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [fineMode, setFineMode] = useState(false);
+  const [touchCreateMode, setTouchCreateMode] = useState(false);
   const surfaceRef = useRef<HTMLDivElement>(null);
   const touchGestureRef = useRef<TouchGestureState | null>(null);
   const descriptionId = useId();
+
+  useEffect(() => {
+    return () => {
+      const gesture = touchGestureRef.current;
+      if (gesture) window.clearTimeout(gesture.holdTimer);
+    };
+  }, []);
 
   if (!valid) {
     return (
@@ -280,13 +294,41 @@ export function TimeRangeColumn({
     );
 
     if (event.pointerType === "touch") {
-      touchGestureRef.current = {
-        pointerId: event.pointerId,
+      const pointerId = event.pointerId;
+      const target = event.currentTarget;
+      const gesture: TouchGestureState = {
+        pointerId,
         startX: event.clientX,
         startY: event.clientY,
+        lastY: event.clientY,
         anchor: time,
+        current: time,
         baseRanges: ranges,
+        mode: "pending",
+        holdTimer: 0,
+        target,
       };
+
+      gesture.holdTimer = window.setTimeout(() => {
+        const activeGesture = touchGestureRef.current;
+        if (
+          !activeGesture ||
+          activeGesture.pointerId !== pointerId ||
+          activeGesture.mode !== "pending"
+        ) {
+          return;
+        }
+
+        activeGesture.mode = "creating";
+        setTouchCreateMode(true);
+        activeGesture.target.setPointerCapture(pointerId);
+        emitRanges([
+          ...activeGesture.baseRanges,
+          { start: activeGesture.anchor, end: activeGesture.anchor },
+        ]);
+      }, TOUCH_HOLD_DELAY_MS);
+
+      touchGestureRef.current = gesture;
       return;
     }
 
@@ -307,7 +349,43 @@ export function TimeRangeColumn({
   };
 
   const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (touchGestureRef.current?.pointerId === event.pointerId) return;
+    const touchGesture = touchGestureRef.current;
+    if (touchGesture?.pointerId === event.pointerId) {
+      if (touchGesture.mode === "pending") {
+        const movement = Math.hypot(
+          event.clientX - touchGesture.startX,
+          event.clientY - touchGesture.startY,
+        );
+        if (movement < TOUCH_SCROLL_THRESHOLD) return;
+
+        window.clearTimeout(touchGesture.holdTimer);
+        touchGesture.mode = "scrolling";
+      }
+
+      if (touchGesture.mode === "scrolling") {
+        const scrollDelta = touchGesture.lastY - event.clientY;
+        touchGesture.lastY = event.clientY;
+        window.scrollBy(0, scrollDelta);
+        return;
+      }
+
+      if (touchGesture.mode === "creating" && surfaceRef.current) {
+        const bounds = surfaceRef.current.getBoundingClientRect();
+        const current = timeFromPointer(
+          event.clientY,
+          bounds,
+          beginMinutes,
+          endMinutes,
+          resolution,
+        );
+        touchGesture.current = current;
+        emitRanges([
+          ...touchGesture.baseRanges,
+          { start: touchGesture.anchor, end: current },
+        ]);
+      }
+      return;
+    }
 
     if (!drag || drag.pointerId !== event.pointerId || !surfaceRef.current)
       return;
@@ -338,20 +416,23 @@ export function TimeRangeColumn({
   const finishDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
     const touchGesture = touchGestureRef.current;
     if (touchGesture?.pointerId === event.pointerId) {
+      window.clearTimeout(touchGesture.holdTimer);
       touchGestureRef.current = null;
-      const movement = Math.hypot(
-        event.clientX - touchGesture.startX,
-        event.clientY - touchGesture.startY,
-      );
 
-      if (movement > TOUCH_TAP_MAX_MOVEMENT) return;
+      if (touchGesture.mode !== "creating") return;
 
-      const endCandidate =
-        touchGesture.anchor + resolution <= endMinutes
-          ? touchGesture.anchor + resolution
-          : touchGesture.anchor - resolution;
+      setTouchCreateMode(false);
+      if (touchGesture.target.hasPointerCapture(event.pointerId)) {
+        touchGesture.target.releasePointerCapture(event.pointerId);
+      }
+
+      if (touchGesture.current === touchGesture.anchor) {
+        emitRanges(touchGesture.baseRanges);
+        return;
+      }
+
       const createdRange = normalizeMinuteRange(
-        { start: touchGesture.anchor, end: endCandidate },
+        { start: touchGesture.anchor, end: touchGesture.current },
         beginMinutes,
         endMinutes,
       );
@@ -392,8 +473,12 @@ export function TimeRangeColumn({
   };
 
   const cancelDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (touchGestureRef.current?.pointerId === event.pointerId) {
+    const touchGesture = touchGestureRef.current;
+    if (touchGesture?.pointerId === event.pointerId) {
+      window.clearTimeout(touchGesture.holdTimer);
       touchGestureRef.current = null;
+      setTouchCreateMode(false);
+      if (touchGesture.mode === "creating") emitRanges(touchGesture.baseRanges);
       return;
     }
 
@@ -428,9 +513,9 @@ export function TimeRangeColumn({
 
       <p id={descriptionId} className="timerange__hint">
         Mit der Maus ziehst du senkrecht, um einen Zeitraum in {resolution}-Minuten-
-        Schritten hinzuzufügen. Auf Touchscreens scrollst du normal durch den Tag;
-        ein kurzer Tap legt einen {resolution}-Minuten-Zeitraum an, den du im Editor
-        anpassen kannst. Überschneidungen werden gleich breit nebeneinander
+        Schritten hinzuzufügen. Auf Touchscreens scrollt eine direkte Wischgeste;
+        halte kurz an einer Startzeit, bis die Auswahl aktiviert ist, und ziehe dann
+        zum Ende der Aktivität. Überschneidungen werden gleich breit nebeneinander
         dargestellt. Mit der Maus kannst du von einer Seite zur Mitte ziehen, um
         lokal auf {fineResolution} Minute{fineResolution === 1 ? "" : "n"} zu
         verfeinern.
@@ -454,7 +539,7 @@ export function TimeRangeColumn({
         </div>
         <div
           ref={surfaceRef}
-          className={`timerange__surface${fineMode ? " timerange__surface--fine" : ""}`}
+          className={`timerange__surface${fineMode ? " timerange__surface--fine" : ""}${touchCreateMode ? " timerange__surface--touch-create" : ""}`}
           aria-describedby={descriptionId}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
