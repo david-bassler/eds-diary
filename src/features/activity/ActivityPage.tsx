@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   CopyDayDialog,
   type CopyDayItem,
@@ -19,6 +19,8 @@ import {
   deleteActivityEntry,
   listActivityEntries,
   listActivityTypes,
+  replaceActivityEntries,
+  replaceActivityTypes,
   saveActivityEntry,
   saveActivityTypeColor,
   type ActivityType,
@@ -33,6 +35,12 @@ interface RangeDetails {
 
 interface RangeDraft extends RangeDetails, TimeRange {}
 
+interface ActivityHistorySnapshot {
+  entries: ActivityEntry[]
+  types: ActivityType[]
+}
+
+const HISTORY_LIMIT = 40
 const MINUTES_PER_DAY = 24 * 60
 const TIME_STEP_MINUTES = 15
 const ACTIVITY_DAY_START_ANCHOR = 'activity-day-start'
@@ -144,8 +152,10 @@ export function ActivityPage() {
   const [activeRangeIndex, setActiveRangeIndex] = useState<number | null>(null)
   const [activeDraft, setActiveDraft] = useState<RangeDraft | null>(null)
   const [status, setStatus] = useState('')
-  const [saving, setSaving] = useState(false)
   const [detailsSaving, setDetailsSaving] = useState(false)
+  const [historyBusy, setHistoryBusy] = useState(false)
+  const [undoStack, setUndoStack] = useState<ActivityHistorySnapshot[]>([])
+  const [redoStack, setRedoStack] = useState<ActivityHistorySnapshot[]>([])
   const [copyOpen, setCopyOpen] = useState(false)
   const [copySourceDate, setCopySourceDate] = useState(() =>
     previousDate(localToday()),
@@ -158,6 +168,107 @@ export function ActivityPage() {
   const [copyBusy, setCopyBusy] = useState(false)
   const [copyError, setCopyError] = useState('')
   const detailsDialogRef = useRef<HTMLDialogElement>(null)
+
+  function applyStoredEntries(storedEntries: readonly ActivityEntry[]): void {
+    setTimeRanges(
+      storedEntries.map((entry) => ({
+        start: entry.startTime,
+        end: entry.endTime,
+      })),
+    )
+    setRangeDetails(
+      storedEntries.map((entry) => ({
+        activityName: entry.activityName,
+        color: entry.color,
+        note: entry.note,
+      })),
+    )
+    setRangeRecords([...storedEntries])
+  }
+
+  async function refreshCurrentDate(): Promise<void> {
+    const [entries, types] = await Promise.all([
+      listActivityEntries(),
+      listActivityTypes(),
+    ])
+    applyStoredEntries(entriesForDate(entries, date))
+    setKnownActivityTypes(types)
+  }
+
+  async function captureActivityState(): Promise<ActivityHistorySnapshot> {
+    const [entries, types] = await Promise.all([
+      listActivityEntries(),
+      listActivityTypes(),
+    ])
+    return {
+      entries: entries.map((entry) => ({ ...entry })),
+      types: types.map((type) => ({ ...type })),
+    }
+  }
+
+  async function restoreActivityState(
+    snapshot: ActivityHistorySnapshot,
+  ): Promise<void> {
+    replaceActivityTypes(snapshot.types)
+    await replaceActivityEntries(snapshot.entries)
+    await refreshCurrentDate()
+  }
+
+  function rememberUndo(snapshot: ActivityHistorySnapshot): void {
+    setUndoStack((current) => [
+      ...current.slice(-(HISTORY_LIMIT - 1)),
+      snapshot,
+    ])
+    setRedoStack([])
+  }
+
+  async function undoLastChange(): Promise<void> {
+    const snapshot = undoStack.at(-1)
+    if (!snapshot || historyBusy) return
+
+    setHistoryBusy(true)
+    setStatus('')
+    try {
+      const current = await captureActivityState()
+      await restoreActivityState(snapshot)
+      setUndoStack((items) => items.slice(0, -1))
+      setRedoStack((items) => [
+        ...items.slice(-(HISTORY_LIMIT - 1)),
+        current,
+      ])
+      setActiveDraft(null)
+      setActiveRangeIndex(null)
+      setStatus('Letzte Änderung rückgängig gemacht.')
+    } catch {
+      setStatus('Die letzte Änderung konnte nicht rückgängig gemacht werden.')
+    } finally {
+      setHistoryBusy(false)
+    }
+  }
+
+  async function redoLastChange(): Promise<void> {
+    const snapshot = redoStack.at(-1)
+    if (!snapshot || historyBusy) return
+
+    setHistoryBusy(true)
+    setStatus('')
+    try {
+      const current = await captureActivityState()
+      await restoreActivityState(snapshot)
+      setRedoStack((items) => items.slice(0, -1))
+      setUndoStack((items) => [
+        ...items.slice(-(HISTORY_LIMIT - 1)),
+        current,
+      ])
+      setActiveDraft(null)
+      setActiveRangeIndex(null)
+      setStatus('Änderung wiederhergestellt.')
+    } catch {
+      setStatus('Die Änderung konnte nicht wiederhergestellt werden.')
+    } finally {
+      setHistoryBusy(false)
+    }
+  }
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -187,6 +298,8 @@ export function ActivityPage() {
 
     setActiveRangeIndex(null)
     setActiveDraft(null)
+    setUndoStack([])
+    setRedoStack([])
     setTimeRanges([])
     setRangeDetails([])
     setRangeRecords([])
@@ -196,20 +309,7 @@ export function ActivityPage() {
         if (!active) return
 
         const selectedEntries = entriesForDate(entries, date)
-        setTimeRanges(
-          selectedEntries.map((entry) => ({
-            start: entry.startTime,
-            end: entry.endTime,
-          })),
-        )
-        setRangeDetails(
-          selectedEntries.map((entry) => ({
-            activityName: entry.activityName,
-            color: entry.color,
-            note: entry.note,
-          })),
-        )
-        setRangeRecords(selectedEntries)
+        applyStoredEntries(selectedEntries)
       })
       .catch(() => {
         if (active) {
