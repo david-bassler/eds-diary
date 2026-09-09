@@ -14,6 +14,7 @@ export type TimeRangeColumnProps = {
   value?: readonly TimeRange[];
   rangeColors?: readonly string[];
   rangeLabels?: readonly string[];
+  rangeOngoing?: readonly boolean[];
   onChange?: (ranges: TimeRange[]) => void;
   onRangeActivate?: (index: number) => void;
   onRangeCreated?: (index: number, range: TimeRange) => void;
@@ -211,6 +212,7 @@ export function TimeRangeColumn({
   value,
   rangeColors,
   rangeLabels,
+  rangeOngoing,
   onChange,
   onRangeActivate,
   onRangeCreated,
@@ -546,6 +548,7 @@ export function TimeRangeColumn({
             const left = (range.column / range.columns) * 100;
             const width = 100 / range.columns;
             const rangeLabel = rangeLabels?.[range.index]?.trim() ?? "";
+            const isOngoing = rangeOngoing?.[range.index] === true;
             const showRangeLabel =
               Boolean(rangeLabel) && duration >= MIN_LABEL_DURATION_MINUTES;
 
@@ -560,7 +563,7 @@ export function TimeRangeColumn({
             return (
               <Fragment key={range.index}>
                 <div
-                  className={`timerange__selection${activeRangeIndex === range.index ? " timerange__selection--active" : ""}`}
+                  className={`timerange__selection${activeRangeIndex === range.index ? " timerange__selection--active" : ""}${isOngoing ? " timerange__selection--ongoing" : ""}`}
                   style={{
                     top: `${top}%`,
                     height: `${height}%`,
@@ -580,7 +583,7 @@ export function TimeRangeColumn({
                     </span>
                   ) : null}
                   <span className="timerange__selectionend">
-                    {formatTime(range.end)}
+                    {isOngoing ? "läuft" : formatTime(range.end)}
                   </span>
                 </div>
                 {onRangeActivate ? (
@@ -593,7 +596,7 @@ export function TimeRangeColumn({
                       left: `calc(${left + width / 2}% + 2px)`,
                       width: `calc(${width / 2}% - 4px)`,
                     }}
-                    aria-label={`Zeitraum ${range.index + 1} · ${formatTime(range.start)}–${formatTime(range.end)}${rangeLabel ? ` · ${rangeLabel}` : ""} öffnen`}
+                    aria-label={`Zeitraum ${range.index + 1} · ${formatTime(range.start)}–${isOngoing ? "läuft noch" : formatTime(range.end)}${rangeLabel ? ` · ${rangeLabel}` : ""} öffnen`}
                     onPointerDown={(event) => event.stopPropagation()}
                     onClick={(event) => {
                       event.stopPropagation();
