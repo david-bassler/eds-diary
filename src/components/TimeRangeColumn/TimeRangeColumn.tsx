@@ -19,6 +19,7 @@ export type TimeRangeColumnProps = {
   onRangeCreated?: (index: number, range: TimeRange) => void;
   activeRangeIndex?: number | null;
   label?: string;
+  workspaceAnchorId?: string;
 };
 
 type MinuteRange = {
@@ -201,6 +202,7 @@ export function TimeRangeColumn({
   onRangeCreated,
   activeRangeIndex = null,
   label = "Zeiträume auswählen",
+  workspaceAnchorId,
 }: TimeRangeColumnProps) {
   const beginMinutes = parseTime(begin);
   const endMinutes = parseTime(end);
@@ -377,7 +379,7 @@ export function TimeRangeColumn({
           : ""}
       </p>
 
-      <div className="timerange__workspace">
+      <div className="timerange__workspace" id={workspaceAnchorId}>
         <div className="timerange__times" aria-hidden="true">
           {ticks.map((tick) => (
             <span
