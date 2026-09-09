@@ -63,6 +63,28 @@ test('swipes between front and back on mobile without treating the swipe as a ta
   await expect(frontTab).toHaveAttribute('aria-pressed', 'true')
 })
 
+
+test('keeps short taps selectable on the body map', async ({ page }) => {
+  const frontCanvas = page
+    .getByRole('region', { name: 'Vorderseite' })
+    .locator('.body-map-selector__overlay')
+
+  await expect(frontCanvas).toHaveAttribute('data-hit-map-ready', 'true')
+  const bounds = await frontCanvas.boundingBox()
+  if (!bounds) throw new Error('Vorderseite ist nicht sichtbar.')
+
+  await page.mouse.click(
+    bounds.x + bounds.width / 2,
+    bounds.y + bounds.height * 0.35,
+  )
+
+  await expect(page.getByText('1 Region ausgewählt')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Vorne' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+})
+
 test('creates a pain entry with multiple body regions and details', async ({
   page,
 }) => {
