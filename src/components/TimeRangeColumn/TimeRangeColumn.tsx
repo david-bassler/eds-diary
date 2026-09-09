@@ -36,6 +36,14 @@ type DragState = {
   baseRanges: MinuteRange[];
 };
 
+type TouchGestureState = {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  anchor: number;
+  baseRanges: MinuteRange[];
+};
+
 type LayoutRange = MinuteRange & {
   index: number;
   column: number;
@@ -44,6 +52,7 @@ type LayoutRange = MinuteRange & {
 
 const MINUTES_PER_DAY = 24 * 60;
 const FINE_GESTURE_DISTANCE = 52;
+const TOUCH_TAP_MAX_MOVEMENT = 14;
 const MIN_LABEL_DURATION_MINUTES = 150;
 
 function parseTime(value: string) {
@@ -215,6 +224,7 @@ export function TimeRangeColumn({
   const [drag, setDrag] = useState<DragState | null>(null);
   const [fineMode, setFineMode] = useState(false);
   const surfaceRef = useRef<HTMLDivElement>(null);
+  const touchGestureRef = useRef<TouchGestureState | null>(null);
   const descriptionId = useId();
 
   if (!valid) {
@@ -268,6 +278,18 @@ export function TimeRangeColumn({
       endMinutes,
       resolution,
     );
+
+    if (event.pointerType === "touch") {
+      touchGestureRef.current = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        anchor: time,
+        baseRanges: ranges,
+      };
+      return;
+    }
+
     const side =
       event.clientX < bounds.left + bounds.width / 2 ? "left" : "right";
 
@@ -285,6 +307,8 @@ export function TimeRangeColumn({
   };
 
   const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (touchGestureRef.current?.pointerId === event.pointerId) return;
+
     if (!drag || drag.pointerId !== event.pointerId || !surfaceRef.current)
       return;
 
@@ -312,6 +336,35 @@ export function TimeRangeColumn({
   };
 
   const finishDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const touchGesture = touchGestureRef.current;
+    if (touchGesture?.pointerId === event.pointerId) {
+      touchGestureRef.current = null;
+      const movement = Math.hypot(
+        event.clientX - touchGesture.startX,
+        event.clientY - touchGesture.startY,
+      );
+
+      if (movement > TOUCH_TAP_MAX_MOVEMENT) return;
+
+      const endCandidate =
+        touchGesture.anchor + resolution <= endMinutes
+          ? touchGesture.anchor + resolution
+          : touchGesture.anchor - resolution;
+      const createdRange = normalizeMinuteRange(
+        { start: touchGesture.anchor, end: endCandidate },
+        beginMinutes,
+        endMinutes,
+      );
+
+      emitRanges([...touchGesture.baseRanges, createdRange]);
+      const createdIndex = touchGesture.baseRanges.length;
+      onRangeCreated?.(createdIndex, {
+        start: formatTime(createdRange.start),
+        end: formatTime(createdRange.end),
+      });
+      return;
+    }
+
     if (!drag || drag.pointerId !== event.pointerId) return;
 
     const endCandidate =
@@ -339,6 +392,11 @@ export function TimeRangeColumn({
   };
 
   const cancelDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (touchGestureRef.current?.pointerId === event.pointerId) {
+      touchGestureRef.current = null;
+      return;
+    }
+
     if (!drag || drag.pointerId !== event.pointerId) return;
 
     emitRanges(drag.baseRanges);
@@ -369,10 +427,12 @@ export function TimeRangeColumn({
       </header>
 
       <p id={descriptionId} className="timerange__hint">
-        Ziehe senkrecht, um einen weiteren Zeitraum in {resolution}-Minuten-
-        Schritten hinzuzufügen. Überschneidungen werden gleich breit
-        nebeneinander dargestellt. Ziehe von einer Seite zur Mitte, um lokal
-        auf {fineResolution} Minute{fineResolution === 1 ? "" : "n"} zu
+        Mit der Maus ziehst du senkrecht, um einen Zeitraum in {resolution}-Minuten-
+        Schritten hinzuzufügen. Auf Touchscreens scrollst du normal durch den Tag;
+        ein kurzer Tap legt einen {resolution}-Minuten-Zeitraum an, den du im Editor
+        anpassen kannst. Überschneidungen werden gleich breit nebeneinander
+        dargestellt. Mit der Maus kannst du von einer Seite zur Mitte ziehen, um
+        lokal auf {fineResolution} Minute{fineResolution === 1 ? "" : "n"} zu
         verfeinern.
         {onRangeActivate
           ? " Die rechte Hälfte eines Zeitraums öffnet seine Details."
