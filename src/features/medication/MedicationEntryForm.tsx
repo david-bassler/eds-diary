@@ -1,6 +1,7 @@
 import { type FormEvent, useEffect, useState } from 'react'
 import {
   createMedicationEntry,
+  listMedicationEntries,
   listMedicationNames,
 } from './medicationRepository'
 import './MedicationEntryForm.css'
@@ -9,6 +10,15 @@ interface LocalDateTime {
   date: string
   time: string
 }
+
+interface MedicationQuickChoice {
+  name: string
+  dose: string
+  count: number
+  lastTakenAt: string
+}
+
+const MAX_QUICK_CHOICES = 5
 
 export interface MedicationEntryFormProps {
   date: string
@@ -36,6 +46,51 @@ function toIso(date: string, time: string): string | null {
   return Number.isNaN(value.getTime()) ? null : value.toISOString()
 }
 
+async function loadMedicationChoices(): Promise<{
+  names: string[]
+  quickChoices: MedicationQuickChoice[]
+}> {
+  const [names, entries] = await Promise.all([
+    listMedicationNames(),
+    listMedicationEntries(),
+  ])
+  const choices = new Map<string, MedicationQuickChoice>()
+
+  for (const entry of entries) {
+    const key = entry.medicationName.trim().toLocaleLowerCase('de')
+    const current = choices.get(key)
+
+    if (!current) {
+      choices.set(key, {
+        name: entry.medicationName,
+        dose: entry.dose,
+        count: 1,
+        lastTakenAt: entry.takenAt,
+      })
+      continue
+    }
+
+    current.count += 1
+    if (entry.takenAt > current.lastTakenAt) {
+      current.name = entry.medicationName
+      current.dose = entry.dose
+      current.lastTakenAt = entry.takenAt
+    }
+  }
+
+  return {
+    names,
+    quickChoices: [...choices.values()]
+      .sort(
+        (left, right) =>
+          right.count - left.count ||
+          right.lastTakenAt.localeCompare(left.lastTakenAt) ||
+          left.name.localeCompare(right.name, 'de'),
+      )
+      .slice(0, MAX_QUICK_CHOICES),
+  }
+}
+
 export function MedicationEntryForm({
   date,
   refreshNamesKey = 0,
@@ -46,14 +101,17 @@ export function MedicationEntryForm({
   const [dose, setDose] = useState('')
   const [time, setTime] = useState(() => localNow().time)
   const [knownMedicationNames, setKnownMedicationNames] = useState<string[]>([])
+  const [quickChoices, setQuickChoices] = useState<MedicationQuickChoice[]>([])
   const [status, setStatus] = useState('')
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     let active = true
 
-    void listMedicationNames().then((names) => {
-      if (active) setKnownMedicationNames(names)
+    void loadMedicationChoices().then(({ names, quickChoices }) => {
+      if (!active) return
+      setKnownMedicationNames(names)
+      setQuickChoices(quickChoices)
     })
 
     return () => {
@@ -91,7 +149,9 @@ export function MedicationEntryForm({
         takenAt,
       })
 
-      setKnownMedicationNames(await listMedicationNames())
+      const choices = await loadMedicationChoices()
+      setKnownMedicationNames(choices.names)
+      setQuickChoices(choices.quickChoices)
       setMedicationName('')
       setDose('')
       setTime(localNow().time)
@@ -115,6 +175,32 @@ export function MedicationEntryForm({
           eingenommen hast.
         </p>
       </div>
+
+      {quickChoices.length ? (
+        <div
+          className="medication-entry-form__quick-access"
+          aria-label="Medikamenten-Schnellzugriff"
+        >
+          <span className="medication-entry-form__quick-title">Schnellzugriff</span>
+          <div className="medication-entry-form__quick-choices">
+            {quickChoices.map((choice) => (
+              <button
+                key={choice.name.toLocaleLowerCase('de')}
+                type="button"
+                className="medication-entry-form__quick-choice"
+                onClick={() => {
+                  setMedicationName(choice.name)
+                  setDose(choice.dose)
+                  setStatus('')
+                }}
+              >
+                <strong>{choice.name}</strong>
+                <span>{choice.dose}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       <form
         className="medication-entry-form__form"
