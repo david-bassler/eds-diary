@@ -81,6 +81,10 @@ test('shows date and the time range picker on the activity page', async ({
     page.getByRole('heading', { level: 2, name: 'Aktivitätszeiträume' }),
   ).toBeVisible()
   await expect(page.getByTestId('time-range-surface')).toBeVisible()
+  await expect.poll(async () => {
+    const bounds = await page.locator('#activity-day-start').boundingBox()
+    return bounds?.y ?? Number.POSITIVE_INFINITY
+  }).toBeLessThan(2)
 
   const workspaceBounds = await page.locator('.timerange__workspace').boundingBox()
   const navigationBounds = await page
