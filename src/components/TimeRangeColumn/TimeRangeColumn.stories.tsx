@@ -99,6 +99,17 @@ export const WithRangeLabels: Story = {
   ),
 };
 
+export const OngoingRange: Story = {
+  render: (args) => (
+    <ControlledExample
+      {...args}
+      value={[{ start: "09:00", end: "11:45" }]}
+      rangeLabels={["Spaziergang"]}
+      rangeOngoing={[true]}
+    />
+  ),
+};
+
 export const FineResolution: Story = {
   args: {
     begin: "08:00",
