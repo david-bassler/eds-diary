@@ -470,32 +470,38 @@ export function ActivityPage() {
   async function removeRange(index: number): Promise<void> {
     const storedRecord = rangeRecords[index]
 
-    if (storedRecord) {
-      setDetailsSaving(true)
-
-      try {
-        await deleteActivityEntry(storedRecord.id)
-      } catch {
-        setStatus('Die Aktivität konnte nicht entfernt werden.')
-        setDetailsSaving(false)
-        return
-      }
-
-      setDetailsSaving(false)
+    if (!storedRecord) {
+      setTimeRanges((current) =>
+        current.filter((_, rangeIndex) => rangeIndex !== index),
+      )
+      setRangeDetails((current) =>
+        current.filter((_, detailsIndex) => detailsIndex !== index),
+      )
+      setRangeRecords((current) =>
+        current.filter((_, recordIndex) => recordIndex !== index),
+      )
+      setActiveDraft(null)
+      setActiveRangeIndex(null)
+      setStatus('')
+      return
     }
 
-    setTimeRanges((current) =>
-      current.filter((_, rangeIndex) => rangeIndex !== index),
-    )
-    setRangeDetails((current) =>
-      current.filter((_, detailsIndex) => detailsIndex !== index),
-    )
-    setRangeRecords((current) =>
-      current.filter((_, recordIndex) => recordIndex !== index),
-    )
-    setActiveDraft(null)
-    setActiveRangeIndex(null)
-    setStatus(storedRecord ? 'Aktivität entfernt.' : '')
+    setDetailsSaving(true)
+    setStatus('')
+
+    try {
+      const before = await captureActivityState()
+      await deleteActivityEntry(storedRecord.id)
+      await refreshCurrentDate()
+      rememberUndo(before)
+      setActiveDraft(null)
+      setActiveRangeIndex(null)
+      setStatus('Aktivität entfernt.')
+    } catch {
+      setStatus('Die Aktivität konnte nicht entfernt werden.')
+    } finally {
+      setDetailsSaving(false)
+    }
   }
 
   async function applyActiveDraft(): Promise<void> {
@@ -512,85 +518,54 @@ export function ActivityPage() {
     }
 
     const storedRecord = rangeRecords[activeRangeIndex]
-
     const activityName = activeDraft.activityName.trim()
     const activityColor = normalizeActivityColor(activeDraft.color, activityName)
-
-    if (!storedRecord) {
-      setDetailsSaving(true)
-      setStatus('')
-
-      try {
-        await saveActivityTypeColor(activityName, activityColor)
-
-        setTimeRanges((current) =>
-          current.map((range, index) =>
-            index === activeRangeIndex
-              ? { start: activeDraft.start, end: activeDraft.end }
-              : range,
-          ),
-        )
-        setRangeDetails((current) =>
-          current.map((details, index) => {
-            if (index === activeRangeIndex) {
-              return {
-                activityName,
-                color: activityColor,
-                note: activeDraft.note,
-              }
-            }
-            return sameActivityType(details.activityName, activityName)
-              ? { ...details, color: activityColor }
-              : details
-          }),
-        )
-        setKnownActivityTypes(await listActivityTypes())
-        setActiveDraft(null)
-        setActiveRangeIndex(null)
-        setStatus('')
-      } catch {
-        setStatus('Die Aktivitätsfarbe konnte nicht gespeichert werden.')
-      } finally {
-        setDetailsSaving(false)
-      }
-      return
-    }
 
     setDetailsSaving(true)
     setStatus('')
 
-    try {
-      await saveActivityEntry({
-        ...storedRecord,
-        startTime: activeDraft.start,
-        endTime: activeDraft.end,
-        activityName,
-        color: activityColor,
-        note: activeDraft.note,
-      })
-      await saveActivityTypeColor(activityName, activityColor)
+    const before = await captureActivityState()
 
-      const storedEntries = entriesForDate(await listActivityEntries(), date)
-      setTimeRanges(
-        storedEntries.map((entry) => ({
-          start: entry.startTime,
-          end: entry.endTime,
-        })),
-      )
-      setRangeDetails(
-        storedEntries.map((entry) => ({
-          activityName: entry.activityName,
-          color: entry.color,
-          note: entry.note,
-        })),
-      )
-      setRangeRecords(storedEntries)
-      setKnownActivityTypes(await listActivityTypes())
+    try {
+      if (storedRecord) {
+        await saveActivityEntry({
+          ...storedRecord,
+          startTime: activeDraft.start,
+          endTime: activeDraft.end,
+          activityName,
+          color: activityColor,
+          note: activeDraft.note,
+        })
+      } else {
+        await createActivityEntries([
+          {
+            date,
+            startTime: activeDraft.start,
+            endTime: activeDraft.end,
+            activityName,
+            color: activityColor,
+            note: activeDraft.note,
+          },
+        ])
+      }
+
+      await saveActivityTypeColor(activityName, activityColor)
+      await refreshCurrentDate()
+      rememberUndo(before)
       setActiveDraft(null)
       setActiveRangeIndex(null)
-      setStatus('Aktivität aktualisiert.')
+      setStatus(storedRecord ? 'Aktivität aktualisiert.' : 'Aktivität gespeichert.')
     } catch {
-      setStatus('Die Aktivität konnte nicht aktualisiert werden.')
+      try {
+        await restoreActivityState(before)
+      } catch {
+        // Der ursprüngliche Fehlerstatus bleibt aussagekräftiger.
+      }
+      setStatus(
+        storedRecord
+          ? 'Die Aktivität konnte nicht aktualisiert werden.'
+          : 'Die Aktivität konnte nicht gespeichert werden.',
+      )
     } finally {
       setDetailsSaving(false)
     }
@@ -620,20 +595,10 @@ export function ActivityPage() {
     )
     if (!selectedEntries.length || copySourceDate === date) return
 
-    const pendingEntries = rangeRecords.flatMap((record, index) => {
-      if (record) return []
-      const range = timeRanges[index]
-      if (!range) return []
-      return [
-        {
-          range,
-          details: rangeDetails[index] ?? emptyDetails(),
-        },
-      ]
-    })
-
     setCopyBusy(true)
     setCopyError('')
+
+    const before = await captureActivityState()
 
     try {
       await createActivityEntries(
@@ -647,27 +612,8 @@ export function ActivityPage() {
         })),
       )
 
-      const storedEntries = entriesForDate(await listActivityEntries(), date)
-      setTimeRanges([
-        ...storedEntries.map((entry) => ({
-          start: entry.startTime,
-          end: entry.endTime,
-        })),
-        ...pendingEntries.map((entry) => entry.range),
-      ])
-      setRangeDetails([
-        ...storedEntries.map((entry) => ({
-          activityName: entry.activityName,
-          color: entry.color,
-          note: entry.note,
-        })),
-        ...pendingEntries.map((entry) => entry.details),
-      ])
-      setRangeRecords([
-        ...storedEntries,
-        ...pendingEntries.map(() => null),
-      ])
-      setKnownActivityTypes(await listActivityTypes())
+      await refreshCurrentDate()
+      rememberUndo(before)
       setCopyOpen(false)
       setStatus(
         selectedEntries.length === 1
@@ -675,84 +621,14 @@ export function ActivityPage() {
           : `${selectedEntries.length} Aktivitäten wurden auf den aktuellen Tag übernommen.`,
       )
     } catch {
+      try {
+        await restoreActivityState(before)
+      } catch {
+        // Der Kopierfehler bleibt die relevante Meldung.
+      }
       setCopyError('Die ausgewählten Aktivitäten konnten nicht übernommen werden.')
     } finally {
       setCopyBusy(false)
-    }
-  }
-
-  async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault()
-
-    if (!date) {
-      setStatus('Bitte ein Datum wählen.')
-      return
-    }
-
-    const unsavedIndexes = rangeRecords.flatMap((record, index) =>
-      record ? [] : [index],
-    )
-
-    if (!unsavedIndexes.length) {
-      setStatus('Alle Aktivitäten für dieses Datum sind bereits gespeichert.')
-      return
-    }
-
-    const missingActivityIndex = unsavedIndexes.find(
-      (index) => !rangeDetails[index]?.activityName.trim(),
-    )
-    if (missingActivityIndex !== undefined) {
-      setStatus(
-        `Bitte für Zeitraum ${missingActivityIndex + 1} eine Aktivität eintragen. Öffne dazu die rechte Hälfte des Zeitraums.`,
-      )
-      return
-    }
-
-    setSaving(true)
-    setStatus('')
-
-    try {
-      const createdEntries = await createActivityEntries(
-        unsavedIndexes.map((index) => ({
-          date,
-          startTime: timeRanges[index]?.start ?? '',
-          endTime: timeRanges[index]?.end ?? '',
-          activityName: rangeDetails[index]?.activityName ?? '',
-          color: rangeDetails[index]?.color,
-          note: rangeDetails[index]?.note ?? '',
-        })),
-      )
-
-      const storedEntries = entriesForDate(
-        await listActivityEntries(),
-        date,
-      )
-      setTimeRanges(
-        storedEntries.map((entry) => ({
-          start: entry.startTime,
-          end: entry.endTime,
-        })),
-      )
-      setRangeDetails(
-        storedEntries.map((entry) => ({
-          activityName: entry.activityName,
-          color: entry.color,
-          note: entry.note,
-        })),
-      )
-      setRangeRecords(storedEntries)
-      setKnownActivityTypes(await listActivityTypes())
-      setActiveDraft(null)
-      setActiveRangeIndex(null)
-      setStatus(
-        createdEntries.length === 1
-          ? 'Aktivität gespeichert.'
-          : 'Aktivitäten gespeichert.',
-      )
-    } catch {
-      setStatus('Die Aktivitäten konnten lokal nicht gespeichert werden.')
-    } finally {
-      setSaving(false)
     }
   }
 
@@ -777,7 +653,10 @@ export function ActivityPage() {
       ? activeDraft.activityName
       : rangeDetails[index]?.activityName ?? '',
   )
-  const unsavedCount = rangeRecords.filter((record) => record === null).length
+  const historyLocked =
+    historyBusy || detailsSaving || copyBusy || activeRangeIndex !== null || copyOpen
+  const canUndo = undoStack.length > 0 && !historyLocked
+  const canRedo = redoStack.length > 0 && !historyLocked
   const activitySearch =
     activeDraft?.activityName.trim().toLocaleLowerCase('de') ?? ''
   const activitySuggestions = knownActivityTypes
@@ -797,7 +676,7 @@ export function ActivityPage() {
   }))
 
   return (
-    <form className="activity-page" onSubmit={(event) => void submit(event)}>
+    <form className="activity-page" onSubmit={(event) => event.preventDefault()}>
       <div className="activity-page__day-controls">
         <label className="activity-page__date">
           <span>Datum</span>
@@ -846,21 +725,29 @@ export function ActivityPage() {
         workspaceAnchorId={ACTIVITY_DAY_START_ANCHOR}
       />
 
-      {unsavedCount ? (
-        <div className="activity-page__footer">
-          <button
-            className="activity-page__primary"
-            type="submit"
-            disabled={saving}
-          >
-            {saving
-              ? 'Speichert …'
-              : unsavedCount === 1
-                ? 'Aktivität speichern'
-                : 'Aktivitäten speichern'}
-          </button>
-        </div>
-      ) : null}
+      <div className="activity-page__history" aria-label="Änderungsverlauf">
+        <button
+          type="button"
+          className="activity-page__history-button"
+          disabled={!canUndo}
+          onClick={() => void undoLastChange()}
+        >
+          <span aria-hidden="true">↶</span>
+          Undo
+        </button>
+        <button
+          type="button"
+          className="activity-page__history-button"
+          disabled={!canRedo}
+          onClick={() => void redoLastChange()}
+        >
+          <span aria-hidden="true">↷</span>
+          Redo
+        </button>
+        <span className="activity-page__autosave-note">
+          Änderungen werden automatisch gespeichert.
+        </span>
+      </div>
 
       <p className="activity-page__status" aria-live="polite">
         {status}
