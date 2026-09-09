@@ -22,6 +22,54 @@
   opacity: 0.72;
 }
 
+.medication-entry-form__quick-access {
+  display: grid;
+  gap: 9px;
+}
+
+.medication-entry-form__quick-title {
+  font-size: 0.86rem;
+  font-weight: 750;
+}
+
+.medication-entry-form__quick-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.medication-entry-form__quick-choice {
+  display: grid;
+  min-height: 52px;
+  gap: 2px;
+  padding: 8px 12px;
+  border: 1px solid rgb(37 48 43 / 20%);
+  border-radius: 0;
+  background: rgb(255 255 255 / 72%);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.medication-entry-form__quick-choice strong {
+  font-size: 0.9rem;
+}
+
+.medication-entry-form__quick-choice span {
+  font-size: 0.78rem;
+  opacity: 0.68;
+}
+
+.medication-entry-form__quick-choice:hover {
+  background: #eef4f1;
+}
+
+.medication-entry-form__quick-choice:focus-visible {
+  outline: 3px solid #8ec9b5;
+  outline-offset: 3px;
+}
+
 .medication-entry-form__form {
   display: grid;
   gap: 20px;
