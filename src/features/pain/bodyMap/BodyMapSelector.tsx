@@ -32,6 +32,10 @@ interface HitMapData {
 }
 
 const NO_REGION = 255
+const TAP_MAX_MOVEMENT = 14
+const SWIPE_MIN_DISTANCE = 56
+const SWIPE_AXIS_RATIO = 1.2
+const MOBILE_BODY_MAP_QUERY = '(max-width: 639px)'
 
 const FRONT_REGIONS: readonly RegionDefinition[] = [
   { id: 'head', label: 'Kopf', color: [216, 133, 159] },
@@ -194,16 +198,23 @@ function BodyViewMap({
   view,
   value,
   onToggle,
+  onSwipe,
   activeOnMobile,
 }: {
   view: BodyView
   value: readonly PainLocation[]
   onToggle: (view: BodyView, regionId: string) => void
+  onSwipe: (direction: 'left' | 'right') => void
   activeOnMobile: boolean
 }) {
   const title = view === 'front' ? 'Vorderseite' : 'Rückseite'
   const map = BODY_MAPS[view]
   const overlayRef = useRef<HTMLCanvasElement>(null)
+  const gestureRef = useRef<{
+    pointerId: number
+    startX: number
+    startY: number
+  } | null>(null)
   const [hitMap, setHitMap] = useState<HitMapData | null>(null)
 
   useEffect(() => {
@@ -314,6 +325,48 @@ function BodyViewMap({
     if (region) onToggle(view, region.id)
   }
 
+  function beginGesture(event: ReactPointerEvent<HTMLCanvasElement>): void {
+    if (event.pointerType === 'mouse' && event.button !== 0) return
+
+    gestureRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+    }
+  }
+
+  function finishGesture(event: ReactPointerEvent<HTMLCanvasElement>): void {
+    const gesture = gestureRef.current
+    gestureRef.current = null
+    if (!gesture || gesture.pointerId !== event.pointerId) return
+
+    const deltaX = event.clientX - gesture.startX
+    const deltaY = event.clientY - gesture.startY
+    const horizontalDistance = Math.abs(deltaX)
+    const verticalDistance = Math.abs(deltaY)
+
+    const isMobileSwipe =
+      activeOnMobile &&
+      window.matchMedia(MOBILE_BODY_MAP_QUERY).matches &&
+      horizontalDistance >= SWIPE_MIN_DISTANCE &&
+      horizontalDistance > verticalDistance * SWIPE_AXIS_RATIO
+
+    if (isMobileSwipe) {
+      onSwipe(deltaX < 0 ? 'left' : 'right')
+      return
+    }
+
+    if (Math.hypot(deltaX, deltaY) <= TAP_MAX_MOVEMENT) {
+      selectAtPointer(event)
+    }
+  }
+
+  function cancelGesture(event: ReactPointerEvent<HTMLCanvasElement>): void {
+    if (gestureRef.current?.pointerId === event.pointerId) {
+      gestureRef.current = null
+    }
+  }
+
   return (
     <section
       className="body-map-selector__view"
@@ -338,7 +391,9 @@ function BodyViewMap({
           className="body-map-selector__overlay"
           data-hit-map-ready={hitMap !== null}
           aria-hidden="true"
-          onPointerDown={selectAtPointer}
+          onPointerDown={beginGesture}
+          onPointerUp={finishGesture}
+          onPointerCancel={cancelGesture}
         />
       </div>
     </section>
@@ -358,6 +413,14 @@ export function BodyMapSelector({ value, onChange }: BodyMapSelectorProps) {
           )
         : [...value, { view, regionId }],
     )
+  }
+
+  function swipeBodyView(direction: 'left' | 'right'): void {
+    setMobileView((current) => {
+      if (direction === 'left' && current === 'front') return 'back'
+      if (direction === 'right' && current === 'back') return 'front'
+      return current
+    })
   }
 
   return (
@@ -388,12 +451,14 @@ export function BodyMapSelector({ value, onChange }: BodyMapSelectorProps) {
           view="front"
           value={value}
           onToggle={toggle}
+          onSwipe={swipeBodyView}
           activeOnMobile={mobileView === 'front'}
         />
         <BodyViewMap
           view="back"
           value={value}
           onToggle={toggle}
+          onSwipe={swipeBodyView}
           activeOnMobile={mobileView === 'back'}
         />
       </div>
