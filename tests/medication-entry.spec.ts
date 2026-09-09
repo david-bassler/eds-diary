@@ -64,6 +64,50 @@ test('uses previously entered medication names as suggestions', async ({
   ).toHaveCount(1)
 })
 
+test('offers frequent medications as quick access with the latest dose', async ({
+  page,
+}) => {
+  await page.evaluate(async () => {
+    const repository = await import(
+      '/src/features/medication/medicationRepository.ts'
+    )
+    await repository.createMedicationEntries([
+      {
+        medicationName: 'Schnellmittel',
+        dose: '5 mg',
+        takenAt: new Date('2026-09-06T08:00:00').toISOString(),
+      },
+      {
+        medicationName: 'Schnellmittel',
+        dose: '10 mg',
+        takenAt: new Date('2026-09-08T08:00:00').toISOString(),
+      },
+      {
+        medicationName: 'Seltenmittel',
+        dose: '1 Tablette',
+        takenAt: new Date('2026-09-07T09:00:00').toISOString(),
+      },
+    ])
+  })
+
+  await page.reload()
+  await page
+    .getByRole('navigation', { name: 'Hauptnavigation' })
+    .getByRole('link', { name: 'Medikamente' })
+    .click()
+
+  const quickAccess = page.getByLabel('Medikamenten-Schnellzugriff')
+  await expect(quickAccess).toBeVisible()
+  await expect(quickAccess.getByRole('button').first()).toContainText(
+    'Schnellmittel',
+  )
+  await expect(quickAccess.getByRole('button').first()).toContainText('10 mg')
+
+  await quickAccess.getByRole('button', { name: /Schnellmittel/ }).click()
+  await expect(page.getByLabel('Medikament')).toHaveValue('Schnellmittel')
+  await expect(page.getByLabel('Dosis')).toHaveValue('10 mg')
+})
+
 test('copies selected medication intakes from the previous day', async ({
   page,
 }) => {
