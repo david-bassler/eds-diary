@@ -102,7 +102,7 @@
   border-radius: 18px;
   background: #f9fbfa;
   cursor: crosshair;
-  touch-action: none;
+  touch-action: pan-y;
   user-select: none;
 }
 
