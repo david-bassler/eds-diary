@@ -102,7 +102,7 @@
   border-radius: 18px;
   background: #f9fbfa;
   cursor: crosshair;
-  touch-action: pan-y;
+  touch-action: none;
   user-select: none;
 }
 
@@ -118,6 +118,10 @@
 
 .timerange__surface--fine::after {
   border-color: #eea044;
+}
+
+.timerange__surface--touch-create::after {
+  border-color: #315b4a;
 }
 
 .timerange__grid {
