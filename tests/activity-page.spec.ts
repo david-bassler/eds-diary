@@ -472,6 +472,61 @@ test('automatically saves new activities and supports undo and redo', async ({
   })
 })
 
+test('starts an ongoing activity now and can finish it later', async ({
+  page,
+}) => {
+  const date = await page.getByLabel('Datum').inputValue()
+  expect(date).not.toBe('')
+
+  await page.getByRole('button', { name: 'Aktivität starten' }).click()
+
+  const dialog = page.getByRole('dialog', { name: 'Aktivität eintragen' })
+  await expect(dialog).toBeVisible()
+  await expect(page.getByRole('checkbox', { name: 'Läuft noch' })).toBeChecked()
+  await expect(page.getByText('läuft noch', { exact: true })).toBeVisible()
+
+  await page.getByLabel('Aktivität für Zeitraum 1').fill('Laufende Aktivität')
+  await page.getByRole('button', { name: 'Fertig' }).click()
+
+  await expect(page.getByText('Aktivität gespeichert.')).toBeVisible()
+  await expect(page.locator('.timerange__selection--ongoing')).toHaveCount(1)
+  await expect(page.locator('.timerange__selection--ongoing')).toContainText(
+    'läuft',
+  )
+
+  let entries = await page.evaluate(async () => {
+    const repository = await import(
+      '/src/features/activity/activityRepository.ts'
+    )
+    return repository.listActivityEntries()
+  })
+  expect(entries).toHaveLength(1)
+  expect(entries[0]).toMatchObject({
+    activityName: 'Laufende Aktivität',
+    endTime: '',
+    isOngoing: true,
+  })
+
+  await page
+    .getByRole('button', { name: /Laufende Aktivität öffnen/ })
+    .click()
+  await expect(page.getByRole('button', { name: 'Jetzt beenden' })).toBeVisible()
+  await page.getByRole('button', { name: 'Jetzt beenden' }).click()
+
+  await expect(page.getByText('Aktivität aktualisiert.')).toBeVisible()
+  await expect(page.locator('.timerange__selection--ongoing')).toHaveCount(0)
+
+  entries = await page.evaluate(async () => {
+    const repository = await import(
+      '/src/features/activity/activityRepository.ts'
+    )
+    return repository.listActivityEntries()
+  })
+  expect(entries).toHaveLength(1)
+  expect(entries[0].isOngoing).toBe(false)
+  expect(entries[0].endTime).not.toBe('')
+})
+
 test('offers an automatically saved activity again immediately', async ({
   page,
 }) => {
