@@ -188,8 +188,9 @@ export function PainEntryFlow() {
             <p className="pain-entry-flow__eyebrow">Schritt 1 von 2</p>
             <h2 id="pain-entry-flow-title">Wo tut es weh?</h2>
             <p>
-              Wähle eine oder mehrere Regionen. Auf größeren Bildschirmen siehst
-              du Vorder- und Rückseite gleichzeitig.
+              Wähle eine oder mehrere Regionen. Auf dem Handy kannst du zwischen
+              Vorder- und Rückseite wischen oder die Schaltflächen benutzen. Auf
+              größeren Bildschirmen siehst du beide Ansichten gleichzeitig.
             </p>
           </div>
 
