@@ -118,6 +118,7 @@ test('does not create an activity range while scrolling on touch', async ({
   const x = bounds.x + bounds.width / 2
   const startY = bounds.y + bounds.height * 0.55
   const endY = startY - 120
+  const scrollBefore = await page.evaluate(() => window.scrollY)
 
   await surface.dispatchEvent('pointerdown', {
     pointerId: 31,
@@ -142,9 +143,12 @@ test('does not create an activity range while scrolling on touch', async ({
   await expect(
     page.getByRole('dialog', { name: 'Aktivität eintragen' }),
   ).not.toBeVisible()
+  await expect.poll(async () => page.evaluate(() => window.scrollY)).not.toBe(
+    scrollBefore,
+  )
 })
 
-test('creates one short activity range from a deliberate touch tap', async ({
+test('does not create an activity range from a quick touch tap', async ({
   page,
   isMobile,
 }) => {
@@ -168,6 +172,48 @@ test('creates one short activity range from a deliberate touch tap', async ({
     pointerType: 'touch',
     clientX: x + 2,
     clientY: y + 2,
+  })
+
+  await expect(page.locator('.timerange__selection')).toHaveCount(0)
+  await expect(
+    page.getByRole('dialog', { name: 'Aktivität eintragen' }),
+  ).not.toBeVisible()
+})
+
+test('creates an activity range after holding and then dragging on touch', async ({
+  page,
+  isMobile,
+}) => {
+  test.skip(!isMobile, 'Touch hold-and-drag is covered in the mobile project.')
+
+  const surface = page.getByTestId('time-range-surface')
+  const bounds = await surface.boundingBox()
+  if (!bounds) throw new Error('Zeitpicker ist nicht sichtbar.')
+
+  const x = bounds.x + bounds.width / 2
+  const startY = bounds.y + bounds.height * 0.35
+  const endY = bounds.y + bounds.height * 0.48
+
+  await surface.dispatchEvent('pointerdown', {
+    pointerId: 33,
+    pointerType: 'touch',
+    clientX: x,
+    clientY: startY,
+  })
+  await page.waitForTimeout(350)
+  await expect(surface).toHaveClass(/timerange__surface--touch-create/)
+
+  await surface.dispatchEvent('pointermove', {
+    pointerId: 33,
+    pointerType: 'touch',
+    clientX: x + 2,
+    clientY: endY,
+  })
+  await surface.dispatchEvent('pointerup', {
+    pointerId: 33,
+    pointerType: 'touch',
+    clientX: x + 2,
+    clientY: endY,
   })
 
   await expect(page.locator('.timerange__selection')).toHaveCount(1)
