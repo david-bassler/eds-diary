@@ -170,10 +170,6 @@ export function MedicationEntryForm({
     >
       <div className="medication-entry-form__intro">
         <h2 id="medication-entry-form-title">Einnahme erfassen</h2>
-        <p>
-          Dokumentiere, welches Medikament du wann und in welcher Dosis
-          eingenommen hast.
-        </p>
       </div>
 
       {quickChoices.length ? (
@@ -242,9 +238,6 @@ export function MedicationEntryForm({
 
         <fieldset className="medication-entry-form__fieldset">
           <legend>Zeitpunkt</legend>
-          <p>
-            Standardmäßig ist der aktuelle lokale Zeitpunkt eingestellt.
-          </p>
           <div className="medication-entry-form__datetime">
             <label>
               <span>Datum</span>
