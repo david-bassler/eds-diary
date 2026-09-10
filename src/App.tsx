@@ -3,6 +3,7 @@ import {
   BottomNavigation,
   type AppSection,
 } from './components/BottomNavigation/BottomNavigation'
+import { ActivityNowIndicator } from './features/activity/ActivityNowIndicator'
 import { ActivityPage } from './features/activity/ActivityPage'
 import { MedicationPage } from './features/medication/MedicationPage'
 import { PainEntryFlow } from './features/pain/PainEntryFlow'
@@ -117,7 +118,12 @@ export function App() {
 
             {activeSection === 'medication' ? <MedicationPage /> : null}
 
-            {activeSection === 'activity' ? <ActivityPage /> : null}
+            {activeSection === 'activity' ? (
+              <>
+                <ActivityPage />
+                <ActivityNowIndicator />
+              </>
+            ) : null}
 
             {activeSection === 'configuration' ? (
               <>
