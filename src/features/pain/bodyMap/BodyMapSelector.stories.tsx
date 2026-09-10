@@ -9,6 +9,12 @@ const meta = {
   component: BodyMapSelector,
   parameters: {
     layout: 'padded',
+    docs: {
+      description: {
+        component:
+          'Schmerzregionen werden direkt über die Körperkarte ausgewählt. Eine zusätzliche Listenansicht wird nicht angezeigt.',
+      },
+    },
   },
   args: {
     value: [],
