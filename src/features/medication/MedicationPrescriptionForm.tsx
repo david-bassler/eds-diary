@@ -78,10 +78,6 @@ export function MedicationPrescriptionForm() {
         <h2 id="medication-prescription-form-title">
           Verordnung dokumentieren
         </h2>
-        <p>
-          Halte fest, wann ein Medikament verordnet wurde, von wem und aus
-          welchem Grund.
-        </p>
       </div>
 
       <form
