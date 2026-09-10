@@ -184,7 +184,7 @@ export function PainEntryFlow() {
   }
 
   return (
-    <section className="pain-entry-flow" aria-labelledby="pain-entry-flow-title">
+    <section className="pain-entry-flow" aria-label="Schmerzerfassung">
       <div className="pain-entry-flow__progress" aria-label="Erfassungsschritte">
         <span data-active={step === 1}>1 · Region</span>
         <span data-active={step === 2}>2 · Details</span>
@@ -192,16 +192,6 @@ export function PainEntryFlow() {
 
       {step === 1 ? (
         <div className="pain-entry-flow__step">
-          <div className="pain-entry-flow__intro">
-            <p className="pain-entry-flow__eyebrow">Schritt 1 von 2</p>
-            <h2 id="pain-entry-flow-title">Wo tut es weh?</h2>
-            <p>
-              Wähle eine oder mehrere Regionen. Auf dem Handy kannst du zwischen
-              Vorder- und Rückseite wischen oder die Schaltflächen benutzen. Auf
-              größeren Bildschirmen siehst du beide Ansichten gleichzeitig.
-            </p>
-          </div>
-
           <BodyMapSelector value={locations} onChange={setLocations} />
 
           <div className="pain-entry-flow__footer">
