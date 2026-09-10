@@ -23,7 +23,7 @@ const PAGE_COPY: Record<
   pain: {
     eyebrow: 'Schmerztagebuch',
     title: 'Schmerzen',
-    description: 'Schmerzepisoden erfassen und ihren Verlauf dokumentieren.',
+    description: '',
   },
   medication: {
     eyebrow: 'Schmerztagebuch',
@@ -94,7 +94,9 @@ export function App() {
                 </div>
                 <QrShareButton />
               </div>
-              <p className="app__description">{page.description}</p>
+              {page.description ? (
+                <p className="app__description">{page.description}</p>
+              ) : null}
             </header>
 
             {activeSection === 'pain' ? <PainEntryFlow /> : null}
