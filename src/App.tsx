@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   BottomNavigation,
   type AppSection,
@@ -33,7 +33,7 @@ const PAGE_COPY: Record<
   activity: {
     eyebrow: 'Schmerztagebuch',
     title: 'Aktivitäten',
-    description: 'Aktivitäten und Belastungen werden hier dokumentiert.',
+    description: '',
   },
   configuration: {
     eyebrow: 'App',
@@ -46,6 +46,7 @@ export function App() {
   const [activeSection, setActiveSection] = useState<AppSection>(() =>
     sectionFromPathname(window.location.pathname),
   )
+  const activityHelpDialogRef = useRef<HTMLDialogElement>(null)
   const page = PAGE_COPY[activeSection]
 
   useEffect(() => {
@@ -92,7 +93,20 @@ export function App() {
                     {page.title}
                   </h1>
                 </div>
-                <QrShareButton />
+                <div className="app__header-actions">
+                  {activeSection === 'activity' ? (
+                    <button
+                      type="button"
+                      className="app__help-button"
+                      aria-label="Hilfe zu Aktivitäten"
+                      title="Hilfe zu Aktivitäten"
+                      onClick={() => activityHelpDialogRef.current?.showModal()}
+                    >
+                      ?
+                    </button>
+                  ) : null}
+                  <QrShareButton />
+                </div>
               </div>
               {page.description ? (
                 <p className="app__description">{page.description}</p>
@@ -114,6 +128,52 @@ export function App() {
           </section>
         </div>
       </main>
+
+      <dialog
+        ref={activityHelpDialogRef}
+        className="app__help-dialog"
+        aria-labelledby="activity-help-title"
+      >
+        <div className="app__help-card">
+          <header className="app__help-header">
+            <h2 id="activity-help-title">Aktivitäten – Hilfe</h2>
+            <button
+              type="button"
+              className="app__help-close"
+              aria-label="Hilfe schließen"
+              onClick={() => activityHelpDialogRef.current?.close()}
+            >
+              Schließen
+            </button>
+          </header>
+          <div className="app__help-content">
+            <p>
+              Auf dem Handy scrollt direktes Wischen. Halte kurz an der Startzeit,
+              bis die Auswahl aktiviert ist, und ziehe dann zum Ende der Aktivität.
+              Mit der Maus legst du einen Zeitraum durch vertikales Ziehen an.
+            </p>
+            <p>
+              Die rechte Hälfte eines vorhandenen Zeitraums öffnet die Details.
+              Überschneidungen werden nebeneinander dargestellt.
+            </p>
+            <p>
+              Änderungen werden automatisch gespeichert. Mit Undo und Redo kannst
+              du Änderungen zurücknehmen oder wiederherstellen.
+            </p>
+            <p>
+              „Aktivität starten“ legt für heute eine laufende Aktivität ab jetzt
+              an. Eine laufende Aktivität kannst du später mit „Jetzt beenden“
+              abschließen.
+            </p>
+            <p>
+              „Tag kopieren“ übernimmt ausgewählte Aktivitäten eines anderen Tages.
+              Die gewählte Farbe gilt für alle Einträge mit demselben
+              Aktivitätsnamen. Uhrzeiten werden als HH:MM eingegeben; 24:00 ist als
+              Tagesende möglich.
+            </p>
+          </div>
+        </div>
+      </dialog>
 
       <PainStatusPrompt />
 
