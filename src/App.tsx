@@ -28,7 +28,7 @@ const PAGE_COPY: Record<
   medication: {
     eyebrow: 'Schmerztagebuch',
     title: 'Medikamente',
-    description: 'Eingenommene Medikamente mit Dosis und Zeitpunkt dokumentieren.',
+    description: '',
   },
   activity: {
     eyebrow: 'Schmerztagebuch',
