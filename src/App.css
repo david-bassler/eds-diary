@@ -30,6 +30,13 @@
   gap: 16px;
 }
 
+.app__header-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
 .app__heading-copy {
   min-width: 0;
 }
@@ -56,6 +63,92 @@
   opacity: 0.72;
 }
 
+.app__help-button,
+.app__help-close {
+  min-width: 44px;
+  min-height: 44px;
+  border: 1px solid rgb(37 48 43 / 20%);
+  background: white;
+  color: inherit;
+  font: inherit;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.app__help-button {
+  padding: 0;
+  font-size: 1.15rem;
+}
+
+.app__help-close {
+  padding: 9px 14px;
+}
+
+.app__help-button:focus-visible,
+.app__help-close:focus-visible {
+  outline: 3px solid #8ec9b5;
+  outline-offset: 3px;
+}
+
+.app__help-dialog {
+  width: min(560px, calc(100vw - 32px));
+  max-width: none;
+  max-height: min(86dvh, 720px);
+  margin: auto;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid rgb(37 48 43 / 18%);
+  background: #fcfdfc;
+  color: inherit;
+  box-shadow: 0 28px 80px rgb(20 35 29 / 28%);
+}
+
+.app__help-dialog::backdrop {
+  background: rgb(23 32 28 / 48%);
+}
+
+.app__help-card {
+  display: grid;
+  max-height: inherit;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.app__help-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 22px;
+  border-bottom: 1px solid rgb(37 48 43 / 12%);
+  background: #f4f8f6;
+}
+
+.app__help-header h2 {
+  margin: 0;
+  font-size: clamp(1.25rem, 5vw, 1.6rem);
+}
+
+.app__help-content {
+  display: grid;
+  gap: 14px;
+  overflow: auto;
+  padding: 22px;
+}
+
+.app__help-content p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.activity-page__intro,
+.activity-page .timerange__header,
+.activity-page .timerange__hint,
+.activity-page__autosave-note,
+.activity-page__color-picker > small,
+.activity-page__time-help {
+  display: none;
+}
+
 .app__placeholder {
   display: grid;
   min-height: 220px;
@@ -72,4 +165,11 @@
   margin: 0;
   line-height: 1.55;
   opacity: 0.72;
+}
+
+@media (width <= 640px) {
+  .app__help-dialog {
+    width: calc(100vw - 24px);
+    max-height: calc(100dvh - 24px);
+  }
 }
