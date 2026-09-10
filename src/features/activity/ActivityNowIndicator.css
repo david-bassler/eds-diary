@@ -1,0 +1,35 @@
+.activity-now-indicator {
+  position: absolute;
+  z-index: 5;
+  right: 0;
+  left: 0;
+  height: 0;
+  border-top: 2px solid #b8463d;
+  pointer-events: none;
+}
+
+.activity-now-indicator::before {
+  position: absolute;
+  top: 0;
+  left: -4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #b8463d;
+  content: '';
+  transform: translateY(-50%);
+}
+
+.activity-now-indicator__label {
+  position: absolute;
+  top: 0;
+  left: 7px;
+  padding: 2px 5px;
+  background: #b8463d;
+  color: white;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  line-height: 1.2;
+  transform: translateY(-50%);
+}
