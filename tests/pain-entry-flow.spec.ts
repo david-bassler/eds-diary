@@ -1,9 +1,32 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/')
 })
 
+async function selectBodyMapRegion(
+  page: Page,
+  view: 'front' | 'back' = 'front',
+): Promise<void> {
+  if (view === 'back') {
+    const backTab = page.getByRole('button', { name: 'Hinten' })
+    if (await backTab.isVisible()) await backTab.click()
+  }
+
+  const regionName = view === 'front' ? 'Vorderseite' : 'Rückseite'
+  const canvas = page
+    .getByRole('region', { name: regionName })
+    .locator('.body-map-selector__overlay')
+
+  await expect(canvas).toHaveAttribute('data-hit-map-ready', 'true')
+  const bounds = await canvas.boundingBox()
+  if (!bounds) throw new Error(`${regionName} ist nicht sichtbar.`)
+
+  await page.mouse.click(
+    bounds.x + bounds.width / 2,
+    bounds.y + bounds.height * 0.35,
+  )
+}
 
 test('swipes between front and back on mobile without treating the swipe as a tap', async ({
   page,
@@ -63,20 +86,8 @@ test('swipes between front and back on mobile without treating the swipe as a ta
   await expect(frontTab).toHaveAttribute('aria-pressed', 'true')
 })
 
-
 test('keeps short taps selectable on the body map', async ({ page }) => {
-  const frontCanvas = page
-    .getByRole('region', { name: 'Vorderseite' })
-    .locator('.body-map-selector__overlay')
-
-  await expect(frontCanvas).toHaveAttribute('data-hit-map-ready', 'true')
-  const bounds = await frontCanvas.boundingBox()
-  if (!bounds) throw new Error('Vorderseite ist nicht sichtbar.')
-
-  await page.mouse.click(
-    bounds.x + bounds.width / 2,
-    bounds.y + bounds.height * 0.35,
-  )
+  await selectBodyMapRegion(page)
 
   await expect(page.getByText('1 Region ausgewählt')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Vorne' })).toHaveAttribute(
@@ -85,11 +96,21 @@ test('keeps short taps selectable on the body map', async ({ page }) => {
   )
 })
 
+test('keeps the pain start screen compact without explanatory copy or list alternative', async ({
+  page,
+}) => {
+  await expect(
+    page.getByText('Schmerzepisoden erfassen und ihren Verlauf dokumentieren.'),
+  ).toHaveCount(0)
+  await expect(
+    page.getByText('Regionen alternativ als Liste auswählen'),
+  ).not.toBeVisible()
+})
+
 test('scrolls instantly to the top when continuing to pain details', async ({
   page,
 }) => {
-  await page.getByText('Regionen alternativ als Liste auswählen').click()
-  await page.getByRole('checkbox', { name: 'Bauch', exact: true }).check()
+  await selectBodyMapRegion(page)
 
   await page.evaluate(() => {
     window.scrollTo(0, document.documentElement.scrollHeight)
@@ -107,14 +128,9 @@ test('scrolls instantly to the top when continuing to pain details', async ({
 test('creates a pain entry with multiple body regions and details', async ({
   page,
 }) => {
-  await page.getByText('Regionen alternativ als Liste auswählen').click()
-
-  await page
-    .getByRole('checkbox', { name: 'Linkes Knie', exact: true })
-    .check()
-  await page
-    .getByRole('checkbox', { name: 'Unterer Rücken', exact: true })
-    .check()
+  await selectBodyMapRegion(page, 'front')
+  await selectBodyMapRegion(page, 'back')
+  await expect(page.getByText('2 Regionen ausgewählt')).toBeVisible()
 
   await page.getByRole('button', { name: 'Weiter' }).click()
 
@@ -136,20 +152,19 @@ test('creates a pain entry with multiple body regions and details', async ({
 
   expect(entries).toHaveLength(1)
   expect(entries[0]).toMatchObject({
-    locations: [
-      { view: 'front', regionId: 'left-knee' },
-      { view: 'back', regionId: 'lower-back' },
-    ],
     qualities: ['Stechend'],
     cause: 'synthetische Ursache',
     occursWhen: 'synthetischer Auslöser',
     note: 'synthetische Notiz',
   })
+  expect(entries[0].locations).toHaveLength(2)
+  expect(entries[0].locations.map((location) => location.view)).toEqual(
+    expect.arrayContaining(['front', 'back']),
+  )
 })
 
 test('stores an optional explicit pain end time', async ({ page }) => {
-  await page.getByText('Regionen alternativ als Liste auswählen').click()
-  await page.getByRole('checkbox', { name: 'Bauch', exact: true }).check()
+  await selectBodyMapRegion(page)
   await page.getByRole('button', { name: 'Weiter' }).click()
   await page.getByRole('button', { name: 'Dumpf' }).click()
 
@@ -251,8 +266,7 @@ test('appends a pain change to the existing note', async ({ page }) => {
 })
 
 test('adds and keeps a custom pain type chip', async ({ page }) => {
-  await page.getByText('Regionen alternativ als Liste auswählen').click()
-  await page.getByRole('checkbox', { name: 'Bauch', exact: true }).check()
+  await selectBodyMapRegion(page)
   await page.getByRole('button', { name: 'Weiter' }).click()
 
   await page.getByLabel('Eigene Schmerzart').fill('Bohrend')
@@ -263,8 +277,7 @@ test('adds and keeps a custom pain type chip', async ({ page }) => {
   ).toHaveAttribute('aria-pressed', 'true')
 
   await page.reload()
-  await page.getByText('Regionen alternativ als Liste auswählen').click()
-  await page.getByRole('checkbox', { name: 'Bauch', exact: true }).check()
+  await selectBodyMapRegion(page)
   await page.getByRole('button', { name: 'Weiter' }).click()
 
   await expect(page.getByRole('button', { name: 'Bohrend' })).toBeVisible()
