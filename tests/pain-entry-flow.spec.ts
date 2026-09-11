@@ -28,6 +28,17 @@ async function selectBodyMapRegion(
   )
 }
 
+async function continueToPainDetails(
+  page: Page,
+  intensity = 5,
+): Promise<void> {
+  await page.getByRole('button', { name: 'Weiter' }).click()
+  await page
+    .getByRole('slider', { name: 'Schmerzstärke von 0 bis 10' })
+    .fill(String(intensity))
+  await page.getByRole('button', { name: 'Weiter' }).click()
+}
+
 test('swipes between front and back on mobile without treating the swipe as a tap', async ({
   page,
   isMobile,
@@ -107,7 +118,51 @@ test('keeps the pain start screen compact without explanatory copy or list alter
   ).not.toBeVisible()
 })
 
-test('scrolls instantly to the top when continuing to pain details', async ({
+test('selects pain intensity with five explanatory scales and stores the value', async ({
+  page,
+}) => {
+  await selectBodyMapRegion(page)
+  await page.getByRole('button', { name: 'Weiter' }).click()
+
+  await expect(page.getByText('2 · Stärke')).toHaveAttribute('data-active', 'true')
+  const slider = page.getByRole('slider', {
+    name: 'Schmerzstärke von 0 bis 10',
+  })
+  await expect(slider).toBeVisible()
+  await expect(page.locator('.pain-intensity-selector__number')).toHaveCount(11)
+  await expect(page.getByRole('button', { name: 'Weiter' })).toBeDisabled()
+
+  await slider.fill('6')
+  await expect(slider).toHaveValue('6')
+  await expect(
+    page.locator(".pain-intensity-selector__number[data-selected='true']"),
+  ).toHaveText('6')
+  await expect(page.locator('.pain-intensity-selector__card')).toHaveCount(5)
+  await expect(page.getByText('Numerische Ratingskala (NRS)')).toBeVisible()
+  await expect(page.getByText(/Defense and Veterans Pain Rating Scale/)).toBeVisible()
+  await expect(page.getByText(/Functional Pain Scale/)).toBeVisible()
+  await expect(page.getByText('Mankoski Pain Scale')).toBeVisible()
+  await expect(page.getByText('EDS Awareness Comparative Pain Scale')).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Quelle ↗' })).toHaveCount(5)
+
+  await slider.fill('7')
+  await expect(
+    page.getByText(/Steht im Mittelpunkt der Aufmerksamkeit/),
+  ).toBeVisible()
+
+  await page.getByRole('button', { name: 'Weiter' }).click()
+  await page.getByRole('button', { name: 'Stechend' }).click()
+  await page.getByRole('button', { name: 'Speichern' }).click()
+  await expect(page.getByText('Schmerzeintrag gespeichert.')).toBeVisible()
+
+  const entry = await page.evaluate(async () => {
+    const repository = await import('/src/features/pain/painRepository.ts')
+    return (await repository.listPainEntries())[0]
+  })
+  expect(entry.intensity).toBe(7)
+})
+
+test('scrolls instantly to the top when moving between pain steps', async ({
   page,
 }) => {
   await selectBodyMapRegion(page)
@@ -117,6 +172,18 @@ test('scrolls instantly to the top when continuing to pain details', async ({
   })
   await expect.poll(async () => page.evaluate(() => window.scrollY)).toBeGreaterThan(0)
 
+  await page.getByRole('button', { name: 'Weiter' }).click()
+  await expect(
+    page.getByRole('slider', { name: 'Schmerzstärke von 0 bis 10' }),
+  ).toBeVisible()
+  await expect.poll(async () => page.evaluate(() => window.scrollY)).toBe(0)
+
+  await page
+    .getByRole('slider', { name: 'Schmerzstärke von 0 bis 10' })
+    .fill('5')
+  await page.evaluate(() => {
+    window.scrollTo(0, document.documentElement.scrollHeight)
+  })
   await page.getByRole('button', { name: 'Weiter' }).click()
 
   await expect(
@@ -132,7 +199,7 @@ test('creates a pain entry with multiple body regions and details', async ({
   await selectBodyMapRegion(page, 'back')
   await expect(page.getByText('2 Regionen ausgewählt')).toBeVisible()
 
-  await page.getByRole('button', { name: 'Weiter' }).click()
+  await continueToPainDetails(page, 6)
 
   await page.getByRole('button', { name: 'Stechend' }).click()
   await page.getByLabel('Mögliche Ursache (optional)').fill('synthetische Ursache')
@@ -152,6 +219,7 @@ test('creates a pain entry with multiple body regions and details', async ({
 
   expect(entries).toHaveLength(1)
   expect(entries[0]).toMatchObject({
+    intensity: 6,
     qualities: ['Stechend'],
     cause: 'synthetische Ursache',
     occursWhen: 'synthetischer Auslöser',
@@ -165,7 +233,7 @@ test('creates a pain entry with multiple body regions and details', async ({
 
 test('stores an optional explicit pain end time', async ({ page }) => {
   await selectBodyMapRegion(page)
-  await page.getByRole('button', { name: 'Weiter' }).click()
+  await continueToPainDetails(page)
   await page.getByRole('button', { name: 'Dumpf' }).click()
 
   await page.getByLabel('Beginndatum').fill('2026-09-08')
@@ -267,7 +335,7 @@ test('appends a pain change to the existing note', async ({ page }) => {
 
 test('adds and keeps a custom pain type chip', async ({ page }) => {
   await selectBodyMapRegion(page)
-  await page.getByRole('button', { name: 'Weiter' }).click()
+  await continueToPainDetails(page)
 
   await page.getByLabel('Eigene Schmerzart').fill('Bohrend')
   await page.getByRole('button', { name: 'Hinzufügen' }).click()
@@ -278,7 +346,7 @@ test('adds and keeps a custom pain type chip', async ({ page }) => {
 
   await page.reload()
   await selectBodyMapRegion(page)
-  await page.getByRole('button', { name: 'Weiter' }).click()
+  await continueToPainDetails(page)
 
   await expect(page.getByRole('button', { name: 'Bohrend' })).toBeVisible()
 })
