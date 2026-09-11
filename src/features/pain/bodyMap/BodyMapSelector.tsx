@@ -196,7 +196,9 @@ export function painLocationLabel(location: PainLocation): string {
   const detailRegionIds = location.detailRegionIds ?? []
   if (!detailRegionIds.length) return base
 
-  return `${base} → ${detailRegionIds.map(handDetailLabel).join(', ')}`
+  return `${base} → ${detailRegionIds
+    .map((regionId) => handDetailLabel(regionId, location.view))
+    .join(', ')}`
 }
 
 function isSelected(
@@ -524,6 +526,7 @@ export function BodyMapSelector({ value, onChange }: BodyMapSelectorProps) {
 
       {detailTarget && detailLocation ? (
         <HandDetailSelector
+          view={detailTarget.view}
           side={detailTarget.regionId === 'left-hand' ? 'left' : 'right'}
           value={detailLocation.detailRegionIds ?? []}
           onChange={updateHandDetails}

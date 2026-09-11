@@ -4,9 +4,11 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
+import type { BodyView } from '../painEntry'
 import './HandDetailSelector.css'
 
 export interface HandDetailSelectorProps {
+  view: BodyView
   side: 'left' | 'right'
   value: readonly string[]
   onChange: (regionIds: string[]) => void
@@ -19,6 +21,12 @@ interface RegionDefinition {
   color: readonly [number, number, number]
 }
 
+interface HandDetailMapDefinition {
+  image: string
+  surfaceLabel: string
+  regions: readonly RegionDefinition[]
+}
+
 interface HitMapData {
   width: number
   height: number
@@ -29,11 +37,7 @@ interface HitMapData {
 const NO_REGION = 255
 const TAP_MAX_MOVEMENT = 14
 
-const HAND_DETAIL_IMAGE = `${import.meta.env.BASE_URL}body-map/details/hand-top-hitmap.png`
-
-const HAND_DETAIL_REGIONS: readonly RegionDefinition[] = [
-  { id: 'wrist', label: 'Handgelenk', color: [216, 133, 159] },
-  { id: 'hand-back', label: 'Handrücken', color: [219, 134, 144] },
+const FINGER_REGIONS: readonly RegionDefinition[] = [
   { id: 'thumb-distal-joint', label: 'Daumen: Endgelenk', color: [218, 136, 129] },
   { id: 'thumb-base-joint', label: 'Daumen: Grundgelenk', color: [213, 139, 116] },
   { id: 'index-distal-joint', label: 'Zeigefinger: Endgelenk', color: [205, 144, 106] },
@@ -50,12 +54,46 @@ const HAND_DETAIL_REGIONS: readonly RegionDefinition[] = [
   { id: 'little-base-joint', label: 'Kleiner Finger: Grundgelenk', color: [27, 173, 194] },
 ]
 
-const LABELS = new Map(
-  HAND_DETAIL_REGIONS.map((region) => [region.id, region.label] as const),
+const BACK_REGIONS: readonly RegionDefinition[] = [
+  { id: 'wrist', label: 'Handgelenk', color: [216, 133, 159] },
+  { id: 'hand-back', label: 'Handrücken', color: [219, 134, 144] },
+  ...FINGER_REGIONS,
+]
+
+const FRONT_REGIONS: readonly RegionDefinition[] = [
+  { id: 'wrist', label: 'Handgelenk', color: [216, 133, 159] },
+  { id: 'palm', label: 'Handfläche', color: [219, 134, 144] },
+  { id: 'thenar', label: 'Daumenballen', color: [42, 171, 205] },
+  ...FINGER_REGIONS,
+]
+
+const HAND_DETAIL_MAPS: Record<BodyView, HandDetailMapDefinition> = {
+  front: {
+    image: `${import.meta.env.BASE_URL}body-map/details/hand-palm-hitmap.png`,
+    surfaceLabel: 'Handfläche',
+    regions: FRONT_REGIONS,
+  },
+  back: {
+    image: `${import.meta.env.BASE_URL}body-map/details/hand-top-hitmap.png`,
+    surfaceLabel: 'Handrücken',
+    regions: BACK_REGIONS,
+  },
+}
+
+const GENERIC_LABELS = new Map(
+  [...BACK_REGIONS, ...FRONT_REGIONS].map(
+    (region) => [region.id, region.label] as const,
+  ),
 )
 
-export function handDetailLabel(regionId: string): string {
-  return LABELS.get(regionId) ?? regionId
+export function handDetailLabel(regionId: string, view?: BodyView): string {
+  if (view === 'front' && regionId === 'hand-back') return 'Handfläche'
+
+  const viewLabel = view
+    ? HAND_DETAIL_MAPS[view].regions.find((region) => region.id === regionId)?.label
+    : undefined
+
+  return viewLabel ?? GENERIC_LABELS.get(regionId) ?? regionId
 }
 
 export function isHandRegionId(regionId: string): boolean {
@@ -66,13 +104,16 @@ function colorKey(red: number, green: number, blue: number): string {
   return `${red},${green},${blue}`
 }
 
-function createHitMapData(imageData: ImageData): HitMapData {
+function createHitMapData(
+  imageData: ImageData,
+  regions: readonly RegionDefinition[],
+): HitMapData {
   const { width, height, data } = imageData
   const regionAtPixel = new Uint8Array(width * height)
   regionAtPixel.fill(NO_REGION)
 
   const colorLookup = new Map(
-    HAND_DETAIL_REGIONS.map((region, index) => [
+    regions.map((region, index) => [
       colorKey(region.color[0], region.color[1], region.color[2]),
       index,
     ]),
@@ -122,6 +163,7 @@ function createHitMapData(imageData: ImageData): HitMapData {
 }
 
 export function HandDetailSelector({
+  view,
   side,
   value,
   onChange,
@@ -134,12 +176,14 @@ export function HandDetailSelector({
     startY: number
   } | null>(null)
   const [hitMap, setHitMap] = useState<HitMapData | null>(null)
+  const map = HAND_DETAIL_MAPS[view]
   const mirrored = side === 'right'
 
   useEffect(() => {
     let active = true
     const image = new Image()
     image.decoding = 'async'
+    setHitMap(null)
 
     image.onload = () => {
       if (!active) return
@@ -154,6 +198,7 @@ export function HandDetailSelector({
       setHitMap(
         createHitMapData(
           context.getImageData(0, 0, canvas.width, canvas.height),
+          map.regions,
         ),
       )
     }
@@ -162,14 +207,14 @@ export function HandDetailSelector({
       if (active) setHitMap(null)
     }
 
-    image.src = HAND_DETAIL_IMAGE
+    image.src = map.image
 
     return () => {
       active = false
       image.onload = null
       image.onerror = null
     }
-  }, [])
+  }, [map.image, map.regions])
 
   useEffect(() => {
     const canvas = overlayRef.current
@@ -187,8 +232,13 @@ export function HandDetailSelector({
     if (!context) return
 
     const selectedRegions = new Set<number>()
-    HAND_DETAIL_REGIONS.forEach((region, index) => {
-      if (value.includes(region.id)) selectedRegions.add(index)
+    map.regions.forEach((region, index) => {
+      const selected =
+        value.includes(region.id) ||
+        (view === 'front' &&
+          region.id === 'palm' &&
+          value.includes('hand-back'))
+      if (selected) selectedRegions.add(index)
     })
 
     const overlay = context.createImageData(hitMap.width, hitMap.height)
@@ -210,7 +260,7 @@ export function HandDetailSelector({
     }
 
     context.putImageData(overlay, 0, 0)
-  }, [hitMap, value])
+  }, [hitMap, map.regions, value, view])
 
   function selectAtPointer(event: ReactPointerEvent<HTMLCanvasElement>): void {
     if (!hitMap) return
@@ -241,13 +291,21 @@ export function HandDetailSelector({
     const regionIndex = hitMap.regionAtPixel[y * hitMap.width + x]
     if (regionIndex === NO_REGION) return
 
-    const region = HAND_DETAIL_REGIONS[regionIndex]
+    const region = map.regions[regionIndex]
     if (!region) return
 
+    const legacyPalmSelected =
+      view === 'front' &&
+      region.id === 'palm' &&
+      value.includes('hand-back')
+    const selected = value.includes(region.id) || legacyPalmSelected
+    const normalizedValue =
+      view === 'front' ? value.filter((regionId) => regionId !== 'hand-back') : value
+
     onChange(
-      value.includes(region.id)
-        ? value.filter((regionId) => regionId !== region.id)
-        : [...value, region.id],
+      selected
+        ? normalizedValue.filter((regionId) => regionId !== region.id)
+        : [...normalizedValue, region.id],
     )
   }
 
@@ -283,11 +341,12 @@ export function HandDetailSelector({
     <section
       className="hand-detail-selector"
       aria-label={`${side === 'left' ? 'Linke' : 'Rechte'} Hand genauer auswählen`}
+      data-surface={view}
     >
       <div className="hand-detail-selector__heading">
         <div>
           <strong>
-            {side === 'left' ? 'Linke Hand' : 'Rechte Hand'} genauer auswählen
+            {side === 'left' ? 'Linke Hand' : 'Rechte Hand'} · {map.surfaceLabel}
           </strong>
           <span>Optional · mehrere Bereiche möglich</span>
         </div>
@@ -300,11 +359,11 @@ export function HandDetailSelector({
         className="hand-detail-selector__artwork"
         data-mirrored={mirrored}
         role="img"
-        aria-label="Handregionen und Fingergelenke antippen"
+        aria-label={`${map.surfaceLabel}, Handregionen und Fingergelenke antippen`}
       >
         <img
           className="hand-detail-selector__image"
-          src={HAND_DETAIL_IMAGE}
+          src={map.image}
           alt=""
           aria-hidden="true"
           draggable={false}
@@ -325,7 +384,7 @@ export function HandDetailSelector({
           <span>Noch keine Feinauswahl</span>
         ) : (
           <>
-            <span>{value.map(handDetailLabel).join(', ')}</span>
+            <span>{value.map((regionId) => handDetailLabel(regionId, view)).join(', ')}</span>
             <button type="button" onClick={() => onChange([])}>
               Feinauswahl löschen
             </button>

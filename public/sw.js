@@ -1,4 +1,4 @@
-const CACHE_NAME = 'eds-diary-shell-v10'
+const CACHE_NAME = 'eds-diary-shell-v11'
 const APP_SHELL = [
   './',
   './manifest.webmanifest',
@@ -13,6 +13,7 @@ const APP_SHELL = [
   './body-map/back-gray.png',
   './body-map/back-hitmap.png',
   './body-map/details/hand-top-hitmap.png',
+  './body-map/details/hand-palm-hitmap.png',
 ]
 
 self.addEventListener('install', (event) => {

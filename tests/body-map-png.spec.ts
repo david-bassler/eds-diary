@@ -70,6 +70,58 @@ test('opens the hand detail hit map and selects a finger joint', async ({
   )
 })
 
+test('uses palm detail in front view and dorsal detail in back view', async ({
+  page,
+}) => {
+  await page.goto('/')
+
+  const frontCanvas = page.locator(
+    'section[aria-label="Vorderseite"] canvas.body-map-selector__overlay',
+  )
+  await expect(frontCanvas).toHaveAttribute('data-hit-map-ready', 'true')
+
+  const frontBox = await frontCanvas.boundingBox()
+  if (!frontBox) throw new Error('Front body-map canvas is not visible.')
+
+  await frontCanvas.click({
+    position: {
+      x: frontBox.width * (398 / 512),
+      y: frontBox.height * (458 / 768),
+    },
+  })
+
+  const detail = page.locator('.hand-detail-selector')
+  await expect(detail).toHaveAttribute('data-surface', 'front')
+  await expect(detail.locator('.hand-detail-selector__image')).toHaveAttribute(
+    'src',
+    /hand-palm-hitmap\.png$/,
+  )
+  await expect(detail).toContainText('Handfläche')
+  await detail.getByRole('button', { name: 'Fertig' }).click()
+
+  const backCanvas = page.locator(
+    'section[aria-label="Rückseite"] canvas.body-map-selector__overlay',
+  )
+  await expect(backCanvas).toHaveAttribute('data-hit-map-ready', 'true')
+
+  const backBox = await backCanvas.boundingBox()
+  if (!backBox) throw new Error('Back body-map canvas is not visible.')
+
+  await backCanvas.click({
+    position: {
+      x: backBox.width * (106 / 512),
+      y: backBox.height * (378 / 768),
+    },
+  })
+
+  await expect(detail).toHaveAttribute('data-surface', 'back')
+  await expect(detail.locator('.hand-detail-selector__image')).toHaveAttribute(
+    'src',
+    /hand-top-hitmap\.png$/,
+  )
+  await expect(detail).toContainText('Handrücken')
+})
+
 test('uses anatomical left and right for all paired regions in the back view', async ({
   page,
 }) => {
