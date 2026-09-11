@@ -39,13 +39,17 @@
 .hand-detail-selector__artwork {
   position: relative;
   width: min(100%, 290px);
+  overflow: hidden;
+  background: #fff;
+  isolation: isolate;
 }
 
 .hand-detail-selector__image {
   display: block;
   width: 100%;
   height: auto;
-  filter: grayscale(1) contrast(0.82) brightness(1.12);
+  filter: grayscale(1) contrast(1.15) brightness(0.9);
+  opacity: 1;
   pointer-events: none;
   user-select: none;
 }
@@ -59,8 +63,9 @@
   touch-action: pan-y;
 }
 
-.hand-detail-selector__artwork[data-mirrored='true'] .hand-detail-selector__image,
-.hand-detail-selector__artwork[data-mirrored='true'] .hand-detail-selector__overlay {
+/* Mirror the wrapper instead of combining filter + transform on the image.
+   This avoids WebKit/Safari compositing artefacts with transparent PNGs. */
+.hand-detail-selector__artwork[data-mirrored='true'] {
   transform: scaleX(-1);
 }
 
