@@ -9,6 +9,7 @@ import {
   BodyMapSelector,
   painLocationLabel,
 } from './bodyMap/BodyMapSelector'
+import { PainIntensitySelector } from './PainIntensitySelector'
 import './PainEntryFlow.css'
 
 const DEFAULT_PAIN_TYPES = [
@@ -47,9 +48,16 @@ function toIso(date: string, time: string): string | null {
   return Number.isNaN(value.getTime()) ? null : value.toISOString()
 }
 
+function scrollToTop(): void {
+  window.requestAnimationFrame(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
+  })
+}
+
 export function PainEntryFlow() {
-  const [step, setStep] = useState<1 | 2>(1)
+  const [step, setStep] = useState<1 | 2 | 3>(1)
   const [locations, setLocations] = useState<PainLocation[]>([])
+  const [intensity, setIntensity] = useState<number | null>(null)
   const [selectedPainTypes, setSelectedPainTypes] = useState<string[]>([])
   const [customPainTypes, setCustomPainTypes] = useState<string[]>([])
   const [newPainType, setNewPainType] = useState('')
@@ -110,12 +118,21 @@ export function PainEntryFlow() {
     )
   }
 
-  function continueToDetails(): void {
+  function continueToIntensity(): void {
     setStatus('')
     setStep(2)
-    window.requestAnimationFrame(() => {
-      window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
-    })
+    scrollToTop()
+  }
+
+  function continueToDetails(): void {
+    if (intensity === null) {
+      setStatus('Bitte eine Schmerzstärke auswählen.')
+      return
+    }
+
+    setStatus('')
+    setStep(3)
+    scrollToTop()
   }
 
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -147,6 +164,12 @@ export function PainEntryFlow() {
       return
     }
 
+    if (intensity === null) {
+      setStep(2)
+      setStatus('Bitte eine Schmerzstärke auswählen.')
+      return
+    }
+
     if (!selectedPainTypes.length) {
       setStatus('Bitte mindestens eine Schmerzart auswählen.')
       return
@@ -160,6 +183,7 @@ export function PainEntryFlow() {
         startedAt,
         endedAt,
         locations,
+        intensity,
         qualities: selectedPainTypes,
         cause,
         occursWhen,
@@ -167,6 +191,7 @@ export function PainEntryFlow() {
       })
 
       setLocations([])
+      setIntensity(null)
       setSelectedPainTypes([])
       setCause('')
       setOccursWhen('')
@@ -187,7 +212,8 @@ export function PainEntryFlow() {
     <section className="pain-entry-flow" aria-label="Schmerzerfassung">
       <div className="pain-entry-flow__progress" aria-label="Erfassungsschritte">
         <span data-active={step === 1}>1 · Region</span>
-        <span data-active={step === 2}>2 · Details</span>
+        <span data-active={step === 2}>2 · Stärke</span>
+        <span data-active={step === 3}>3 · Details</span>
       </div>
 
       {step === 1 ? (
@@ -199,6 +225,34 @@ export function PainEntryFlow() {
               className="pain-entry-flow__primary"
               type="button"
               disabled={!locations.length}
+              onClick={continueToIntensity}
+            >
+              Weiter
+              <span aria-hidden="true">→</span>
+            </button>
+          </div>
+        </div>
+      ) : step === 2 ? (
+        <div className="pain-entry-flow__step" aria-label="Schmerzstärke">
+          <PainIntensitySelector value={intensity} onChange={setIntensity} />
+
+          <div className="pain-entry-flow__footer pain-entry-flow__footer--split">
+            <button
+              className="pain-entry-flow__secondary"
+              type="button"
+              onClick={() => {
+                setStatus('')
+                setStep(1)
+                scrollToTop()
+              }}
+            >
+              <span aria-hidden="true">←</span>
+              Regionen
+            </button>
+            <button
+              className="pain-entry-flow__primary"
+              type="button"
+              disabled={intensity === null}
               onClick={continueToDetails}
             >
               Weiter
@@ -209,12 +263,12 @@ export function PainEntryFlow() {
       ) : (
         <form className="pain-entry-flow__step" onSubmit={(event) => void submit(event)}>
           <div className="pain-entry-flow__intro">
-            <p className="pain-entry-flow__eyebrow">Schritt 2 von 2</p>
+            <p className="pain-entry-flow__eyebrow">Schritt 3 von 3</p>
             <h2 id="pain-entry-flow-title">Schmerzdetails</h2>
             <p>
               {locations.length} {locations.length === 1 ? 'Region' : 'Regionen'}:
               {' '}
-              {locations.map(painLocationLabel).join(', ')}
+              {locations.map(painLocationLabel).join(', ')} · Stärke {intensity}/10
             </p>
           </div>
 
@@ -388,11 +442,12 @@ export function PainEntryFlow() {
               type="button"
               onClick={() => {
                 setStatus('')
-                setStep(1)
+                setStep(2)
+                scrollToTop()
               }}
             >
               <span aria-hidden="true">←</span>
-              Regionen
+              Stärke
             </button>
             <button
               className="pain-entry-flow__primary"
