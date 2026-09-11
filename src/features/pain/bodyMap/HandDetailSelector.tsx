@@ -177,7 +177,7 @@ export function HandDetailSelector({
   } | null>(null)
   const [hitMap, setHitMap] = useState<HitMapData | null>(null)
   const map = HAND_DETAIL_MAPS[view]
-  const mirrored = side === 'right'
+  const mirrored = side === 'left'
 
   useEffect(() => {
     let active = true
