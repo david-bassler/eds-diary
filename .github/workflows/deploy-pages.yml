@@ -87,3 +87,5 @@ jobs:
             signature="$(od -An -t x1 -N 8 "/tmp/${file}" | tr -d ' \n')"
             test "$signature" = "89504e470d0a1a0a"
           done
+          echo "714d4607f2196260b9ea4c310592210ae8268c5da3d62cf962ece899154a2d53  /tmp/head-front-hitmap.png" | sha256sum -c -
+          echo "303ee1d4d3d06e301873f32a75db0dd84663f4508bb8037a1274beb5bb5ea22f  /tmp/head-back-hitmap.png" | sha256sum -c -
