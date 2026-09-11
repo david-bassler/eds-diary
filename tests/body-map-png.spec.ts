@@ -27,7 +27,7 @@ test('selects a pain region through the PNG hit map', async ({ page }) => {
   )
 })
 
-test('opens the hand detail hit map and selects a finger joint', async ({
+test('selects finger segments and separate joint hotspots on the hand detail map', async ({
   page,
 }) => {
   await page.goto('/')
@@ -62,15 +62,26 @@ test('opens the hand detail hit map and selects a finger joint', async ({
   const detailBox = await detailCanvas.boundingBox()
   if (!detailBox) throw new Error('Hand detail canvas is not visible.')
 
+  // Source map is mirrored for the anatomical left hand. These two points are
+  // adjacent regions of the index finger: middle phalanx and PIP joint.
   await detailCanvas.click({
     position: {
-      x: detailBox.width * ((560 - 203) / 560),
-      y: detailBox.height * (215 / 1028),
+      x: detailBox.width * ((1086 - 399) / 1086),
+      y: detailBox.height * (333 / 1448),
+    },
+  })
+  await detailCanvas.click({
+    position: {
+      x: detailBox.width * ((1086 - 412) / 1086),
+      y: detailBox.height * (415 / 1448),
     },
   })
 
   await expect(page.locator('.body-map-selector__selection')).toContainText(
-    'Hinten: Linke Hand → Zeigefinger: Mittelgelenk',
+    'Zeigefinger: Mittelglied',
+  )
+  await expect(page.locator('.body-map-selector__selection')).toContainText(
+    'Zeigefinger: Mittelgelenk',
   )
 })
 
@@ -105,6 +116,7 @@ test('uses palm detail in front view and dorsal detail in back view', async ({
     'true',
   )
   await expect(detail).toContainText('Handfläche')
+  await expect(detail).toContainText('Fingerglieder und Gelenke einzeln auswählbar')
   await detail.getByRole('button', { name: 'Fertig' }).click()
 
   const backCanvas = page.locator(
