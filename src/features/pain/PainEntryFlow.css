@@ -5,7 +5,7 @@
 
 .pain-entry-flow__progress {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -235,7 +235,6 @@
   outline: 3px solid #8ec9b5;
   outline-offset: 3px;
 }
-
 
 .pain-entry-flow__status {
   min-height: 1.4em;
