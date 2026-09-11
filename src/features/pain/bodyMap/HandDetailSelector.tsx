@@ -89,12 +89,12 @@ const FRONT_REGIONS: readonly RegionDefinition[] = [
 
 const HAND_DETAIL_MAPS: Record<BodyView, HandDetailMapDefinition> = {
   front: {
-    image: `${import.meta.env.BASE_URL}body-map/details/hand-palm-hitmap.png`,
+    image: `${import.meta.env.BASE_URL}body-map/details/hand-palm-hitmap.png?v=3`,
     surfaceLabel: 'Handfläche',
     regions: FRONT_REGIONS,
   },
   back: {
-    image: `${import.meta.env.BASE_URL}body-map/details/hand-top-hitmap.png`,
+    image: `${import.meta.env.BASE_URL}body-map/details/hand-top-hitmap.png?v=3`,
     surfaceLabel: 'Handrücken',
     regions: BACK_REGIONS,
   },

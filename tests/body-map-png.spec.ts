@@ -109,7 +109,7 @@ test('uses palm detail in front view and dorsal detail in back view', async ({
   await expect(detail).toHaveAttribute('data-surface', 'front')
   await expect(detail.locator('.hand-detail-selector__image')).toHaveAttribute(
     'src',
-    /hand-palm-hitmap\.png$/,
+    /hand-palm-hitmap\.png\?v=3$/,
   )
   await expect(detail.locator('.hand-detail-selector__artwork')).toHaveAttribute(
     'data-mirrored',
@@ -137,7 +137,7 @@ test('uses palm detail in front view and dorsal detail in back view', async ({
   await expect(detail).toHaveAttribute('data-surface', 'back')
   await expect(detail.locator('.hand-detail-selector__image')).toHaveAttribute(
     'src',
-    /hand-top-hitmap\.png$/,
+    /hand-top-hitmap\.png\?v=3$/,
   )
   await expect(detail.locator('.hand-detail-selector__artwork')).toHaveAttribute(
     'data-mirrored',
