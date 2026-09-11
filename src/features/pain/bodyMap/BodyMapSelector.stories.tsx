@@ -12,7 +12,7 @@ const meta = {
     docs: {
       description: {
         component:
-          'Schmerzregionen werden direkt über die Körperkarte ausgewählt. Die Karte unterscheidet unter anderem Gesicht und Kiefer, Handgelenke, einzelne Hüften sowie BWS, LWS und Kreuzbein/SI-Bereich.',
+          'Schmerzregionen werden direkt über die Körperkarte ausgewählt. Eine zusätzliche Listenansicht wird nicht angezeigt.',
       },
     },
   },
@@ -38,8 +38,8 @@ export const MultipleSelected: Story = {
   render: () => (
     <ControlledExample
       initial={[
-        { view: 'front', regionId: 'left-wrist' },
-        { view: 'back', regionId: 'sacrum' },
+        { view: 'front', regionId: 'left-knee' },
+        { view: 'back', regionId: 'lower-back' },
       ]}
     />
   ),
@@ -52,7 +52,7 @@ export const NarrowViewport: Story = {
     docs: {
       description: {
         story:
-          'Auf kleinen Bildschirmen wechselt ein horizontaler Swipe zwischen Vorder- und Rückseite. Kurze Taps wählen weiterhin einzelne Körperregionen aus.',
+          'Auf kleinen Bildschirmen wechselt ein horizontaler Swipe zwischen Vorder- und Rückseite. Kurze Taps wählen weiterhin Körperregionen aus.',
       },
     },
   },
