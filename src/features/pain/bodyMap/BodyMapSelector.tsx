@@ -12,9 +12,12 @@ export interface BodyMapSelectorProps {
   onChange: (locations: PainLocation[]) => void
 }
 
-interface RegionDefinition {
+interface RegionMeta {
   id: string
   label: string
+}
+
+interface RegionDefinition extends RegionMeta {
   color: readonly [number, number, number]
 }
 
@@ -37,62 +40,111 @@ const SWIPE_MIN_DISTANCE = 56
 const SWIPE_AXIS_RATIO = 1.2
 const MOBILE_BODY_MAP_QUERY = '(max-width: 639px)'
 
-const FRONT_REGIONS: readonly RegionDefinition[] = [
-  { id: 'head', label: 'Kopf', color: [216, 133, 159] },
-  { id: 'neck', label: 'Nacken / Hals', color: [219, 134, 144] },
-  { id: 'chest', label: 'Brustkorb', color: [218, 136, 129] },
-  { id: 'abdomen', label: 'Bauch', color: [213, 139, 116] },
-  { id: 'pelvis', label: 'Becken / Hüfte', color: [205, 144, 106] },
-  { id: 'left-shoulder', label: 'Linke Schulter', color: [195, 149, 98] },
-  { id: 'right-shoulder', label: 'Rechte Schulter', color: [182, 155, 95] },
-  { id: 'left-upper-arm', label: 'Linker Oberarm', color: [167, 159, 95] },
-  { id: 'right-upper-arm', label: 'Rechter Oberarm', color: [151, 164, 100] },
-  { id: 'left-elbow', label: 'Linker Ellenbogen', color: [134, 168, 108] },
-  { id: 'right-elbow', label: 'Rechter Ellenbogen', color: [116, 171, 120] },
-  { id: 'left-forearm', label: 'Linker Unterarm', color: [97, 173, 134] },
-  { id: 'right-forearm', label: 'Rechter Unterarm', color: [77, 174, 149] },
-  { id: 'left-hand', label: 'Linke Hand', color: [56, 175, 165] },
-  { id: 'right-hand', label: 'Rechte Hand', color: [36, 174, 180] },
-  { id: 'left-thigh', label: 'Linker Oberschenkel', color: [27, 173, 194] },
-  { id: 'right-thigh', label: 'Rechter Oberschenkel', color: [42, 171, 205] },
-  { id: 'left-knee', label: 'Linkes Knie', color: [67, 168, 214] },
-  { id: 'right-knee', label: 'Rechtes Knie', color: [93, 164, 219] },
-  { id: 'left-lower-leg', label: 'Linker Unterschenkel', color: [119, 160, 220] },
-  { id: 'right-lower-leg', label: 'Rechter Unterschenkel', color: [143, 154, 217] },
-  { id: 'left-ankle', label: 'Linkes Sprunggelenk', color: [165, 149, 211] },
-  { id: 'right-ankle', label: 'Rechtes Sprunggelenk', color: [183, 143, 201] },
-  { id: 'left-foot', label: 'Linker Fuß', color: [198, 139, 188] },
-  { id: 'right-foot', label: 'Rechter Fuß', color: [209, 135, 174] },
+const FRONT_REGION_META: readonly RegionMeta[] = [
+  { id: 'head', label: 'Kopf' },
+  { id: 'face', label: 'Gesicht' },
+  { id: 'jaw', label: 'Kiefer / Kiefergelenk' },
+  { id: 'neck', label: 'Nacken / Hals' },
+  { id: 'chest', label: 'Brustkorb' },
+  { id: 'abdomen', label: 'Bauch' },
+  { id: 'pelvis', label: 'Becken / Leiste' },
+  { id: 'left-hip', label: 'Linke Hüfte' },
+  { id: 'right-hip', label: 'Rechte Hüfte' },
+  { id: 'left-shoulder', label: 'Linke Schulter' },
+  { id: 'right-shoulder', label: 'Rechte Schulter' },
+  { id: 'left-upper-arm', label: 'Linker Oberarm' },
+  { id: 'right-upper-arm', label: 'Rechter Oberarm' },
+  { id: 'left-elbow', label: 'Linker Ellenbogen' },
+  { id: 'right-elbow', label: 'Rechter Ellenbogen' },
+  { id: 'left-forearm', label: 'Linker Unterarm' },
+  { id: 'right-forearm', label: 'Rechter Unterarm' },
+  { id: 'left-wrist', label: 'Linkes Handgelenk' },
+  { id: 'right-wrist', label: 'Rechtes Handgelenk' },
+  { id: 'left-hand', label: 'Linke Hand' },
+  { id: 'right-hand', label: 'Rechte Hand' },
+  { id: 'left-thigh', label: 'Linker Oberschenkel' },
+  { id: 'right-thigh', label: 'Rechter Oberschenkel' },
+  { id: 'left-knee', label: 'Linkes Knie' },
+  { id: 'right-knee', label: 'Rechtes Knie' },
+  { id: 'left-lower-leg', label: 'Linker Unterschenkel' },
+  { id: 'right-lower-leg', label: 'Rechter Unterschenkel' },
+  { id: 'left-ankle', label: 'Linkes Sprunggelenk' },
+  { id: 'right-ankle', label: 'Rechtes Sprunggelenk' },
+  { id: 'left-foot', label: 'Linker Fuß' },
+  { id: 'right-foot', label: 'Rechter Fuß' },
 ]
 
-const BACK_REGIONS: readonly RegionDefinition[] = [
-  { id: 'head', label: 'Hinterkopf', color: [216, 133, 159] },
-  { id: 'neck', label: 'Nacken', color: [219, 134, 144] },
-  { id: 'upper-back', label: 'Oberer Rücken', color: [218, 136, 130] },
-  { id: 'lower-back', label: 'Unterer Rücken', color: [214, 139, 118] },
-  { id: 'left-glute', label: 'Linke Gesäß- / Hüftregion', color: [207, 143, 107] },
-  { id: 'right-glute', label: 'Rechte Gesäß- / Hüftregion', color: [197, 148, 100] },
-  { id: 'left-shoulder', label: 'Linke Schulter', color: [185, 153, 95] },
-  { id: 'right-shoulder', label: 'Rechte Schulter', color: [171, 158, 95] },
-  { id: 'left-upper-arm', label: 'Linker Oberarm', color: [156, 163, 98] },
-  { id: 'right-upper-arm', label: 'Rechter Oberarm', color: [140, 166, 105] },
-  { id: 'left-elbow', label: 'Linker Ellenbogen', color: [123, 170, 115] },
-  { id: 'right-elbow', label: 'Rechter Ellenbogen', color: [105, 172, 128] },
-  { id: 'left-forearm', label: 'Linker Unterarm', color: [87, 174, 142] },
-  { id: 'right-forearm', label: 'Rechter Unterarm', color: [67, 174, 157] },
-  { id: 'left-hand', label: 'Linke Hand', color: [46, 175, 172] },
-  { id: 'right-hand', label: 'Rechte Hand', color: [30, 174, 186] },
-  { id: 'left-thigh', label: 'Linker hinterer Oberschenkel', color: [31, 172, 198] },
-  { id: 'right-thigh', label: 'Rechter hinterer Oberschenkel', color: [50, 170, 208] },
-  { id: 'left-knee', label: 'Linke Kniekehle', color: [75, 167, 216] },
-  { id: 'right-knee', label: 'Rechte Kniekehle', color: [100, 163, 219] },
-  { id: 'left-calf', label: 'Linke Wade', color: [125, 158, 220] },
-  { id: 'right-calf', label: 'Rechte Wade', color: [147, 153, 216] },
-  { id: 'left-ankle', label: 'Linkes Sprunggelenk', color: [168, 148, 209] },
-  { id: 'right-ankle', label: 'Rechtes Sprunggelenk', color: [185, 143, 200] },
-  { id: 'left-foot', label: 'Linker Fuß', color: [199, 138, 187] },
-  { id: 'right-foot', label: 'Rechter Fuß', color: [210, 135, 174] },
+const BACK_REGION_META: readonly RegionMeta[] = [
+  { id: 'head', label: 'Hinterkopf' },
+  { id: 'neck', label: 'Nacken' },
+  { id: 'upper-back', label: 'Oberer Rücken' },
+  { id: 'mid-back', label: 'Mittlerer Rücken / BWS' },
+  { id: 'lower-back', label: 'Unterer Rücken / LWS' },
+  { id: 'sacrum', label: 'Kreuzbein / SI-Bereich' },
+  { id: 'left-glute', label: 'Linke Gesäß- / Hüftregion' },
+  { id: 'right-glute', label: 'Rechte Gesäß- / Hüftregion' },
+  { id: 'left-shoulder', label: 'Linke Schulter' },
+  { id: 'right-shoulder', label: 'Rechte Schulter' },
+  { id: 'left-upper-arm', label: 'Linker Oberarm' },
+  { id: 'right-upper-arm', label: 'Rechter Oberarm' },
+  { id: 'left-elbow', label: 'Linker Ellenbogen' },
+  { id: 'right-elbow', label: 'Rechter Ellenbogen' },
+  { id: 'left-forearm', label: 'Linker Unterarm' },
+  { id: 'right-forearm', label: 'Rechter Unterarm' },
+  { id: 'left-wrist', label: 'Linkes Handgelenk' },
+  { id: 'right-wrist', label: 'Rechtes Handgelenk' },
+  { id: 'left-hand', label: 'Linke Hand' },
+  { id: 'right-hand', label: 'Rechte Hand' },
+  { id: 'left-thigh', label: 'Linker hinterer Oberschenkel' },
+  { id: 'right-thigh', label: 'Rechter hinterer Oberschenkel' },
+  { id: 'left-knee', label: 'Linke Kniekehle' },
+  { id: 'right-knee', label: 'Rechte Kniekehle' },
+  { id: 'left-calf', label: 'Linke Wade' },
+  { id: 'right-calf', label: 'Rechte Wade' },
+  { id: 'left-ankle', label: 'Linkes Sprunggelenk' },
+  { id: 'right-ankle', label: 'Rechtes Sprunggelenk' },
+  { id: 'left-foot', label: 'Linker Fuß' },
+  { id: 'right-foot', label: 'Rechter Fuß' },
 ]
+
+function regionColor(
+  index: number,
+  total: number,
+): readonly [number, number, number] {
+  const hue = (index * 360) / total
+  const saturation = 0.54
+  const lightness = 0.62
+  const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation
+  const hueSection = hue / 60
+  const secondary = chroma * (1 - Math.abs((hueSection % 2) - 1))
+  let red = 0
+  let green = 0
+  let blue = 0
+
+  if (hueSection < 1) [red, green, blue] = [chroma, secondary, 0]
+  else if (hueSection < 2) [red, green, blue] = [secondary, chroma, 0]
+  else if (hueSection < 3) [red, green, blue] = [0, chroma, secondary]
+  else if (hueSection < 4) [red, green, blue] = [0, secondary, chroma]
+  else if (hueSection < 5) [red, green, blue] = [secondary, 0, chroma]
+  else [red, green, blue] = [chroma, 0, secondary]
+
+  const offset = lightness - chroma / 2
+  return [red, green, blue].map((value) =>
+    Math.round((value + offset) * 255),
+  ) as [number, number, number]
+}
+
+function withRegionColors(
+  regions: readonly RegionMeta[],
+): readonly RegionDefinition[] {
+  return regions.map((region, index) => ({
+    ...region,
+    color: regionColor(index, regions.length),
+  }))
+}
+
+const FRONT_REGIONS = withRegionColors(FRONT_REGION_META)
+const BACK_REGIONS = withRegionColors(BACK_REGION_META)
 
 const BODY_MAPS: Record<BodyView, BodyMapDefinition> = {
   front: {
@@ -377,7 +429,7 @@ function BodyViewMap({
       <div
         className="body-map-selector__artwork"
         role="img"
-        aria-label={`${title}: Körperregion antippen. Eine vollständige Auswahl als Checkbox-Liste folgt unter den Körperkarten.`}
+        aria-label={`${title}: Körperregion antippen.`}
       >
         <img
           className="body-map-selector__image"
@@ -473,35 +525,6 @@ export function BodyMapSelector({ value, onChange }: BodyMapSelectorProps) {
           <span>{value.map(painLocationLabel).join(', ')}</span>
         ) : null}
       </div>
-
-      <details className="body-map-selector__list">
-        <summary>Regionen alternativ als Liste auswählen</summary>
-        <div className="body-map-selector__list-grid">
-          {(
-            [
-              ['front', 'Vorne', FRONT_REGIONS],
-              ['back', 'Hinten', BACK_REGIONS],
-            ] as const
-          ).map(([view, listTitle, regions]) => (
-            <fieldset key={view}>
-              <legend>{listTitle}</legend>
-              {regions.map((region) => {
-                const checked = isSelected(value, view, region.id)
-                return (
-                  <label key={region.id}>
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => toggle(view, region.id)}
-                    />
-                    <span>{region.label}</span>
-                  </label>
-                )
-              })}
-            </fieldset>
-          ))}
-        </div>
-      </details>
     </div>
   )
 }
