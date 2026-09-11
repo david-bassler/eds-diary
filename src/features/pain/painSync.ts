@@ -44,6 +44,19 @@ function text(cell: SheetCell | undefined): string {
   return cell === undefined ? '' : String(cell)
 }
 
+function parseStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+
+  return [
+    ...new Set(
+      value
+        .filter((item): item is string => typeof item === 'string')
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ),
+  ]
+}
+
 function parseLocations(value: SheetCell | undefined): PainLocation[] {
   try {
     const parsed: unknown = JSON.parse(text(value) || '[]')
@@ -63,7 +76,12 @@ function parseLocations(value: SheetCell | undefined): PainLocation[] {
         return []
       }
 
-      return [{ view, regionId: regionId.trim() }]
+      const detailRegionIds = parseStringArray(record.detailRegionIds)
+      return [
+        detailRegionIds.length
+          ? { view, regionId: regionId.trim(), detailRegionIds }
+          : { view, regionId: regionId.trim() },
+      ]
     })
   } catch {
     return []
@@ -73,16 +91,7 @@ function parseLocations(value: SheetCell | undefined): PainLocation[] {
 function parseStrings(value: SheetCell | undefined): string[] {
   try {
     const parsed: unknown = JSON.parse(text(value) || '[]')
-    if (!Array.isArray(parsed)) return []
-
-    return [
-      ...new Set(
-        parsed
-          .filter((item): item is string => typeof item === 'string')
-          .map((item) => item.trim())
-          .filter(Boolean),
-      ),
-    ]
+    return parseStringArray(parsed)
   } catch {
     return []
   }

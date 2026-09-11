@@ -27,6 +27,49 @@ test('selects a pain region through the PNG hit map', async ({ page }) => {
   )
 })
 
+test('opens the hand detail hit map and selects a finger joint', async ({
+  page,
+}) => {
+  await page.goto('/')
+
+  const canvas = page.locator(
+    'section[aria-label="Rückseite"] canvas.body-map-selector__overlay',
+  )
+  await expect(canvas).toHaveAttribute('data-hit-map-ready', 'true')
+
+  const box = await canvas.boundingBox()
+  if (!box) throw new Error('Back body-map canvas is not visible.')
+
+  await canvas.click({
+    position: {
+      x: box.width * (106 / 512),
+      y: box.height * (378 / 768),
+    },
+  })
+
+  const detail = page.getByRole('region', {
+    name: 'Linke Hand genauer auswählen',
+  })
+  await expect(detail).toBeVisible()
+
+  const detailCanvas = detail.locator('.hand-detail-selector__overlay')
+  await expect(detailCanvas).toHaveAttribute('data-hit-map-ready', 'true')
+
+  const detailBox = await detailCanvas.boundingBox()
+  if (!detailBox) throw new Error('Hand detail canvas is not visible.')
+
+  await detailCanvas.click({
+    position: {
+      x: detailBox.width * (203 / 560),
+      y: detailBox.height * (215 / 1028),
+    },
+  })
+
+  await expect(page.locator('.body-map-selector__selection')).toContainText(
+    'Hinten: Linke Hand → Zeigefinger: Mittelgelenk',
+  )
+})
+
 test('uses anatomical left and right for all paired regions in the back view', async ({
   page,
 }) => {

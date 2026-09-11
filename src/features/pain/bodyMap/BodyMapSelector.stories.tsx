@@ -12,7 +12,7 @@ const meta = {
     docs: {
       description: {
         component:
-          'Schmerzregionen werden direkt über die Körperkarte ausgewählt. Eine zusätzliche Listenansicht wird nicht angezeigt.',
+          'Schmerzregionen werden direkt über die Körperkarte ausgewählt. Für Hände kann anschließend eine Feinauswahl mit Fingergelenken geöffnet werden.',
       },
     },
   },
@@ -40,6 +40,21 @@ export const MultipleSelected: Story = {
       initial={[
         { view: 'front', regionId: 'left-knee' },
         { view: 'back', regionId: 'lower-back' },
+      ]}
+    />
+  ),
+}
+
+export const HandDetail: Story = {
+  name: 'Hand with joint detail',
+  render: () => (
+    <ControlledExample
+      initial={[
+        {
+          view: 'front',
+          regionId: 'left-hand',
+          detailRegionIds: ['wrist', 'index-middle-joint'],
+        },
       ]}
     />
   ),

@@ -4,6 +4,7 @@ export type PainEntryStatus = 'active' | 'deleted'
 export interface PainLocation {
   view: BodyView
   regionId: string
+  detailRegionIds?: string[]
 }
 
 export interface PainEntry {

@@ -5,6 +5,11 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react'
 import type { BodyView, PainLocation } from '../painEntry'
+import {
+  HandDetailSelector,
+  handDetailLabel,
+  isHandRegionId,
+} from './HandDetailSelector'
 import './BodyMapSelector.css'
 
 export interface BodyMapSelectorProps {
@@ -29,6 +34,11 @@ interface HitMapData {
   height: number
   regionAtPixel: Uint8Array
   boundaryAtPixel: Uint8Array
+}
+
+interface DetailTarget {
+  view: BodyView
+  regionId: string
 }
 
 const NO_REGION = 255
@@ -181,7 +191,12 @@ function createHitMapData(
 }
 
 export function painLocationLabel(location: PainLocation): string {
-  return LABELS.get(`${location.view}:${location.regionId}`) ?? location.regionId
+  const base =
+    LABELS.get(`${location.view}:${location.regionId}`) ?? location.regionId
+  const detailRegionIds = location.detailRegionIds ?? []
+  if (!detailRegionIds.length) return base
+
+  return `${base} → ${detailRegionIds.map(handDetailLabel).join(', ')}`
 }
 
 function isSelected(
@@ -400,18 +415,62 @@ function BodyViewMap({
   )
 }
 
+function sameTarget(location: PainLocation, target: DetailTarget): boolean {
+  return location.view === target.view && location.regionId === target.regionId
+}
+
 export function BodyMapSelector({ value, onChange }: BodyMapSelectorProps) {
   const [mobileView, setMobileView] = useState<BodyView>('front')
+  const [detailTarget, setDetailTarget] = useState<DetailTarget | null>(() => {
+    const hand = value.find((location) => isHandRegionId(location.regionId))
+    return hand ? { view: hand.view, regionId: hand.regionId } : null
+  })
+
+  const detailLocation =
+    detailTarget === null
+      ? undefined
+      : value.find((location) => sameTarget(location, detailTarget))
+
+  useEffect(() => {
+    if (detailTarget && !detailLocation) setDetailTarget(null)
+  }, [detailLocation, detailTarget])
 
   function toggle(view: BodyView, regionId: string): void {
     const selected = isSelected(value, view, regionId)
+
+    if (selected) {
+      onChange(
+        value.filter(
+          (location) =>
+            !(location.view === view && location.regionId === regionId),
+        ),
+      )
+      if (
+        detailTarget?.view === view &&
+        detailTarget.regionId === regionId
+      ) {
+        setDetailTarget(null)
+      }
+      return
+    }
+
+    onChange([...value, { view, regionId }])
+    if (isHandRegionId(regionId)) setDetailTarget({ view, regionId })
+  }
+
+  function updateHandDetails(detailRegionIds: string[]): void {
+    if (!detailTarget) return
+
     onChange(
-      selected
-        ? value.filter(
-            (location) =>
-              !(location.view === view && location.regionId === regionId),
-          )
-        : [...value, { view, regionId }],
+      value.map((location) => {
+        if (!sameTarget(location, detailTarget)) return location
+
+        if (!detailRegionIds.length) {
+          return { view: location.view, regionId: location.regionId }
+        }
+
+        return { ...location, detailRegionIds }
+      }),
     )
   }
 
@@ -463,6 +522,15 @@ export function BodyMapSelector({ value, onChange }: BodyMapSelectorProps) {
         />
       </div>
 
+      {detailTarget && detailLocation ? (
+        <HandDetailSelector
+          side={detailTarget.regionId === 'left-hand' ? 'left' : 'right'}
+          value={detailLocation.detailRegionIds ?? []}
+          onChange={updateHandDetails}
+          onClose={() => setDetailTarget(null)}
+        />
+      ) : null}
+
       <div className="body-map-selector__selection" aria-live="polite">
         <strong>
           {value.length === 0
@@ -470,7 +538,28 @@ export function BodyMapSelector({ value, onChange }: BodyMapSelectorProps) {
             : `${value.length} ${value.length === 1 ? 'Region' : 'Regionen'} ausgewählt`}
         </strong>
         {value.length > 0 ? (
-          <span>{value.map(painLocationLabel).join(', ')}</span>
+          <>
+            <span>{value.map(painLocationLabel).join(', ')}</span>
+            <div className="body-map-selector__detail-actions">
+              {value
+                .filter((location) => isHandRegionId(location.regionId))
+                .map((location) => (
+                  <button
+                    key={`${location.view}:${location.regionId}`}
+                    type="button"
+                    onClick={() =>
+                      setDetailTarget({
+                        view: location.view,
+                        regionId: location.regionId,
+                      })
+                    }
+                  >
+                    {location.regionId === 'left-hand' ? 'Linke' : 'Rechte'} Hand{' '}
+                    {location.detailRegionIds?.length ? 'ändern' : 'genauer auswählen'}
+                  </button>
+                ))}
+            </div>
+          </>
         ) : null}
       </div>
 

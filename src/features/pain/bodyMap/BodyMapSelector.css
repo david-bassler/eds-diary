@@ -75,16 +75,35 @@
 
 .body-map-selector__selection {
   display: grid;
-  gap: 4px;
+  gap: 6px;
   padding: 12px 14px;
   border-radius: 12px;
   background: rgb(37 48 43 / 7%);
   line-height: 1.4;
 }
 
-.body-map-selector__selection span {
+.body-map-selector__selection > span {
   font-size: 0.9rem;
   opacity: 0.74;
+}
+
+.body-map-selector__detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.body-map-selector__detail-actions:empty {
+  display: none;
+}
+
+.body-map-selector__detail-actions button {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid rgb(37 48 43 / 20%);
+  background: rgb(255 255 255 / 70%);
+  color: inherit;
 }
 
 .body-map-selector__list {

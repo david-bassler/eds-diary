@@ -31,6 +31,19 @@ function stringValue(value: unknown): string {
   return typeof value === 'string' ? value : ''
 }
 
+function normalizeStrings(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+
+  return [
+    ...new Set(
+      value
+        .filter((item): item is string => typeof item === 'string')
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ),
+  ]
+}
+
 function normalizeLocations(value: unknown): PainLocation[] {
   if (!Array.isArray(value)) return []
 
@@ -48,24 +61,20 @@ function normalizeLocations(value: unknown): PainLocation[] {
     const key = `${view}:${regionId}`
     if (seen.has(key)) continue
 
+    const detailRegionIds = normalizeStrings(item.detailRegionIds)
     seen.add(key)
-    result.push({ view, regionId })
+    result.push(
+      detailRegionIds.length
+        ? { view, regionId, detailRegionIds }
+        : { view, regionId },
+    )
   }
 
   return result
 }
 
 function normalizeQualities(value: unknown): string[] {
-  if (!Array.isArray(value)) return []
-
-  return [
-    ...new Set(
-      value
-        .filter((quality): quality is string => typeof quality === 'string')
-        .map((quality) => quality.trim())
-        .filter(Boolean),
-    ),
-  ]
+  return normalizeStrings(value)
 }
 
 function normalizeIntensity(value: unknown): number | null {

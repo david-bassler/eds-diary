@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "body-map:generate": "node scripts/generate-body-map-pngs.mjs",
+    "body-map:generate": "node scripts/generate-body-map-pngs.mjs && node scripts/generate-hand-detail-png.mjs",
     "predev": "npm run body-map:generate",
     "dev": "vite",
     "prebuild": "npm run body-map:generate",
