@@ -51,6 +51,10 @@ test('opens the hand detail hit map and selects a finger joint', async ({
     name: 'Linke Hand genauer auswählen',
   })
   await expect(detail).toBeVisible()
+  await expect(detail.locator('.hand-detail-selector__artwork')).toHaveAttribute(
+    'data-mirrored',
+    'true',
+  )
 
   const detailCanvas = detail.locator('.hand-detail-selector__overlay')
   await expect(detailCanvas).toHaveAttribute('data-hit-map-ready', 'true')
@@ -60,7 +64,7 @@ test('opens the hand detail hit map and selects a finger joint', async ({
 
   await detailCanvas.click({
     position: {
-      x: detailBox.width * (203 / 560),
+      x: detailBox.width * ((560 - 203) / 560),
       y: detailBox.height * (215 / 1028),
     },
   })
@@ -96,6 +100,10 @@ test('uses palm detail in front view and dorsal detail in back view', async ({
     'src',
     /hand-palm-hitmap\.png$/,
   )
+  await expect(detail.locator('.hand-detail-selector__artwork')).toHaveAttribute(
+    'data-mirrored',
+    'true',
+  )
   await expect(detail).toContainText('Handfläche')
   await detail.getByRole('button', { name: 'Fertig' }).click()
 
@@ -109,7 +117,7 @@ test('uses palm detail in front view and dorsal detail in back view', async ({
 
   await backCanvas.click({
     position: {
-      x: backBox.width * (106 / 512),
+      x: backBox.width * (406 / 512),
       y: backBox.height * (378 / 768),
     },
   })
@@ -118,6 +126,10 @@ test('uses palm detail in front view and dorsal detail in back view', async ({
   await expect(detail.locator('.hand-detail-selector__image')).toHaveAttribute(
     'src',
     /hand-top-hitmap\.png$/,
+  )
+  await expect(detail.locator('.hand-detail-selector__artwork')).toHaveAttribute(
+    'data-mirrored',
+    'false',
   )
   await expect(detail).toContainText('Handrücken')
 })
