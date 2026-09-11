@@ -89,10 +89,13 @@ test('serves the service worker', async ({ page, request }) => {
   const serviceWorkerResponse = await request.get(serviceWorkerUrl)
 
   expect(serviceWorkerResponse.ok()).toBe(true)
-  expect(await serviceWorkerResponse.text()).toContain('eds-diary-shell-v13')
+  const serviceWorker = await serviceWorkerResponse.text()
+  expect(serviceWorker).toContain('eds-diary-shell-v14')
+  expect(serviceWorker).toContain('head-front-hitmap.png?v=1')
+  expect(serviceWorker).toContain('head-back-hitmap.png?v=1')
 })
 
-test('serves generated PNG body maps and hand detail map', async ({
+test('serves generated PNG body maps and detail maps', async ({
   page,
   request,
 }) => {
@@ -105,6 +108,8 @@ test('serves generated PNG body maps and hand detail map', async ({
     'body-map/back-hitmap.png',
     'body-map/details/hand-top-hitmap.png',
     'body-map/details/hand-palm-hitmap.png',
+    'body-map/details/head-front-hitmap.png',
+    'body-map/details/head-back-hitmap.png',
   ]) {
     const url = new URL(file, page.url()).toString()
     const response = await request.get(url)

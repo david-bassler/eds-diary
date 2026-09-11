@@ -12,7 +12,7 @@ const meta = {
     docs: {
       description: {
         component:
-          'Schmerzregionen werden direkt über die Körperkarte ausgewählt. Hände öffnen passend zur Körperansicht eine Feinauswahl: vorne die Handfläche, hinten der Handrücken. Fingerglieder und Fingergelenke sind getrennt auswählbar.',
+          'Schmerzregionen werden direkt über die Körperkarte ausgewählt. Hände und Kopf öffnen passend zur Körperansicht eine optionale Feinauswahl. Mehrere Detailregionen können gleichzeitig ausgewählt werden.',
       },
     },
   },
@@ -69,6 +69,36 @@ export const HandBackDetail: Story = {
           view: 'back',
           regionId: 'left-hand',
           detailRegionIds: ['middle-proximal-phalanx', 'middle-base-joint'],
+        },
+      ]}
+    />
+  ),
+}
+
+export const HeadDetail: Story = {
+  name: 'Front head detail',
+  render: () => (
+    <ControlledExample
+      initial={[
+        {
+          view: 'front',
+          regionId: 'head',
+          detailRegionIds: ['left-eye', 'left-tmj'],
+        },
+      ]}
+    />
+  ),
+}
+
+export const HeadBackDetail: Story = {
+  name: 'Back head detail',
+  render: () => (
+    <ControlledExample
+      initial={[
+        {
+          view: 'back',
+          regionId: 'head',
+          detailRegionIds: ['neck', 'right-occipital'],
         },
       ]}
     />

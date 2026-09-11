@@ -80,3 +80,10 @@ jobs:
             signature="$(od -An -t x1 -N 8 "/tmp/${file}" | tr -d ' \n')"
             test "$signature" = "89504e470d0a1a0a"
           done
+          for file in head-front-hitmap.png head-back-hitmap.png; do
+            curl --fail --show-error --silent --location \
+              --output "/tmp/${file}" "${base_url}body-map/details/${file}"
+            test -s "/tmp/${file}"
+            signature="$(od -An -t x1 -N 8 "/tmp/${file}" | tr -d ' \n')"
+            test "$signature" = "89504e470d0a1a0a"
+          done
