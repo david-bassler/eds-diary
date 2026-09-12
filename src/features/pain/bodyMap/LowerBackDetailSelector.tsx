@@ -46,7 +46,7 @@ const LOWER_BACK_REGIONS: readonly RegionDefinition[] = [
   { id: 'right-si-joint', label: 'Rechtes SI-Gelenk', color: [225, 147, 184] },
 ]
 
-const LOWER_BACK_IMAGE = `${import.meta.env.BASE_URL}body-map/details/lower-back-hitmap.png?v=1`
+const LOWER_BACK_IMAGE = `${import.meta.env.BASE_URL}body-map/details/lower-back-hitmap.png?v=2`
 
 export function isLowerBackRegionId(regionId: string, view: BodyView): boolean {
   return view === 'back' && regionId === 'lower-back'
