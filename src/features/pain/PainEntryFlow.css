@@ -6,20 +6,56 @@
 .pain-entry-flow__progress {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
+  gap: 0;
+  padding-inline: 4px;
 }
 
 .pain-entry-flow__progress span {
-  padding: 8px 10px;
-  border-bottom: 3px solid rgb(37 48 43 / 12%);
-  font-size: 0.82rem;
+  position: relative;
+  padding: 20px 6px 5px;
+  border: 0;
+  font-size: 0.78rem;
   font-weight: 650;
-  opacity: 0.55;
+  line-height: 1.2;
+  text-align: center;
+  opacity: 0.48;
+}
+
+.pain-entry-flow__progress span::before {
+  position: absolute;
+  top: 6px;
+  right: 0;
+  left: 0;
+  height: 2px;
+  background: rgb(37 48 43 / 14%);
+  content: '';
+}
+
+.pain-entry-flow__progress span::after {
+  position: absolute;
+  top: 2px;
+  left: 50%;
+  width: 10px;
+  height: 10px;
+  border: 2px solid rgb(37 48 43 / 30%);
+  background: #f7f5ef;
+  content: '';
+  transform: translateX(-50%);
 }
 
 .pain-entry-flow__progress span[data-active='true'] {
-  border-bottom-color: #3f6f5b;
+  color: #315b4a;
+  font-weight: 800;
   opacity: 1;
+}
+
+.pain-entry-flow__progress span[data-active='true']::before {
+  background: rgb(49 91 74 / 28%);
+}
+
+.pain-entry-flow__progress span[data-active='true']::after {
+  border-color: #315b4a;
+  background: #315b4a;
 }
 
 .pain-entry-flow__step {
