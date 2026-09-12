@@ -1,0 +1,66 @@
+.pain-page {
+  display: grid;
+  gap: 18px;
+}
+
+.pain-page__tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-bottom: 1px solid rgb(37 48 43 / 16%);
+}
+
+.pain-page__tabs button {
+  min-height: 46px;
+  padding: 8px 12px;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.pain-page__tabs button[aria-pressed='true'] {
+  border-bottom-color: #315b4a;
+  font-weight: 800;
+}
+
+.pain-page__editing {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid rgb(49 91 74 / 28%);
+  background: rgb(63 111 91 / 10%);
+}
+
+.pain-page__editing > div {
+  display: grid;
+  gap: 2px;
+}
+
+.pain-page__editing span {
+  font-size: 0.84rem;
+  opacity: 0.7;
+}
+
+.pain-page__editing button {
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid rgb(37 48 43 / 22%);
+  border-radius: 0;
+  background: white;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+@media (max-width: 520px) {
+  .pain-page__editing {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
