@@ -1,35 +1,11 @@
-import {
-  useEffect,
-  useRef,
-  useState,
-  type PointerEvent as ReactPointerEvent,
-} from 'react'
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import type { BodyView, PainLocation } from '../painEntry'
-import {
-  HandDetailSelector,
-  handDetailLabel,
-  isHandRegionId,
-} from './HandDetailSelector'
-import {
-  HeadDetailSelector,
-  headDetailLabel,
-  isHeadRegionId,
-} from './HeadDetailSelector'
-import {
-  ShoulderDetailSelector,
-  isShoulderRegionId,
-  shoulderDetailLabel,
-} from './ShoulderDetailSelector'
-import {
-  HipDetailSelector,
-  hipDetailLabel,
-  isHipRegionId,
-} from './HipDetailSelector'
-import {
-  KneeDetailSelector,
-  isKneeRegionId,
-  kneeDetailLabel,
-} from './KneeDetailSelector'
+import { HandDetailSelector, handDetailLabel, isHandRegionId } from './HandDetailSelector'
+import { HeadDetailSelector, headDetailLabel, isHeadRegionId } from './HeadDetailSelector'
+import { ShoulderDetailSelector, isShoulderRegionId, shoulderDetailLabel } from './ShoulderDetailSelector'
+import { HipDetailSelector, hipDetailLabel, isHipRegionId } from './HipDetailSelector'
+import { KneeDetailSelector, isKneeRegionId, kneeDetailLabel } from './KneeDetailSelector'
+import { LowerBackDetailSelector, isLowerBackRegionId, lowerBackDetailLabel } from './LowerBackDetailSelector'
 import './BodyMapSelector.css'
 
 export interface BodyMapSelectorProps {
@@ -37,29 +13,9 @@ export interface BodyMapSelectorProps {
   onChange: (locations: PainLocation[]) => void
 }
 
-interface RegionDefinition {
-  id: string
-  label: string
-  color: readonly [number, number, number]
-}
-
-interface BodyMapDefinition {
-  visibleImage: string
-  hitMapImage: string
-  regions: readonly RegionDefinition[]
-}
-
-interface HitMapData {
-  width: number
-  height: number
-  regionAtPixel: Uint8Array
-  boundaryAtPixel: Uint8Array
-}
-
-interface DetailTarget {
-  view: BodyView
-  regionId: string
-}
+type RegionDefinition = { id: string; label: string; color: readonly [number, number, number] }
+type HitMapData = { width: number; height: number; regionAtPixel: Uint8Array; boundaryAtPixel: Uint8Array }
+type DetailTarget = { view: BodyView; regionId: string }
 
 const NO_REGION = 255
 const TAP_MAX_MOVEMENT = 14
@@ -124,593 +80,221 @@ const BACK_REGIONS: readonly RegionDefinition[] = [
   { id: 'right-foot', label: 'Rechter Fuß', color: [199, 138, 187] },
 ]
 
-const BODY_MAPS: Record<BodyView, BodyMapDefinition> = {
-  front: {
-    visibleImage: `${import.meta.env.BASE_URL}body-map/front-gray.png`,
-    hitMapImage: `${import.meta.env.BASE_URL}body-map/front-hitmap.png`,
-    regions: FRONT_REGIONS,
-  },
-  back: {
-    visibleImage: `${import.meta.env.BASE_URL}body-map/back-gray.png`,
-    hitMapImage: `${import.meta.env.BASE_URL}body-map/back-hitmap.png`,
-    regions: BACK_REGIONS,
-  },
-}
+const BODY_MAPS = {
+  front: { visibleImage: `${import.meta.env.BASE_URL}body-map/front-gray.png`, hitMapImage: `${import.meta.env.BASE_URL}body-map/front-hitmap.png`, regions: FRONT_REGIONS },
+  back: { visibleImage: `${import.meta.env.BASE_URL}body-map/back-gray.png`, hitMapImage: `${import.meta.env.BASE_URL}body-map/back-hitmap.png`, regions: BACK_REGIONS },
+} as const
 
-const LABELS = new Map(
-  [
-    ...FRONT_REGIONS.map(
-      (region) => [`front:${region.id}`, `Vorne: ${region.label}`] as const,
-    ),
-    ...BACK_REGIONS.map(
-      (region) => [`back:${region.id}`, `Hinten: ${region.label}`] as const,
-    ),
-  ],
-)
+const LABELS = new Map([
+  ...FRONT_REGIONS.map((r) => [`front:${r.id}`, `Vorne: ${r.label}`] as const),
+  ...BACK_REGIONS.map((r) => [`back:${r.id}`, `Hinten: ${r.label}`] as const),
+])
 
-function colorKey(red: number, green: number, blue: number): string {
-  return `${red},${green},${blue}`
-}
+const colorKey = (r: number, g: number, b: number) => `${r},${g},${b}`
 
-function createHitMapData(
-  imageData: ImageData,
-  regions: readonly RegionDefinition[],
-): HitMapData {
+function createHitMapData(imageData: ImageData, regions: readonly RegionDefinition[]): HitMapData {
   const { width, height, data } = imageData
-  const regionAtPixel = new Uint8Array(width * height)
-  regionAtPixel.fill(NO_REGION)
-
-  const colorLookup = new Map(
-    regions.map((region, index) => [
-      colorKey(region.color[0], region.color[1], region.color[2]),
-      index,
-    ]),
-  )
-
+  const regionAtPixel = new Uint8Array(width * height).fill(NO_REGION)
+  const colorLookup = new Map(regions.map((r, i) => [colorKey(...r.color), i]))
   for (let pixel = 0; pixel < width * height; pixel += 1) {
     const offset = pixel * 4
     if (data[offset + 3] === 0) continue
-
-    const regionIndex = colorLookup.get(
-      colorKey(data[offset], data[offset + 1], data[offset + 2]),
-    )
-    if (regionIndex !== undefined) regionAtPixel[pixel] = regionIndex
+    const region = colorLookup.get(colorKey(data[offset], data[offset + 1], data[offset + 2]))
+    if (region !== undefined) regionAtPixel[pixel] = region
   }
-
   const boundaryAtPixel = new Uint8Array(width * height)
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const pixel = y * width + x
-      const region = regionAtPixel[pixel]
-      if (region === NO_REGION) continue
-
-      let boundary = false
-      for (let deltaY = -1; deltaY <= 1 && !boundary; deltaY += 1) {
-        for (let deltaX = -1; deltaX <= 1; deltaX += 1) {
-          if (deltaX === 0 && deltaY === 0) continue
-
-          const neighborX = x + deltaX
-          const neighborY = y + deltaY
-          if (
-            neighborX < 0 ||
-            neighborX >= width ||
-            neighborY < 0 ||
-            neighborY >= height ||
-            regionAtPixel[neighborY * width + neighborX] !== region
-          ) {
-            boundary = true
-            break
-          }
-        }
+  for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+    const pixel = y * width + x
+    const region = regionAtPixel[pixel]
+    if (region === NO_REGION) continue
+    for (let dy = -1; dy <= 1 && !boundaryAtPixel[pixel]; dy += 1) for (let dx = -1; dx <= 1; dx += 1) {
+      if (!dx && !dy) continue
+      const nx = x + dx, ny = y + dy
+      if (nx < 0 || nx >= width || ny < 0 || ny >= height || regionAtPixel[ny * width + nx] !== region) {
+        boundaryAtPixel[pixel] = 1
+        break
       }
-      if (boundary) boundaryAtPixel[pixel] = 1
     }
   }
-
   return { width, height, regionAtPixel, boundaryAtPixel }
 }
 
-function detailRegionLabel(location: PainLocation, regionId: string): string {
-  if (isHeadRegionId(location.regionId)) {
-    return headDetailLabel(regionId, location.view)
-  }
-
-  if (isShoulderRegionId(location.regionId)) {
-    return shoulderDetailLabel(regionId)
-  }
-
-  if (isHipRegionId(location.regionId)) {
-    return hipDetailLabel(regionId)
-  }
-
-  if (isKneeRegionId(location.regionId, location.view)) {
-    return kneeDetailLabel(regionId)
-  }
-
-  return handDetailLabel(regionId, location.view)
+function detailRegionLabel(location: PainLocation, id: string): string {
+  if (isHeadRegionId(location.regionId)) return headDetailLabel(id, location.view)
+  if (isShoulderRegionId(location.regionId)) return shoulderDetailLabel(id)
+  if (isHipRegionId(location.regionId)) return hipDetailLabel(id)
+  if (isKneeRegionId(location.regionId, location.view)) return kneeDetailLabel(id)
+  if (isLowerBackRegionId(location.regionId, location.view)) return lowerBackDetailLabel(id)
+  return handDetailLabel(id, location.view)
 }
 
 export function painLocationLabel(location: PainLocation): string {
-  const base =
-    LABELS.get(`${location.view}:${location.regionId}`) ?? location.regionId
-  const detailRegionIds = location.detailRegionIds ?? []
-  if (!detailRegionIds.length) return base
-
-  return `${base} → ${detailRegionIds
-    .map((regionId) => detailRegionLabel(location, regionId))
-    .join(', ')}`
+  const base = LABELS.get(`${location.view}:${location.regionId}`) ?? location.regionId
+  const details = location.detailRegionIds ?? []
+  return details.length ? `${base} → ${details.map((id) => detailRegionLabel(location, id)).join(', ')}` : base
 }
 
-function isSelected(
-  value: readonly PainLocation[],
-  view: BodyView,
-  regionId: string,
-): boolean {
-  return value.some(
-    (location) => location.view === view && location.regionId === regionId,
-  )
-}
+const isSelected = (value: readonly PainLocation[], view: BodyView, regionId: string) =>
+  value.some((location) => location.view === view && location.regionId === regionId)
 
-function isDetailRegionId(view: BodyView, regionId: string): boolean {
-  return (
-    isHandRegionId(regionId) ||
-    isHeadRegionId(regionId) ||
-    isShoulderRegionId(regionId) ||
-    isHipRegionId(regionId) ||
-    isKneeRegionId(regionId, view)
-  )
-}
+const isDetailRegionId = (view: BodyView, regionId: string) =>
+  isHandRegionId(regionId) || isHeadRegionId(regionId) || isShoulderRegionId(regionId) ||
+  isHipRegionId(regionId) || isKneeRegionId(regionId, view) || isLowerBackRegionId(regionId, view)
 
-function BodyViewMap({
-  view,
-  value,
-  onToggle,
-  onSwipe,
-  activeOnMobile,
-}: {
+function BodyViewMap({ view, value, onToggle, onSwipe, activeOnMobile }: {
   view: BodyView
   value: readonly PainLocation[]
   onToggle: (view: BodyView, regionId: string) => void
   onSwipe: (direction: 'left' | 'right') => void
   activeOnMobile: boolean
 }) {
-  const title = view === 'front' ? 'Vorderseite' : 'Rückseite'
   const map = BODY_MAPS[view]
+  const title = view === 'front' ? 'Vorderseite' : 'Rückseite'
   const overlayRef = useRef<HTMLCanvasElement>(null)
-  const gestureRef = useRef<{
-    pointerId: number
-    startX: number
-    startY: number
-  } | null>(null)
+  const gestureRef = useRef<{ pointerId: number; startX: number; startY: number } | null>(null)
   const [hitMap, setHitMap] = useState<HitMapData | null>(null)
 
   useEffect(() => {
     let active = true
     const image = new Image()
     image.decoding = 'async'
-
     image.onload = () => {
       if (!active) return
-
       const canvas = document.createElement('canvas')
-      canvas.width = image.naturalWidth
-      canvas.height = image.naturalHeight
+      canvas.width = image.naturalWidth; canvas.height = image.naturalHeight
       const context = canvas.getContext('2d', { willReadFrequently: true })
       if (!context) return
-
       context.drawImage(image, 0, 0)
-      setHitMap(
-        createHitMapData(
-          context.getImageData(0, 0, canvas.width, canvas.height),
-          map.regions,
-        ),
-      )
+      setHitMap(createHitMapData(context.getImageData(0, 0, canvas.width, canvas.height), map.regions))
     }
-
-    image.onerror = () => {
-      if (active) setHitMap(null)
-    }
-
+    image.onerror = () => { if (active) setHitMap(null) }
     image.src = map.hitMapImage
-
-    return () => {
-      active = false
-      image.onload = null
-      image.onerror = null
-    }
+    return () => { active = false; image.onload = null; image.onerror = null }
   }, [map.hitMapImage, map.regions])
 
   useEffect(() => {
     const canvas = overlayRef.current
     if (!canvas) return
-
-    if (!hitMap) {
-      const context = canvas.getContext('2d')
-      context?.clearRect(0, 0, canvas.width, canvas.height)
-      return
-    }
-
-    canvas.width = hitMap.width
-    canvas.height = hitMap.height
+    if (!hitMap) { canvas.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height); return }
+    canvas.width = hitMap.width; canvas.height = hitMap.height
     const context = canvas.getContext('2d')
     if (!context) return
-
-    const selectedRegions = new Set<number>()
-    map.regions.forEach((region, index) => {
-      if (isSelected(value, view, region.id)) selectedRegions.add(index)
-    })
-
+    const selected = new Set<number>()
+    map.regions.forEach((r, i) => { if (isSelected(value, view, r.id)) selected.add(i) })
     const overlay = context.createImageData(hitMap.width, hitMap.height)
     for (let pixel = 0; pixel < hitMap.regionAtPixel.length; pixel += 1) {
       const region = hitMap.regionAtPixel[pixel]
-      if (
-        region === NO_REGION ||
-        hitMap.boundaryAtPixel[pixel] === 1 ||
-        !selectedRegions.has(region)
-      ) {
-        continue
-      }
-
-      const offset = pixel * 4
-      overlay.data[offset] = 45
-      overlay.data[offset + 1] = 112
-      overlay.data[offset + 2] = 83
-      overlay.data[offset + 3] = 122
+      if (region === NO_REGION || hitMap.boundaryAtPixel[pixel] || !selected.has(region)) continue
+      const o = pixel * 4
+      overlay.data[o] = 45; overlay.data[o + 1] = 112; overlay.data[o + 2] = 83; overlay.data[o + 3] = 122
     }
-
     context.putImageData(overlay, 0, 0)
   }, [hitMap, map.regions, value, view])
 
-  function selectAtPointer(event: ReactPointerEvent<HTMLCanvasElement>): void {
+  function selectAtPointer(event: ReactPointerEvent<HTMLCanvasElement>) {
     if (!hitMap) return
-
-    const rectangle = event.currentTarget.getBoundingClientRect()
-    if (rectangle.width === 0 || rectangle.height === 0) return
-
-    const x = Math.min(
-      hitMap.width - 1,
-      Math.max(
-        0,
-        Math.floor(
-          ((event.clientX - rectangle.left) / rectangle.width) * hitMap.width,
-        ),
-      ),
-    )
-    const y = Math.min(
-      hitMap.height - 1,
-      Math.max(
-        0,
-        Math.floor(
-          ((event.clientY - rectangle.top) / rectangle.height) * hitMap.height,
-        ),
-      ),
-    )
-    const regionIndex = hitMap.regionAtPixel[y * hitMap.width + x]
-    if (regionIndex === NO_REGION) return
-
-    const region = map.regions[regionIndex]
-    if (region) onToggle(view,
-region.id)
+    const rect = event.currentTarget.getBoundingClientRect()
+    if (!rect.width || !rect.height) return
+    const x = Math.min(hitMap.width - 1, Math.max(0, Math.floor(((event.clientX - rect.left) / rect.width) * hitMap.width)))
+    const y = Math.min(hitMap.height - 1, Math.max(0, Math.floor(((event.clientY - rect.top) / rect.height) * hitMap.height)))
+    const index = hitMap.regionAtPixel[y * hitMap.width + x]
+    if (index !== NO_REGION) onToggle(view, map.regions[index].id)
   }
 
-  function beginGesture(event: ReactPointerEvent<HTMLCanvasElement>): void {
+  function beginGesture(event: ReactPointerEvent<HTMLCanvasElement>) {
     if (event.pointerType === 'mouse' && event.button !== 0) return
-
-    gestureRef.current = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
+    gestureRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY }
+  }
+  function finishGesture(event: ReactPointerEvent<HTMLCanvasElement>) {
+    const g = gestureRef.current; gestureRef.current = null
+    if (!g || g.pointerId !== event.pointerId) return
+    const dx = event.clientX - g.startX, dy = event.clientY - g.startY
+    if (activeOnMobile && window.matchMedia(MOBILE_BODY_MAP_QUERY).matches && Math.abs(dx) >= SWIPE_MIN_DISTANCE && Math.abs(dx) > Math.abs(dy) * SWIPE_AXIS_RATIO) {
+      onSwipe(dx < 0 ? 'left' : 'right'); return
     }
+    if (Math.hypot(dx, dy) <= TAP_MAX_MOVEMENT) selectAtPointer(event)
   }
 
-  function finishGesture(event: ReactPointerEvent<HTMLCanvasElement>): void {
-    const gesture = gestureRef.current
-    gestureRef.current = null
-    if (!gesture || gesture.pointerId !== event.pointerId) return
-
-    const deltaX = event.clientX - gesture.startX
-    const deltaY = event.clientY - gesture.startY
-    const horizontalDistance = Math.abs(deltaX)
-    const verticalDistance = Math.abs(deltaY)
-
-    const isMobileSwipe =
-      activeOnMobile &&
-      window.matchMedia(MOBILE_BODY_MAP_QUERY).matches &&
-      horizontalDistance >= SWIPE_MIN_DISTANCE &&
-      horizontalDistance > verticalDistance * SWIPE_AXIS_RATIO
-
-    if (isMobileSwipe) {
-      onSwipe(deltaX < 0 ? 'left' : 'right')
-      return
-    }
-
-    if (Math.hypot(deltaX, deltaY) <= TAP_MAX_MOVEMENT) {
-      selectAtPointer(event)
-    }
-  }
-
-  function cancelGesture(event: ReactPointerEvent<HTMLCanvasElement>): void {
-    if (gestureRef.current?.pointerId === event.pointerId) {
-      gestureRef.current = null
-    }
-  }
-
-  return (
-    <section
-      className="body-map-selector__view"
-      data-mobile-active={activeOnMobile}
-      aria-label={title}
-    >
-      <h3 className="body-map-selector__view-title">{title}</h3>
-      <div
-        className="body-map-selector__artwork"
-        role="img"
-        aria-label={`${title}: Körperregion antippen. Eine vollständige Auswahl als Checkbox-Liste folgt unter den Körperkarten.`}
-      >
-        <img
-          className="body-map-selector__image"
-          src={map.visibleImage}
-          alt=""
-          aria-hidden="true"
-          draggable={false}
-        />
-        <canvas
-          ref={overlayRef}
-          className="body-map-selector__overlay"
-          data-hit-map-ready={hitMap !== null}
-          aria-hidden="true"
-          onPointerDown={beginGesture}
-          onPointerUp={finishGesture}
-          onPointerCancel={cancelGesture}
-        />
-      </div>
-    </section>
-  )
+  return <section className="body-map-selector__view" data-mobile-active={activeOnMobile} aria-label={title}>
+    <h3 className="body-map-selector__view-title">{title}</h3>
+    <div className="body-map-selector__artwork" role="img" aria-label={`${title}: Körperregion antippen. Eine vollständige Auswahl als Checkbox-Liste folgt unter den Körperkarten.`}>
+      <img className="body-map-selector__image" src={map.visibleImage} alt="" aria-hidden="true" draggable={false} />
+      <canvas ref={overlayRef} className="body-map-selector__overlay" data-hit-map-ready={hitMap !== null} aria-hidden="true"
+        onPointerDown={beginGesture} onPointerUp={finishGesture} onPointerCancel={() => { gestureRef.current = null }} />
+    </div>
+  </section>
 }
 
-function sameTarget(location: PainLocation, target: DetailTarget): boolean {
-  return location.view === target.view && location.regionId === target.regionId
-}
+const sameTarget = (location: PainLocation, target: DetailTarget) => location.view === target.view && location.regionId === target.regionId
 
 function detailActionLabel(location: PainLocation): string {
-  if (isHeadRegionId(location.regionId)) {
-    return `Kopf ${location.view === 'front' ? 'vorne' : 'hinten'}`
-  }
-
-  if (isShoulderRegionId(location.regionId)) {
-    return location.regionId === 'left-shoulder'
-      ? 'Linke Schulter'
-      : 'Rechte Schulter'
-  }
-
-  if (isHipRegionId(location.regionId)) {
-    return 'Becken / Hüfte'
-  }
-
-  if (isKneeRegionId(location.regionId, location.view)) {
-    return location.regionId === 'left-knee' ? 'Linkes Knie' : 'Rechtes Knie'
-  }
-
+  if (isHeadRegionId(location.regionId)) return `Kopf ${location.view === 'front' ? 'vorne' : 'hinten'}`
+  if (isShoulderRegionId(location.regionId)) return location.regionId === 'left-shoulder' ? 'Linke Schulter' : 'Rechte Schulter'
+  if (isHipRegionId(location.regionId)) return 'Becken / Hüfte'
+  if (isKneeRegionId(location.regionId, location.view)) return location.regionId === 'left-knee' ? 'Linkes Knie' : 'Rechtes Knie'
+  if (isLowerBackRegionId(location.regionId, location.view)) return 'Unterer Rücken'
   return `${location.regionId === 'left-hand' ? 'Linke' : 'Rechte'} Hand`
 }
 
 export function BodyMapSelector({ value, onChange }: BodyMapSelectorProps) {
   const [mobileView, setMobileView] = useState<BodyView>('front')
   const [detailTarget, setDetailTarget] = useState<DetailTarget | null>(() => {
-    const detailLocation = value.find((location) =>
-      isDetailRegionId(location.view, location.regionId),
-    )
-    return detailLocation
-      ? { view: detailLocation.view, regionId: detailLocation.regionId }
-      : null
+    const location = value.find((item) => isDetailRegionId(item.view, item.regionId))
+    return location ? { view: location.view, regionId: location.regionId } : null
   })
+  const detailLocation = detailTarget ? value.find((location) => sameTarget(location, detailTarget)) : undefined
+  useEffect(() => { if (detailTarget && !detailLocation) setDetailTarget(null) }, [detailLocation, detailTarget])
 
-  const detailLocation =
-    detailTarget === null
-      ? undefined
-      : value.find((location) => sameTarget(location, detailTarget))
-
-  useEffect(() => {
-    if (detailTarget && !detailLocation) setDetailTarget(null)
-  }, [detailLocation, detailTarget])
-
-  function toggle(view: BodyView, regionId: string): void {
-    const selected = isSelected(value, view, regionId)
-
-    if (selected) {
-      onChange(
-        value.filter(
-          (location) =>
-            !(location.view === view && location.regionId === regionId),
-        ),
-      )
-      if (
-        detailTarget?.view === view &&
-        detailTarget.regionId === regionId
-      ) {
-        setDetailTarget(null)
-      }
+  function toggle(view: BodyView, regionId: string) {
+    if (isSelected(value, view, regionId)) {
+      onChange(value.filter((location) => !(location.view === view && location.regionId === regionId)))
+      if (detailTarget?.view === view && detailTarget.regionId === regionId) setDetailTarget(null)
       return
     }
-
     onChange([...value, { view, regionId }])
     if (isDetailRegionId(view, regionId)) setDetailTarget({ view, regionId })
   }
-
-  function updateDetails(detailRegionIds: string[]): void {
+  function updateDetails(detailRegionIds: string[]) {
     if (!detailTarget) return
-
-    onChange(
-      value.map((location) => {
-        if (!sameTarget(location, detailTarget)) return location
-
-        if (!detailRegionIds.length) {
-          return { view: location.view, regionId: location.regionId }
-        }
-
-        return { ...location, detailRegionIds }
-      }),
-    )
+    onChange(value.map((location) => sameTarget(location, detailTarget)
+      ? detailRegionIds.length ? { ...location, detailRegionIds } : { view: location.view, regionId: location.regionId }
+      : location))
   }
+  const closeDetails = () => setDetailTarget(null)
+  const swipeBodyView = (direction: 'left' | 'right') => setMobileView((current) =>
+    direction === 'left' && current === 'front' ? 'back' : direction === 'right' && current === 'back' ? 'front' : current)
 
-  function swipeBodyView(direction: 'left' | 'right'): void {
-    setMobileView((current) => {
-      if (direction === 'left' && current === 'front') return 'back'
-      if (direction === 'right' && current === 'back') return 'front'
-      return current
-    })
-  }
-
-  return (
-    <div className="body-map-selector">
-      <div
-        className="body-map-selector__tabs"
-        role="group"
-        aria-label="Körperansicht"
-      >
-        <button
-          type="button"
-          aria-pressed={mobileView === 'front'}
-          onClick={() => setMobileView('front')}
-        >
-          Vorne
-        </button>
-        <button
-          type="button"
-          aria-pressed={mobileView === 'back'}
-          onClick={() => setMobileView('back')}
-        >
-          Hinten
-        </button>
-      </div>
-
-      <div className="body-map-selector__views">
-        <BodyViewMap
-          view="front"
-          value={value}
-          onToggle={toggle}
-          onSwipe={swipeBodyView}
-          activeOnMobile={mobileView === 'front'}
-        />
-        <BodyViewMap
-          view="back"
-          value={value}
-          onToggle={toggle}
-          onSwipe={swipeBodyView}
-          activeOnMobile={mobileView === 'back'}
-        />
-      </div>
-
-      {detailTarget && detailLocation && isHandRegionId(detailTarget.regionId) ? (
-        <HandDetailSelector
-          view={detailTarget.view}
-          side={detailTarget.regionId === 'left-hand' ? 'left' : 'right'}
-          value={detailLocation.detailRegionIds ?? []}
-          onChange={updateDetails}
-          onClose={() => setDetailTarget(null)}
-        />
-      ) : null}
-
-      {detailTarget && detailLocation && isHeadRegionId(detailTarget.regionId) ? (
-        <HeadDetailSelector
-          view={detailTarget.view}
-          value={detailLocation.detailRegionIds ?? []}
-          onChange={updateDetails}
-          onClose={() => setDetailTarget(null)}
-        />
-      ) : null}
-
-      {detailTarget && detailLocation && isShoulderRegionId(detailTarget.regionId) ? (
-        <ShoulderDetailSelector
-          side={detailTarget.regionId === 'left-shoulder' ? 'left' : 'right'}
-          value={detailLocation.detailRegionIds ?? []}
-          onChange={updateDetails}
-          onClose={() => setDetailTarget(null)}
-        />
-      ) : null}
-
-      {detailTarget && detailLocation && isHipRegionId(detailTarget.regionId) ? (
-        <HipDetailSelector
-          value={detailLocation.detailRegionIds ?? []}
-          onChange={updateDetails}
-          onClose={() => setDetailTarget(null)}
-        />
-      ) : null}
-
-      {detailTarget &&
-      detailLocation &&
-      isKneeRegionId(detailTarget.regionId, detailTarget.view) ? (
-        <KneeDetailSelector
-          view={detailTarget.view}
-          side={detailTarget.regionId === 'left-knee' ? 'left' : 'right'}
-          value={detailLocation.detailRegionIds ?? []}
-          onChange={updateDetails}
-          onClose={() => setDetailTarget(null)}
-        />
-      ) : null}
-
-      <div className="body-map-selector__selection" aria-live="polite">
-        <strong>
-          {value.length === 0
-            ? 'Noch keine Region ausgewählt'
-            : `${value.length} ${value.length === 1 ? 'Region' : 'Regionen'} ausgewählt`}
-        </strong>
-        {value.length > 0 ? (
-          <>
-            <span>{value.map(painLocationLabel).join(', ')}</span>
-            <div className="body-map-selector__detail-actions">
-              {value
-                .filter((location) =>
-                  isDetailRegionId(location.view, location.regionId),
-                )
-                .map((location) => (
-                  <button
-                    key={`${location.view}:${location.regionId}`}
-                    type="button"
-                    onClick={() =>
-                      setDetailTarget({
-                        view: location.view,
-                        regionId: location.regionId,
-                      })
-                    }
-                  >
-                    {detailActionLabel(location)}{' '}
-                    {location.detailRegionIds?.length ? 'ändern' : 'genauer auswählen'}
-                  </button>
-                ))}
-            </div>
-          </>
-        ) : null}
-      </div>
-
-      <details className="body-map-selector__list">
-        <summary>Regionen alternativ als Liste auswählen</summary>
-        <div className="body-map-selector__list-grid">
-          {(
-            [
-              ['front', 'Vorne', FRONT_REGIONS],
-              ['back', 'Hinten', BACK_REGIONS],
-            ] as const
-          ).map(([view, listTitle, regions]) => (
-            <fieldset key={view}>
-              <legend>{listTitle}</legend>
-              {regions.map((region) => {
-                const checked = isSelected(value, view, region.id)
-                return (
-                  <label key={region.id}>
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => toggle(view, region.id)}
-                    />
-                    <span>{region.label}</span>
-                  </label>
-                )
-              })}
-            </fieldset>
-          ))}
-        </div>
-      </details>
+  return <div className="body-map-selector">
+    <div className="body-map-selector__tabs" role="group" aria-label="Körperansicht">
+      <button type="button" aria-pressed={mobileView === 'front'} onClick={() => setMobileView('front')}>Vorne</button>
+      <button type="button" aria-pressed={mobileView === 'back'} onClick={() => setMobileView('back')}>Hinten</button>
     </div>
-  )
+    <div className="body-map-selector__views">
+      <BodyViewMap view="front" value={value} onToggle={toggle} onSwipe={swipeBodyView} activeOnMobile={mobileView === 'front'} />
+      <BodyViewMap view="back" value={value} onToggle={toggle} onSwipe={swipeBodyView} activeOnMobile={mobileView === 'back'} />
+    </div>
+
+    {detailTarget && detailLocation && isHandRegionId(detailTarget.regionId) && <HandDetailSelector view={detailTarget.view} side={detailTarget.regionId === 'left-hand' ? 'left' : 'right'} value={detailLocation.detailRegionIds ?? []} onChange={updateDetails} onClose={closeDetails} />}
+    {detailTarget && detailLocation && isHeadRegionId(detailTarget.regionId) && <HeadDetailSelector view={detailTarget.view} value={detailLocation.detailRegionIds ?? []} onChange={updateDetails} onClose={closeDetails} />}
+    {detailTarget && detailLocation && isShoulderRegionId(detailTarget.regionId) && <ShoulderDetailSelector side={detailTarget.regionId === 'left-shoulder' ? 'left' : 'right'} value={detailLocation.detailRegionIds ?? []} onChange={updateDetails} onClose={closeDetails} />}
+    {detailTarget && detailLocation && isHipRegionId(detailTarget.regionId) && <HipDetailSelector value={detailLocation.detailRegionIds ?? []} onChange={updateDetails} onClose={closeDetails} />}
+    {detailTarget && detailLocation && isKneeRegionId(detailTarget.regionId, detailTarget.view) && <KneeDetailSelector view={detailTarget.view} side={detailTarget.regionId === 'left-knee' ? 'left' : 'right'} value={detailLocation.detailRegionIds ?? []} onChange={updateDetails} onClose={closeDetails} />}
+    {detailTarget && detailLocation && isLowerBackRegionId(detailTarget.regionId, detailTarget.view) && <LowerBackDetailSelector value={detailLocation.detailRegionIds ?? []} onChange={updateDetails} onClose={closeDetails} />}
+
+    <div className="body-map-selector__selection" aria-live="polite">
+      <strong>{value.length === 0 ? 'Noch keine Region ausgewählt' : `${value.length} ${value.length === 1 ? 'Region' : 'Regionen'} ausgewählt`}</strong>
+      {value.length > 0 && <><span>{value.map(painLocationLabel).join(', ')}</span>
+        <div className="body-map-selector__detail-actions">{value.filter((location) => isDetailRegionId(location.view, location.regionId)).map((location) =>
+          <button key={`${location.view}:${location.regionId}`} type="button" onClick={() => setDetailTarget({ view: location.view, regionId: location.regionId })}>
+            {detailActionLabel(location)} {location.detailRegionIds?.length ? 'ändern' : 'genauer auswählen'}
+          </button>)}</div></>}
+    </div>
+
+    <details className="body-map-selector__list"><summary>Regionen alternativ als Liste auswählen</summary>
+      <div className="body-map-selector__list-grid">{([['front', 'Vorne', FRONT_REGIONS], ['back', 'Hinten', BACK_REGIONS]] as const).map(([view, title, regions]) =>
+        <fieldset key={view}><legend>{title}</legend>{regions.map((region) => <label key={region.id}>
+          <input type="checkbox" checked={isSelected(value, view, region.id)} onChange={() => toggle(view, region.id)} /><span>{region.label}</span>
+        </label>)}</fieldset>)}</div>
+    </details>
+  </div>
 }
