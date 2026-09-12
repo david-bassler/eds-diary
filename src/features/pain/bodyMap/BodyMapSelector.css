@@ -60,6 +60,13 @@
   pointer-events: none;
 }
 
+.body-map-selector canvas {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 .body-map-selector__overlay {
   position: absolute;
   inset: 0;
