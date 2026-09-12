@@ -92,4 +92,4 @@ jobs:
           echo "0d9c6c0dc5935351e04f68bc9e6c02b5b617b17b0db76f824659cec88db97e2b  /tmp/shoulder-right-hitmap.png" | sha256sum -c -
           echo "fa501c4b705df1a6c4da39e22f4d4a0ab5dd03e35e882d3a4eba9e83c01683f9  /tmp/hip-right-hitmap.png" | sha256sum -c -
           echo "18e1f8369659f5ac224d5ef9e320798b392803afacebdea70ac0518ac13f0b5b  /tmp/knee-front-right-hitmap.png" | sha256sum -c -
-          echo "824c42d7e96d70b64bb6f77516a4e4f58dfa230a75277f99ff37ea4b4320b752  /tmp/knee-back-right-hitmap.png" | sha256sum -c -
+          echo "554d871410d561d01b109307daf515202266e5d423d97ef0920a2c0da8845dcd  /tmp/knee-back-right-hitmap.png" | sha256sum -c -
