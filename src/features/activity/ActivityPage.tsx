@@ -1102,8 +1102,8 @@ export function ActivityPage() {
                     <label htmlFor="activity-start-time">Beginn</label>
                     <input
                       id="activity-start-time"
-                      type="text"
-                      pattern="(?:[01][0-9]|2[0-3]):[0-5][0-9]"
+                      type="time"
+                      step={TIME_STEP_MINUTES * 60}
                       value={activeDraft.start}
                       aria-invalid={Boolean(draftValidationMessage)}
                       aria-describedby="activity-time-help activity-time-error"
@@ -1146,13 +1146,18 @@ export function ActivityPage() {
                         <label htmlFor="activity-end-time">Ende</label>
                         <input
                           id="activity-end-time"
-                          type="text"
-                          pattern="(?:(?:[01][0-9]|2[0-3]):[0-5][0-9]|24:00)"
-                          value={activeDraft.end}
+                          type="time"
+                          step={TIME_STEP_MINUTES * 60}
+                          value={activeDraft.end === '24:00' ? '00:00' : activeDraft.end}
                           aria-invalid={Boolean(draftValidationMessage)}
                           aria-describedby="activity-time-help activity-time-error"
                           onChange={(event) =>
-                            updateDraft({ end: event.target.value })
+                            updateDraft({
+                              end:
+                                event.target.value === '00:00'
+                                  ? '24:00'
+                                  : event.target.value,
+                            })
                           }
                         />
                         <div className="activity-page__time-buttons">
@@ -1186,8 +1191,9 @@ export function ActivityPage() {
                 </div>
 
                 <p id="activity-time-help" className="activity-page__time-help">
-                  Uhrzeiten als HH:MM eingeben. Für das Tagesende ist 24:00
-                  möglich. Bei „Läuft noch“ bleibt das Ende offen.
+                  Die Uhrzeitfelder öffnen auf unterstützten Geräten die native
+                  Zeitauswahl. 00:00 als Ende entspricht dem Tagesende 24:00. Bei
+                  „Läuft noch“ bleibt das Ende offen.
                 </p>
                 <p
                   id="activity-time-error"
