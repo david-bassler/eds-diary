@@ -3,6 +3,10 @@
   gap: 18px;
 }
 
+.pain-entry-list__print-header {
+  display: none;
+}
+
 .pain-entry-list__filters {
   display: flex;
   flex-wrap: wrap;
@@ -19,6 +23,7 @@
 
 .pain-entry-list__filter-tabs button,
 .pain-entry-list__clear-date,
+.pain-entry-list__print-button,
 .pain-entry-list__actions button {
   min-height: 44px;
   padding: 8px 13px;
@@ -33,6 +38,12 @@
 .pain-entry-list__filter-tabs button[aria-pressed='true'] {
   border-color: #315b4a;
   background: rgb(63 111 91 / 14%);
+  font-weight: 750;
+}
+
+.pain-entry-list__print-button {
+  margin-left: auto;
+  border-color: #315b4a;
   font-weight: 750;
 }
 
@@ -55,6 +66,12 @@
   margin: 0;
 }
 
+.pain-entry-list__date-range {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+}
+
 .pain-entry-list__date-filter {
   display: grid;
   gap: 4px;
@@ -70,6 +87,12 @@
   background: white;
   color: inherit;
   font: inherit;
+}
+
+.pain-entry-list__range-summary {
+  margin: -4px 0 0;
+  font-size: 0.86rem;
+  opacity: 0.7;
 }
 
 .pain-entry-list__days,
@@ -269,6 +292,12 @@
   font-weight: 650;
 }
 
+@media (max-width: 720px) {
+  .pain-entry-list__print-button {
+    margin-left: 0;
+  }
+}
+
 @media (max-width: 520px) {
   .pain-entry-list__filters,
   .pain-entry-list__day-header,
@@ -277,9 +306,16 @@
     flex-direction: column;
   }
 
+  .pain-entry-list__date-range {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    width: 100%;
+  }
+
   .pain-entry-list__date-filter,
   .pain-entry-list__date-filter input,
   .pain-entry-list__clear-date,
+  .pain-entry-list__print-button,
   .pain-entry-list__activity-toggle {
     width: 100%;
   }
@@ -297,5 +333,119 @@
 
   .pain-entry-list__delete {
     margin-left: 0;
+  }
+}
+
+@media print {
+  @page {
+    margin: 14mm;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+  }
+
+  body {
+    font-size: 10pt;
+  }
+
+  .bottom-navigation,
+  .app__header,
+  .pain-page__tabs,
+  .pain-entry-list__filters,
+  .pain-entry-list__range-summary,
+  .pain-entry-list__actions,
+  .pain-entry-list__status {
+    display: none !important;
+  }
+
+  .app,
+  .app__content,
+  .app__page,
+  .pain-page,
+  .pain-entry-list {
+    display: block !important;
+    width: auto !important;
+    max-width: none !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .pain-entry-list {
+    color: #000;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .pain-entry-list__print-header {
+    display: block;
+    margin-bottom: 8mm;
+    padding-bottom: 4mm;
+    border-bottom: 1px solid #777;
+  }
+
+  .pain-entry-list__print-header h1 {
+    margin: 0 0 2mm;
+    font-size: 18pt;
+  }
+
+  .pain-entry-list__print-header p {
+    margin: 1mm 0 0;
+    font-size: 9.5pt;
+  }
+
+  .pain-entry-list__days {
+    gap: 7mm;
+  }
+
+  .pain-entry-list__day {
+    gap: 3mm;
+  }
+
+  .pain-entry-list__day-header {
+    break-after: avoid;
+    padding-bottom: 2mm;
+    border-bottom-color: #777;
+  }
+
+  .pain-entry-list__entries {
+    gap: 2.5mm;
+  }
+
+  .pain-entry-list__entry,
+  .pain-entry-list__activity {
+    break-inside: avoid;
+    background: #fff !important;
+    box-shadow: none !important;
+  }
+
+  .pain-entry-list__entry summary {
+    cursor: default;
+  }
+
+  .pain-entry-list__entry > .pain-entry-list__details {
+    display: grid !important;
+  }
+
+  .pain-entry-list__details {
+    gap: 2mm;
+    padding-top: 0;
+  }
+
+  .pain-entry-list__details dl > div {
+    grid-template-columns: 34mm 1fr;
+    padding: 2mm 0;
+  }
+
+  .pain-entry-list__preview {
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+  }
+
+  .pain-entry-list__summary-bottom {
+    opacity: 0.82;
   }
 }
