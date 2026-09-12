@@ -61,7 +61,7 @@ const KNEE_REGIONS: readonly RegionDefinition[] = [
   },
 ]
 
-const KNEE_IMAGE = `${import.meta.env.BASE_URL}body-map/details/knee-front-right-hitmap.png?v=1`
+const KNEE_IMAGE = `${import.meta.env.BASE_URL}body-map/details/knee-front-right-hitmap.png?v=2`
 
 export function isKneeRegionId(regionId: string, view: BodyView): boolean {
   return (
