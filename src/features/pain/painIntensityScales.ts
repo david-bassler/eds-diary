@@ -66,7 +66,7 @@ export const PAIN_INTENSITY_SCALES: readonly PainIntensityScale[] = [
   {
     id: 'mankoski',
     name: 'Mankoski Pain Scale',
-    sourceUrl: 'https://www.painscale.com/article/mankoski-pain-scale',
+    sourceUrl: 'https://ap.io/painscale/',
     descriptions: [
       'Schmerzfrei.',
       'Sehr geringe, gelegentliche Beschwerden.',
