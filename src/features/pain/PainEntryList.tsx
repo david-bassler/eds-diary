@@ -145,6 +145,21 @@ function activitySortKey(entry: ActivityEntry): string {
   return `${entry.date}T${entry.startTime}`
 }
 
+function dateIsInRange(key: string, fromDate: string, toDate: string): boolean {
+  if (fromDate && key < fromDate) return false
+  if (toDate && key > toDate) return false
+  return true
+}
+
+function dateRangeLabel(fromDate: string, toDate: string): string {
+  if (fromDate && toDate) {
+    return `${formatCalendarDate(fromDate)} – ${formatCalendarDate(toDate)}`
+  }
+  if (fromDate) return `ab ${formatCalendarDate(fromDate)}`
+  if (toDate) return `bis ${formatCalendarDate(toDate)}`
+  return 'Alle Zeiträume'
+}
+
 export function PainEntryList({
   refreshKey = 0,
   onEdit,
@@ -154,7 +169,8 @@ export function PainEntryList({
   const [activities, setActivities] = useState<ActivityEntry[]>([])
   const [showActivities, setShowActivities] = useState(false)
   const [filter, setFilter] = useState<ListFilter>('all')
-  const [dateFilter, setDateFilter] = useState('')
+  const [fromDate, setFromDate] = useState('')
+  const [toDate, setToDate] = useState('')
   const [loading, setLoading] = useState(true)
   const [status, setStatus] = useState('')
   const [busyId, setBusyId] = useState<string | null>(null)
@@ -184,10 +200,9 @@ export function PainEntryList({
     () =>
       entries.filter((entry) => {
         if (filter === 'active' && !isOngoing(entry)) return false
-        if (dateFilter && localDateKey(entry.startedAt) !== dateFilter) return false
-        return true
+        return dateIsInRange(localDateKey(entry.startedAt), fromDate, toDate)
       }),
-    [dateFilter, entries, filter],
+    [entries, filter, fromDate, toDate],
   )
 
   const filteredActivities = useMemo(
@@ -195,11 +210,10 @@ export function PainEntryList({
       showActivities
         ? activities.filter((entry) => {
             if (filter === 'active' && !entry.isOngoing) return false
-            if (dateFilter && entry.date !== dateFilter) return false
-            return true
+            return dateIsInRange(entry.date, fromDate, toDate)
           })
         : [],
-    [activities, dateFilter, filter, showActivities],
+    [activities, filter, fromDate, showActivities, toDate],
   )
 
   const groupedEntries = useMemo(() => {
@@ -274,10 +288,35 @@ export function PainEntryList({
     }
   }
 
+  function changeFromDate(nextDate: string): void {
+    setFromDate(nextDate)
+    if (nextDate && toDate && nextDate > toDate) setToDate(nextDate)
+  }
+
+  function changeToDate(nextDate: string): void {
+    setToDate(nextDate)
+    if (nextDate && fromDate && nextDate < fromDate) setFromDate(nextDate)
+  }
+
+  function resetDateRange(): void {
+    setFromDate('')
+    setToDate('')
+  }
+
   const hasVisibleItems = filteredEntries.length + filteredActivities.length > 0
+  const selectedDateRangeLabel = dateRangeLabel(fromDate, toDate)
 
   return (
     <section className="pain-entry-list" aria-label="Schmerzverlauf">
+      <header className="pain-entry-list__print-header" aria-hidden="true">
+        <h1>Verlaufsübersicht</h1>
+        <p>Zeitraum: {selectedDateRangeLabel}</p>
+        <p>
+          Schmerzen{showActivities ? ' und Aktivitäten' : ''}
+          {filter === 'active' ? ' · nur aktive Einträge' : ''}
+        </p>
+      </header>
+
       <div className="pain-entry-list__filters">
         <div className="pain-entry-list__filter-tabs" role="group" aria-label="Einträge filtern">
           <button
@@ -305,24 +344,49 @@ export function PainEntryList({
           <span>Aktivitäten einblenden</span>
         </label>
 
-        <label className="pain-entry-list__date-filter">
-          <span>Datum</span>
-          <input
-            type="date"
-            value={dateFilter}
-            onChange={(event) => setDateFilter(event.target.value)}
-          />
-        </label>
-        {dateFilter ? (
+        <div className="pain-entry-list__date-range" role="group" aria-label="Datumsbereich">
+          <label className="pain-entry-list__date-filter">
+            <span>Von</span>
+            <input
+              type="date"
+              value={fromDate}
+              max={toDate || undefined}
+              onChange={(event) => changeFromDate(event.target.value)}
+            />
+          </label>
+          <label className="pain-entry-list__date-filter">
+            <span>Bis</span>
+            <input
+              type="date"
+              value={toDate}
+              min={fromDate || undefined}
+              onChange={(event) => changeToDate(event.target.value)}
+            />
+          </label>
+        </div>
+
+        {fromDate || toDate ? (
           <button
             type="button"
             className="pain-entry-list__clear-date"
-            onClick={() => setDateFilter('')}
+            onClick={resetDateRange}
           >
-            Datum zurücksetzen
+            Zeitraum zurücksetzen
           </button>
         ) : null}
+
+        <button
+          type="button"
+          className="pain-entry-list__print-button"
+          onClick={() => window.print()}
+        >
+          Druckansicht
+        </button>
       </div>
+
+      <p className="pain-entry-list__range-summary">
+        Zeitraum: <strong>{selectedDateRangeLabel}</strong>
+      </p>
 
       {loading ? <p className="pain-entry-list__state">Einträge werden geladen …</p> : null}
 
