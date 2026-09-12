@@ -1,4 +1,4 @@
-const CACHE_NAME = 'eds-diary-shell-v28'
+const CACHE_NAME = 'eds-diary-shell-v29'
 const APP_SHELL = [
   './',
   './manifest.webmanifest',
