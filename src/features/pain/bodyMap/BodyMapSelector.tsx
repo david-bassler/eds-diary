@@ -15,6 +15,11 @@ import {
   headDetailLabel,
   isHeadRegionId,
 } from './HeadDetailSelector'
+import {
+  ShoulderDetailSelector,
+  isShoulderRegionId,
+  shoulderDetailLabel,
+} from './ShoulderDetailSelector'
 import './BodyMapSelector.css'
 
 export interface BodyMapSelectorProps {
@@ -200,6 +205,10 @@ function detailRegionLabel(location: PainLocation, regionId: string): string {
     return headDetailLabel(regionId, location.view)
   }
 
+  if (isShoulderRegionId(location.regionId)) {
+    return shoulderDetailLabel(regionId)
+  }
+
   return handDetailLabel(regionId, location.view)
 }
 
@@ -225,7 +234,11 @@ function isSelected(
 }
 
 function isDetailRegionId(regionId: string): boolean {
-  return isHandRegionId(regionId) || isHeadRegionId(regionId)
+  return (
+    isHandRegionId(regionId) ||
+    isHeadRegionId(regionId) ||
+    isShoulderRegionId(regionId)
+  )
 }
 
 function BodyViewMap({
@@ -443,6 +456,12 @@ function detailActionLabel(location: PainLocation): string {
     return `Kopf ${location.view === 'front' ? 'vorne' : 'hinten'}`
   }
 
+  if (isShoulderRegionId(location.regionId)) {
+    return location.regionId === 'left-shoulder'
+      ? 'Linke Schulter'
+      : 'Rechte Schulter'
+  }
+
   return `${location.regionId === 'left-hand' ? 'Linke' : 'Rechte'} Hand`
 }
 
@@ -566,6 +585,15 @@ export function BodyMapSelector({ value, onChange }: BodyMapSelectorProps) {
       {detailTarget && detailLocation && isHeadRegionId(detailTarget.regionId) ? (
         <HeadDetailSelector
           view={detailTarget.view}
+          value={detailLocation.detailRegionIds ?? []}
+          onChange={updateDetails}
+          onClose={() => setDetailTarget(null)}
+        />
+      ) : null}
+
+      {detailTarget && detailLocation && isShoulderRegionId(detailTarget.regionId) ? (
+        <ShoulderDetailSelector
+          side={detailTarget.regionId === 'left-shoulder' ? 'left' : 'right'}
           value={detailLocation.detailRegionIds ?? []}
           onChange={updateDetails}
           onClose={() => setDetailTarget(null)}
