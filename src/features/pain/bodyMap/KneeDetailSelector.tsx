@@ -10,6 +10,7 @@ import './KneeDetailSelector.css'
 export type KneeSide = 'left' | 'right'
 
 export interface KneeDetailSelectorProps {
+  view: BodyView
   side: KneeSide
   value: readonly string[]
   onChange: (regionIds: string[]) => void
@@ -32,7 +33,7 @@ interface HitMapData {
 const NO_REGION = 255
 const TAP_MAX_MOVEMENT = 14
 
-const KNEE_REGIONS: readonly RegionDefinition[] = [
+const FRONT_KNEE_REGIONS: readonly RegionDefinition[] = [
   {
     id: 'suprapatellar',
     label: 'Oberhalb der Kniescheibe',
@@ -61,30 +62,82 @@ const KNEE_REGIONS: readonly RegionDefinition[] = [
   },
 ]
 
-const KNEE_IMAGE = `${import.meta.env.BASE_URL}body-map/details/knee-front-right-hitmap.png?v=2`
+const BACK_KNEE_REGIONS: readonly RegionDefinition[] = [
+  {
+    id: 'distal-thigh',
+    label: 'Distaler Oberschenkel',
+    color: [104, 181, 103],
+  },
+  {
+    id: 'medial-posterior-knee',
+    label: 'Innere Kniekehle / innere Knierückseite',
+    color: [242, 199, 94],
+  },
+  {
+    id: 'popliteal-fossa',
+    label: 'Zentrale Kniekehle',
+    color: [232, 111, 104],
+  },
+  {
+    id: 'lateral-posterior-knee',
+    label: 'Äußere Kniekehle / äußere Knierückseite',
+    color: [104, 158, 218],
+  },
+  {
+    id: 'upper-calf-transition',
+    label: 'Übergang zur Wade',
+    color: [155, 130, 204],
+  },
+  {
+    id: 'proximal-calf',
+    label: 'Obere Wade',
+    color: [225, 147, 84],
+  },
+]
+
+const KNEE_MAPS: Record<BodyView, {
+  image: string
+  regions: readonly RegionDefinition[]
+  label: string
+}> = {
+  front: {
+    image: `${import.meta.env.BASE_URL}body-map/details/knee-front-right-hitmap.png?v=2`,
+    regions: FRONT_KNEE_REGIONS,
+    label: 'Vorderseite',
+  },
+  back: {
+    image: `${import.meta.env.BASE_URL}body-map/details/knee-back-right-hitmap.png?v=1`,
+    regions: BACK_KNEE_REGIONS,
+    label: 'Rückseite',
+  },
+}
 
 export function isKneeRegionId(regionId: string, view: BodyView): boolean {
   return (
-    view === 'front' &&
+    (view === 'front' || view === 'back') &&
     (regionId === 'left-knee' || regionId === 'right-knee')
   )
 }
 
 export function kneeDetailLabel(regionId: string): string {
-  return KNEE_REGIONS.find((region) => region.id === regionId)?.label ?? regionId
+  const regions = [...FRONT_KNEE_REGIONS, ...BACK_KNEE_REGIONS]
+  return regions.find((region) => region.id === regionId)?.label ?? regionId
 }
 
 function colorKey(red: number, green: number, blue: number): string {
   return `${red},${green},${blue}`
 }
 
-function createHitMapData(imageData: ImageData): HitMapData {
+function createHitMapData(
+  imageData: ImageData,
+  regions: readonly RegionDefinition[],
+): HitMapData {
   const { width, height, data } = imageData
   const regionAtPixel = new Uint8Array(width * height)
   regionAtPixel.fill(NO_REGION)
 
   const colorLookup = new Map(
-    KNEE_REGIONS.map((region, index) => [
+    regions.map((region, index) => [
       colorKey(region.color[0], region.color[1], region.color[2]),
       index,
     ]),
@@ -133,6 +186,7 @@ function createHitMapData(imageData: ImageData): HitMapData {
 }
 
 export function KneeDetailSelector({
+  view,
   side,
   value,
   onChange,
@@ -147,6 +201,7 @@ export function KneeDetailSelector({
   const [hitMap, setHitMap] = useState<HitMapData | null>(null)
   const mirrored = side === 'left'
   const sideLabel = side === 'left' ? 'Linkes Knie' : 'Rechtes Knie'
+  const map = KNEE_MAPS[view]
 
   useEffect(() => {
     let active = true
@@ -165,6 +220,7 @@ export function KneeDetailSelector({
       setHitMap(
         createHitMapData(
           context.getImageData(0, 0, canvas.width, canvas.height),
+          map.regions,
         ),
       )
     }
@@ -172,14 +228,14 @@ export function KneeDetailSelector({
     image.onerror = () => {
       if (active) setHitMap(null)
     }
-    image.src = KNEE_IMAGE
+    image.src = map.image
 
     return () => {
       active = false
       image.onload = null
       image.onerror = null
     }
-  }, [])
+  }, [map.image, map.regions])
 
   useEffect(() => {
     const canvas = overlayRef.current
@@ -195,7 +251,7 @@ export function KneeDetailSelector({
     if (!context) return
 
     const selectedRegions = new Set<number>()
-    KNEE_REGIONS.forEach((region, index) => {
+    map.regions.forEach((region, index) => {
       if (value.includes(region.id)) selectedRegions.add(index)
     })
 
@@ -216,7 +272,7 @@ export function KneeDetailSelector({
       overlay.data[offset + 3] = 145
     }
     context.putImageData(overlay, 0, 0)
-  }, [hitMap, value])
+  }, [hitMap, map.regions, value])
 
   function toggleRegion(regionId: string): void {
     onChange(
@@ -248,7 +304,7 @@ export function KneeDetailSelector({
     )
     const regionIndex = hitMap.regionAtPixel[y * hitMap.width + x]
     if (regionIndex === NO_REGION) return
-    const region = KNEE_REGIONS[regionIndex]
+    const region = map.regions[regionIndex]
     if (region) toggleRegion(region.id)
   }
 
@@ -278,12 +334,13 @@ export function KneeDetailSelector({
   return (
     <section
       className="knee-detail-selector"
-      aria-label={`${sideLabel} genauer auswählen`}
+      aria-label={`${sideLabel} ${map.label} genauer auswählen`}
       data-side={side}
+      data-view={view}
     >
       <div className="knee-detail-selector__heading">
         <div>
-          <strong>{sideLabel} · Vorderseite</strong>
+          <strong>{sideLabel} · {map.label}</strong>
           <span>Optional · mehrere Bereiche möglich</span>
         </div>
         <button type="button" onClick={onClose}>Fertig</button>
@@ -293,11 +350,11 @@ export function KneeDetailSelector({
         className="knee-detail-selector__artwork"
         data-mirrored={mirrored}
         role="img"
-        aria-label={`${sideLabel} Vorderseite: Bereich antippen`}
+        aria-label={`${sideLabel} ${map.label}: Bereich antippen`}
       >
         <img
           className="knee-detail-selector__image"
-          src={KNEE_IMAGE}
+          src={map.image}
           alt=""
           aria-hidden="true"
           draggable={false}
@@ -327,7 +384,7 @@ export function KneeDetailSelector({
       <details className="knee-detail-selector__list">
         <summary>Bereiche alternativ als Liste auswählen</summary>
         <div className="knee-detail-selector__list-grid">
-          {KNEE_REGIONS.map((region) => (
+          {map.regions.map((region) => (
             <label key={region.id}>
               <input
                 type="checkbox"

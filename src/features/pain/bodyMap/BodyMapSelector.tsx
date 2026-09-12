@@ -389,7 +389,8 @@ function BodyViewMap({
     if (regionIndex === NO_REGION) return
 
     const region = map.regions[regionIndex]
-    if (region) onToggle(view, region.id)
+    if (region) onToggle(view,
+region.id)
   }
 
   function beginGesture(event: ReactPointerEvent<HTMLCanvasElement>): void {
@@ -640,6 +641,7 @@ export function BodyMapSelector({ value, onChange }: BodyMapSelectorProps) {
       detailLocation &&
       isKneeRegionId(detailTarget.regionId, detailTarget.view) ? (
         <KneeDetailSelector
+          view={detailTarget.view}
           side={detailTarget.regionId === 'left-knee' ? 'left' : 'right'}
           value={detailLocation.detailRegionIds ?? []}
           onChange={updateDetails}
