@@ -1,30 +1,42 @@
 .pain-page {
   display: grid;
-  gap: 18px;
+  gap: 22px;
 }
 
 .pain-page__tabs {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  border-bottom: 1px solid rgb(37 48 43 / 16%);
+  border: 1px solid rgb(37 48 43 / 20%);
+  background: rgb(37 48 43 / 5%);
 }
 
 .pain-page__tabs button {
-  min-height: 46px;
-  padding: 8px 12px;
+  min-height: 48px;
+  padding: 10px 14px;
   border: 0;
-  border-bottom: 3px solid transparent;
   border-radius: 0;
   background: transparent;
   color: inherit;
   font: inherit;
-  font-weight: 650;
+  font-weight: 700;
   cursor: pointer;
 }
 
+.pain-page__tabs button + button {
+  border-left: 1px solid rgb(37 48 43 / 20%);
+}
+
 .pain-page__tabs button[aria-pressed='true'] {
-  border-bottom-color: #315b4a;
+  background: #315b4a;
+  color: white;
   font-weight: 800;
+}
+
+.pain-page__tabs button:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 3px solid #8ec9b5;
+  outline-offset: 2px;
 }
 
 .pain-page__editing {
@@ -56,6 +68,12 @@
   color: inherit;
   font: inherit;
   cursor: pointer;
+}
+
+@media (hover: hover) {
+  .pain-page__tabs button:not([aria-pressed='true']):hover {
+    background: rgb(49 91 74 / 8%);
+  }
 }
 
 @media (max-width: 520px) {
