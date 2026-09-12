@@ -36,6 +36,25 @@
   font-weight: 750;
 }
 
+.pain-entry-list__activity-toggle {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border: 1px solid rgb(37 48 43 / 18%);
+  background: rgb(255 255 255 / 56%);
+  font-size: 0.86rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.pain-entry-list__activity-toggle input {
+  width: 19px;
+  height: 19px;
+  margin: 0;
+}
+
 .pain-entry-list__date-filter {
   display: grid;
   gap: 4px;
@@ -91,13 +110,22 @@
   gap: 8px;
 }
 
-.pain-entry-list__entry {
+.pain-entry-list__entry,
+.pain-entry-list__activity {
   border: 1px solid rgb(37 48 43 / 16%);
   background: rgb(255 255 255 / 68%);
 }
 
 .pain-entry-list__entry[data-active='true'] {
   border-left: 4px solid #315b4a;
+}
+
+.pain-entry-list__activity {
+  display: grid;
+  gap: 7px;
+  padding: 12px;
+  border-left-width: 6px;
+  background: rgb(255 255 255 / 48%);
 }
 
 .pain-entry-list__entry summary {
@@ -130,7 +158,8 @@
 }
 
 .pain-entry-list__intensity,
-.pain-entry-list__active-badge {
+.pain-entry-list__active-badge,
+.pain-entry-list__activity-badge {
   display: inline-flex;
   min-height: 28px;
   align-items: center;
@@ -145,8 +174,18 @@
   background: rgb(63 111 91 / 12%);
 }
 
-.pain-entry-list__locations {
+.pain-entry-list__activity-badge {
+  background: rgb(37 48 43 / 6%);
+  font-weight: 700;
+}
+
+.pain-entry-list__locations,
+.pain-entry-list__activity-name {
   line-height: 1.42;
+}
+
+.pain-entry-list__activity-name {
+  font-weight: 750;
 }
 
 .pain-entry-list__summary-bottom {
@@ -240,7 +279,8 @@
 
   .pain-entry-list__date-filter,
   .pain-entry-list__date-filter input,
-  .pain-entry-list__clear-date {
+  .pain-entry-list__clear-date,
+  .pain-entry-list__activity-toggle {
     width: 100%;
   }
 
