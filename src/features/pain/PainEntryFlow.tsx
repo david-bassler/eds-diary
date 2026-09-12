@@ -1,10 +1,10 @@
 import { FormEvent, useEffect, useState } from 'react'
-import { createPainEntry } from './painRepository'
+import { createPainEntry, savePainEntry } from './painRepository'
 import {
   addCustomPainType,
   listCustomPainTypes,
 } from './painTypeOptions'
-import type { PainLocation } from './painEntry'
+import type { PainEntry, PainLocation } from './painEntry'
 import {
   BodyMapSelector,
   painLocationLabel,
@@ -29,18 +29,31 @@ interface LocalDateTime {
   time: string
 }
 
-function localNow(): LocalDateTime {
-  const now = new Date()
-  const year = String(now.getFullYear())
-  const month = String(now.getMonth() + 1).padStart(2, '0')
-  const day = String(now.getDate()).padStart(2, '0')
-  const hours = String(now.getHours()).padStart(2, '0')
-  const minutes = String(now.getMinutes()).padStart(2, '0')
+export interface PainEntryFlowProps {
+  entry?: PainEntry | null
+  onSaved?: (entry: PainEntry) => void
+}
+
+function localDateTime(value: Date): LocalDateTime {
+  const year = String(value.getFullYear())
+  const month = String(value.getMonth() + 1).padStart(2, '0')
+  const day = String(value.getDate()).padStart(2, '0')
+  const hours = String(value.getHours()).padStart(2, '0')
+  const minutes = String(value.getMinutes()).padStart(2, '0')
 
   return {
     date: `${year}-${month}-${day}`,
     time: `${hours}:${minutes}`,
   }
+}
+
+function localNow(): LocalDateTime {
+  return localDateTime(new Date())
+}
+
+function localFromIso(value: string): LocalDateTime {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? localNow() : localDateTime(date)
 }
 
 function toIso(date: string, time: string): string | null {
@@ -54,19 +67,23 @@ function scrollToTop(): void {
   })
 }
 
-export function PainEntryFlow() {
+export function PainEntryFlow({ entry = null, onSaved }: PainEntryFlowProps) {
   const [step, setStep] = useState<1 | 2 | 3>(1)
-  const [locations, setLocations] = useState<PainLocation[]>([])
-  const [intensity, setIntensity] = useState<number | null>(null)
-  const [selectedPainTypes, setSelectedPainTypes] = useState<string[]>([])
+  const [locations, setLocations] = useState<PainLocation[]>(() => entry?.locations ?? [])
+  const [intensity, setIntensity] = useState<number | null>(() => entry?.intensity ?? null)
+  const [selectedPainTypes, setSelectedPainTypes] = useState<string[]>(() => entry?.qualities ?? [])
   const [customPainTypes, setCustomPainTypes] = useState<string[]>([])
   const [newPainType, setNewPainType] = useState('')
-  const [cause, setCause] = useState('')
-  const [occursWhen, setOccursWhen] = useState('')
-  const [note, setNote] = useState('')
-  const [when, setWhen] = useState<LocalDateTime>(localNow)
-  const [hasEnd, setHasEnd] = useState(false)
-  const [endWhen, setEndWhen] = useState<LocalDateTime>(localNow)
+  const [cause, setCause] = useState(() => entry?.cause ?? '')
+  const [occursWhen, setOccursWhen] = useState(() => entry?.occursWhen ?? '')
+  const [note, setNote] = useState(() => entry?.note ?? '')
+  const [when, setWhen] = useState<LocalDateTime>(() =>
+    entry ? localFromIso(entry.startedAt) : localNow(),
+  )
+  const [hasEnd, setHasEnd] = useState(() => Boolean(entry?.endedAt))
+  const [endWhen, setEndWhen] = useState<LocalDateTime>(() =>
+    entry?.endedAt ? localFromIso(entry.endedAt) : localNow(),
+  )
   const [status, setStatus] = useState('')
   const [saving, setSaving] = useState(false)
 
@@ -83,14 +100,11 @@ export function PainEntryFlow() {
   }, [])
 
   const painTypes = [
-    ...DEFAULT_PAIN_TYPES,
-    ...customPainTypes.filter(
-      (custom) =>
-        !DEFAULT_PAIN_TYPES.some(
-          (preset) =>
-            preset.toLocaleLowerCase('de') === custom.toLocaleLowerCase('de'),
-        ),
-    ),
+    ...new Set([
+      ...DEFAULT_PAIN_TYPES,
+      ...customPainTypes,
+      ...selectedPainTypes,
+    ]),
   ]
 
   function togglePainType(type: string): void {
@@ -179,37 +193,62 @@ export function PainEntryFlow() {
     setStatus('')
 
     try {
-      await createPainEntry({
-        startedAt,
-        endedAt,
-        locations,
-        intensity,
-        qualities: selectedPainTypes,
-        cause,
-        occursWhen,
-        note,
-      })
+      const savedEntry = entry
+        ? await savePainEntry({
+            ...entry,
+            startedAt,
+            endedAt,
+            locations,
+            intensity,
+            qualities: selectedPainTypes,
+            cause,
+            occursWhen,
+            note,
+          })
+        : await createPainEntry({
+            startedAt,
+            endedAt,
+            locations,
+            intensity,
+            qualities: selectedPainTypes,
+            cause,
+            occursWhen,
+            note,
+          })
 
-      setLocations([])
-      setIntensity(null)
-      setSelectedPainTypes([])
-      setCause('')
-      setOccursWhen('')
-      setNote('')
-      setWhen(localNow())
-      setHasEnd(false)
-      setEndWhen(localNow())
-      setStep(1)
-      setStatus('Schmerzeintrag gespeichert.')
+      if (!entry) {
+        setLocations([])
+        setIntensity(null)
+        setSelectedPainTypes([])
+        setCause('')
+        setOccursWhen('')
+        setNote('')
+        setWhen(localNow())
+        setHasEnd(false)
+        setEndWhen(localNow())
+        setStep(1)
+        setStatus('Schmerzeintrag gespeichert.')
+      } else {
+        setStatus('Änderungen gespeichert.')
+      }
+
+      onSaved?.(savedEntry)
     } catch {
-      setStatus('Der Schmerzeintrag konnte lokal nicht gespeichert werden.')
+      setStatus(
+        entry
+          ? 'Die Änderungen konnten lokal nicht gespeichert werden.'
+          : 'Der Schmerzeintrag konnte lokal nicht gespeichert werden.',
+      )
     } finally {
       setSaving(false)
     }
   }
 
   return (
-    <section className="pain-entry-flow" aria-label="Schmerzerfassung">
+    <section
+      className="pain-entry-flow"
+      aria-label={entry ? 'Schmerzeintrag bearbeiten' : 'Schmerzerfassung'}
+    >
       <div className="pain-entry-flow__progress" aria-label="Erfassungsschritte">
         <span data-active={step === 1}>1 · Region</span>
         <span data-active={step === 2}>2 · Stärke</span>
@@ -264,10 +303,11 @@ export function PainEntryFlow() {
         <form className="pain-entry-flow__step" onSubmit={(event) => void submit(event)}>
           <div className="pain-entry-flow__intro">
             <p className="pain-entry-flow__eyebrow">Schritt 3 von 3</p>
-            <h2 id="pain-entry-flow-title">Schmerzdetails</h2>
+            <h2 id="pain-entry-flow-title">
+              {entry ? 'Schmerzdetails bearbeiten' : 'Schmerzdetails'}
+            </h2>
             <p>
-              {locations.length} {locations.length === 1 ? 'Region' : 'Regionen'}:
-              {' '}
+              {locations.length} {locations.length === 1 ? 'Region' : 'Regionen'}:{' '}
               {locations.map(painLocationLabel).join(', ')} · Stärke {intensity}/10
             </p>
           </div>
@@ -393,7 +433,7 @@ export function PainEntryFlow() {
                 onChange={(event) => {
                   const checked = event.target.checked
                   setHasEnd(checked)
-                  if (checked) setEndWhen(localNow())
+                  if (checked && !hasEnd) setEndWhen(localNow())
                 }}
               />
               <span>Endzeitpunkt angeben</span>
@@ -454,7 +494,11 @@ export function PainEntryFlow() {
               type="submit"
               disabled={saving || !selectedPainTypes.length}
             >
-              {saving ? 'Speichert …' : 'Speichern'}
+              {saving
+                ? 'Speichert …'
+                : entry
+                  ? 'Änderungen speichern'
+                  : 'Speichern'}
             </button>
           </div>
         </form>
