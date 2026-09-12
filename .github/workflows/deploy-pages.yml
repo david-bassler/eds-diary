@@ -80,7 +80,7 @@ jobs:
             signature="$(od -An -t x1 -N 8 "/tmp/${file}" | tr -d ' \n')"
             test "$signature" = "89504e470d0a1a0a"
           done
-          for file in head-front-hitmap.png head-back-hitmap.png shoulder-right-hitmap.png; do
+          for file in head-front-hitmap.png head-back-hitmap.png shoulder-right-hitmap.png hip-right-hitmap.png; do
             curl --fail --show-error --silent --location \
               --output "/tmp/${file}" "${base_url}body-map/details/${file}"
             test -s "/tmp/${file}"
@@ -90,3 +90,4 @@ jobs:
           echo "714d4607f2196260b9ea4c310592210ae8268c5da3d62cf962ece899154a2d53  /tmp/head-front-hitmap.png" | sha256sum -c -
           echo "303ee1d4d3d06e301873f32a75db0dd84663f4508bb8037a1274beb5bb5ea22f  /tmp/head-back-hitmap.png" | sha256sum -c -
           echo "0d9c6c0dc5935351e04f68bc9e6c02b5b617b17b0db76f824659cec88db97e2b  /tmp/shoulder-right-hitmap.png" | sha256sum -c -
+          echo "fa501c4b705df1a6c4da39e22f4d4a0ab5dd03e35e882d3a4eba9e83c01683f9  /tmp/hip-right-hitmap.png" | sha256sum -c -

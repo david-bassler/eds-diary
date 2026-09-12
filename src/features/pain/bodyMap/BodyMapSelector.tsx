@@ -20,6 +20,11 @@ import {
   isShoulderRegionId,
   shoulderDetailLabel,
 } from './ShoulderDetailSelector'
+import {
+  HipDetailSelector,
+  hipDetailLabel,
+  isHipRegionId,
+} from './HipDetailSelector'
 import './BodyMapSelector.css'
 
 export interface BodyMapSelectorProps {
@@ -209,6 +214,10 @@ function detailRegionLabel(location: PainLocation, regionId: string): string {
     return shoulderDetailLabel(regionId)
   }
 
+  if (isHipRegionId(location.regionId)) {
+    return hipDetailLabel(regionId)
+  }
+
   return handDetailLabel(regionId, location.view)
 }
 
@@ -237,7 +246,8 @@ function isDetailRegionId(regionId: string): boolean {
   return (
     isHandRegionId(regionId) ||
     isHeadRegionId(regionId) ||
-    isShoulderRegionId(regionId)
+    isShoulderRegionId(regionId) ||
+    isHipRegionId(regionId)
   )
 }
 
@@ -462,6 +472,10 @@ function detailActionLabel(location: PainLocation): string {
       : 'Rechte Schulter'
   }
 
+  if (isHipRegionId(location.regionId)) {
+    return 'Becken / Hüfte'
+  }
+
   return `${location.regionId === 'left-hand' ? 'Linke' : 'Rechte'} Hand`
 }
 
@@ -594,6 +608,14 @@ export function BodyMapSelector({ value, onChange }: BodyMapSelectorProps) {
       {detailTarget && detailLocation && isShoulderRegionId(detailTarget.regionId) ? (
         <ShoulderDetailSelector
           side={detailTarget.regionId === 'left-shoulder' ? 'left' : 'right'}
+          value={detailLocation.detailRegionIds ?? []}
+          onChange={updateDetails}
+          onClose={() => setDetailTarget(null)}
+        />
+      ) : null}
+
+      {detailTarget && detailLocation && isHipRegionId(detailTarget.regionId) ? (
+        <HipDetailSelector
           value={detailLocation.detailRegionIds ?? []}
           onChange={updateDetails}
           onClose={() => setDetailTarget(null)}
