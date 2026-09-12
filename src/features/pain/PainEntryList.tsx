@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import type { ActivityEntry } from '../activity/activityEntry'
+import { listActivityEntries } from '../activity/activityRepository'
 import type { PainEntry } from './painEntry'
 import {
   deletePainEntry,
@@ -15,6 +17,10 @@ export interface PainEntryListProps {
 }
 
 type ListFilter = 'all' | 'active'
+
+type TimelineItem =
+  | { kind: 'pain'; entry: PainEntry }
+  | { kind: 'activity'; entry: ActivityEntry }
 
 function localDateKey(value: string): string {
   const date = new Date(value)
@@ -79,6 +85,24 @@ function formatDuration(entry: PainEntry): string {
   return parts.join(' ')
 }
 
+function timeMinutes(value: string): number {
+  const [hours, minutes] = value.split(':').map(Number)
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return 0
+  return hours * 60 + minutes
+}
+
+function activityDuration(entry: ActivityEntry): string {
+  if (entry.isOngoing) return 'läuft'
+  const duration = timeMinutes(entry.endTime) - timeMinutes(entry.startTime)
+  if (duration <= 0) return ''
+
+  const hours = Math.floor(duration / 60)
+  const minutes = duration % 60
+  if (!hours) return `${minutes} min`
+  if (!minutes) return `${hours} h`
+  return `${hours} h ${minutes} min`
+}
+
 function isOngoing(entry: PainEntry): boolean {
   return !entry.endedAt
 }
@@ -86,6 +110,11 @@ function isOngoing(entry: PainEntry): boolean {
 function timeRangeLabel(entry: PainEntry): string {
   if (isOngoing(entry)) return `seit ${formatTime(entry.startedAt)}`
   return `${formatTime(entry.startedAt)} – ${formatTime(entry.endedAt)}`
+}
+
+function activityTimeRangeLabel(entry: ActivityEntry): string {
+  if (entry.isOngoing) return `seit ${entry.startTime}`
+  return `${entry.startTime} – ${entry.endTime}`
 }
 
 function detailRows(entry: PainEntry): Array<[string, string]> {
@@ -99,14 +128,32 @@ function detailRows(entry: PainEntry): Array<[string, string]> {
   return rows
 }
 
+function timelineDayKey(item: TimelineItem): string {
+  return item.kind === 'pain' ? localDateKey(item.entry.startedAt) : item.entry.date
+}
+
+function timelineStartMinutes(item: TimelineItem): number {
+  if (item.kind === 'activity') return timeMinutes(item.entry.startTime)
+
+  const date = new Date(item.entry.startedAt)
+  if (Number.isNaN(date.getTime())) return 0
+  return date.getHours() * 60 + date.getMinutes()
+}
+
+function timelineItemIsActive(item: TimelineItem): boolean {
+  return item.kind === 'pain' ? isOngoing(item.entry) : item.entry.isOngoing
+}
+
 export function PainEntryList({
   refreshKey = 0,
   onEdit,
   onChanged,
 }: PainEntryListProps) {
   const [entries, setEntries] = useState<PainEntry[]>([])
+  const [activities, setActivities] = useState<ActivityEntry[]>([])
   const [filter, setFilter] = useState<ListFilter>('all')
   const [dateFilter, setDateFilter] = useState('')
+  const [showActivities, setShowActivities] = useState(false)
   const [loading, setLoading] = useState(true)
   const [status, setStatus] = useState('')
   const [busyId, setBusyId] = useState<string | null>(null)
@@ -114,10 +161,15 @@ export function PainEntryList({
   const loadEntries = useCallback(async () => {
     setLoading(true)
     try {
-      setEntries(await listPainEntries())
+      const [painEntries, activityEntries] = await Promise.all([
+        listPainEntries(),
+        listActivityEntries(),
+      ])
+      setEntries(painEntries)
+      setActivities(activityEntries)
       setStatus('')
     } catch {
-      setStatus('Die Schmerzeinträge konnten nicht geladen werden.')
+      setStatus('Die Verlaufseinträge konnten nicht geladen werden.')
     } finally {
       setLoading(false)
     }
@@ -127,26 +179,42 @@ export function PainEntryList({
     void loadEntries()
   }, [loadEntries, refreshKey])
 
-  const filteredEntries = useMemo(
-    () =>
-      entries.filter((entry) => {
+  const timelineItems = useMemo(() => {
+    const painItems: TimelineItem[] = entries
+      .filter((entry) => {
         if (filter === 'active' && !isOngoing(entry)) return false
         if (dateFilter && localDateKey(entry.startedAt) !== dateFilter) return false
         return true
-      }),
-    [dateFilter, entries, filter],
-  )
+      })
+      .map((entry) => ({ kind: 'pain', entry }))
+
+    const activityItems: TimelineItem[] = showActivities
+      ? activities
+          .filter((entry) => {
+            if (filter === 'active' && !entry.isOngoing) return false
+            if (dateFilter && entry.date !== dateFilter) return false
+            return true
+          })
+          .map((entry) => ({ kind: 'activity', entry }))
+      : []
+
+    return [...painItems, ...activityItems].sort((left, right) => {
+      const dayComparison = timelineDayKey(right).localeCompare(timelineDayKey(left))
+      if (dayComparison) return dayComparison
+      return timelineStartMinutes(right) - timelineStartMinutes(left)
+    })
+  }, [activities, dateFilter, entries, filter, showActivities])
 
   const groupedEntries = useMemo(() => {
-    const groups = new Map<string, PainEntry[]>()
-    for (const entry of filteredEntries) {
-      const key = localDateKey(entry.startedAt)
+    const groups = new Map<string, TimelineItem[]>()
+    for (const item of timelineItems) {
+      const key = timelineDayKey(item)
       const group = groups.get(key)
-      if (group) group.push(entry)
-      else groups.set(key, [entry])
+      if (group) group.push(item)
+      else groups.set(key, [item])
     }
     return [...groups.entries()]
-  }, [filteredEntries])
+  }, [timelineItems])
 
   async function endEntry(entry: PainEntry): Promise<void> {
     if (!isOngoing(entry)) return
@@ -206,6 +274,15 @@ export function PainEntryList({
           </button>
         </div>
 
+        <label className="pain-entry-list__activity-toggle">
+          <input
+            type="checkbox"
+            checked={showActivities}
+            onChange={(event) => setShowActivities(event.target.checked)}
+          />
+          <span>Aktivitäten anzeigen</span>
+        </label>
+
         <label className="pain-entry-list__date-filter">
           <span>Datum</span>
           <input
@@ -227,30 +304,84 @@ export function PainEntryList({
 
       {loading ? <p className="pain-entry-list__state">Einträge werden geladen …</p> : null}
 
-      {!loading && !filteredEntries.length ? (
+      {!loading && !timelineItems.length ? (
         <p className="pain-entry-list__state">
-          {entries.length
-            ? 'Für diesen Filter gibt es keine Schmerzeinträge.'
-            : 'Noch keine Schmerzeinträge vorhanden.'}
+          {entries.length || (showActivities && activities.length)
+            ? showActivities
+              ? 'Für diesen Filter gibt es keine Schmerzen oder Aktivitäten.'
+              : 'Für diesen Filter gibt es keine Schmerzeinträge.'
+            : showActivities
+              ? 'Noch keine Schmerzen oder Aktivitäten vorhanden.'
+              : 'Noch keine Schmerzeinträge vorhanden.'}
         </p>
       ) : null}
 
       <div className="pain-entry-list__days">
-        {groupedEntries.map(([dayKey, dayEntries]) => {
-          const activeCount = dayEntries.filter(isOngoing).length
+        {groupedEntries.map(([dayKey, dayItems]) => {
+          const painCount = dayItems.filter((item) => item.kind === 'pain').length
+          const activityCount = dayItems.length - painCount
+          const activeCount = dayItems.filter(timelineItemIsActive).length
+          const summaryParts: string[] = []
+
+          if (painCount) {
+            summaryParts.push(`${painCount} ${painCount === 1 ? 'Schmerz' : 'Schmerzen'}`)
+          }
+          if (activityCount) {
+            summaryParts.push(
+              `${activityCount} ${activityCount === 1 ? 'Aktivität' : 'Aktivitäten'}`,
+            )
+          }
+          if (activeCount) summaryParts.push(`${activeCount} aktiv`)
 
           return (
             <section className="pain-entry-list__day" key={dayKey}>
               <header className="pain-entry-list__day-header">
                 <h2>{formatDayLabel(dayKey)}</h2>
-                <span>
-                  {dayEntries.length} {dayEntries.length === 1 ? 'Eintrag' : 'Einträge'}
-                  {activeCount ? ` · ${activeCount} aktiv` : ''}
-                </span>
+                <span>{summaryParts.join(' · ')}</span>
               </header>
 
               <div className="pain-entry-list__entries">
-                {dayEntries.map((entry) => {
+                {dayItems.map((item) => {
+                  if (item.kind === 'activity') {
+                    const activity = item.entry
+                    const duration = activityDuration(activity)
+
+                    return (
+                      <article
+                        className="pain-entry-list__activity"
+                        data-active={activity.isOngoing}
+                        key={`activity:${activity.id}`}
+                      >
+                        <div className="pain-entry-list__summary-top">
+                          <strong>{activityTimeRangeLabel(activity)}</strong>
+                          <div className="pain-entry-list__badges">
+                            <span className="pain-entry-list__activity-badge">
+                              Aktivität
+                            </span>
+                            {activity.isOngoing ? (
+                              <span className="pain-entry-list__active-badge">Aktiv</span>
+                            ) : null}
+                          </div>
+                        </div>
+                        <div className="pain-entry-list__activity-name">
+                          <span
+                            className="pain-entry-list__activity-color"
+                            style={{ backgroundColor: activity.color }}
+                            aria-hidden="true"
+                          />
+                          <strong>{activity.activityName}</strong>
+                        </div>
+                        <div className="pain-entry-list__summary-bottom">
+                          <span className="pain-entry-list__preview">
+                            {activity.note || 'Keine Notiz'}
+                          </span>
+                          {duration ? <span>{duration}</span> : null}
+                        </div>
+                      </article>
+                    )
+                  }
+
+                  const entry = item.entry
                   const ongoing = isOngoing(entry)
                   const rows = detailRows(entry)
                   const duration = formatDuration(entry)
