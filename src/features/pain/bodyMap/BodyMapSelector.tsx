@@ -25,6 +25,11 @@ import {
   hipDetailLabel,
   isHipRegionId,
 } from './HipDetailSelector'
+import {
+  KneeDetailSelector,
+  isKneeRegionId,
+  kneeDetailLabel,
+} from './KneeDetailSelector'
 import './BodyMapSelector.css'
 
 export interface BodyMapSelectorProps {
@@ -218,6 +223,10 @@ function detailRegionLabel(location: PainLocation, regionId: string): string {
     return hipDetailLabel(regionId)
   }
 
+  if (isKneeRegionId(location.regionId, location.view)) {
+    return kneeDetailLabel(regionId)
+  }
+
   return handDetailLabel(regionId, location.view)
 }
 
@@ -242,12 +251,13 @@ function isSelected(
   )
 }
 
-function isDetailRegionId(regionId: string): boolean {
+function isDetailRegionId(view: BodyView, regionId: string): boolean {
   return (
     isHandRegionId(regionId) ||
     isHeadRegionId(regionId) ||
     isShoulderRegionId(regionId) ||
-    isHipRegionId(regionId)
+    isHipRegionId(regionId) ||
+    isKneeRegionId(regionId, view)
   )
 }
 
@@ -476,6 +486,10 @@ function detailActionLabel(location: PainLocation): string {
     return 'Becken / Hüfte'
   }
 
+  if (isKneeRegionId(location.regionId, location.view)) {
+    return location.regionId === 'left-knee' ? 'Linkes Knie' : 'Rechtes Knie'
+  }
+
   return `${location.regionId === 'left-hand' ? 'Linke' : 'Rechte'} Hand`
 }
 
@@ -483,7 +497,7 @@ export function BodyMapSelector({ value, onChange }: BodyMapSelectorProps) {
   const [mobileView, setMobileView] = useState<BodyView>('front')
   const [detailTarget, setDetailTarget] = useState<DetailTarget | null>(() => {
     const detailLocation = value.find((location) =>
-      isDetailRegionId(location.regionId),
+      isDetailRegionId(location.view, location.regionId),
     )
     return detailLocation
       ? { view: detailLocation.view, regionId: detailLocation.regionId }
@@ -519,7 +533,7 @@ export function BodyMapSelector({ value, onChange }: BodyMapSelectorProps) {
     }
 
     onChange([...value, { view, regionId }])
-    if (isDetailRegionId(regionId)) setDetailTarget({ view, regionId })
+    if (isDetailRegionId(view, regionId)) setDetailTarget({ view, regionId })
   }
 
   function updateDetails(detailRegionIds: string[]): void {
@@ -622,6 +636,17 @@ export function BodyMapSelector({ value, onChange }: BodyMapSelectorProps) {
         />
       ) : null}
 
+      {detailTarget &&
+      detailLocation &&
+      isKneeRegionId(detailTarget.regionId, detailTarget.view) ? (
+        <KneeDetailSelector
+          side={detailTarget.regionId === 'left-knee' ? 'left' : 'right'}
+          value={detailLocation.detailRegionIds ?? []}
+          onChange={updateDetails}
+          onClose={() => setDetailTarget(null)}
+        />
+      ) : null}
+
       <div className="body-map-selector__selection" aria-live="polite">
         <strong>
           {value.length === 0
@@ -633,7 +658,9 @@ export function BodyMapSelector({ value, onChange }: BodyMapSelectorProps) {
             <span>{value.map(painLocationLabel).join(', ')}</span>
             <div className="body-map-selector__detail-actions">
               {value
-                .filter((location) => isDetailRegionId(location.regionId))
+                .filter((location) =>
+                  isDetailRegionId(location.view, location.regionId),
+                )
                 .map((location) => (
                   <button
                     key={`${location.view}:${location.regionId}`}
