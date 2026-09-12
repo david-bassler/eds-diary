@@ -6,7 +6,7 @@ import {
 import { ActivityNowIndicator } from './features/activity/ActivityNowIndicator'
 import { ActivityPage } from './features/activity/ActivityPage'
 import { MedicationPage } from './features/medication/MedicationPage'
-import { PainEntryFlow } from './features/pain/PainEntryFlow'
+import { PainPage } from './features/pain/PainPage'
 import { PainStatusPrompt } from './features/pain/PainStatusPrompt'
 import { QrShareButton } from './features/share/QrShareButton'
 import { GoogleSyncSettings } from './features/settings/GoogleSyncSettings'
@@ -114,7 +114,7 @@ export function App() {
               ) : null}
             </header>
 
-            {activeSection === 'pain' ? <PainEntryFlow /> : null}
+            {activeSection === 'pain' ? <PainPage /> : null}
 
             {activeSection === 'medication' ? <MedicationPage /> : null}
 
