@@ -8,6 +8,7 @@ import { KneeDetailSelector, isKneeRegionId, kneeDetailLabel } from './KneeDetai
 import { LowerBackDetailSelector, isLowerBackRegionId, lowerBackDetailLabel } from './LowerBackDetailSelector'
 import { FootDetailSelector, footDetailLabel, isFootRegionId } from './FootDetailSelector'
 import { GluteDetailSelector, gluteDetailLabel, isGluteRegionId } from './GluteDetailSelector'
+import { AbdomenDetailSelector, abdomenDetailLabel, isAbdomenRegionId } from './AbdomenDetailSelector'
 import './BodyMapSelector.css'
 
 export interface BodyMapSelectorProps {
@@ -134,6 +135,7 @@ function detailRegionLabel(location: PainLocation, id: string): string {
   if (isLowerBackRegionId(location.regionId, location.view)) return lowerBackDetailLabel(id)
   if (isFootRegionId(location.regionId, location.view)) return footDetailLabel(id, location.view)
   if (isGluteRegionId(location.regionId, location.view)) return gluteDetailLabel(id)
+  if (isAbdomenRegionId(location.regionId, location.view)) return abdomenDetailLabel(id)
   return handDetailLabel(id, location.view)
 }
 
@@ -149,7 +151,7 @@ const isSelected = (value: readonly PainLocation[], view: BodyView, regionId: st
 const isDetailRegionId = (view: BodyView, regionId: string) =>
   isHandRegionId(regionId) || isHeadRegionId(regionId) || isShoulderRegionId(regionId) ||
   isHipRegionId(regionId) || isKneeRegionId(regionId, view) || isLowerBackRegionId(regionId, view) ||
-  isFootRegionId(regionId, view) || isGluteRegionId(regionId, view)
+  isFootRegionId(regionId, view) || isGluteRegionId(regionId, view) || isAbdomenRegionId(regionId, view)
 
 function BodyViewMap({ view, value, onToggle, onSwipe, activeOnMobile }: {
   view: BodyView
@@ -264,6 +266,7 @@ function detailActionLabel(location: PainLocation): string {
   if (isLowerBackRegionId(location.regionId, location.view)) return 'Unterer Rücken'
   if (isFootRegionId(location.regionId, location.view)) return location.regionId === 'left-foot' ? 'Linker Fuß' : 'Rechter Fuß'
   if (isGluteRegionId(location.regionId, location.view)) return location.regionId === 'left-glute' ? 'Linke Gesäß- / Hüftregion' : 'Rechte Gesäß- / Hüftregion'
+  if (isAbdomenRegionId(location.regionId, location.view)) return 'Bauch'
   return `${location.regionId === 'left-hand' ? 'Linke' : 'Rechte'} Hand`
 }
 
@@ -345,6 +348,9 @@ export function BodyMapSelector({ value, onChange }: BodyMapSelectorProps) {
       )}
       {detailTarget && detailLocation && isGluteRegionId(detailTarget.regionId, detailTarget.view) && (
         <GluteDetailSelector side={detailTarget.regionId === 'left-glute' ? 'left' : 'right'} value={detailLocation.detailRegionIds ?? []} onChange={updateDetails} onClose={closeDetails} />
+      )}
+      {detailTarget && detailLocation && isAbdomenRegionId(detailTarget.regionId, detailTarget.view) && (
+        <AbdomenDetailSelector value={detailLocation.detailRegionIds ?? []} onChange={updateDetails} onClose={closeDetails} />
       )}
 
       <div className="body-map-selector__selection" aria-live="polite">
