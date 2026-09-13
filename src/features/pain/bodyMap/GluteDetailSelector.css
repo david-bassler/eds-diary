@@ -1,0 +1,135 @@
+.glute-detail-selector {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgb(37 48 43 / 14%);
+  background: rgb(255 255 255 / 70%);
+}
+
+.glute-detail-selector__heading {
+  display: flex;
+  width: 100%;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.glute-detail-selector__heading > div {
+  display: grid;
+  gap: 2px;
+}
+
+.glute-detail-selector__heading span {
+  font-size: 0.85rem;
+  opacity: 0.72;
+}
+
+.glute-detail-selector button {
+  min-height: 44px;
+  border: 1px solid rgb(37 48 43 / 20%);
+  background: rgb(255 255 255 / 82%);
+  color: inherit;
+}
+
+.glute-detail-selector__heading > button {
+  padding: 0 14px;
+}
+
+.glute-detail-selector__artwork {
+  position: relative;
+  width: min(100%, 320px);
+  overflow: hidden;
+  background: #fff;
+  isolation: isolate;
+}
+
+.glute-detail-selector__image {
+  display: block;
+  width: 100%;
+  height: auto;
+  filter: grayscale(1) contrast(1.1) brightness(0.9);
+  pointer-events: none;
+  user-select: none;
+}
+
+.glute-detail-selector__overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+  touch-action: pan-y;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+
+.glute-detail-selector__artwork[data-mirrored='true'] .glute-detail-selector__image,
+.glute-detail-selector__artwork[data-mirrored='true'] .glute-detail-selector__overlay {
+  transform: scaleX(-1);
+}
+
+.glute-detail-selector__overlay[data-hit-map-ready='false'] {
+  cursor: wait;
+}
+
+.glute-detail-selector__selection {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.9rem;
+}
+
+.glute-detail-selector__selection > span {
+  line-height: 1.4;
+}
+
+.glute-detail-selector__selection > button {
+  flex: 0 0 auto;
+  padding: 0 12px;
+}
+
+.glute-detail-selector__list {
+  width: 100%;
+}
+
+.glute-detail-selector__list summary {
+  min-height: 44px;
+  cursor: pointer;
+  line-height: 44px;
+}
+
+.glute-detail-selector__list-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 6px 12px;
+  padding-top: 8px;
+}
+
+.glute-detail-selector__list-grid label {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 8px;
+}
+
+.glute-detail-selector__list-grid input {
+  width: 20px;
+  height: 20px;
+}
+
+@media (max-width: 480px) {
+  .glute-detail-selector__heading,
+  .glute-detail-selector__selection {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .glute-detail-selector__heading > button,
+  .glute-detail-selector__selection > button {
+    width: 100%;
+  }
+}
