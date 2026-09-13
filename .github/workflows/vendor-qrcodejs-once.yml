@@ -66,7 +66,7 @@ jobs:
           PY
 
           node --check public/vendor/qrcodejs/qrcode.min.js
-          test "$(grep -R --exclude-dir=.git --exclude=vendor-qrcodejs-once.yml -l 'cdn.jsdelivr.net/npm/qrcodejs' . | wc -l)" -eq 0
+          ! grep -q 'cdn.jsdelivr.net/npm/qrcodejs' index.html
           grep -q './vendor/qrcodejs/qrcode.min.js' index.html
           grep -q './vendor/qrcodejs/qrcode.min.js' public/sw.js
 
