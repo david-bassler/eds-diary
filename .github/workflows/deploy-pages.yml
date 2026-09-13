@@ -80,7 +80,7 @@ jobs:
             signature="$(od -An -t x1 -N 8 "/tmp/${file}" | tr -d ' \n')"
             test "$signature" = "89504e470d0a1a0a"
           done
-          for file in head-front-hitmap.png head-back-hitmap.png shoulder-right-hitmap.png hip-right-hitmap.png knee-front-right-hitmap.png knee-back-right-hitmap.png lower-back-hitmap.png foot-dorsal-right-hitmap.png foot-plantar-right-hitmap.png glute-right-hitmap.png; do
+          for file in head-front-hitmap.png head-back-hitmap.png shoulder-right-hitmap.png hip-right-hitmap.png knee-front-right-hitmap.png knee-back-right-hitmap.png lower-back-hitmap.png foot-dorsal-right-hitmap.png foot-plantar-right-hitmap.png glute-right-hitmap.png abdomen-hitmap.png; do
             curl --fail --show-error --silent --location \
               --output "/tmp/${file}" "${base_url}body-map/details/${file}?verify=${{ github.sha }}"
             test -s "/tmp/${file}"
@@ -97,3 +97,4 @@ jobs:
           echo "e6939a24cfa36b87b623eefb6ade8f8b1be12d9a639dc0b2193f08f3ae9f897b  /tmp/foot-dorsal-right-hitmap.png" | sha256sum -c -
           echo "926ae2e4525531093173e6a5ae27e432fb1e751661209112c98766e304a41222  /tmp/foot-plantar-right-hitmap.png" | sha256sum -c -
           echo "de0864acabbf3d971891b98392f45deae936d675e914aabe0499dbab6670699c  /tmp/glute-right-hitmap.png" | sha256sum -c -
+          echo "b91b2db6a51481fc1820b2e658fc0436346edd7cad82a954a51e2f26596ac40f  /tmp/abdomen-hitmap.png" | sha256sum -c -
