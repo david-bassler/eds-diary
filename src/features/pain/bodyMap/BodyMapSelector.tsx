@@ -104,16 +104,21 @@ function createHitMapData(imageData: ImageData, regions: readonly RegionDefiniti
     if (region !== undefined) regionAtPixel[pixel] = region
   }
   const boundaryAtPixel = new Uint8Array(width * height)
-  for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
-    const pixel = y * width + x
-    const region = regionAtPixel[pixel]
-    if (region === NO_REGION) continue
-    for (let dy = -1; dy <= 1 && !boundaryAtPixel[pixel]; dy += 1) for (let dx = -1; dx <= 1; dx += 1) {
-      if (!dx && !dy) continue
-      const nx = x + dx, ny = y + dy
-      if (nx < 0 || nx >= width || ny < 0 || ny >= height || regionAtPixel[ny * width + nx] !== region) {
-        boundaryAtPixel[pixel] = 1
-        break
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const pixel = y * width + x
+      const region = regionAtPixel[pixel]
+      if (region === NO_REGION) continue
+      for (let dy = -1; dy <= 1 && !boundaryAtPixel[pixel]; dy += 1) {
+        for (let dx = -1; dx <= 1; dx += 1) {
+          if (!dx && !dy) continue
+          const nx = x + dx
+          const ny = y + dy
+          if (nx < 0 || nx >= width || ny < 0 || ny >= height || regionAtPixel[ny * width + nx] !== region) {
+            boundaryAtPixel[pixel] = 1
+            break
+          }
+        }
       }
     }
   }
@@ -126,7 +131,7 @@ function detailRegionLabel(location: PainLocation, id: string): string {
   if (isHipRegionId(location.regionId)) return hipDetailLabel(id)
   if (isKneeRegionId(location.regionId, location.view)) return kneeDetailLabel(id)
   if (isLowerBackRegionId(location.regionId, location.view)) return lowerBackDetailLabel(id)
-  if (isFootRegionId(location.regionId, location.view)) return footDetailLabel(id)
+  if (isFootRegionId(location.regionId, location.view)) return footDetailLabel(id, location.view)
   return handDetailLabel(id, location.view)
 }
 
@@ -333,7 +338,7 @@ export function BodyMapSelector({ value, onChange }: BodyMapSelectorProps) {
         <LowerBackDetailSelector value={detailLocation.detailRegionIds ?? []} onChange={updateDetails} onClose={closeDetails} />
       )}
       {detailTarget && detailLocation && isFootRegionId(detailTarget.regionId, detailTarget.view) && (
-        <FootDetailSelector side={detailTarget.regionId === 'left-foot' ? 'left' : 'right'} value={detailLocation.detailRegionIds ?? []} onChange={updateDetails} onClose={closeDetails} />
+        <FootDetailSelector view={detailTarget.view} side={detailTarget.regionId === 'left-foot' ? 'left' : 'right'} value={detailLocation.detailRegionIds ?? []} onChange={updateDetails} onClose={closeDetails} />
       )}
 
       <div className="body-map-selector__selection" aria-live="polite">

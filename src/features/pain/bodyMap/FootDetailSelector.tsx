@@ -10,6 +10,7 @@ import './FootDetailSelector.css'
 export type FootSide = 'left' | 'right'
 
 export interface FootDetailSelectorProps {
+  view: BodyView
   side: FootSide
   value: readonly string[]
   onChange: (regionIds: string[]) => void
@@ -22,6 +23,12 @@ interface RegionDefinition {
   color: readonly [number, number, number]
 }
 
+interface FootDetailMapDefinition {
+  image: string
+  surfaceLabel: string
+  regions: readonly RegionDefinition[]
+}
+
 interface HitMapData {
   width: number
   height: number
@@ -32,7 +39,7 @@ interface HitMapData {
 const NO_REGION = 255
 const TAP_MAX_MOVEMENT = 14
 
-const FOOT_REGIONS: readonly RegionDefinition[] = [
+const DORSAL_REGIONS: readonly RegionDefinition[] = [
   { id: 'hindfoot', label: 'Rückfuß / Fersenbereich', color: [155, 130, 204] },
   { id: 'medial-midfoot', label: 'Innerer Mittelfuß', color: [242, 199, 94] },
   { id: 'central-dorsum', label: 'Zentraler Fußrücken', color: [120, 190, 130] },
@@ -45,27 +52,65 @@ const FOOT_REGIONS: readonly RegionDefinition[] = [
   { id: 'fifth-toe', label: 'Kleine Zehe', color: [225, 147, 184] },
 ]
 
-const FOOT_IMAGE = `${import.meta.env.BASE_URL}body-map/details/foot-dorsal-right-hitmap.png?v=1`
+const PLANTAR_REGIONS: readonly RegionDefinition[] = [
+  { id: 'heel', label: 'Ferse', color: [155, 130, 204] },
+  { id: 'medial-arch', label: 'Inneres Fußgewölbe', color: [242, 199, 94] },
+  { id: 'lateral-sole', label: 'Äußere Fußsohle', color: [104, 158, 218] },
+  { id: 'forefoot-pad', label: 'Ballen / Vorfußsohle', color: [225, 147, 84] },
+  { id: 'great-toe', label: 'Großzehe', color: [232, 111, 104] },
+  { id: 'second-toe', label: 'Zweite Zehe', color: [110, 190, 170] },
+  { id: 'third-toe', label: 'Dritte Zehe', color: [93, 170, 220] },
+  { id: 'fourth-toe', label: 'Vierte Zehe', color: [175, 125, 205] },
+  { id: 'fifth-toe', label: 'Kleine Zehe', color: [225, 147, 184] },
+]
 
-export function isFootRegionId(regionId: string, view?: BodyView): boolean {
-  return view === 'front' && (regionId === 'left-foot' || regionId === 'right-foot')
+const FOOT_DETAIL_MAPS: Record<BodyView, FootDetailMapDefinition> = {
+  front: {
+    image: `${import.meta.env.BASE_URL}body-map/details/foot-dorsal-right-hitmap.png?v=1`,
+    surfaceLabel: 'Fußrücken',
+    regions: DORSAL_REGIONS,
+  },
+  back: {
+    image: `${import.meta.env.BASE_URL}body-map/details/foot-plantar-right-hitmap.png?v=1`,
+    surfaceLabel: 'Fußsohle',
+    regions: PLANTAR_REGIONS,
+  },
 }
 
-export function footDetailLabel(regionId: string): string {
-  return FOOT_REGIONS.find((region) => region.id === regionId)?.label ?? regionId
+const GENERIC_LABELS = new Map(
+  [...DORSAL_REGIONS, ...PLANTAR_REGIONS].map(
+    (region) => [region.id, region.label] as const,
+  ),
+)
+
+export function isFootRegionId(regionId: string, view?: BodyView): boolean {
+  return (
+    (view === 'front' || view === 'back') &&
+    (regionId === 'left-foot' || regionId === 'right-foot')
+  )
+}
+
+export function footDetailLabel(regionId: string, view?: BodyView): string {
+  const viewLabel = view
+    ? FOOT_DETAIL_MAPS[view].regions.find((region) => region.id === regionId)?.label
+    : undefined
+  return viewLabel ?? GENERIC_LABELS.get(regionId) ?? regionId
 }
 
 function colorKey(red: number, green: number, blue: number): string {
   return `${red},${green},${blue}`
 }
 
-function createHitMapData(imageData: ImageData): HitMapData {
+function createHitMapData(
+  imageData: ImageData,
+  regions: readonly RegionDefinition[],
+): HitMapData {
   const { width, height, data } = imageData
   const regionAtPixel = new Uint8Array(width * height)
   regionAtPixel.fill(NO_REGION)
 
   const colorLookup = new Map(
-    FOOT_REGIONS.map((region, index) => [
+    regions.map((region, index) => [
       colorKey(region.color[0], region.color[1], region.color[2]),
       index,
     ]),
@@ -114,6 +159,7 @@ function createHitMapData(imageData: ImageData): HitMapData {
 }
 
 export function FootDetailSelector({
+  view,
   side,
   value,
   onChange,
@@ -126,6 +172,7 @@ export function FootDetailSelector({
     startY: number
   } | null>(null)
   const [hitMap, setHitMap] = useState<HitMapData | null>(null)
+  const map = FOOT_DETAIL_MAPS[view]
   const mirrored = side === 'left'
   const sideLabel = side === 'left' ? 'Linker Fuß' : 'Rechter Fuß'
 
@@ -146,6 +193,7 @@ export function FootDetailSelector({
       setHitMap(
         createHitMapData(
           context.getImageData(0, 0, canvas.width, canvas.height),
+          map.regions,
         ),
       )
     }
@@ -153,14 +201,14 @@ export function FootDetailSelector({
     image.onerror = () => {
       if (active) setHitMap(null)
     }
-    image.src = FOOT_IMAGE
+    image.src = map.image
 
     return () => {
       active = false
       image.onload = null
       image.onerror = null
     }
-  }, [])
+  }, [map.image, map.regions])
 
   useEffect(() => {
     const canvas = overlayRef.current
@@ -176,7 +224,7 @@ export function FootDetailSelector({
     if (!context) return
 
     const selectedRegions = new Set<number>()
-    FOOT_REGIONS.forEach((region, index) => {
+    map.regions.forEach((region, index) => {
       if (value.includes(region.id)) selectedRegions.add(index)
     })
 
@@ -198,7 +246,7 @@ export function FootDetailSelector({
       overlay.data[offset + 3] = 145
     }
     context.putImageData(overlay, 0, 0)
-  }, [hitMap, value])
+  }, [hitMap, map.regions, value])
 
   function toggleRegion(regionId: string): void {
     onChange(
@@ -232,7 +280,7 @@ export function FootDetailSelector({
     const regionIndex = hitMap.regionAtPixel[y * hitMap.width + x]
     if (regionIndex === NO_REGION) return
 
-    const region = FOOT_REGIONS[regionIndex]
+    const region = map.regions[regionIndex]
     if (region) toggleRegion(region.id)
   }
 
@@ -265,10 +313,11 @@ export function FootDetailSelector({
       className="foot-detail-selector"
       aria-label={`${sideLabel} genauer auswählen`}
       data-side={side}
+      data-surface={view}
     >
       <div className="foot-detail-selector__heading">
         <div>
-          <strong>{sideLabel} · Fußrücken</strong>
+          <strong>{sideLabel} · {map.surfaceLabel}</strong>
           <span>Optional · mehrere Bereiche und einzelne Zehen möglich</span>
         </div>
         <button type="button" onClick={onClose}>Fertig</button>
@@ -278,11 +327,11 @@ export function FootDetailSelector({
         className="foot-detail-selector__artwork"
         data-mirrored={mirrored}
         role="img"
-        aria-label={`${sideLabel}: Bereich oder Zehe antippen`}
+        aria-label={`${sideLabel} · ${map.surfaceLabel}: Bereich oder Zehe antippen`}
       >
         <img
           className="foot-detail-selector__image"
-          src={FOOT_IMAGE}
+          src={map.image}
           alt=""
           aria-hidden="true"
           draggable={false}
@@ -303,7 +352,7 @@ export function FootDetailSelector({
           <span>Noch keine Feinauswahl</span>
         ) : (
           <>
-            <span>{value.map(footDetailLabel).join(', ')}</span>
+            <span>{value.map((regionId) => footDetailLabel(regionId, view)).join(', ')}</span>
             <button type="button" onClick={() => onChange([])}>
               Feinauswahl löschen
             </button>
@@ -314,7 +363,7 @@ export function FootDetailSelector({
       <details className="foot-detail-selector__list">
         <summary>Bereiche alternativ als Liste auswählen</summary>
         <div className="foot-detail-selector__list-grid">
-          {FOOT_REGIONS.map((region) => (
+          {map.regions.map((region) => (
             <label key={region.id}>
               <input
                 type="checkbox"
