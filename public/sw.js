@@ -1,7 +1,8 @@
-const CACHE_NAME = 'eds-diary-shell-v33'
+const CACHE_NAME = 'eds-diary-shell-v34'
 const APP_SHELL = [
   './',
   './manifest.webmanifest',
+  './vendor/qrcodejs/qrcode.min.js',
   './icons/app-icon.svg',
   './icons/app-icon-192.png',
   './icons/app-icon-512.png',
