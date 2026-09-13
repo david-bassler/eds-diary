@@ -1,0 +1,53 @@
+name: Vendor QRCode.js retry
+
+on:
+  push:
+    paths:
+      - '.github/workflows/vendor-qrcodejs-once2.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  vendor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Vendor pinned QRCode.js and remove CDN runtime dependency
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git clone --branch "$GITHUB_REF_NAME" --single-branch "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" repo
+          cd repo
+          mkdir -p public/vendor/qrcodejs
+          curl --fail --location --proto '=https' --tlsv1.2 'https://raw.githubusercontent.com/davidshimjs/qrcodejs/04f46c6a0708418cb7b96fc563eacae0fbf77674/qrcode.min.js' -o public/vendor/qrcodejs/qrcode.min.js
+          curl --fail --location --proto '=https' --tlsv1.2 'https://raw.githubusercontent.com/davidshimjs/qrcodejs/04f46c6a0708418cb7b96fc563eacae0fbf77674/LICENSE' -o public/vendor/qrcodejs/LICENSE
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p = Path('index.html')
+          s = p.read_text()
+          old = '<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js" defer></script>'
+          new = '<script src="./vendor/qrcodejs/qrcode.min.js" defer></script>'
+          if s.count(old) != 1: raise SystemExit('unexpected QRCode.js runtime reference count')
+          p.write_text(s.replace(old, new))
+          p = Path('public/sw.js')
+          s = p.read_text()
+          m = re.search(r"const CACHE_NAME = 'eds-diary-shell-v(\d+)'", s)
+          if not m: raise SystemExit('cache version not found')
+          s = s[:m.start()] + f"const CACHE_NAME = 'eds-diary-shell-v{int(m.group(1))+1}'" + s[m.end():]
+          marker = "  './manifest.webmanifest',\n"
+          asset = "  './vendor/qrcodejs/qrcode.min.js',\n"
+          if asset not in s: s = s.replace(marker, marker + asset)
+          p.write_text(s)
+          PY
+          node --check public/vendor/qrcodejs/qrcode.min.js
+          ! grep -q 'cdn.jsdelivr.net/npm/qrcodejs' index.html
+          grep -q './vendor/qrcodejs/qrcode.min.js' index.html
+          grep -q './vendor/qrcodejs/qrcode.min.js' public/sw.js
+          rm -f .github/workflows/vendor-qrcodejs-once.yml .github/workflows/vendor-qrcodejs-once2.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'security: serve qrcodejs from same origin'
+          git push origin "HEAD:${GITHUB_REF_NAME}"
