@@ -1,0 +1,21 @@
+import { aesGcmDecrypt,aesGcmEncrypt,deriveRecoveryKey,randomBytes,recoveryCommitment } from './crypto/core'
+import { base64Url,fixedBase64Url,fromBase64Url } from './crypto/bytes'
+import { canonicalBytes,parseCanonicalJson } from './crypto/canonical'
+
+export interface RecoveryArtifact {format:'sync-recovery-v5';version:5;recovery_artifact_id:string;kdf_profile_id:'recovery-hkdf-v5-1';salt:string;wrap_iv:string;wrapped_payload:string}
+export interface RecoveryPayload {recovery_artifact_id:string;diary_id:string;epoch_id:string;key_id:string;RK_epoch:string;manifest_fingerprint:string;remote_anchor:unknown;google_account_binding:string;recovery_generation:number;created_at:string}
+function aad(a:Omit<RecoveryArtifact,'wrapped_payload'>):Uint8Array{return canonicalBytes(a)}
+export async function createRecovery(payload:Omit<RecoveryPayload,'recovery_artifact_id'>,urs:Uint8Array,id=randomBytes(16),salt=randomBytes(32),iv=randomBytes(12)):Promise<RecoveryArtifact>{
+  const recovery_artifact_id=base64Url(id),header={format:'sync-recovery-v5' as const,version:5 as const,recovery_artifact_id,kdf_profile_id:'recovery-hkdf-v5-1' as const,salt:base64Url(salt),wrap_iv:base64Url(iv)}
+  const encrypted=await aesGcmEncrypt(await deriveRecoveryKey(urs,salt),canonicalBytes({...payload,recovery_artifact_id} as never),aad(header),iv)
+  return {...header,wrapped_payload:base64Url(encrypted.ciphertext)}
+}
+export async function recoverRootKeyCandidate(artifact:RecoveryArtifact,urs:Uint8Array,manifestCommitment:string):Promise<{rootKey:Uint8Array;payload:RecoveryPayload}>{
+  fixedBase64Url(artifact.recovery_artifact_id,16);const header={format:artifact.format,version:artifact.version,recovery_artifact_id:artifact.recovery_artifact_id,kdf_profile_id:artifact.kdf_profile_id,salt:artifact.salt,wrap_iv:artifact.wrap_iv}
+  const plaintext=await aesGcmDecrypt(await deriveRecoveryKey(urs,fixedBase64Url(artifact.salt,32)),fromBase64Url(artifact.wrapped_payload),aad(header),fixedBase64Url(artifact.wrap_iv,12)),payload=parseCanonicalJson(plaintext) as unknown as RecoveryPayload
+  if(payload.recovery_artifact_id!==artifact.recovery_artifact_id)throw new Error('Recovery artifact binding mismatch.');const diary=fixedBase64Url(payload.diary_id,16),rootKey=fixedBase64Url(payload.RK_epoch,32)
+  if(await recoveryCommitment(urs,diary,payload.recovery_generation)!==manifestCommitment)throw new Error('Recovery secret continuity check failed.')
+  return {rootKey,payload}
+}
+/** Activation is intentionally separate: callers may invoke it only after complete remote/backup verification. */
+export async function activateRecoveredRoot(candidate:{rootKey:Uint8Array;payload:RecoveryPayload},bootstrap:()=>Promise<void>,persistWrap:(rootKey:Uint8Array,payload:RecoveryPayload)=>Promise<void>):Promise<void>{await bootstrap();await persistWrap(candidate.rootKey,candidate.payload)}
