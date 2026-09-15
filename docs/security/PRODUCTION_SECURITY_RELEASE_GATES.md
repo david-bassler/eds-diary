@@ -17,3 +17,10 @@ EDS Diary ist **nicht** als „production secure“ freigegeben.
 ## Zulässige Aussage
 
 „Konservativer clientseitiger Kryptographieentwurf mit fail-closed Produktgrenzen; nicht extern auditiert und nicht für Produktion freigegeben.“
+
+## Korrektur nach kumulativem Self-Review
+
+Der Gate-Eintrag „Interner Single-Writer-Kern – Erfüllt“ ist überholt und steht auf
+**FAIL**: lokaler Envelope-Cutover, persistente Create-/Rotation-/Migration-
+Orchestrierung und normative Fachschemafestlegung sind noch nicht abgeschlossen.
+Unabhängig von den externen Gates ist keine Freigabe zulässig.

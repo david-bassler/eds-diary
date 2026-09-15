@@ -37,3 +37,17 @@ Keine. Bei dieser Umsetzung wurde keine neue Security-Semantik benötigt.
 - Dependency-Audit-Bereinigung: `npm install` meldete 5 Funde (2 moderate, 2 high, 1 critical).
 
 Die zulässige Aussage bleibt: konservativer, fail-closed clientseitiger Kryptographieentwurf; nicht extern auditiert und nicht zur Produktion freigegeben.
+
+## Korrektur nach kumulativem Self-Review (15.09.2026)
+
+Die oben stehende pauschale DONE-Tabelle ist überholt. Dieser Durchgang schließt
+die Grid-/Binding-, Remote-Duplikat-, Recovery-Issuer- und Backup-Callback-Lücken.
+Nicht abgeschlossen sind der produktive Cutover von `secureRecords` auf das
+Envelopejournal, die vollständige persistente Create-Orchestrierung und die
+produktive Rotations-/Legacy-Migrationsorchestrierung. Die sechs Fachschema-IDs
+sind normativ genannt, ihre konkreten zulässigen Payloadfelder, Typen und Limits
+jedoch nicht festgelegt; bis zu einer normativen Entscheidung bleiben sie
+fail-closed statt erfundene Semantik zu akzeptieren.
+
+`TODO_INTERNAL` ist daher in diesem Checkout **nicht none**. Eine interne
+Vollständigkeits- oder Produktionsfreigabe wird ausdrücklich nicht behauptet.

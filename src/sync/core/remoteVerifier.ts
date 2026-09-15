@@ -30,7 +30,7 @@ function sameRow(left: readonly string[], right: PreparedEnvelope): boolean {
   return left.length === 3 && left[0] === right.envelopeId && left[1] === right.iv && left[2] === right.ciphertext
 }
 
-function validateControl(revision: Revision): void {
+function validateControl(revision: Revision, currentEpochId: string): void {
   if (revision.record_status !== 'control') return
   if (!['rotation-announcement-sw-v1', 'epoch-migration-sw-v1'].includes(revision.record_schema)) throw new Error('Unknown control schema.')
   if (!revision.record_data || typeof revision.record_data !== 'object' || Array.isArray(revision.record_data)) throw new Error('Invalid control data.')
@@ -42,7 +42,7 @@ function validateControl(revision: Revision): void {
   if (revision.record_schema === 'rotation-announcement-sw-v1') {
     if (revision.record_type !== 'rotation_announcement') throw new Error('Rotation control type mismatch.')
     exact(['rotation_id','from_epoch_id','successor_epoch_id','successor_creation_locator','successor_manifest_fingerprint','rotation_kind'])
-    id(data.rotation_id, 32, 'rotation_id'); id(data.from_epoch_id, 16, 'from_epoch_id'); id(data.successor_epoch_id, 16, 'successor_epoch_id')
+    id(data.rotation_id, 32, 'rotation_id'); id(data.from_epoch_id, 16, 'from_epoch_id'); if (data.from_epoch_id !== currentEpochId) throw new Error('Rotation announcement is not for the current epoch.'); id(data.successor_epoch_id, 16, 'successor_epoch_id')
     id(data.successor_creation_locator, 16, 'successor_creation_locator'); id(data.successor_manifest_fingerprint, 32, 'successor_manifest_fingerprint')
     if (data.rotation_kind !== 'normal') throw new Error('Invalid rotation kind.')
   } else {
@@ -58,6 +58,11 @@ function validateControl(revision: Revision): void {
     id(source.source_epoch_id,16,'source_epoch_id'); id(source.source_manifest_fingerprint,32,'source_manifest_fingerprint'); id(source.source_lineage_snapshot_hash,32,'source_lineage_snapshot_hash'); id(source.source_semantic_snapshot_hash,32,'source_semantic_snapshot_hash')
     const localOnly = data.migration_kind === 'local_rotation' || data.migration_kind === 'remote_enablement'
     if (localOnly ? source.source_anchor !== null : source.source_anchor === null) throw new Error('Migration anchor/kind mismatch.')
+    if (source.source_anchor !== null) {
+      const anchor = source.source_anchor as Record<string, unknown>
+      if (!anchor || typeof anchor !== 'object' || Array.isArray(anchor) || Object.keys(anchor).sort().join('\0') !== 'anchor_profile\0covered_row_count\0prefix_hash' || anchor.anchor_profile !== 'google-sheets-single-writer-v1' || !Number.isSafeInteger(anchor.covered_row_count) || Number(anchor.covered_row_count) < 0) throw new Error('Migration source anchor schema mismatch.')
+      id(anchor.prefix_hash, 32, 'source_anchor.prefix_hash')
+    }
     if (data.migration_kind === 'normal' && data.result_semantic_snapshot_hash !== source.source_semantic_snapshot_hash) throw new Error('Normal migration changed the semantic snapshot.')
   }
 }
@@ -84,6 +89,9 @@ function validateManifestBindings(manifest: ProtectedManifest, trusted: TrustedR
  * reconciliation. */
 export class FullRemoteVerifier {
   constructor(private readonly trusted: TrustedRemoteContext) {}
+  assertRecoveryBinding(binding: {diaryId:string;epochId:string;keyId:string;manifestFingerprint:string;recoveryGeneration:number;accountBinding:string;anchor:RemoteAnchor|null}): void {
+    if (binding.diaryId !== this.trusted.diaryId || binding.epochId !== this.trusted.epochId || binding.keyId !== this.trusted.expectedKeyId || binding.manifestFingerprint !== this.trusted.expectedManifestFingerprint || binding.recoveryGeneration !== this.trusted.expectedRecoveryGeneration || binding.accountBinding !== this.trusted.expectedGoogleAccountBinding || JSON.stringify(binding.anchor) !== JSON.stringify(this.trusted.oldAnchor)) throw new Error('Recovery candidate does not match the trusted verifier context.')
+  }
   async verify(snapshot: RemoteSnapshot): Promise<VerifiedRemoteState> {
     const cells = parseManifestCells(snapshot.manifest)
     const fingerprint = await manifestFingerprint(cells)
@@ -101,11 +109,23 @@ export class FullRemoteVerifier {
       return { envelopeId: row[0], iv: row[1], ciphertext: row[2], bytesHash: '' }
     })
     const revisions: Revision[] = []
+    const envelopeRows = new Map<string, string>()
+    const ivOwners = new Map<string, string>()
     for (const envelope of envelopes) {
       fixedBase64Url(envelope.envelopeId, 32, 'envelope_id'); fixedBase64Url(envelope.iv, 12, 'iv')
+      const rowBytes = JSON.stringify([envelope.envelopeId, envelope.iv, envelope.ciphertext])
+      const existing = envelopeRows.get(envelope.envelopeId)
+      if (existing !== undefined) {
+        if (existing !== rowBytes) throw new Error('Duplicate envelope_id has different bytes.')
+        continue // byte-identical physical retry: counted by the anchor, semantic once
+      }
+      envelopeRows.set(envelope.envelopeId, rowBytes)
+      const ivOwner = ivOwners.get(envelope.iv)
+      if (ivOwner !== undefined && ivOwner !== envelope.envelopeId) throw new Error('IV reuse across envelope IDs is a security anomaly.')
+      ivOwners.set(envelope.iv, envelope.envelopeId)
       const revision = await openEnvelope(this.trusted.rootKey, salt, this.trusted, envelope)
       if (TYPE_SCHEMA.get(revision.record_type) !== revision.record_schema || !SCHEMA_ALLOWLIST.includes(revision.record_schema as typeof SCHEMA_ALLOWLIST[number])) throw new Error('Record type/schema binding mismatch.')
-      validateControl(revision); validateDataSchema(revision,this.trusted.schemas[revision.record_schema]); revisions.push(revision)
+      validateControl(revision, this.trusted.epochId); validateDataSchema(revision,this.trusted.schemas[revision.record_schema]); revisions.push(revision)
     }
     validateRevisionGraph(revisions)
     const announcements = revisions.filter((revision) => revision.record_schema === 'rotation-announcement-sw-v1')

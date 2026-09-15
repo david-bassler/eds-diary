@@ -23,3 +23,23 @@ Tests decken Duplicate Keys (top-level/verschachtelt), noncanonical JSON, unpair
 ## Externe Grenzen
 
 Live-Google-Vertrag, Auth-Origin, WebAuthn-Hardwarematrix, Hostingheader und unabhängiger Audit konnten im Checkout nicht erbracht werden. Sie sind Release-Gates, keine behaupteten Testergebnisse. Es liegen keine `SECURITY/SPEC DECISION REQUIRED`-Punkte vor.
+
+## Adversarialer kumulativer Self-Review (15.09.2026, aktueller Checkout)
+
+Die frühere DONE-Einstufung oben ist durch diesen kumulativen Review überholt. Der
+Checkout darf nicht als intern vollständig oder produktionsreif bezeichnet werden.
+
+| Anforderung | Implementierung / Test | Status |
+|---|---|---|
+| Begrenzter Google-Grid-Read, Offsets, dynamische IDs | `GoogleSheetsSingleWriterTransport`; Unit-/Build-Gates | **PASS** (lokal), Live-Vertrag **BLOCKED_EXTERNAL** |
+| Exakte Epoch-/Owner-/Account-Bindung und Pagination | `GoogleSheetsSingleWriterTransport` | **PASS** (lokal), Live-Vertrag **BLOCKED_EXTERNAL** |
+| Same envelope ID/different bytes, IV-Wiederverwendung, Control-Bindungen | `FullRemoteVerifier`; Security-Tests | **PASS** |
+| Nicht frei ausstellbarer Recovery-Nachweis | Aktivierung verlangt konkrete `FullRemoteVerifier`-Instanz und erneute Vollverifikation; kein exportierter Issuer | **PASS** |
+| Backup-Vertrauensgrenze | Restore verlangt konkrete `FullRemoteVerifier`-Instanz; Schema, Counts, Hashes, Anchor und Union werden vor Aktivierung geprüft | **PASS** |
+| Lokale normative Envelope-Source-of-Truth | Produktive Repositories verwenden weiterhin `secureRecords` in `localDatabase.ts` | **FAIL** |
+| Vollständige Create-/Reconcile-State-Machine | Manifestwrite ist noch an `create()` gekoppelt; persistenter Planned-/Candidate-/Patch-State fehlt | **FAIL** |
+| Sechs normative Fachschemas | Normtexte benennen IDs und Registrybindung, definieren aber keine zulässigen Fachfelder/Typen/Limits; vorhandene Dateien sind Placeholder | **SECURITY/SPEC DECISION REQUIRED** |
+| Vollständige produktive Rotation/Migration | Persistente Phasenhelfer existieren, vollständige Orchestrierung und Repository-Cutover fehlen | **FAIL** |
+
+Der Self-Review hat somit interne FAILs festgestellt. Release bleibt fail-closed; diese
+Datei ist kein Freigabenachweis.

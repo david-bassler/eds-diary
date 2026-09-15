@@ -2,6 +2,8 @@ import { aesGcmDecrypt,aesGcmEncrypt,deriveRecoveryKey,randomBytes,recoveryCommi
 import { base64Url,fixedBase64Url,fromBase64Url } from './crypto/bytes'
 import { canonicalBytes,parseCanonicalJson } from './crypto/canonical'
 import type { RemoteAnchor } from '../sync/core/prefix'
+import { FullRemoteVerifier } from '../sync/core/remoteVerifier'
+import type { RemoteSnapshot } from '../sync/core/contracts'
 
 export interface RecoveryArtifact {format:'sync-recovery-v5';version:5;recovery_artifact_id:string;kdf_profile_id:'recovery-hkdf-v5-1';salt:string;wrap_iv:string;wrapped_payload:string}
 export interface RecoveryPayload {recovery_artifact_id:string;diary_id:string;epoch_id:string;key_id:string;RK_epoch:string;manifest_fingerprint:string;remote_anchor:RemoteAnchor|null;google_account_binding:string;recovery_generation:number;created_at:string}
@@ -22,10 +24,13 @@ export async function recoverRootKeyCandidate(artifact:RecoveryArtifact,urs:Uint
   if(await recoveryCommitment(urs,diary,payload.recovery_generation)!==manifestCommitment)throw new Error('Recovery secret continuity check failed.')
   return {rootKey,payload}
 }
-export interface RecoveryBootstrapProof {readonly manifestFingerprint:string;readonly diaryId:string;readonly epochId:string;readonly keyId:string;readonly recoveryGeneration:number;readonly accountBinding:string;readonly anchor:RemoteAnchor|null}
-const issuedProofs=new WeakSet<object>()
-/** Called only after a production full remote/backup verification boundary. */
-export function issueRecoveryBootstrapProof(binding:RecoveryBootstrapProof):RecoveryBootstrapProof{const proof=Object.freeze({...binding});issuedProofs.add(proof);return proof}
-/** Activation consumes an explicit proof from the full remote/backup verifier;
- * AEAD unwrap or a generic callback can never be the activation boundary. */
-export async function activateRecoveredRoot(candidate:{rootKey:Uint8Array;payload:RecoveryPayload},proof:RecoveryBootstrapProof,persistWrap:(rootKey:Uint8Array,payload:RecoveryPayload)=>Promise<void>):Promise<void>{const p=candidate.payload;validatePayload(p);if(!issuedProofs.has(proof as object)||proof.manifestFingerprint!==p.manifest_fingerprint||proof.diaryId!==p.diary_id||proof.epochId!==p.epoch_id||proof.keyId!==p.key_id||proof.recoveryGeneration!==p.recovery_generation||proof.accountBinding!==p.google_account_binding||JSON.stringify(proof.anchor)!==JSON.stringify(p.remote_anchor))throw new Error('Recovery bootstrap proof does not bind the candidate.');await persistWrap(candidate.rootKey,p)}
+/** Recovery activation is deliberately coupled to the concrete full verifier.
+ * There is no exported proof issuer and no caller supplied verification callback. */
+export async function activateRecoveredRoot(candidate:{rootKey:Uint8Array;payload:RecoveryPayload},verifier:FullRemoteVerifier,snapshot:RemoteSnapshot,persistWrap:(rootKey:Uint8Array,payload:RecoveryPayload)=>Promise<void>):Promise<void>{
+  if (!(verifier instanceof FullRemoteVerifier)) throw new Error('A production full verifier is required.')
+  const p=candidate.payload;validatePayload(p)
+  verifier.assertRecoveryBinding({manifestFingerprint:p.manifest_fingerprint,diaryId:p.diary_id,epochId:p.epoch_id,keyId:p.key_id,recoveryGeneration:p.recovery_generation,accountBinding:p.google_account_binding,anchor:p.remote_anchor})
+  const verified=await verifier.verify(snapshot)
+  if(verified.manifestFingerprint!==p.manifest_fingerprint)throw new Error('Verified remote does not bind the recovery candidate.')
+  await persistWrap(candidate.rootKey,p)
+}
