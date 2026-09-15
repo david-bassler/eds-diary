@@ -34,6 +34,45 @@ function validateControl(revision: Revision): void {
   if (revision.record_status !== 'control') return
   if (!['rotation-announcement-sw-v1', 'epoch-migration-sw-v1'].includes(revision.record_schema)) throw new Error('Unknown control schema.')
   if (!revision.record_data || typeof revision.record_data !== 'object' || Array.isArray(revision.record_data)) throw new Error('Invalid control data.')
+  const data = revision.record_data as Record<string, unknown>
+  const exact = (keys: readonly string[]) => {
+    if (Object.keys(data).sort().join('\0') !== [...keys].sort().join('\0')) throw new Error('Control data schema mismatch.')
+  }
+  const id = (value: unknown, length: number, name: string) => fixedBase64Url(String(value), length, name)
+  if (revision.record_schema === 'rotation-announcement-sw-v1') {
+    if (revision.record_type !== 'rotation_announcement') throw new Error('Rotation control type mismatch.')
+    exact(['rotation_id','from_epoch_id','successor_epoch_id','successor_creation_locator','successor_manifest_fingerprint','rotation_kind'])
+    id(data.rotation_id, 32, 'rotation_id'); id(data.from_epoch_id, 16, 'from_epoch_id'); id(data.successor_epoch_id, 16, 'successor_epoch_id')
+    id(data.successor_creation_locator, 16, 'successor_creation_locator'); id(data.successor_manifest_fingerprint, 32, 'successor_manifest_fingerprint')
+    if (data.rotation_kind !== 'normal') throw new Error('Invalid rotation kind.')
+  } else {
+    if (revision.record_type !== 'epoch_migration') throw new Error('Migration control type mismatch.')
+    exact(['migration_id','migration_kind','source','result_semantic_snapshot_hash','active_head_count','tombstone_head_count'])
+    id(data.migration_id, 32, 'migration_id'); id(data.result_semantic_snapshot_hash, 32, 'result_semantic_snapshot_hash')
+    if (!['normal','local_rotation','remote_enablement','emergency'].includes(String(data.migration_kind))) throw new Error('Invalid migration kind.')
+    if (!Number.isSafeInteger(data.active_head_count) || Number(data.active_head_count) < 0 || !Number.isSafeInteger(data.tombstone_head_count) || Number(data.tombstone_head_count) < 0) throw new Error('Invalid migration counts.')
+    if (!data.source || typeof data.source !== 'object' || Array.isArray(data.source)) throw new Error('Invalid migration source.')
+    const source = data.source as Record<string, unknown>
+    const sourceKeys=['source_epoch_id','source_manifest_fingerprint','source_anchor','source_lineage_snapshot_hash','source_semantic_snapshot_hash']
+    if (Object.keys(source).sort().join('\0') !== sourceKeys.sort().join('\0')) throw new Error('Migration source schema mismatch.')
+    id(source.source_epoch_id,16,'source_epoch_id'); id(source.source_manifest_fingerprint,32,'source_manifest_fingerprint'); id(source.source_lineage_snapshot_hash,32,'source_lineage_snapshot_hash'); id(source.source_semantic_snapshot_hash,32,'source_semantic_snapshot_hash')
+    const localOnly = data.migration_kind === 'local_rotation' || data.migration_kind === 'remote_enablement'
+    if (localOnly ? source.source_anchor !== null : source.source_anchor === null) throw new Error('Migration anchor/kind mismatch.')
+    if (data.migration_kind === 'normal' && data.result_semantic_snapshot_hash !== source.source_semantic_snapshot_hash) throw new Error('Normal migration changed the semantic snapshot.')
+  }
+}
+
+function validateDataSchema(revision: Revision, schema: unknown): void {
+  if (revision.record_status === 'deleted') return
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) throw new Error('Bundled record schema is invalid.')
+  const definition=schema as Record<string,unknown>
+  const value=revision.record_data
+  if (definition.type === 'object' && (!value || typeof value !== 'object' || Array.isArray(value))) throw new Error('record_data does not satisfy its bundled schema.')
+  if (definition.additionalProperties === false && definition.properties && typeof definition.properties === 'object' && value && typeof value === 'object') {
+    const allowed=new Set(Object.keys(definition.properties as object))
+    if(Object.keys(value).some((key)=>!allowed.has(key)))throw new Error('record_data contains an unknown property.')
+  }
+  if(Array.isArray(definition.required) && value && typeof value === 'object' && definition.required.some((key)=>typeof key !== 'string' || !(key in value)))throw new Error('record_data is missing a required property.')
 }
 
 function validateManifestBindings(manifest: ProtectedManifest, trusted: TrustedRemoteContext): void {
@@ -66,16 +105,19 @@ export class FullRemoteVerifier {
       fixedBase64Url(envelope.envelopeId, 32, 'envelope_id'); fixedBase64Url(envelope.iv, 12, 'iv')
       const revision = await openEnvelope(this.trusted.rootKey, salt, this.trusted, envelope)
       if (TYPE_SCHEMA.get(revision.record_type) !== revision.record_schema || !SCHEMA_ALLOWLIST.includes(revision.record_schema as typeof SCHEMA_ALLOWLIST[number])) throw new Error('Record type/schema binding mismatch.')
-      validateControl(revision); revisions.push(revision)
+      validateControl(revision); validateDataSchema(revision,this.trusted.schemas[revision.record_schema]); revisions.push(revision)
     }
-    const graph = validateRevisionGraph(revisions)
+    validateRevisionGraph(revisions)
     const announcements = revisions.filter((revision) => revision.record_schema === 'rotation-announcement-sw-v1')
     if (new Set(announcements.map((revision) => JSON.stringify(revision.record_data))).size > 1) throw new Error('Competing rotation announcements.')
     for (const local of this.trusted.localEnvelopes) {
       const sameId = snapshot.rows.filter((row) => row[0] === local.envelopeId)
       if (sameId.some((row) => !sameRow(row, local))) throw new Error('Local envelope ID has different remote bytes.')
     }
-    for (const head of this.trusted.localHeadRevisionIds) if (!graph.revisions.has(head)) throw new Error('A local head disappeared from remote state.')
+    // A local-only head is a valid pending offline mutation.  It must not be
+    // collapsed into a remote head (and it is never selected by row time).
+    // Same-ID byte conflicts were rejected above; byte-identical rows are
+    // represented by verifiedEnvelopeIds and can be marked remote_seen.
     return { snapshot, manifestFingerprint: fingerprint, retired: announcements.length === 1, verifiedEnvelopeIds: new Set(envelopes.map((envelope) => envelope.envelopeId)) }
   }
 }

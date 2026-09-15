@@ -38,6 +38,11 @@ export function validateRevisionGraph<T>(input: readonly Revision<T>[]): Revisio
   }
   const headsByRecord=new Map<string,Set<string>>()
   for(const revision of input){if(revision.record_status==='control'||children.has(revision.revision_id))continue;const heads=headsByRecord.get(revision.record_id)??new Set<string>();heads.add(revision.revision_id);headsByRecord.set(revision.record_id,heads)}
+  // Parent-before-child already prevents an honest cycle, but explicitly walk
+  // every chain as a defence against future graph construction changes and to
+  // enforce the normative depth bound.
+  const depths=new Map<string,number>()
+  for(const revision of input){const depth=1+revision.parent_revision_ids.reduce((maximum,id)=>Math.max(maximum,depths.get(id)??0),0);if(depth>MAX_PER_RECORD)throw new Error('Revision graph depth bound exceeded.');depths.set(revision.revision_id,depth)}
   return {revisions,headsByRecord}
 }
 export function createMergeRevision<T>(revisionId:string,heads:readonly Revision<T>[],data:T,createdAt:string):Revision<T>{

@@ -22,7 +22,7 @@ export class GoogleSheetsSingleWriterTransport implements RemoteTransport {
   private readonly sheetIds=new Map<string,number>()
   constructor(private readonly api:GoogleApiClient){}
   async discover(locator:string):Promise<readonly RemoteCandidate[]>{
-    try { const name=`sync-${locator}`;const escaped=name.replaceAll("'","\\'");const q=encodeURIComponent(`name = '${escaped}' and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`);const result=await this.api.request<{files?:DriveFile[]}>(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,name,mimeType,trashed,appProperties)&pageSize=1000`);return(result.files??[]).flatMap((file)=>file.id&&file.name===name?[{remoteId:file.id,locator}]:[])}catch(error){throw normalize(error)}
+    try { const name=`sync-${locator}`;const escaped=name.replaceAll("'","\\'");const q=encodeURIComponent(`name = '${escaped}' and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`);const files:DriveFile[]=[];let token:string|undefined;do{const suffix=token?`&pageToken=${encodeURIComponent(token)}`:'';const result=await this.api.request<{files?:DriveFile[];nextPageToken?:string}>(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,name,mimeType,trashed,appProperties),nextPageToken&pageSize=1000${suffix}`);files.push(...(result.files??[]));token=result.nextPageToken}while(token);return files.flatMap((file)=>file.id&&file.name===name?[{remoteId:file.id,locator}]:[])}catch(error){throw normalize(error)}
   }
   async create(locator:string,manifest:readonly string[]):Promise<void>{
     let id:string
@@ -32,6 +32,8 @@ export class GoogleSheetsSingleWriterTransport implements RemoteTransport {
   private async verifyDrive(remoteId:string):Promise<void>{
     const file=await this.api.request<DriveFile>(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(remoteId)}?fields=id,mimeType,trashed,ownedByMe,shared,driveId,isAppAuthorized,appProperties`)
     if(file.mimeType!=='application/vnd.google-apps.spreadsheet'||file.trashed!==false||file.ownedByMe!==true||file.shared!==false||file.driveId!==undefined||file.isAppAuthorized!==true)throw new TransportError('integrity_failure','Drive file invariants failed.')
+    const properties=file.appProperties??{},keys=Object.keys(properties).sort()
+    if(keys.length!==2||keys[0]!=='app_format'||keys[1]!=='epoch_locator'||properties.app_format!=='sync-v5'||!/^[A-Za-z0-9_-]{22}$/.test(properties.epoch_locator??''))throw new TransportError('integrity_failure','Protocol appProperties are not exact.')
     let token:string|undefined;const permissions:unknown[]=[]
     do { const suffix=token?`&pageToken=${encodeURIComponent(token)}`:'';const page=await this.api.request<{permissions?:Array<{id?:string;type?:string;role?:string;deleted?:boolean}>;nextPageToken?:string}>(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(remoteId)}/permissions?fields=permissions(id,type,role,deleted),nextPageToken&includePermissionsForView=published&pageSize=100${suffix}`);permissions.push(...(page.permissions??[]));token=page.nextPageToken }while(token)
     const identity=this.api.identity();if(permissions.length!==1||!permissions.every((permission)=>{const p=permission as {id?:string;type?:string;role?:string;deleted?:boolean};return p.id===identity&&p.type==='user'&&p.role==='owner'&&!p.deleted}))throw new TransportError('integrity_failure','Drive permission invariants failed.')
