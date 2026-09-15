@@ -1,1 +1,15 @@
-{"$id":"medication-prescription/v1","additionalProperties":false,"type":"object"}
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "medication-prescription/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["medicationName", "prescribedOn", "prescriber", "reason", "createdAt", "updatedAt"],
+  "properties": {
+    "medicationName": {"type": "string", "minLength": 1, "maxLength": 120, "pattern": "^\\S(?:[\\s\\S]*\\S)?$"},
+    "prescribedOn": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$"},
+    "prescriber": {"type": "string", "maxLength": 160, "pattern": "^(?:$|\\S(?:[\\s\\S]*\\S)?)$"},
+    "reason": {"type": "string", "maxLength": 500, "pattern": "^(?:$|\\S(?:[\\s\\S]*\\S)?)$"},
+    "createdAt": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"},
+    "updatedAt": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"}
+  }
+}
