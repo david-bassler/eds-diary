@@ -1,1 +1,38 @@
-{"$id":"pain-entry/v1","additionalProperties":false,"type":"object"}
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pain-entry/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["startedAt", "endedAt", "locations", "intensity", "qualities", "cause", "occursWhen", "note", "createdAt", "updatedAt"],
+  "properties": {
+    "startedAt": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"},
+    "endedAt": {"type": "string", "anyOf": [{"const": ""}, {"pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"}]},
+    "locations": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["view", "regionId"],
+        "properties": {
+          "view": {"enum": ["front", "back"]},
+          "regionId": {"type": "string", "minLength": 1, "maxLength": 120, "pattern": "^\\S(?:[\\s\\S]*\\S)?$"},
+          "detailRegionIds": {
+            "type": "array",
+            "maxItems": 64,
+            "uniqueItems": true,
+            "items": {"type": "string", "minLength": 1, "maxLength": 120, "pattern": "^\\S(?:[\\s\\S]*\\S)?$"}
+          }
+        }
+      }
+    },
+    "intensity": {"type": ["number", "null"], "minimum": 0, "maximum": 10},
+    "qualities": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 60, "pattern": "^\\S(?:[\\s\\S]*\\S)?$"}},
+    "cause": {"type": "string", "maxLength": 240, "pattern": "^(?:$|\\S(?:[\\s\\S]*\\S)?)$"},
+    "occursWhen": {"type": "string", "maxLength": 240, "pattern": "^(?:$|\\S(?:[\\s\\S]*\\S)?)$"},
+    "note": {"type": "string", "maxLength": 2000, "pattern": "^(?:$|\\S(?:[\\s\\S]*\\S)?)$"},
+    "createdAt": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"},
+    "updatedAt": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"}
+  }
+}
