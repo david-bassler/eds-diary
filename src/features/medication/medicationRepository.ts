@@ -20,7 +20,7 @@ function nowIso(): string {
 
 function createId(): string {
   if (crypto.randomUUID) return `medication-${crypto.randomUUID()}`
-  return `medication-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+  return `medication-${Date.now()}-${Array.from(crypto.getRandomValues(new Uint8Array(8)), (byte) => byte.toString(16).padStart(2, '0')).join('')}`
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

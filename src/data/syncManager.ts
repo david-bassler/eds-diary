@@ -152,10 +152,13 @@ export function initializeSyncManager(): void {
 
   onGoogleConnection((connected) => {
     refreshSyncState()
-    if (connected && isGoogleSyncReady()) void syncAll().catch(() => {})
+    // Authentication never confers writer authority. The secure coordinator must
+    // complete pull, cryptographic verification and reconciliation first.
+    if (connected) emit(dirtyVersions.size ? 'pending' : 'local')
   })
 
   window.addEventListener('online', () => {
-    if (isGoogleSyncReady()) void syncPending().catch(() => {})
+    // Online is transport availability, not permission to mutate remote state.
+    if (isGoogleSyncReady()) emit(dirtyVersions.size ? 'pending' : 'local')
   })
 }

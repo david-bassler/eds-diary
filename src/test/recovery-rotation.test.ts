@@ -1,0 +1,6 @@
+import { describe, expect, it } from 'vitest'
+import { createRecovery, recoverRootKey } from '../security/recovery'
+import { advanceRotation, maySwitchRotation, oldEpochWritable, type RotationState } from '../security/rotation'
+import { randomBytes } from '../security/crypto/core'
+describe('recovery continuity',()=>{it('rejects a self-confirming wrong URS',async()=>{const root=randomBytes(32), urs=randomBytes(32);const artifact=await createRecovery(root,urs,'d',1,'anchor');expect(await recoverRootKey(artifact,urs,'d',artifact.ursCommitment,'anchor')).toEqual(root);const wrong=randomBytes(32);await expect(recoverRootKey(artifact,wrong,'d',artifact.ursCommitment,'anchor')).rejects.toThrow(/continuity/)})})
+describe('rotation gates',()=>{it('cannot switch before verification, recovery, backup and announcement',()=>{let state:RotationState={rotationId:'r',oldEpochId:'o',newEpochId:'n',step:'prepared',copiedEnvelopeIds:[]};for(const step of ['root_wrapped','successor_pending','successor_bound','copying','successor_verified','recovery_verified','backup_restored'] as const) state=advanceRotation(state,step);expect(maySwitchRotation(state)).toBe(false);state=advanceRotation(state,'announcement_durable');expect(maySwitchRotation(state)).toBe(true);expect(oldEpochWritable(state)).toBe(false)})})

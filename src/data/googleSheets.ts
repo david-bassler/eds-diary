@@ -8,33 +8,6 @@ export interface GoogleConfig {
 
 export type GoogleStatusKind = 'neutral' | 'good' | 'bad'
 
-interface GoogleTokenResponse {
-  access_token?: string
-  error?: string
-}
-
-interface GoogleTokenClient {
-  requestAccessToken(options?: { prompt?: string }): void
-}
-
-interface GoogleOAuth2 {
-  initTokenClient(config: {
-    client_id: string
-    scope: string
-    callback: (response: GoogleTokenResponse) => void
-  }): GoogleTokenClient
-}
-
-declare global {
-  interface Window {
-    google?: {
-      accounts?: {
-        oauth2?: GoogleOAuth2
-      }
-    }
-  }
-}
-
 interface SpreadsheetCreateResponse {
   spreadsheetId?: string
 }
@@ -58,14 +31,12 @@ interface BatchGetResponse {
 const CONFIG_KEY = 'eds-diary-google-config-v1'
 const CLIENT_ID =
   '708446377117-vhj86jrhngsj0i289vffdl4q1nfri7c3.apps.googleusercontent.com'
-const SCOPE = 'https://www.googleapis.com/auth/drive.file'
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504])
 
 const connectionListeners = new Set<(connected: boolean) => void>()
 const statusListeners = new Set<(message: string, kind: GoogleStatusKind) => void>()
 
 let accessToken = ''
-let tokenClient: GoogleTokenClient | null = null
 let requestTail: Promise<void> = Promise.resolve()
 let knownSheetId = ''
 let knownTitles: Set<string> | null = null
@@ -162,32 +133,9 @@ export function onGoogleStatus(
 }
 
 export function connectGoogle(): void {
-  const oauth2 = window.google?.accounts?.oauth2
-  if (!oauth2) {
-    throw new Error('Google Identity ist noch nicht geladen. Bitte kurz warten und erneut versuchen.')
-  }
-
-  if (!tokenClient) {
-    tokenClient = oauth2.initTokenClient({
-      client_id: config.clientId,
-      scope: SCOPE,
-      callback: (response) => {
-        if (response.error) {
-          emitStatus(`Google-Anmeldung fehlgeschlagen: ${response.error}`, 'bad')
-          return
-        }
-
-        accessToken = response.access_token ?? ''
-        emitConnection()
-        emitStatus(
-          'Verbunden. Der Google Access Token bleibt nur im Arbeitsspeicher.',
-          'good',
-        )
-      },
-    })
-  }
-
-  tokenClient.requestAccessToken({ prompt: 'consent' })
+  throw new Error(
+    'Google Sync ist sicherheitsbedingt gesperrt, bis der getrennte Auth-Origin bereitgestellt ist.',
+  )
 }
 
 function sleep(milliseconds: number): Promise<void> {
