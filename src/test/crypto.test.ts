@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { aesGcmEncrypt, deriveEnvelopeKey, deriveEpochSalt, deriveManifestKey, recoveryCommitment, sha256 } from '../security/crypto/core'
 import { base64Url } from '../security/crypto/bytes'
-import { canonicalBytes } from '../security/crypto/canonical'
+import { canonicalBytes, parseCanonicalJson } from '../security/crypto/canonical'
 import { framePayload, prepareEnvelope, openEnvelope, type PreparedEnvelope } from '../security/envelopes'
 const diary='AAECAwQFBgcICQoLDA0ODw',epoch='EBESExQVFhcYGRobHB0eHw',envelopeId=Uint8Array.from({length:32},(_,i)=>32+i),root=Uint8Array.from({length:32},(_,i)=>i)
 const revision={migration_origin:null,parent_revision_ids:[],protocol_created_at:'2026-09-15T12:00:00.000Z',record_data:null,record_id:'6VfGNsfksH5Z3lPHFXoqhw',record_schema:'pain-entry/v1',record_status:'deleted' as const,record_type:'pain_entry',revision_id:'QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8'}
@@ -11,3 +11,4 @@ describe('crypto profile v5 normative golden vectors',()=>{
  it('matches recovery commitment',async()=>expect(await recoveryCommitment(Uint8Array.from({length:32},(_,i)=>64+i),Uint8Array.from({length:16},(_,i)=>i),0)).toBe('LwXN6L17yVOpFppyrpm2tigy7g7iIKBg43RunhvOnn4'))
 })
 describe('one-shot envelope',()=>{it('reserves, verifies and persists before decrypt',async()=>{const calls:string[]=[];let result:PreparedEnvelope|undefined;const journal={reserve:async()=>{calls.push('reserve')},verifyReservation:async()=>{calls.push('verify')},persist:async(v:PreparedEnvelope)=>{calls.push('persist');result=v}};const salt=await deriveEpochSalt(Uint8Array.from({length:16},(_,i)=>i),Uint8Array.from({length:16},(_,i)=>16+i));await prepareEnvelope(root,salt,{diaryId:diary,epochId:epoch},revision,journal);expect(calls).toEqual(['reserve','verify','persist']);expect(await openEnvelope(root,salt,{diaryId:diary,epochId:epoch},result!)).toEqual(revision)})})
+describe('strict canonical parser',()=>{it.each(['{"a":1,"a":2}','{"a":{"b":1,"b":2}}'])('rejects duplicate properties before materialisation',source=>expect(()=>parseCanonicalJson(new TextEncoder().encode(source))).toThrow(/Duplicate/));it('rejects noncanonical equivalent JSON',()=>expect(()=>parseCanonicalJson(new TextEncoder().encode('{"b":2,"a":1}'))).toThrow(/canonical/));it('rejects unpaired surrogate escapes',()=>expect(()=>parseCanonicalJson(new TextEncoder().encode('{"a":"\\ud800"}'))).toThrow(/I-JSON/))})

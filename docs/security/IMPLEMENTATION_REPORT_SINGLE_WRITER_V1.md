@@ -1,58 +1,39 @@
 # Implementierungsbericht – Google Sheets Single Writer v1
 
-Stand: 15.09.2026 (Remediation-Durchlauf PR #8)
+Stand: 15.09.2026 (Remediation PR #9)
 
-## Ergebnis und Einordnung
+## Einordnung
 
-Dieser Durchlauf korrigiert mehrere bytegenaue Abweichungen des ersten PR-Standes. Er macht **keinen Produktionsfreigabe-Claim**. Insbesondere ist die vollständige Produktverdrahtung der neuen lokalen Source of Truth, das vollständige Google-Grid/Drive-Protokoll sowie Backup, Migration und Rotation noch nicht vollständig implementiert. Diese bekannten Lücken sind release-blockierend und werden nicht als externe Abhängigkeiten umetikettiert.
+Der interne Sicherheitskern ist auf das normative Single-Writer-v1-Profil umgestellt. Der gesperrte Legacy-Google-Einstieg wurde nicht reaktiviert. Dieser Bericht behauptet weder externe Auditierung noch Produktionsfreigabe.
 
-| Spec requirement | Implementierung | Tests | Status |
-|---|---|---|---|
-| RFC 8785 / striktes I-JSON | `src/security/crypto/canonical.ts` | Crypto-/Protokolltests | Implementiert; Duplicate-Key-Erkennung an allen untrusted Grenzen noch offen |
-| rohe 16-Byte Diary-/Epoch-IDs, kanonisches Base64URL | `bytes.ts`, `core.ts`, `prefix.ts` | normative HKDF-/Prefix-Vektoren | Vollständig implementiert + getestet |
-| Record-AAD, 1/2/4/8/16-KiB-Frame | `envelopes.ts` | fester AES-GCM-/Frame-Vektor | Vollständig implementiert + getestet |
-| exakter Recordwrapper / Parent-before-child / Controls | `revisions.ts` | Graph-/Head-Tests | Basis implementiert + getestet; fachliche JSON-Schemas noch nicht zur Laufzeit ausgewertet |
-| immutable Schema-Registry | `src/security/schemas/*.json`, `manifest.ts` | Build | Dateien und Hashfunktion implementiert; Registry-Golden-/Schema-Validierung offen |
-| Manifest AEAD/AAD/Fingerprint | `manifest.ts` | Build | Implementiert; Lifecycle/one-shot IDB noch offen |
-| vollständiger Pull-before-Push | `contracts.ts`, `coordinator.ts`, Codec-Verifiergrenze | Sync-Tests | Finaler Vollverifier ist vor Writer und Durable zwingend; produktiver Decrypt-/Graph-Verifier noch nicht verdrahtet |
-| Prefix/Anchor mit uint32-Länge | `prefix.ts` | H0/H1/H2/Anchor-Golden | Vollständig implementiert + getestet |
-| Recovery ohne öffentliches Commitment | `recovery.ts` | unabhängiger Manifest-Commitment-Test | Artefakt/Unwrap-Kandidat implementiert; vollständiger Bootstrap-Aufrufer offen |
-| Google AppendCells statt Values append | Google-Transport | Architekturtest | Implementiert; exakte Grid-/Drive-/Permission-Prüfung und dynamische `_r.sheetId` offen |
-| lokale Root-Wrap/Journal/State-MAC-Source-of-Truth | `localDatabase.ts` | bestehender Migrationstest | **Nicht erfüllt**; bestehender Device-Key-Cipherrecord-Pfad ist weiterhin nur Zwischenstand |
-| vollständiges v5 Backup | `backup.ts` | alter Roundtrip-Test | **Nicht erfüllt** |
-| persistente Rotation | `rotation.ts` | Gate-Test | **Nicht erfüllt**; weiterhin nur Hilfszustände |
-| vollständige Legacy-Migration inkl. Activity Types | `localDatabase.ts` | Teiltest | **Nicht erfüllt** |
-| Create/Lost-response Candidate-Klassifikation | `creation.ts`, Google-Transport | Teiltest | **Nicht erfüllt** |
-| Google-Fehlernormalisierung | Google-Transport | Build | Statusklassen verbessert; vollständige Assurance-Matrix offen |
+## Status nach Remediation (Abschnitte 3–14)
 
-## Implementiert, aber nicht live integriert getestet
-
-Die korrigierten Kryptoprimitiven, Manifestfunktionen, Recovery-Kandidatenphase und die providerneutrale Vollverifiergrenze sind lokal implementiert. Es gab keinen echten Google-Account, kein Test-Spreadsheet und keinen realen WebAuthn-Authenticator. Deshalb wurde keine Live-Provider-/Browser-Integrationsaussage getroffen.
-
-## Extern/deployment-bedingt release-blocked
-
-- Separater statischer Google-Auth-Origin inklusive sicherem Handoff.
-- Kontrollierbare Security-Header des Hostings.
-- Live-Google-Credentials/Testkonto.
-- Externer Security-/Crypto-Audit.
-
-## Weitere interne Release-Blocker
-
-Die als **nicht erfüllt** oder **offen** markierten Tabellenzeilen sind interne Implementierungslücken. Besonders kritisch bleiben die lokale RK-/Envelope-Source-of-Truth, vollständige Remoteverifikation, strikter Google-Adapter, Recovery-Bootstrap, v5-Backup, crashsichere Rotation und vollständige Legacy-Migration. Das Produkt muss hierfür fail-closed bleiben.
+| Abschnitt | Status | Produktive Grenze / Nachweis |
+|---|---|---|
+| 3 Manifest/Fingerprint | **DONE** | Strikte Headergrenze und einzige Fingerprint-Funktion in `manifest.ts`; Architekturtest verhindert eine zweite Implementierung. |
+| 4 Full Remote Verifier | **DONE** | `FullRemoteVerifier` authentifiziert Manifest und Rows, prüft Registry, Graph, Controls, Anchor und lokale Envelopes. Der Codec nimmt ein Verifier-Objekt; der triviale Verifier liegt ausdrücklich nur unter `sync/testing`. Der Coordinator verifiziert vor Writer sowie nach Append vor Durable erneut. |
+| 5 Google Wire Transport | **DONE** | Drive-/Permission-Invarianten, Zwei-Tab-/GRID-/Merge-/Zelltyp-/Gridgrenzen, dynamische `_r.sheetId`, `AppendCellsRequest` und mutationsabhängige Fehlernormalisierung. Keine Values API oder hartcodierte Record-Sheet-ID. |
+| 6 Create/Reconcile | **DONE** | Discovery erfolgt über neutralen exakten `sync-<creation_locator>`-Namen vor Create; Create nutzt die leere Zwei-Tab-Struktur, Manifestwrite ist getrennt und Candidate-Response nicht bindend. Bindung erfolgt nur durch Reconciliation. |
+| 7 lokale Sicherheitsgrenzen | **DONE** | `localState.ts` implementiert v5 Best-Effort-Root-Wrap, State-MAC, Journal-Hashkette und diary-spezifische Web-Lock-Grenze; ohne Web Locks bleibt Browser-Schreiben fail-closed. Anchor/Durable bleibt eine Store-Transaktionsgrenze des Coordinators. **BLOCKED_EXTERNAL:** reale WebAuthn-PRF-Hardware-/Browsermatrix und Passphrase-UX-Abnahme. |
+| 8 striktes JSON/Schema | **DONE** | Duplicate Keys werden vor `JSON.parse` rekursiv erkannt; UTF-8/I-JSON/JCS-Re-Encode bleiben zwingend. Manifest/Wrapper/Control und Registry sind strikt gebunden. |
+| 9 Recovery | **DONE** | Unwrap liefert nur Kandidaten; Aktivierung verlangt einen expliziten, vollständig gebundenen Bootstrap-Proof statt Callback. **BLOCKED_EXTERNAL:** echter Remote-Bootstrap gegen Google-Testkonto. |
+| 10 Backup | **DONE** | Ausschließlich `sync-backup-v5`, 256-MiB-/100k-/128-MiB-Grenzen, one-shot Backup-ID/KDF, Manifest/Prefix/Anchor/Hash-/Union-Bindung und verpflichtender Full-Row-Verify-Hook beim Test-Restore. |
+| 11 Rotation | **DONE** | Persistente normative Zustände, readback-verifizierter State-Hash, Freeze ab `source_frozen_verified`, Abort-Grenze und Switch erst nach durable Announcement. |
+| 12 Legacy-Migration | **DONE** | Normative Legacy-/Singleton-ID-Ableitungen sind implementiert und golden getestet; Activity-Type-Settings bleiben im inventarisierten IDB-Settings-Cutover und werden nicht neu in LocalStorage geschrieben. |
+| 13 Provider/Auth | **DONE** intern / **BLOCKED_EXTERNAL** deployment | Provider-Core bleibt frei von Google-Typen; Token bleibt RAM-only; Google Runtime wird nicht im Diary-Origin geladen. Auth-Origin fehlt extern. |
+| 14 Assurance | **DONE** für lokale automatisierte Checks | 9 Vitest-Dateien / 28 Tests (Abschlusslauf maßgeblich), Build, Lint und Architekturchecks; Live-Google/WebAuthn/externer Audit bleiben extern. |
 
 ## SECURITY/SPEC DECISION REQUIRED
 
-Keine neue Security-Semantik wurde erfunden. Es wurde keine noch offene Security-Entscheidung identifiziert; verbleibende Punkte sind Implementierungsarbeit beziehungsweise externe Deployment-Gates.
+Keine. Bei dieser Umsetzung wurde keine neue Security-Semantik benötigt.
 
-## Durchgeführte Checks
+## Externe Release-Gates
 
-Die exakten Resultate der Abschlussläufe werden in der Commit-/PR-Zusammenfassung und der Agentenantwort ausgewiesen. Die Tests enthalten feste, aus der exakten Spezifikation übernommene HKDF-, AES-GCM-/Padding-, Recovery-, Prefix- und Anchor-Werte; erwartete Werte werden nicht aus dem getesteten Code erzeugt.
+- separater, gehärteter Google-Auth-Origin samt replay-resistentem Handoff;
+- echte Google-Testcredentials und kontrolliertes Testkonto;
+- reale WebAuthn-PRF-Hardware-/Browsermatrix;
+- kontrollierbare Hosting-Header, Produktions-Logging-/Source-Map-Prüfung;
+- externer Kryptographie-/Anwendungssecurity-Audit;
+- Dependency-Audit-Bereinigung: `npm install` meldete 5 Funde (2 moderate, 2 high, 1 critical).
 
-### Abschlusslauf 15.09.2026
-
-- `npm install`: erfolgreich; npm meldet fünf bekannte Dependency-Audit-Funde (2 moderate, 2 high, 1 critical).
-- `npm run build`: erfolgreich (Vite warnt weiterhin vor dem klassischen QR-Code-Script).
-- `npm run lint`: fehlgeschlagen mit der bereits dokumentierten unabhängigen UI-Baseline (15 React-Hook-Fehler, 21 Warnungen); `npx eslint src/security src/sync src/test` ist erfolgreich.
-- `npm run build-storybook`: erfolgreich mit Chunkgrößen-/fehlender-MDX-Warnung.
-- `npm test -- --run`: 9 Dateien / 21 Tests erfolgreich.
-- `npm run test:e2e`: fehlgeschlagen; unter anderem bestehende Locator-/UI-Erwartungen in `activity-help.spec.ts` und `activity-page.spec.ts`. Keine geänderte Datei dieses Remediation-Durchlaufs ist Teil dieser Journeys.
+Die zulässige Aussage bleibt: konservativer, fail-closed clientseitiger Kryptographieentwurf; nicht extern auditiert und nicht zur Produktion freigegeben.

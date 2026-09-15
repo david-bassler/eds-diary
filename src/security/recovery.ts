@@ -17,5 +17,7 @@ export async function recoverRootKeyCandidate(artifact:RecoveryArtifact,urs:Uint
   if(await recoveryCommitment(urs,diary,payload.recovery_generation)!==manifestCommitment)throw new Error('Recovery secret continuity check failed.')
   return {rootKey,payload}
 }
-/** Activation is intentionally separate: callers may invoke it only after complete remote/backup verification. */
-export async function activateRecoveredRoot(candidate:{rootKey:Uint8Array;payload:RecoveryPayload},bootstrap:()=>Promise<void>,persistWrap:(rootKey:Uint8Array,payload:RecoveryPayload)=>Promise<void>):Promise<void>{await bootstrap();await persistWrap(candidate.rootKey,candidate.payload)}
+export interface RecoveryBootstrapProof {manifestFingerprint:string;diaryId:string;epochId:string;keyId:string;recoveryGeneration:number;accountBinding:string;anchorVerified:boolean;allRowsVerified:boolean;graphVerified:boolean}
+/** Activation consumes an explicit proof from the full remote/backup verifier;
+ * AEAD unwrap or a generic callback can never be the activation boundary. */
+export async function activateRecoveredRoot(candidate:{rootKey:Uint8Array;payload:RecoveryPayload},proof:RecoveryBootstrapProof,persistWrap:(rootKey:Uint8Array,payload:RecoveryPayload)=>Promise<void>):Promise<void>{const p=candidate.payload;if(!proof.anchorVerified||!proof.allRowsVerified||!proof.graphVerified||proof.manifestFingerprint!==p.manifest_fingerprint||proof.diaryId!==p.diary_id||proof.epochId!==p.epoch_id||proof.keyId!==p.key_id||proof.recoveryGeneration!==p.recovery_generation||proof.accountBinding!==p.google_account_binding)throw new Error('Recovery bootstrap proof does not bind the candidate.');await persistWrap(candidate.rootKey,p)}

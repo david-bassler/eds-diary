@@ -25,9 +25,63 @@ export function canonicalJson(value: CanonicalValue): string {
 
 export function parseCanonicalJson(bytes: Uint8Array): CanonicalValue {
   const source = decodeUtf8(bytes)
+  rejectDuplicateProperties(source)
   const parsed: unknown = JSON.parse(source)
   if (canonicalJson(parsed as CanonicalValue) !== source) throw new Error('JSON is not canonical JCS or contains unsupported values.')
   return parsed as CanonicalValue
+}
+
+/** JSON.parse silently applies last-key-wins.  This small grammar walk records
+ * object member names before materialisation, including names containing JSON
+ * escapes (for example `"a"` and `"\u0061"`). */
+function rejectDuplicateProperties(source: string): void {
+  let offset = 0
+  const whitespace = () => { while (/\s/u.test(source[offset] ?? '')) offset += 1 }
+  const string = (): string => {
+    const start = offset
+    if (source[offset++] !== '"') throw new Error('Invalid JSON string.')
+    while (offset < source.length) {
+      const character = source[offset++]
+      if (character === '"') return JSON.parse(source.slice(start, offset)) as string
+      if (character === '\\') {
+        if (source[offset] === 'u') offset += 5
+        else offset += 1
+      } else if (character < ' ') throw new Error('Invalid JSON string.')
+    }
+    throw new Error('Unterminated JSON string.')
+  }
+  const value = (): void => {
+    whitespace()
+    if (source[offset] === '{') {
+      offset += 1; whitespace(); const keys = new Set<string>()
+      if (source[offset] === '}') { offset += 1; return }
+      while (true) {
+        whitespace(); const key = string()
+        if (keys.has(key)) throw new Error(`Duplicate JSON property: ${key}`)
+        keys.add(key); whitespace()
+        if (source[offset++] !== ':') throw new Error('Invalid JSON object.')
+        value(); whitespace()
+        const separator = source[offset++]
+        if (separator === '}') return
+        if (separator !== ',') throw new Error('Invalid JSON object.')
+      }
+    }
+    if (source[offset] === '[') {
+      offset += 1; whitespace()
+      if (source[offset] === ']') { offset += 1; return }
+      while (true) {
+        value(); whitespace(); const separator = source[offset++]
+        if (separator === ']') return
+        if (separator !== ',') throw new Error('Invalid JSON array.')
+      }
+    }
+    if (source[offset] === '"') { string(); return }
+    const match = /^(?:true|false|null|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?)/.exec(source.slice(offset))
+    if (!match) throw new Error('Invalid JSON value.')
+    offset += match[0].length
+  }
+  value(); whitespace()
+  if (offset !== source.length) throw new Error('Trailing JSON input.')
 }
 
 export function canonicalBytes(value: CanonicalValue): Uint8Array {

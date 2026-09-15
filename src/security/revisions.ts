@@ -1,4 +1,5 @@
-import { fixedBase64Url } from './crypto/bytes'
+import { base64Url, concatBytes, fixedBase64Url, utf8 } from './crypto/bytes'
+import { sha256 } from './crypto/core'
 
 export type RevisionStatus = 'active' | 'deleted' | 'control'
 export interface MigrationOrigin { sources: Array<{ source_epoch_id: string; source_record_id: string; source_revision_ids: string[] }> }
@@ -11,6 +12,9 @@ export interface RevisionGraph<T = unknown> { revisions: Map<string, Revision<T>
 const MAX_PARENTS = 8, MAX_PER_RECORD = 4096
 const FORBIDDEN = new Set(['remote-checkpoint/v1', 'rotation-fence/v1', 'rotation-abort/v1'])
 const CREATED_AT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+const ZERO=new Uint8Array([0])
+export async function legacyRecordId(diaryId:string,recordType:string,legacyId:string):Promise<string>{const encoded=utf8(legacyId);if(encoded.byteLength<1||encoded.byteLength>1024)throw new Error('Legacy ID length is invalid.');return base64Url((await sha256(concatBytes(utf8('eds-diary/legacy-record-id/v5'),ZERO,fixedBase64Url(diaryId,16),ZERO,utf8(recordType),ZERO,encoded))).slice(0,16))}
+export async function singletonRecordId(diaryId:string,recordType:'pain_type_settings'|'activity_type_settings'):Promise<string>{return base64Url((await sha256(concatBytes(utf8('eds-diary/singleton-record-id/v5'),ZERO,fixedBase64Url(diaryId,16),ZERO,utf8(recordType)))).slice(0,16))}
 
 export function validateRevision<T>(revision: Revision<T>): void {
   if (Object.keys(revision).sort().join(',') !== ['migration_origin','parent_revision_ids','protocol_created_at','record_data','record_id','record_schema','record_status','record_type','revision_id'].sort().join(',')) throw new Error('Record wrapper has unknown or missing properties.')
