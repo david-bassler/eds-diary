@@ -21,7 +21,8 @@ export interface RotationArtifacts {
 export interface ProductiveRotationState extends RotationState,RotationArtifacts {}
 export interface RotationOrchestratorDependencies {
   persistence:RotationPersistence
-  /** Pulls and fully verifies the source; it must not merely inspect a cached read model. */
+  /** Pulls and fully verifies the source, or verifies the immutable local source
+   * for an explicit local-offline remote-enablement migration. */
   verifyAndFreezeSource(state:ProductiveRotationState):Promise<{anchor:unknown;semanticSnapshot:string;lineageSnapshot:string}>
   createAndVerifyRootWrap(state:ProductiveRotationState):Promise<void>
   verifyRecoverySecret(state:ProductiveRotationState):Promise<void>
@@ -38,23 +39,20 @@ export interface RotationOrchestratorDependencies {
 
 async function saveNext(deps:RotationOrchestratorDependencies,state:ProductiveRotationState,next:RotationStep,extra:Partial<ProductiveRotationState>={}):Promise<ProductiveRotationState>{const updated={...state,...extra};return persistRotationStep(deps.persistence,updated,next) as Promise<ProductiveRotationState>}
 
-/** End-to-end resumable rotation. Side-effecting dependency operations are
- * required to reconcile/read back their outcome and are called again after a
- * crash; no phase transition is made from an HTTP response alone. */
+/** End-to-end resumable rotation/migration. Side-effecting dependency operations
+ * reconcile/read back their outcome and are called again after a crash. */
 export async function runRotation(deps:RotationOrchestratorDependencies,initial:ProductiveRotationState):Promise<ProductiveRotationState>{
   let state=await deps.persistence.read() as ProductiveRotationState|null
   if(!state){if(initial.step!=='prepared'||!initial.rotationId||!initial.oldEpochId||!initial.newEpochId||initial.oldEpochId===initial.newEpochId)throw new Error('Invalid initial rotation state.');const hash=await rotationStateHash(initial);await deps.persistence.write(initial,hash);const read=await deps.persistence.readBack();if(read.hash!==hash||await rotationStateHash(read.state)!==hash)throw new Error('Initial rotation state readback failed.');state=initial}
   if(state.step==='prepared'){await deps.createAndVerifyRootWrap(state);state=await saveNext(deps,state,'root_wrap_verified')}
   if(state.step==='root_wrap_verified'){
-    // Persist/read back the mutation fence before taking the final snapshot.
     state=await saveNext(deps,state,'source_frozen_verified')
     const source=await deps.verifyAndFreezeSource(state)
     state={...state,sourceAnchor:source.anchor,sourceSemanticSnapshot:source.semanticSnapshot,sourceLineageSnapshot:source.lineageSnapshot}
     const hash=await rotationStateHash(state);await deps.persistence.write(state,hash);const read=await deps.persistence.readBack();if(read.hash!==hash||await rotationStateHash(read.state)!==hash)throw new Error('Frozen source snapshot readback failed.')
   }
-  // A crash is possible after the freeze fence but before the snapshot record.
-  // Resume therefore reconstructs and persists the snapshot before proceeding.
-  if(state.step==='source_frozen_verified'&&(!state.sourceAnchor||!state.sourceSemanticSnapshot||!state.sourceLineageSnapshot)){
+  const hasSourceAnchor=Object.prototype.hasOwnProperty.call(state,'sourceAnchor')
+  if(state.step==='source_frozen_verified'&&(!hasSourceAnchor||!state.sourceSemanticSnapshot||!state.sourceLineageSnapshot)){
     const source=await deps.verifyAndFreezeSource(state);state={...state,sourceAnchor:source.anchor,sourceSemanticSnapshot:source.semanticSnapshot,sourceLineageSnapshot:source.lineageSnapshot}
     const hash=await rotationStateHash(state);await deps.persistence.write(state,hash);const read=await deps.persistence.readBack();if(read.hash!==hash||await rotationStateHash(read.state)!==hash)throw new Error('Frozen source snapshot readback failed.')
   }
@@ -62,7 +60,7 @@ export async function runRotation(deps:RotationOrchestratorDependencies,initial:
   if(state.step==='recovery_secret_verified'){await deps.planSuccessor(state);state=await saveNext(deps,state,'successor_planned')}
   if(state.step==='successor_planned'){await deps.createOrReconcileSuccessor(state);state=await saveNext(deps,state,'successor_bound')}
   if(state.step==='successor_bound')state=await saveNext(deps,state,'copying')
-  if(state.step==='copying'){await deps.copySemanticHeadsAndMigration(state);const verified=await deps.fullVerifySuccessor(state);if(verified.semanticSnapshot!==state.sourceSemanticSnapshot)throw new Error('Normal rotation changed the semantic snapshot.');state=await saveNext(deps,state,'successor_verified',{successorSemanticSnapshot:verified.semanticSnapshot})}
+  if(state.step==='copying'){await deps.copySemanticHeadsAndMigration(state);const verified=await deps.fullVerifySuccessor(state);if(verified.semanticSnapshot!==state.sourceSemanticSnapshot)throw new Error('Migration changed the semantic snapshot.');state=await saveNext(deps,state,'successor_verified',{successorSemanticSnapshot:verified.semanticSnapshot})}
   if(state.step==='successor_verified'){state=await saveNext(deps,state,'recovery_verified',{recoveryArtifactId:await deps.createAndBootstrapRecovery(state)})}
   if(state.step==='recovery_verified'){state=await saveNext(deps,state,'backup_verified',{backupId:await deps.createAndTestRestoreBackup(state)})}
   if(state.step==='backup_verified'){await deps.prepareAnnouncementEnvelope(state);state=await saveNext(deps,state,'announcement_pending')}
@@ -72,4 +70,4 @@ export async function runRotation(deps:RotationOrchestratorDependencies,initial:
 }
 
 export interface EpochMigrationData {migration_id:string;migration_kind:'normal'|'local_rotation'|'remote_enablement'|'emergency';source:{source_epoch_id:string;source_manifest_fingerprint:string;source_anchor:unknown;source_lineage_snapshot_hash:string;source_semantic_snapshot_hash:string};result_semantic_snapshot_hash:string;active_head_count:number;tombstone_head_count:number}
-export function createEpochMigrationData(data:EpochMigrationData):EpochMigrationData{if(data.migration_kind==='normal'&&data.result_semantic_snapshot_hash!==data.source.source_semantic_snapshot_hash)throw new Error('Normal migration cannot change semantics.');if(!Number.isSafeInteger(data.active_head_count)||data.active_head_count<0||!Number.isSafeInteger(data.tombstone_head_count)||data.tombstone_head_count<0)throw new Error('Invalid migration head counts.');return structuredClone(data)}
+export function createEpochMigrationData(data:EpochMigrationData):EpochMigrationData{if((data.migration_kind==='normal'||data.migration_kind==='remote_enablement'||data.migration_kind==='local_rotation')&&data.result_semantic_snapshot_hash!==data.source.source_semantic_snapshot_hash)throw new Error('Unchanged migration cannot change semantics.');if(!Number.isSafeInteger(data.active_head_count)||data.active_head_count<0||!Number.isSafeInteger(data.tombstone_head_count)||data.tombstone_head_count<0)throw new Error('Invalid migration head counts.');return structuredClone(data)}
