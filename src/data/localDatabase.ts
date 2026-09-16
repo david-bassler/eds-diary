@@ -1,121 +1,121 @@
-import { arrayBuffer, decodeUtf8, fromBase64Url, base64Url, randomBytes, utf8 } from '../security/crypto/bytes'
+import { base64Url, decodeUtf8, fromBase64Url, randomBytes } from '../security/crypto/bytes'
 import { canonicalBytes } from '../security/crypto/canonical'
+import { deriveEpochSalt, sha256 } from '../security/crypto/core'
+import { envelopeRow, openEnvelope, prepareEnvelope, type PreparedEnvelope } from '../security/envelopes'
+import {
+  createBestEffortRootWrap,
+  journalInitial,
+  journalNext,
+  openBestEffortRootWrap,
+  stateTag,
+  verifyStateTag,
+  withDiaryLock,
+  type EpochLocalSecurityState,
+  type RootWrap,
+} from '../security/localState'
+import { legacyRecordId, singletonRecordId, validateRevisionGraph, type Revision } from '../security/revisions'
+import type { CreationPersistence, CreationState } from '../sync/core/creation'
+import type { RotationPersistence, RotationState } from '../security/rotation'
 
 const DATABASE_NAME = 'eds-diary'
-const DATABASE_VERSION = 6
+const DATABASE_VERSION = 7
 
 export const LOCAL_STORES = {
-  painEntries: 'painEntries',
-  medicationEntries: 'medicationEntries',
-  medicationPrescriptions: 'medicationPrescriptions',
-  activityEntries: 'activityEntries',
-  settings: 'settings',
+  painEntries: 'painEntries', medicationEntries: 'medicationEntries',
+  medicationPrescriptions: 'medicationPrescriptions', activityEntries: 'activityEntries', settings: 'settings',
 } as const
-
 export type LocalStoreName = (typeof LOCAL_STORES)[keyof typeof LOCAL_STORES]
+
 const LEGACY_STORES = Object.values(LOCAL_STORES)
-const SECURE_RECORDS = 'secureRecords'
-const KEY_STORE = 'secureKeys'
-const MIGRATION_STORE = 'migrationState'
-interface CipherRecord { id: string; store: LocalStoreName; recordId: string; iv: string; ciphertext: string }
+const STORES = {
+  context: 'epochContexts', wraps: 'rootWraps', wrappingKeys: 'wrappingKeys', reservations: 'envelopeReservations',
+  envelopes: 'envelopes', revisions: 'revisions', outbox: 'outbox', state: 'epochSecurityState',
+  migration: 'migrationState', operations: 'operationState',
+} as const
+const LEGACY_ACTIVITY_TYPES = 'eds-diary-activity-types-v1'
+const ACTIVE_CONTEXT = 'active'
 
-let databasePromise: Promise<IDBDatabase> | null = null
-let readyPromise: Promise<void> | null = null
-let mutationTail: Promise<void> = Promise.resolve()
+interface EpochContext { id:'active'; diaryId:string; epochId:string; keyId:string; manifestFingerprint:string; wrapId:string }
+interface StoredEnvelope extends PreparedEnvelope { id:string; epochId:string; localSeq:number; rowBytes:string }
+export type OutboxStatus = 'prepared'|'pending'|'remote_seen'|'durable'
+export interface StoredOutbox { id:string; epochId:string; envelopeId:string; rowBytes:string; status:OutboxStatus }
+interface StoredRevision { id:string; epochId:string; sequence:number; revision:Revision }
+interface StoredState { id:string; state:EpochLocalSecurityState; tag:string }
+interface MigrationState { id:'legacy-v1'; phase:'inventory'|'backfill'|'verify'|'cutover'; sourceKeys:string[]; completedKeys:string[]; legacyDirtyGeneration:number; verified:boolean }
 
-function requestResult<T>(request: IDBRequest<T>): Promise<T> {
-  return new Promise((resolve, reject) => {
-    request.addEventListener('success', () => resolve(request.result), { once: true })
-    request.addEventListener('error', () => reject(request.error ?? new Error('IndexedDB-Anfrage fehlgeschlagen.')), { once: true })
-  })
+const STORE_PROFILE: Record<LocalStoreName,{recordType:string;recordSchema:string}> = {
+  painEntries:{recordType:'pain_entry',recordSchema:'pain-entry/v1'},
+  activityEntries:{recordType:'activity_entry',recordSchema:'activity-entry/v1'},
+  medicationEntries:{recordType:'medication_entry',recordSchema:'medication-entry/v1'},
+  medicationPrescriptions:{recordType:'medication_prescription',recordSchema:'medication-prescription/v1'},
+  settings:{recordType:'pain_type_settings',recordSchema:'pain-type-settings/v1'},
 }
-function transactionComplete(transaction: IDBTransaction): Promise<void> {
-  return new Promise((resolve, reject) => {
-    transaction.addEventListener('complete', () => resolve(), { once: true })
-    transaction.addEventListener('abort', () => reject(transaction.error ?? new Error('IndexedDB-Transaktion wurde abgebrochen.')), { once: true })
-    transaction.addEventListener('error', () => reject(transaction.error ?? new Error('IndexedDB-Transaktion fehlgeschlagen.')), { once: true })
-  })
-}
-function openDatabase(): Promise<IDBDatabase> {
-  if (databasePromise) return databasePromise
-  if (!('indexedDB' in globalThis)) return Promise.reject(new Error('Dieser Browser unterstützt IndexedDB nicht.'))
-  databasePromise = new Promise((resolve, reject) => {
-    const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION)
-    request.addEventListener('upgradeneeded', () => {
-      const database = request.result
-      for (const name of LEGACY_STORES) if (!database.objectStoreNames.contains(name)) database.createObjectStore(name, { keyPath: 'id' })
-      if (!database.objectStoreNames.contains(SECURE_RECORDS)) {
-        const store = database.createObjectStore(SECURE_RECORDS, { keyPath: 'id' })
-        store.createIndex('byStore', 'store')
-      }
-      if (!database.objectStoreNames.contains(KEY_STORE)) database.createObjectStore(KEY_STORE, { keyPath: 'id' })
-      if (!database.objectStoreNames.contains(MIGRATION_STORE)) database.createObjectStore(MIGRATION_STORE, { keyPath: 'id' })
-    })
-    request.addEventListener('success', () => resolve(request.result), { once: true })
-    request.addEventListener('error', () => { databasePromise = null; reject(request.error ?? new Error('Lokale Datenbank konnte nicht geöffnet werden.')) }, { once: true })
-  })
+function profileFor(store:LocalStoreName,id?:string):{recordType:string;recordSchema:string}{if(store!==LOCAL_STORES.settings)return STORE_PROFILE[store];return id==='activity-types'||id==='activity-type-settings'?{recordType:'activity_type_settings',recordSchema:'activity-type-settings/v1'}:STORE_PROFILE.settings}
+
+let databasePromise:Promise<IDBDatabase>|null=null
+let readyPromise:Promise<void>|null=null
+
+function result<T>(request:IDBRequest<T>):Promise<T>{return new Promise((resolve,reject)=>{request.addEventListener('success',()=>resolve(request.result),{once:true});request.addEventListener('error',()=>reject(request.error??new Error('IndexedDB request failed.')),{once:true})})}
+function complete(tx:IDBTransaction):Promise<void>{return new Promise((resolve,reject)=>{tx.addEventListener('complete',()=>resolve(),{once:true});tx.addEventListener('abort',()=>reject(tx.error??new Error('IndexedDB transaction aborted.')),{once:true});tx.addEventListener('error',()=>reject(tx.error??new Error('IndexedDB transaction failed.')),{once:true})})}
+function openDatabase():Promise<IDBDatabase>{
+  if(databasePromise)return databasePromise
+  databasePromise=new Promise((resolve,reject)=>{const request=indexedDB.open(DATABASE_NAME,DATABASE_VERSION);request.addEventListener('upgradeneeded',()=>{
+    const db=request.result
+    for(const name of LEGACY_STORES)if(!db.objectStoreNames.contains(name))db.createObjectStore(name,{keyPath:'id'})
+    for(const name of Object.values(STORES))if(!db.objectStoreNames.contains(name)){const store=db.createObjectStore(name,{keyPath:'id'});if(name===STORES.envelopes||name===STORES.revisions||name===STORES.outbox)store.createIndex('byEpoch','epochId')}
+  });request.addEventListener('success',()=>resolve(request.result),{once:true});request.addEventListener('error',()=>{databasePromise=null;reject(request.error??new Error('Database open failed.'))},{once:true})})
   return databasePromise
 }
-async function deviceKey(database: IDBDatabase): Promise<CryptoKey> {
-  const read = database.transaction(KEY_STORE, 'readonly')
-  const existing = await requestResult<{ id: string; key: CryptoKey } | undefined>(read.objectStore(KEY_STORE).get('best-effort-v1'))
-  await transactionComplete(read)
-  if (existing?.key) return existing.key
-  const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt'])
-  const write = database.transaction(KEY_STORE, 'readwrite'); write.objectStore(KEY_STORE).add({ id: 'best-effort-v1', key }); await transactionComplete(write)
-  return key
+async function wrappingKey(db:IDBDatabase,wrapId:string):Promise<CryptoKey>{const tx=db.transaction(STORES.wrappingKeys,'readonly'),existing=await result<{id:string;key:CryptoKey}|undefined>(tx.objectStore(STORES.wrappingKeys).get(wrapId));await complete(tx);if(existing)return existing.key;const key=await crypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']);const write=db.transaction(STORES.wrappingKeys,'readwrite');write.objectStore(STORES.wrappingKeys).add({id:wrapId,key});await complete(write);return key}
+async function initialContext(db:IDBDatabase):Promise<{context:EpochContext;rootKey:Uint8Array;state:EpochLocalSecurityState}>{
+  const diaryId=base64Url(randomBytes(16)),epochId=base64Url(randomBytes(16)),keyId=base64Url(randomBytes(16)),rootKey=randomBytes(32),wrapId=base64Url(randomBytes(16)),manifestFingerprint=base64Url(await sha256(canonicalBytes(['local-offline-v5',diaryId,epochId,keyId])))
+  const context:EpochContext={id:ACTIVE_CONTEXT,diaryId,epochId,keyId,manifestFingerprint,wrapId},key=await wrappingKey(db,wrapId),wrap=await createBestEffortRootWrap(rootKey,key,{diary_id:diaryId,epoch_id:epochId,key_id:keyId,manifest_fingerprint:manifestFingerprint},fromBase64Url(wrapId)),epochSalt=await deriveEpochSalt(fromBase64Url(diaryId),fromBase64Url(epochId))
+  const state:EpochLocalSecurityState={local_state_version:5,diary_id:diaryId,epoch_id:epochId,key_id:keyId,manifest_fingerprint:manifestFingerprint,recovery_generation:0,remote_binding:null,remote_anchor:null,epoch_status:'local_offline',operation_generation:0,rotation_state_ref:null,migration_state_ref:null,local_journal_count:0,local_journal_hash:await journalInitial(diaryId,epochId)}
+  const tag=await stateTag(rootKey,epochSalt,state),tx=db.transaction([STORES.context,STORES.wraps,STORES.state],'readwrite');tx.objectStore(STORES.context).add(context);tx.objectStore(STORES.wraps).add({id:epochId,wrap});tx.objectStore(STORES.state).add({id:epochId,state,tag} satisfies StoredState);await complete(tx);return{context,rootKey,state}
 }
-function secureId(store: LocalStoreName, id: string): string { return `${store}\u0000${id}` }
-async function encryptRecord(key: CryptoKey, store: LocalStoreName, value: { id: string }): Promise<CipherRecord> {
-  const iv = randomBytes(12)
-  const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: arrayBuffer(iv), additionalData: arrayBuffer(canonicalBytes(['eds-diary/local-record/v1', store, value.id])), tagLength: 128 }, key, arrayBuffer(utf8(JSON.stringify(value))))
-  return { id: secureId(store, value.id), store, recordId: value.id, iv: base64Url(iv), ciphertext: base64Url(new Uint8Array(ciphertext)) }
+async function loadEpoch(db:IDBDatabase):Promise<{context:EpochContext;rootKey:Uint8Array;state:EpochLocalSecurityState;epochSalt:Uint8Array}>{
+  const contextTx=db.transaction(STORES.context,'readonly'),context=await result<EpochContext|undefined>(contextTx.objectStore(STORES.context).get(ACTIVE_CONTEXT));await complete(contextTx);if(!context){const made=await initialContext(db);return{...made,epochSalt:await deriveEpochSalt(fromBase64Url(made.context.diaryId),fromBase64Url(made.context.epochId))}}
+  const tx=db.transaction([STORES.wraps,STORES.state],'readonly'),wrapRequest=tx.objectStore(STORES.wraps).get(context.epochId),stateRequest=tx.objectStore(STORES.state).get(context.epochId),[storedWrap,stored]=await Promise.all([result<{id:string;wrap:RootWrap}|undefined>(wrapRequest),result<StoredState|undefined>(stateRequest)]);await complete(tx);if(!storedWrap||!stored)throw new Error('Incomplete local epoch security state.')
+  const rootKey=await openBestEffortRootWrap(storedWrap.wrap,await wrappingKey(db,context.wrapId)),epochSalt=await deriveEpochSalt(fromBase64Url(context.diaryId),fromBase64Url(context.epochId));await verifyStateTag(rootKey,epochSalt,stored.state,stored.tag);return{context,rootKey,state:stored.state,epochSalt}
 }
-async function decryptRecord<T>(key: CryptoKey, value: CipherRecord): Promise<T> {
-  const plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: arrayBuffer(fromBase64Url(value.iv)), additionalData: arrayBuffer(canonicalBytes(['eds-diary/local-record/v1', value.store, value.recordId])), tagLength: 128 }, key, arrayBuffer(fromBase64Url(value.ciphertext)))
-  return JSON.parse(decodeUtf8(new Uint8Array(plaintext))) as T
-}
-async function migrateLegacy(): Promise<void> {
-  const database = await openDatabase(); const key = await deviceKey(database)
-  const statusTx = database.transaction(MIGRATION_STORE, 'readonly')
-  const status = await requestResult<{ id: string; verified: boolean } | undefined>(statusTx.objectStore(MIGRATION_STORE).get('legacy-v1')); await transactionComplete(statusTx)
-  if (status?.verified) return
-  for (const storeName of LEGACY_STORES) {
-    const read = database.transaction(storeName, 'readonly'); const values = await requestResult<Array<{ id: string }>>(read.objectStore(storeName).getAll()); await transactionComplete(read)
-    for (const value of values) {
-      if (!value?.id) continue
-      const encrypted = await encryptRecord(key, storeName, value)
-      const write = database.transaction(SECURE_RECORDS, 'readwrite'); write.objectStore(SECURE_RECORDS).put(encrypted); await transactionComplete(write)
-    }
-  }
-  // Verify every legacy identifier exists before the non-destructive cutover marker.
-  for (const storeName of LEGACY_STORES) {
-    const tx = database.transaction([storeName, SECURE_RECORDS], 'readonly')
-    const legacy = await requestResult<Array<{ id: string }>>(tx.objectStore(storeName).getAll())
-    const secure = await requestResult<CipherRecord[]>(tx.objectStore(SECURE_RECORDS).index('byStore').getAll(storeName)); await transactionComplete(tx)
-    const ids = new Set(secure.map((record) => record.recordId)); if (legacy.some((record) => !ids.has(record.id))) throw new Error('Legacy migration verification failed.')
-  }
-  const done = database.transaction(MIGRATION_STORE, 'readwrite'); done.objectStore(MIGRATION_STORE).put({ id: 'legacy-v1', verified: true, generation: 1 }); await transactionComplete(done)
-}
-async function ready(): Promise<void> { readyPromise ??= migrateLegacy(); return readyPromise }
-function serializeMutation(operation: () => Promise<void>): Promise<void> {
-  const run = mutationTail.then(operation, operation); mutationTail = run.catch(() => undefined); return run
-}
-export async function getAllRecords<T>(storeName: LocalStoreName): Promise<T[]> {
-  await ready(); const database = await openDatabase(); const key = await deviceKey(database)
-  const tx = database.transaction(SECURE_RECORDS, 'readonly'); const values = await requestResult<CipherRecord[]>(tx.objectStore(SECURE_RECORDS).index('byStore').getAll(storeName)); await transactionComplete(tx)
-  return Promise.all(values.map((value) => decryptRecord<T>(key, value)))
-}
-export async function getRecord<T>(storeName: LocalStoreName, id: string): Promise<T | undefined> {
-  await ready(); const database = await openDatabase(); const key = await deviceKey(database)
-  const tx = database.transaction(SECURE_RECORDS, 'readonly'); const value = await requestResult<CipherRecord | undefined>(tx.objectStore(SECURE_RECORDS).get(secureId(storeName, id))); await transactionComplete(tx)
-  return value ? decryptRecord<T>(key, value) : undefined
-}
-export function putRecord<T extends { id: string }>(storeName: LocalStoreName, value: T): Promise<void> { return putRecords(storeName, [value]) }
-export function putRecords<T extends { id: string }>(storeName: LocalStoreName, values: readonly T[]): Promise<void> {
-  if (!values.length) return Promise.resolve()
-  return serializeMutation(async () => {
-    await ready(); const database = await openDatabase(); const key = await deviceKey(database); const encrypted = await Promise.all(values.map((value) => encryptRecord(key, storeName, value)))
-    const tx = database.transaction(SECURE_RECORDS, 'readwrite'); for (const value of encrypted) tx.objectStore(SECURE_RECORDS).put(value); await transactionComplete(tx)
+function revisionData(value:Record<string,unknown>):unknown{const copy={...value};delete copy.id;delete copy.status;return value.status==='deleted'?null:copy}
+function normalizedLegacyValue(store:LocalStoreName,value:Record<string,unknown>):Record<string,unknown>{if(store!==LOCAL_STORES.painEntries)return value;const normalized={...value};for(const field of ['startedAt','endedAt','createdAt','updatedAt']){const raw=normalized[field];if(typeof raw==='string'&&raw!==''){const parsed=new Date(raw);if(Number.isNaN(parsed.getTime()))throw new Error(`Legacy pain timestamp ${field} is not parseable.`);normalized[field]=parsed.toISOString()}else if(raw!==undefined&&typeof raw!=='string')throw new Error(`Legacy pain timestamp ${field} has the wrong type.`)}return normalized}
+async function recordIdentity(context:EpochContext,store:LocalStoreName,id:string):Promise<string>{const profile=profileFor(store,id);return store===LOCAL_STORES.settings?singletonRecordId(context.diaryId,profile.recordType as 'pain_type_settings'|'activity_type_settings'):legacyRecordId(context.diaryId,profile.recordType,id)}
+async function persistRevision(db:IDBDatabase,store:LocalStoreName,value:Record<string,unknown>):Promise<void>{
+  const loaded=await loadEpoch(db),rotationStep=loaded.state.rotation_state_ref?.state,frozen=rotationStep!==undefined&&['source_frozen_verified','recovery_secret_verified','successor_planned','successor_bound','copying','successor_verified','recovery_verified','backup_verified','announcement_pending','announcement_durable','switched'].includes(rotationStep);if(loaded.state.epoch_status==='retired'||frozen)throw new Error('Epoch is frozen for rotation.')
+  const id=String(value.id??'');if(!id)throw new Error('Record id is required.');const recordId=await recordIdentity(loaded.context,store,id),allTx=db.transaction(STORES.revisions,'readonly'),stored=await result<StoredRevision[]>(allTx.objectStore(STORES.revisions).index('byEpoch').getAll(loaded.context.epochId));await complete(allTx)
+  const revisions=stored.sort((a,b)=>a.sequence-b.sequence).map(item=>item.revision),graph=validateRevisionGraph(revisions),heads=[...(graph.headsByRecord.get(recordId)??[])],profile=profileFor(store,id),revisionId=base64Url(randomBytes(32))
+  const revision:Revision={record_type:profile.recordType,record_schema:profile.recordSchema,record_id:recordId,revision_id:revisionId,parent_revision_ids:heads,record_status:value.status==='deleted'?'deleted':'active',record_data:revisionData(value),migration_origin:null,protocol_created_at:new Date().toISOString()}
+  let reserved=false
+  await prepareEnvelope(loaded.rootKey,loaded.epochSalt,{diaryId:loaded.context.diaryId,epochId:loaded.context.epochId},revision,{
+    reserve:async envelopeId=>{const tx=db.transaction(STORES.reservations,'readwrite');tx.objectStore(STORES.reservations).add({id:envelopeId,epochId:loaded.context.epochId,status:'reserved'});await complete(tx);reserved=true},
+    verifyReservation:async envelopeId=>{const tx=db.transaction(STORES.reservations,'readonly'),found=await result<{id:string}|undefined>(tx.objectStore(STORES.reservations).get(envelopeId));await complete(tx);if(!found||!reserved)throw new Error('Envelope reservation readback failed.')},
+    persist:async envelope=>{
+      const current=await loadEpoch(db);if(current.state.operation_generation!==loaded.state.operation_generation)throw new Error('Stale local mutation generation.')
+      const sequence=current.state.local_journal_count+1,nextState={...current.state,local_journal_count:sequence,local_journal_hash:await journalNext(current.state.local_journal_hash,sequence,envelope),operation_generation:current.state.operation_generation+1},rowBytes=decodeUtf8(canonicalBytes([...envelopeRow(envelope)]))
+      const tag=await stateTag(loaded.rootKey,loaded.epochSalt,nextState),tx=db.transaction([STORES.envelopes,STORES.revisions,STORES.outbox,STORES.reservations,STORES.state],'readwrite');tx.objectStore(STORES.envelopes).add({...envelope,id:envelope.envelopeId,epochId:loaded.context.epochId,localSeq:sequence,rowBytes} satisfies StoredEnvelope);tx.objectStore(STORES.revisions).add({id:revisionId,epochId:loaded.context.epochId,sequence,revision} satisfies StoredRevision);tx.objectStore(STORES.outbox).add({id:envelope.envelopeId,epochId:loaded.context.epochId,envelopeId:envelope.envelopeId,rowBytes,status:'prepared'} satisfies StoredOutbox);tx.objectStore(STORES.reservations).put({id:envelope.envelopeId,epochId:loaded.context.epochId,status:'consumed'});tx.objectStore(STORES.state).put({id:loaded.context.epochId,state:nextState,tag} satisfies StoredState);await complete(tx)
+    },
   })
 }
+async function readValues<T>(db:IDBDatabase,store:LocalStoreName):Promise<T[]>{const loaded=await loadEpoch(db),tx=db.transaction(STORES.envelopes,'readonly'),items=await result<StoredEnvelope[]>(tx.objectStore(STORES.envelopes).index('byEpoch').getAll(loaded.context.epochId));await complete(tx);const revisions:Revision[]=[];for(const item of items.sort((a,b)=>a.localSeq-b.localSeq))revisions.push(await openEnvelope(loaded.rootKey,loaded.epochSalt,{diaryId:loaded.context.diaryId,epochId:loaded.context.epochId},item));const graph=validateRevisionGraph(revisions),allowed=store===LOCAL_STORES.settings?new Set(['pain_type_settings','activity_type_settings']):new Set([STORE_PROFILE[store].recordType]),output:T[]=[];for(const ids of graph.headsByRecord.values())for(const revisionId of ids){const revision=graph.revisions.get(revisionId);if(!revision||!allowed.has(revision.record_type))continue;const data=(revision.record_data??{}) as Record<string,unknown>,status=revision.record_status==='deleted'?{status:'deleted'}:{};output.push({id:await legacyUiId(db,revision.record_id,store),...data,...status} as T)}return output}
+async function legacyUiId(db:IDBDatabase,recordId:string,store:LocalStoreName):Promise<string>{const tx=db.transaction(STORES.migration,'readonly'),mapping=await result<{id:string;legacyId:string}|undefined>(tx.objectStore(STORES.migration).get(`map:${store}:${recordId}`));await complete(tx);return mapping?.legacyId??recordId}
+async function rememberMapping(db:IDBDatabase,store:LocalStoreName,recordId:string,legacyId:string):Promise<void>{const id=`map:${store}:${recordId}`,read=db.transaction(STORES.migration,'readonly'),existing=await result<{id:string;legacyId:string}|undefined>(read.objectStore(STORES.migration).get(id));await complete(read);if(existing&&existing.legacyId!==legacyId)throw new Error('Fatal deterministic legacy record ID collision.');const tx=db.transaction(STORES.migration,'readwrite');tx.objectStore(STORES.migration).put({id,legacyId});await complete(tx)}
+async function inventory(db:IDBDatabase):Promise<Array<{key:string;store:LocalStoreName;value:Record<string,unknown>}>>{const entries:Array<{key:string;store:LocalStoreName;value:Record<string,unknown>}>=[];for(const store of LEGACY_STORES){const tx=db.transaction(store,'readonly'),values=await result<Record<string,unknown>[]>(tx.objectStore(store).getAll());await complete(tx);for(const value of values)entries.push({key:`idb:${store}:${String(value.id)}`,store,value:normalizedLegacyValue(store,value)})}const raw=globalThis.localStorage?.getItem(LEGACY_ACTIVITY_TYPES);if(raw){const value=JSON.parse(raw) as unknown;if(!Array.isArray(value))throw new Error('Legacy activity types are malformed.');entries.push({key:'localStorage:activity-types',store:LOCAL_STORES.settings,value:{id:'activity-types',values:value}})}return entries}
+async function migrateLegacy():Promise<void>{const db=await openDatabase();await loadEpoch(db);let tx=db.transaction(STORES.migration,'readonly'),migration=await result<MigrationState|undefined>(tx.objectStore(STORES.migration).get('legacy-v1'));await complete(tx);if(migration?.verified)return;const sources=await inventory(db);if(!migration){migration={id:'legacy-v1',phase:'inventory',sourceKeys:sources.map(item=>item.key),completedKeys:[],legacyDirtyGeneration:0,verified:false};tx=db.transaction(STORES.migration,'readwrite');tx.objectStore(STORES.migration).put(migration);await complete(tx)}if(sources.map(x=>x.key).join('\0')!==migration.sourceKeys.join('\0'))throw new Error('Legacy source changed during migration.');migration={...migration,phase:'backfill'};for(const source of sources){if(migration.completedKeys.includes(source.key))continue;const loaded=await loadEpoch(db),recordId=await recordIdentity(loaded.context,source.store,String(source.value.id));await rememberMapping(db,source.store,recordId,String(source.value.id));await persistRevision(db,source.store,source.value);migration={...migration,completedKeys:[...migration.completedKeys,source.key]};tx=db.transaction(STORES.migration,'readwrite');tx.objectStore(STORES.migration).put(migration);await complete(tx)}for(const source of sources){const values=await readValues<Record<string,unknown>>(db,source.store);if(!values.some(value=>value.id===source.value.id))throw new Error('Legacy target verification failed.')}migration={...migration,phase:'cutover',verified:true};tx=db.transaction(STORES.migration,'readwrite');tx.objectStore(STORES.migration).put(migration);await complete(tx)}
+async function ready():Promise<void>{readyPromise??=migrateLegacy();return readyPromise}
+
+export async function getAllRecords<T>(storeName:LocalStoreName):Promise<T[]>{await ready();return readValues<T>(await openDatabase(),storeName)}
+export async function getRecord<T>(storeName:LocalStoreName,id:string):Promise<T|undefined>{return(await getAllRecords<T&{id:string}>(storeName)).find(value=>value.id===id)}
+export function putRecord<T extends{id:string}>(storeName:LocalStoreName,value:T):Promise<void>{return putRecords(storeName,[value])}
+export async function putRecords<T extends{id:string}>(storeName:LocalStoreName,values:readonly T[]):Promise<void>{if(!values.length)return;await ready();const db=await openDatabase(),loaded=await loadEpoch(db);await withDiaryLock(loaded.context.diaryId,async()=>{for(const value of values){const recordId=await recordIdentity(loaded.context,storeName,value.id);await rememberMapping(db,storeName,recordId,value.id);await persistRevision(db,storeName,value as unknown as Record<string,unknown>)}})}
+
+/** Atomically advances a verified remote anchor and its matching durable ack. */
+export async function commitDurableAck(epochId:string,envelopeId:string,expectedGeneration:number,anchor:EpochLocalSecurityState['remote_anchor']):Promise<void>{const db=await openDatabase(),loaded=await loadEpoch(db);await withDiaryLock(loaded.context.diaryId,async()=>{const current=await loadEpoch(db);if(current.context.epochId!==epochId||current.state.operation_generation!==expectedGeneration)throw new Error('Stale network completion.');const read=db.transaction(STORES.outbox,'readonly'),outbox=await result<StoredOutbox|undefined>(read.objectStore(STORES.outbox).get(envelopeId));await complete(read);if(!outbox)throw new Error('Outbox item missing.');const state={...current.state,remote_anchor:anchor,operation_generation:current.state.operation_generation+1},tag=await stateTag(current.rootKey,current.epochSalt,state),tx=db.transaction([STORES.outbox,STORES.state],'readwrite');tx.objectStore(STORES.outbox).put({...outbox,status:'durable'});tx.objectStore(STORES.state).put({id:epochId,state,tag} satisfies StoredState);await complete(tx)})}
+
+export async function verifyLocalIntegrity():Promise<void>{const db=await openDatabase(),loaded=await loadEpoch(db),tx=db.transaction(STORES.envelopes,'readonly'),items=await result<StoredEnvelope[]>(tx.objectStore(STORES.envelopes).index('byEpoch').getAll(loaded.context.epochId));await complete(tx);let hash=await journalInitial(loaded.context.diaryId,loaded.context.epochId),count=0;for(const item of items.sort((a,b)=>a.localSeq-b.localSeq)){count++;if(item.localSeq!==count||item.rowBytes!==decodeUtf8(canonicalBytes([...envelopeRow(item)])))throw new Error('Local envelope journal corruption.');hash=await journalNext(hash,count,item)}if(count!==loaded.state.local_journal_count||hash!==loaded.state.local_journal_hash)throw new Error('Local envelope journal hash failed.')}
+
+export const __localDatabaseTesting={openDatabase,loadEpoch,STORES}
+
+export function indexedDbCreationPersistence():CreationPersistence{return{async read(locator){const db=await openDatabase(),tx=db.transaction(STORES.operations,'readonly'),value=await result<{id:string;state:CreationState}|undefined>(tx.objectStore(STORES.operations).get(`creation:${locator}`));await complete(tx);return value?.state??null},async write(state){const db=await openDatabase(),loaded=await loadEpoch(db);await withDiaryLock(loaded.context.diaryId,async()=>{const current=await loadEpoch(db);const next={...current.state,operation_generation:current.state.operation_generation+1},tag=await stateTag(current.rootKey,current.epochSalt,next),tx=db.transaction([STORES.operations,STORES.state],'readwrite');tx.objectStore(STORES.operations).put({id:`creation:${state.locator}`,state:structuredClone(state)});tx.objectStore(STORES.state).put({id:current.context.epochId,state:next,tag} satisfies StoredState);await complete(tx)})}}}
+
+export function indexedDbRotationPersistence():RotationPersistence{return{async read(){const db=await openDatabase(),loaded=await loadEpoch(db),tx=db.transaction(STORES.operations,'readonly'),value=await result<{id:string;state:RotationState;hash:string}|undefined>(tx.objectStore(STORES.operations).get(`rotation:${loaded.context.diaryId}`));await complete(tx);return value?.state??null},async write(rotation,hash){const db=await openDatabase(),loaded=await loadEpoch(db);await withDiaryLock(loaded.context.diaryId,async()=>{const current=await loadEpoch(db),ref={operation_id:rotation.rotationId,state:rotation.step,state_record_hash:hash},next={...current.state,rotation_state_ref:ref,operation_generation:current.state.operation_generation+1},tag=await stateTag(current.rootKey,current.epochSalt,next),tx=db.transaction([STORES.operations,STORES.state],'readwrite');tx.objectStore(STORES.operations).put({id:`rotation:${loaded.context.diaryId}`,state:structuredClone(rotation),hash});tx.objectStore(STORES.state).put({id:current.context.epochId,state:next,tag} satisfies StoredState);await complete(tx)})},async readBack(){const db=await openDatabase(),loaded=await loadEpoch(db),tx=db.transaction(STORES.operations,'readonly'),value=await result<{state:RotationState;hash:string}|undefined>(tx.objectStore(STORES.operations).get(`rotation:${loaded.context.diaryId}`));await complete(tx);if(!value)throw new Error('Rotation state missing after persistence.');return value}}}

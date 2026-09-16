@@ -14,6 +14,11 @@ export interface RemoteTransport {
   readonly profileId: string
   discover(locator: string): Promise<readonly RemoteCandidate[]>
   create(locator: string, manifest: readonly string[]): Promise<void>
+  writeManifest?(remoteId:string,manifest:readonly string[]):Promise<void>
+  replaceManifest?(remoteId:string,manifest:readonly string[]):Promise<void>
+  readProperties?(remoteId:string):Promise<Readonly<Record<string,string>>>
+  patchProperties?(remoteId:string,properties:Readonly<Record<string,string>>):Promise<void>
+  orphanCandidates?(remoteIds:readonly string[]):Promise<void>
   read(remoteId: string): Promise<RemoteSnapshot>
   append(remoteId: string, row: readonly [string, string, string]): Promise<void>
 }

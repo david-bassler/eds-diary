@@ -71,7 +71,7 @@
   white-space: nowrap;
 }
 
-@media (min-width: 760px) {
+@media (width >= 760px) {
   .bottom-navigation {
     right: 50%;
     left: auto;

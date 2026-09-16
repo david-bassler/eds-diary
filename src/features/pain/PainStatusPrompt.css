@@ -139,7 +139,7 @@
   outline-offset: 3px;
 }
 
-@media (min-width: 560px) {
+@media (width >= 560px) {
   .pain-status-prompt__datetime {
     grid-template-columns: 1fr 1fr;
   }

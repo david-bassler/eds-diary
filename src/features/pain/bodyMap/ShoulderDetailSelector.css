@@ -118,7 +118,7 @@
   height: 20px;
 }
 
-@media (max-width: 480px) {
+@media (width <= 480px) {
   .shoulder-detail-selector__heading,
   .shoulder-detail-selector__selection {
     align-items: stretch;

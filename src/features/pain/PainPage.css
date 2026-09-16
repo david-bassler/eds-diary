@@ -22,7 +22,18 @@
   cursor: pointer;
 }
 
-.pain-page__tabs button + button {
+.pain-page__editing > button {
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid rgb(37 48 43 / 22%);
+  border-radius: 0;
+  background: white;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.pain-page__tabs button:not(:first-child) {
   border-left: 1px solid rgb(37 48 43 / 20%);
 }
 
@@ -59,24 +70,13 @@
   opacity: 0.7;
 }
 
-.pain-page__editing button {
-  min-height: 44px;
-  padding: 8px 12px;
-  border: 1px solid rgb(37 48 43 / 22%);
-  border-radius: 0;
-  background: white;
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-}
-
 @media (hover: hover) {
   .pain-page__tabs button:not([aria-pressed='true']):hover {
     background: rgb(49 91 74 / 8%);
   }
 }
 
-@media (max-width: 520px) {
+@media (width <= 520px) {
   .pain-page__editing {
     align-items: stretch;
     flex-direction: column;

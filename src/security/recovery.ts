@@ -2,8 +2,7 @@ import { aesGcmDecrypt,aesGcmEncrypt,deriveRecoveryKey,randomBytes,recoveryCommi
 import { base64Url,fixedBase64Url,fromBase64Url } from './crypto/bytes'
 import { canonicalBytes,parseCanonicalJson } from './crypto/canonical'
 import type { RemoteAnchor } from '../sync/core/prefix'
-import { FullRemoteVerifier } from '../sync/core/remoteVerifier'
-import type { RemoteSnapshot } from '../sync/core/contracts'
+import { RecoveryBootstrapVerifier } from '../sync/core/remoteVerifier'
 
 export interface RecoveryArtifact {format:'sync-recovery-v5';version:5;recovery_artifact_id:string;kdf_profile_id:'recovery-hkdf-v5-1';salt:string;wrap_iv:string;wrapped_payload:string}
 export interface RecoveryPayload {recovery_artifact_id:string;diary_id:string;epoch_id:string;key_id:string;RK_epoch:string;manifest_fingerprint:string;remote_anchor:RemoteAnchor|null;google_account_binding:string;recovery_generation:number;created_at:string}
@@ -24,13 +23,12 @@ export async function recoverRootKeyCandidate(artifact:RecoveryArtifact,urs:Uint
   validatePayload(payload);if(payload.recovery_artifact_id!==artifact.recovery_artifact_id)throw new Error('Recovery artifact binding mismatch.');const diary=fixedBase64Url(payload.diary_id,16),rootKey=fixedBase64Url(payload.RK_epoch,32)
   return {rootKey,payload,recoveryCommitment:await recoveryCommitment(urs,diary,payload.recovery_generation)}
 }
-/** Recovery activation is deliberately coupled to the concrete full verifier.
- * There is no exported proof issuer and no caller supplied verification callback. */
-export async function activateRecoveredRoot(candidate:RecoveredRootCandidate,verifier:FullRemoteVerifier,snapshot:RemoteSnapshot,persistWrap:(rootKey:Uint8Array,payload:RecoveryPayload)=>Promise<void>):Promise<void>{
-  if (!(verifier instanceof FullRemoteVerifier)) throw new Error('A production full verifier is required.')
+/** Activation accepts only a bootstrap verifier whose remote/backup locator and
+ * account authority were established independently of the recovery artifact. */
+export async function activateRecoveredRoot(candidate:RecoveredRootCandidate,verifier:RecoveryBootstrapVerifier,persistWrap:(rootKey:Uint8Array,payload:RecoveryPayload)=>Promise<void>):Promise<void>{
+  if (!(verifier instanceof RecoveryBootstrapVerifier)) throw new Error('An independently authenticated bootstrap verifier is required.')
   const p=candidate.payload;validatePayload(p)
-  verifier.assertRecoveryBinding({manifestFingerprint:p.manifest_fingerprint,diaryId:p.diary_id,epochId:p.epoch_id,keyId:p.key_id,recoveryGeneration:p.recovery_generation,recoveryCommitment:candidate.recoveryCommitment,accountBinding:p.google_account_binding,anchor:p.remote_anchor})
-  const verified=await verifier.verify(snapshot)
+  const verified=await verifier.verifyCandidate(candidate)
   if(verified.manifestFingerprint!==p.manifest_fingerprint)throw new Error('Verified remote does not bind the recovery candidate.')
   await persistWrap(candidate.rootKey,p)
 }

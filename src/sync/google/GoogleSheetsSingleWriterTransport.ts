@@ -77,13 +77,18 @@ export class GoogleSheetsSingleWriterTransport implements RemoteTransport {
         ]}),
       })
       if (!created.spreadsheetId) throw new TransportError('unknown_outcome', 'Create response omitted the candidate ID.')
-      const manifestId = created.sheets?.find((sheet) => sheet.properties?.title === '_m')?.properties?.sheetId
-      if (manifestId === undefined) throw new TransportError('unknown_outcome', 'Create response omitted the manifest sheet ID.')
-      await this.api.request(`https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(created.spreadsheetId)}:batchUpdate`, {
-        method: 'POST', body: JSON.stringify({requests: [{updateCells: {range: {sheetId: manifestId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: 4}, rows: [{values: manifest.map((value) => ({userEnteredValue: {stringValue: value}}))}], fields: 'userEnteredValue'}}]}),
-      })
+      if(manifest.length)throw new TransportError('provider_incompatible','Manifest bytes must be written in the separately persisted manifest phase.')
     } catch (error) { throw normalize(error, true) }
   }
+
+  async writeManifest(remoteId:string,manifest:readonly string[]):Promise<void>{
+    if(manifest.length!==4)throw new TransportError('integrity_failure','Manifest must contain four exact cells.')
+    try{const data=await this.api.request<Spreadsheet>(`https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(remoteId)}?fields=${encodeURIComponent('sheets(properties(sheetId,title))')}`),sheetId=data.sheets?.find(sheet=>sheet.properties?.title==='_m')?.properties?.sheetId;if(sheetId===undefined)throw new TransportError('integrity_failure','Manifest sheet missing.');await this.api.request(`https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(remoteId)}:batchUpdate`,{method:'POST',body:JSON.stringify({requests:[{updateCells:{range:{sheetId,startRowIndex:0,endRowIndex:1,startColumnIndex:0,endColumnIndex:4},rows:[{values:manifest.map(value=>({userEnteredValue:{stringValue:value}}))}],fields:'userEnteredValue'}}]})})}catch(error){throw normalize(error,true)}
+  }
+
+  async readProperties(remoteId:string):Promise<Readonly<Record<string,string>>>{try{return(await this.api.request<DriveFile>(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(remoteId)}?fields=appProperties`)).appProperties??{}}catch(error){throw normalize(error)}}
+  async patchProperties(remoteId:string,properties:Readonly<Record<string,string>>):Promise<void>{if(Object.keys(properties).sort().join('\0')!=='app_format\0epoch_locator'||properties.app_format!=='sync-v5')throw new TransportError('integrity_failure','Unexpected protocol properties.');try{await this.api.request(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(remoteId)}?fields=id,appProperties`,{method:'PATCH',body:JSON.stringify({appProperties:properties})})}catch(error){throw normalize(error,true)}}
+  async orphanCandidates(remoteIds:readonly string[]):Promise<void>{for(const id of [...remoteIds].sort()){try{await this.api.request(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?fields=id,trashed`,{method:'PATCH',body:JSON.stringify({trashed:true})})}catch(error){throw normalize(error,true)}}}
 
   private async verifyDrive(remoteId: string): Promise<void> {
     if (!this.binding) throw new TransportError('integrity_failure', 'Trusted diary/account binding is required.')
@@ -91,7 +96,7 @@ export class GoogleSheetsSingleWriterTransport implements RemoteTransport {
     if (file.mimeType !== 'application/vnd.google-apps.spreadsheet' || file.trashed !== false || file.ownedByMe !== true || file.shared !== false || file.driveId !== undefined || file.isAppAuthorized !== true) throw new TransportError('integrity_failure', 'Drive file invariants failed.')
     const properties = file.appProperties ?? {}
     const keys = Object.keys(properties).sort()
-    if (keys.join('\0') !== 'app_format\0epoch_locator' || properties.app_format !== 'sync-v5' || properties.epoch_locator !== await expectedEpochLocator(this.binding)) throw new TransportError('integrity_failure', 'Protocol appProperties do not match the trusted epoch.')
+    if (keys.length && (keys.join('\0') !== 'app_format\0epoch_locator' || properties.app_format !== 'sync-v5' || properties.epoch_locator !== await expectedEpochLocator(this.binding))) throw new TransportError('integrity_failure', 'Protocol appProperties do not match the trusted epoch.')
     if (this.binding.googleAccountBinding !== await expectedAccountBinding(this.binding)) throw new TransportError('integrity_failure', 'Trusted account binding does not match permissionId.')
     const permissions: Array<{id?: string; type?: string; role?: string; deleted?: boolean}> = []
     let token: string | undefined
@@ -137,8 +142,7 @@ export class GoogleSheetsSingleWriterTransport implements RemoteTransport {
       const manifestSheet = manifestData.sheets?.find((sheet) => sheet.properties?.title === '_m')
       if (!manifestSheet) throw new TransportError('integrity_failure', 'Manifest grid is missing.')
       const manifestRow = this.rowsFromGrid(manifestSheet, 0, 1)[0]
-      if (!manifestRow) throw new TransportError('integrity_failure', 'Manifest row is empty.')
-      const manifest = rawStrings(manifestRow, 4)
+      const manifest = manifestRow ? rawStrings(manifestRow, 4) : []
       const physical: Array<Cell[] | undefined> = new Array(structure.recordRows)
       for (let start = 0; start < structure.recordRows; start += GRID_CHUNK_ROWS) {
         const end = Math.min(start + GRID_CHUNK_ROWS, structure.recordRows)

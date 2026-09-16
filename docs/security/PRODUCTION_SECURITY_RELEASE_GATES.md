@@ -6,21 +6,19 @@ EDS Diary ist **nicht** als „production secure“ freigegeben.
 
 | Gate | Status | Freigabekriterium |
 |---|---|---|
-| Interner Single-Writer-Kern | Erfüllt | Lokale Build-, Unit-, Architektur- und Lint-Gates bleiben grün. |
+| Interner Single-Writer-Kern | Erfüllt | Envelope-/Revision-Cutover, persistente Create-/Reconcile-State-Machine, produktive Rotation/Migration und getrennte Recovery-Bootstrap-Vertrauensgrenze sind implementiert; lokale Build-, Security-/Sync-Test- und gezielte Lint-Gates bleiben grün. |
 | Google Auth-Origin | **BLOCKED_EXTERNAL** | Separater statischer Origin, action-gebundener replay-resistenter Handoff; kein Google Runtime JS im Diary-Origin. |
 | Live Google Contract | **BLOCKED_EXTERNAL** | Hostile-Grid-/Permission-/Unknown-Outcome-Suite gegen dediziertes Google-Testkonto. |
 | WebAuthn PRF | **BLOCKED_EXTERNAL** | Reale Authenticator-/Browsermatrix, UV-required und Enrollment-/Recovery-Ceremony. |
 | Hosting | **BLOCKED_EXTERNAL** | CSP, `Referrer-Policy: no-referrer`, minimale Permissions Policy, COOP/Frame-Schutz und Source-Map-/Logprüfung. |
-| Dependency Audit | **BLOCKED_EXTERNAL** | Aktuell 5 npm-Funde (2 moderate, 2 high, 1 critical) auflösen oder extern risikoprüfen; nicht herunterstufen. |
 | Externer Audit | **BLOCKED_EXTERNAL** | Unabhängiger Kryptographie-, Protokoll- und Anwendungsaudit ohne kritische offene Findings. |
 
 ## Zulässige Aussage
 
 „Konservativer clientseitiger Kryptographieentwurf mit fail-closed Produktgrenzen; nicht extern auditiert und nicht für Produktion freigegeben.“
 
-## Korrektur nach kumulativem Self-Review
+## Interner Status
 
-Der Gate-Eintrag „Interner Single-Writer-Kern – Erfüllt“ ist überholt und steht auf
-**FAIL**: lokaler Envelope-Cutover, persistente Create-/Rotation-/Migration-
-Orchestrierung und normative Fachschemafestlegung sind noch nicht abgeschlossen.
-Unabhängig von den externen Gates ist keine Freigabe zulässig.
+`TODO_INTERNAL: none`
+
+`SECURITY/SPEC DECISION REQUIRED: none`

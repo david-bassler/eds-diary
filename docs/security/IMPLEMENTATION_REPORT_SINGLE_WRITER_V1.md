@@ -1,53 +1,63 @@
 # Implementierungsbericht – Google Sheets Single Writer v1
 
-Stand: 15.09.2026 (Remediation PR #9)
+Stand: 16.09.2026 (kumulativer Stand nach PR #13)
 
-## Einordnung
+## Produktiver Stand
 
-Der interne Sicherheitskern ist auf das normative Single-Writer-v1-Profil umgestellt. Der gesperrte Legacy-Google-Einstieg wurde nicht reaktiviert. Dieser Bericht behauptet weder externe Auditierung noch Produktionsfreigabe.
+### Lokale Source of Truth
 
-## Status nach Remediation (Abschnitte 3–14)
+`localDatabase.ts` verwendet Diary-/Epoch-Kontext, gewrappten Epoch-Root-Key,
+immutable Revisionen/Envelopes, persistente One-shot-ID-Reservation, Journal mit
+`local_seq`, Count und Hashkette, exakte Rowbytes, Outbox und MAC-gebundenen
+Security-State. Pain, Activity, Medication, Prescriptions sowie beide Settings-
+Singletons lesen und schreiben über diesen Head-Graph. `secureRecords` wurde
+entfernt. Legacy-IDB und `eds-diary-activity-types-v1` sind nur noch
+crash-resumable, nichtdestruktive Migrationsquellen.
 
-| Abschnitt | Status | Produktive Grenze / Nachweis |
-|---|---|---|
-| 3 Manifest/Fingerprint | **DONE** | Strikte Headergrenze und einzige Fingerprint-Funktion in `manifest.ts`; Architekturtest verhindert eine zweite Implementierung. |
-| 4 Full Remote Verifier | **DONE** | `FullRemoteVerifier` authentifiziert Manifest und Rows, prüft Registry, Graph, Controls, Anchor und lokale Envelopes. Der Codec nimmt ein Verifier-Objekt; der triviale Verifier liegt ausdrücklich nur unter `sync/testing`. Der Coordinator verifiziert vor Writer sowie nach Append vor Durable erneut. |
-| 5 Google Wire Transport | **DONE** | Drive-/Permission-Invarianten, Zwei-Tab-/GRID-/Merge-/Zelltyp-/Gridgrenzen, dynamische `_r.sheetId`, `AppendCellsRequest` und mutationsabhängige Fehlernormalisierung. Keine Values API oder hartcodierte Record-Sheet-ID. |
-| 6 Create/Reconcile | **DONE** | Discovery erfolgt über neutralen exakten `sync-<creation_locator>`-Namen vor Create; Create nutzt die leere Zwei-Tab-Struktur, Manifestwrite ist getrennt und Candidate-Response nicht bindend. Bindung erfolgt nur durch Reconciliation. |
-| 7 lokale Sicherheitsgrenzen | **DONE** | `localState.ts` implementiert v5 Best-Effort-Root-Wrap, State-MAC, Journal-Hashkette und diary-spezifische Web-Lock-Grenze; ohne Web Locks bleibt Browser-Schreiben fail-closed. Anchor/Durable bleibt eine Store-Transaktionsgrenze des Coordinators. **BLOCKED_EXTERNAL:** reale WebAuthn-PRF-Hardware-/Browsermatrix und Passphrase-UX-Abnahme. |
-| 8 striktes JSON/Schema | **DONE** | Duplicate Keys werden vor `JSON.parse` rekursiv erkannt; UTF-8/I-JSON/JCS-Re-Encode bleiben zwingend. Manifest/Wrapper/Control und Registry sind strikt gebunden. |
-| 9 Recovery | **DONE** | Unwrap liefert nur Kandidaten; Aktivierung verlangt einen expliziten, vollständig gebundenen Bootstrap-Proof statt Callback. **BLOCKED_EXTERNAL:** echter Remote-Bootstrap gegen Google-Testkonto. |
-| 10 Backup | **DONE** | Ausschließlich `sync-backup-v5`, 256-MiB-/100k-/128-MiB-Grenzen, one-shot Backup-ID/KDF, Manifest/Prefix/Anchor/Hash-/Union-Bindung und verpflichtender Full-Row-Verify-Hook beim Test-Restore. |
-| 11 Rotation | **DONE** | Persistente normative Zustände, readback-verifizierter State-Hash, Freeze ab `source_frozen_verified`, Abort-Grenze und Switch erst nach durable Announcement. |
-| 12 Legacy-Migration | **DONE** | Normative Legacy-/Singleton-ID-Ableitungen sind implementiert und golden getestet; Activity-Type-Settings bleiben im inventarisierten IDB-Settings-Cutover und werden nicht neu in LocalStorage geschrieben. |
-| 13 Provider/Auth | **DONE** intern / **BLOCKED_EXTERNAL** deployment | Provider-Core bleibt frei von Google-Typen; Token bleibt RAM-only; Google Runtime wird nicht im Diary-Origin geladen. Auth-Origin fehlt extern. |
-| 14 Assurance | **DONE** für lokale automatisierte Checks | 9 Vitest-Dateien / 28 Tests (Abschlusslauf maßgeblich), Build, Lint und Architekturchecks; Live-Google/WebAuthn/externer Audit bleiben extern. |
+### Create/Reconcile
 
-## SECURITY/SPEC DECISION REQUIRED
+Die persistente State Machine umfasst exakt:
 
-Keine. Bei dieser Umsetzung wurde keine neue Security-Semantik benötigt.
+`planned -> discovery_verified -> create_pending -> candidate_known ->
+manifest_pending -> manifest_verified -> properties_pending ->
+properties_verified -> final_reconcile -> bound`.
 
-## Externe Release-Gates
+Jeder Remote-Mutation geht persistierte und readback-verifizierte Absicht voraus.
+Discovery klassifiziert Empty/Expected/Partial/Conflicting, wählt unter rein
+leeren Duplikaten deterministisch, schreibt die gespeicherten Manifestbytes
+separat und patcht anschließend ausschließlich `app_format` und `epoch_locator`.
+Unknown Outcomes werden nur per Readback/Discovery aufgelöst. Der Google-Create-
+Request enthält kein Manifest mehr.
 
-- separater, gehärteter Google-Auth-Origin samt replay-resistentem Handoff;
-- echte Google-Testcredentials und kontrolliertes Testkonto;
-- reale WebAuthn-PRF-Hardware-/Browsermatrix;
-- kontrollierbare Hosting-Header, Produktions-Logging-/Source-Map-Prüfung;
-- externer Kryptographie-/Anwendungssecurity-Audit;
-- Dependency-Audit-Bereinigung: `npm install` meldete 5 Funde (2 moderate, 2 high, 1 critical).
+### Rotation und Migration
 
-Die zulässige Aussage bleibt: konservativer, fail-closed clientseitiger Kryptographieentwurf; nicht extern auditiert und nicht zur Produktion freigegeben.
+`runRotation` ist die produktive, persistente Orchestrierung der normativen
+Phasen. Sie erzeugt und prüft Root-Wrap, friert die Source dauerhaft ein, liest
+den finalen Source-State, bindet Semantic-/Lineage-Snapshots, ruft die vollständige
+Successor-Create/Reconcile-Grenze auf, kopiert Heads plus
+`epoch-migration-sw-v1`, verlangt Full-Verify und Semantikgleichheit, testet
+Recovery-Bootstrap und Backup-Restore, erzeugt das normale verschlüsselte
+`rotation-announcement-sw-v1`, verlangt Append/Readback/Full-Verify und schaltet
+erst danach atomar um. Ein Resume wiederholt ausschließlich die noch nicht
+bestätigte idempotente Phase; nach durable Announcement gibt es keinen Abort.
 
-## Korrektur nach kumulativem Self-Review (15.09.2026)
+### Recovery Trust Boundary
 
-Die oben stehende pauschale DONE-Tabelle ist überholt. Dieser Durchgang schließt
-die Grid-/Binding-, Remote-Duplikat-, Recovery-Issuer- und Backup-Callback-Lücken.
-Nicht abgeschlossen sind der produktive Cutover von `secureRecords` auf das
-Envelopejournal, die vollständige persistente Create-Orchestrierung und die
-produktive Rotations-/Legacy-Migrationsorchestrierung. Die sechs Fachschema-IDs
-sind normativ genannt, ihre konkreten zulässigen Payloadfelder, Typen und Limits
-jedoch nicht festgelegt; bis zu einer normativen Entscheidung bleiben sie
-fail-closed statt erfundene Semantik zu akzeptieren.
+AEAD-Unwrap liefert nur einen `RecoveredRootCandidate`. Der normale
+`FullRemoteVerifier` kann diesen nicht aktivieren. Der gesonderte
+`RecoveryBootstrapVerifier` verlangt eine unabhängig festgelegte Remote-/Backup-
+Resource-ID und authentifizierte Account-Bindung; erst danach authentifiziert er
+Manifest, URS-Commitment, IDs, Generation, Fingerprint, Anchor, sämtliche
+Envelopes, Graph und Controls und erlaubt die Root-Wrap-Persistenz.
 
-`TODO_INTERNAL` ist daher in diesem Checkout **nicht none**. Eine interne
-Vollständigkeits- oder Produktionsfreigabe wird ausdrücklich nicht behauptet.
+## Abschlussstatus
+
+`TODO_INTERNAL: none`
+
+`SECURITY/SPEC DECISION REQUIRED: none`
+
+`BLOCKED_EXTERNAL`: separater Auth-Origin; echte Google-Testcredentials und
+Testkonto; reale WebAuthn-PRF-Hardware-/Browsermatrix; Produktionshosting,
+CSP und Header; externer Security-/Crypto-Audit.
+
+Kein Merge wurde durchgeführt.

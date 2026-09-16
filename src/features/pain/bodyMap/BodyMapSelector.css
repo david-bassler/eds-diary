@@ -63,7 +63,6 @@
 .body-map-selector canvas {
   -webkit-tap-highlight-color: transparent;
   -webkit-touch-callout: none;
-  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -117,7 +116,7 @@
   display: none;
 }
 
-@media (min-width: 640px) {
+@media (width >= 640px) {
   .body-map-selector__tabs {
     display: none;
   }

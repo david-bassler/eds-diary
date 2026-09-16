@@ -183,7 +183,7 @@
   font-weight: 650;
 }
 
-@media (min-width: 560px) {
+@media (width >= 560px) {
   .medication-entry-form__datetime {
     grid-template-columns: 1fr 1fr;
   }

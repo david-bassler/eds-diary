@@ -6,6 +6,7 @@ import { fixedBase64Url } from '../../security/crypto/bytes'
 import { assertExtendsAnchor, type RemoteAnchor } from './prefix'
 import type { RemoteSnapshot, VerifiedRemoteState } from './contracts'
 import { validateDomainData } from '../../security/domainSchemaValidator'
+import type { RecoveredRootCandidate } from '../../security/recovery'
 
 export interface TrustedRemoteContext extends EnvelopeContext {
   rootKey: Uint8Array
@@ -132,5 +133,37 @@ export class FullRemoteVerifier {
     // Same-ID byte conflicts were rejected above; byte-identical rows are
     // represented by verifiedEnvelopeIds and can be marked remote_seen.
     return { snapshot, manifestFingerprint: fingerprint, retired: announcements.length === 1, verifiedEnvelopeIds: new Set(envelopes.map((envelope) => envelope.envelopeId)) }
+  }
+}
+
+/** Trust material that is deliberately unavailable in a RecoveryArtifact.
+ * The resource id comes from neutral discovery/user selection and the account
+ * binding from the authenticated provider (or from a separately verified
+ * backup), never from decrypted recovery payload fields. */
+export interface IndependentBootstrapAuthority {
+  source:'authenticated-remote'|'verified-backup'
+  remoteResourceId:string
+  authenticatedAccountBinding:string
+  load():Promise<RemoteSnapshot>
+}
+
+export interface RecoveryBootstrapOptions {
+  authority:IndependentBootstrapAuthority
+  schemas:Readonly<Record<string,unknown>>
+}
+
+/** A recovery-specific verifier. Unlike FullRemoteVerifier, it has no caller
+ * supplied expected diary/epoch/key/fingerprint/commitment/anchor fields. Those
+ * values are read from the candidate only after an independent resource and
+ * account authority has been fixed, then authenticated from that resource's
+ * manifest and complete prefix. */
+export class RecoveryBootstrapVerifier {
+  constructor(private readonly options:RecoveryBootstrapOptions){if(!options.authority.remoteResourceId||!options.authority.authenticatedAccountBinding)throw new Error('Independent bootstrap authority is incomplete.')}
+  async verifyCandidate(candidate:RecoveredRootCandidate):Promise<VerifiedRemoteState>{
+    const p=candidate.payload,authority=this.options.authority
+    if(p.google_account_binding!==authority.authenticatedAccountBinding)throw new Error('Recovery account binding was not independently authenticated.')
+    if(p.remote_anchor===null)throw new Error('Remote recovery requires a non-null independently checked anchor.')
+    const verifier=new FullRemoteVerifier({rootKey:candidate.rootKey,diaryId:p.diary_id,epochId:p.epoch_id,expectedManifestFingerprint:p.manifest_fingerprint,expectedKeyId:p.key_id,expectedRecoveryGeneration:p.recovery_generation,expectedRecoveryCommitment:candidate.recoveryCommitment,expectedGoogleAccountBinding:authority.authenticatedAccountBinding,schemas:this.options.schemas,oldAnchor:p.remote_anchor,localEnvelopes:[],localHeadRevisionIds:new Set()})
+    return verifier.verify(await authority.load())
   }
 }

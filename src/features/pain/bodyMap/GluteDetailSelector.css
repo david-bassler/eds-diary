@@ -121,7 +121,7 @@
   height: 20px;
 }
 
-@media (max-width: 480px) {
+@media (width <= 480px) {
   .glute-detail-selector__heading,
   .glute-detail-selector__selection {
     align-items: stretch;

@@ -1,45 +1,38 @@
 # Implementierungsaudit – Single Writer v1
 
-Stand: 15.09.2026 (PR-#9-Remediation)
+Stand: 16.09.2026 (kumulativer Stand nach PR #13)
 
-## Geprüfte Angriffsflächen
+## Adversarialer Produktpfad-Review
 
-| Bereich | Ergebnis |
+| Prüfpunkt | Ergebnis |
 |---|---|
-| Manifest | Zentrale bytegenaue Fingerprint-Implementierung; Format, Version, IV, Base64URL und Ciphertextgröße werden vor Hash/AEAD geprüft. |
-| Untrusted JSON | Duplicate-Key-Walk vor Materialisierung, fataler UTF-8-Decoder, I-JSON-Prüfung und JCS-Bytegleichheit. |
-| Remote-Vertrauen | Nur `FullRemoteVerifier` im Produktkern erzeugt den verifizierten Zustand; Test-Doubles sind sichtbar als Testcode isoliert. |
-| Google Grid | `spreadsheets.get`, rohe `userEnteredValue.stringValue`, Struktur-/Merge-/Bounds-Prüfung; dynamische Record-Sheet-ID. |
-| Drive | Owner, Sharing, Shared-Drive, App-Authorization, MIME, Trash und vollständig paginierte Permissions werden geprüft. |
-| Append/Durable | AppendCells mit gespeicherten Bytes; Unknown Outcome wird gelesen/reconciliert; kompletter finaler Verify vor Anchor/Durable. |
-| Lokaler State | v5 Root-Wrap, nicht-extractable Best-Effort-Key-Grenze, State-MAC, Journalhash und Web Lock sind implementiert. |
-| Recovery/Backup/Rotation | Kandidat-vor-Aktivierung, gebundener v5-Backup-Restore und persistente Freeze-/Announcement-Statefolge. |
-| Legacy | Sämtliche IDB-Fachstores, Settings und historischer Activity-Type-Key wurden inventarisiert; keine neuen LocalStorage-Fachwrites. Deterministische IDs sind golden getestet. |
+| Helper vorhanden, aber nicht produktiv benutzt | Die Feature-Repositories laufen über `localDatabase` auf dem entschlüsselten Head des Envelope-/Revision-Graphen. Legacy-Whole-Table-Synchronizer werden beim App-Start nicht mehr registriert. |
+| Alter Source-of-Truth-Pfad | `secureRecords` existiert nicht mehr. Die alten Klartext-Stores und der historische Activity-Type-LocalStorage-Key werden ausschließlich nichtdestruktiv inventarisiert und migriert. |
+| Lokale Manipulation | Root-Wrap, `epoch_local_security_state`/State-MAC sowie Journal-Count/-Hash werden beim Laden beziehungsweise expliziten Integritätscheck geprüft. State- und Journal-Manipulation sind fatal. |
+| Crash zwischen lokalen Phasen | Envelope-ID-Reservation ist eine eigene persistente Phase. Envelope, Revision, Journal, exakte Rowbytes und Outbox werden danach atomar geschrieben; eine verwaiste Reservation wird nie wiederverwendet. |
+| Create Unknown Outcome | `planned`, Discovery, `create_pending`, Candidate, Manifest, Properties, Final-Reconcile und `bound` werden persistiert/readback-verifiziert. Create erzeugt nur die leere `_m`/`_r`-Struktur. |
+| Generation Race / Durable | Netzwerkabschluss darf nur bei derselben `operation_generation` committen. Anchor und `durable` werden in derselben IDB-Transaktion gespeichert. |
+| Same-ID/different-bytes / IV reuse | Der Full-Verifier verwirft beides; byteidentische physische Retries bleiben Bestandteil des Prefix. |
+| Mutation nach Freeze | Alle Phasen ab `source_frozen_verified` blockieren Feature-Mutationen persistent. |
+| Switch vor Announcement | Die Rotation orchestriert Copy, Full Verify, Semantic-Gleichheit, Recovery-Bootstrap, Backup-Test-Restore und Announcement-Full-Verify; Switch ist nur nach `announcement_durable` erreichbar. |
+| Recovery Self-Confirmation | `recoverRootKeyCandidate` aktiviert nichts. `activateRecoveredRoot` akzeptiert nur den Recovery-Bootstrap-Verifier mit unabhängig festgelegter Resource-ID und authentifizierter Account-Bindung, nicht einen frei zusammengestellten normalen Epoch-Verifier. |
 
-## Negative Assurance
+## Lokale Architektur
 
-Tests decken Duplicate Keys (top-level/verschachtelt), noncanonical JSON, unpaired surrogate, Parent-Reihenfolge, Duplicate Revision, Anchorrollback, byteabweichende Envelope-ID, verlorene Append-Antwort, Fingerprint-Einmaligkeit und Rotationsfreeze ab. Der Adapter ist statisch gegen Values-Append und Google-Runtime im Hauptorigin gegated.
+Der aktive Diary-/Epoch-Kontext verweist auf einen nicht extrahierbaren
+Best-Effort-Wrapping-Key und einen v5-Root-Wrap. Immutable Envelopes und
+Revisionen, Reservationen, Journalsequenz/-hash, exakte kanonische Remote-Rowbytes,
+Outboxstatus sowie der MAC-gebundene Security-State liegen in getrennten
+IndexedDB-Stores. Feature-Lesen rekonstruiert und validiert den Revision-Graphen;
+Schreiben erzeugt stets eine neue Revision und ein einmal verschlüsseltes
+Envelope. Legacy-Quellen bleiben bis nach Zielverifikation unverändert.
 
-## Externe Grenzen
+## Ergebnis
 
-Live-Google-Vertrag, Auth-Origin, WebAuthn-Hardwarematrix, Hostingheader und unabhängiger Audit konnten im Checkout nicht erbracht werden. Sie sind Release-Gates, keine behaupteten Testergebnisse. Es liegen keine `SECURITY/SPEC DECISION REQUIRED`-Punkte vor.
+`TODO_INTERNAL: none`
 
-## Adversarialer kumulativer Self-Review (15.09.2026, aktueller Checkout)
+`SECURITY/SPEC DECISION REQUIRED: none`
 
-Die frühere DONE-Einstufung oben ist durch diesen kumulativen Review überholt. Der
-Checkout darf nicht als intern vollständig oder produktionsreif bezeichnet werden.
-
-| Anforderung | Implementierung / Test | Status |
-|---|---|---|
-| Begrenzter Google-Grid-Read, Offsets, dynamische IDs | `GoogleSheetsSingleWriterTransport`; Unit-/Build-Gates | **PASS** (lokal), Live-Vertrag **BLOCKED_EXTERNAL** |
-| Exakte Epoch-/Owner-/Account-Bindung und Pagination | `GoogleSheetsSingleWriterTransport` | **PASS** (lokal), Live-Vertrag **BLOCKED_EXTERNAL** |
-| Same envelope ID/different bytes, IV-Wiederverwendung, Control-Bindungen | `FullRemoteVerifier`; Security-Tests | **PASS** |
-| Nicht frei ausstellbarer Recovery-Nachweis | Aktivierung verlangt konkrete `FullRemoteVerifier`-Instanz und erneute Vollverifikation; kein exportierter Issuer | **PASS** |
-| Backup-Vertrauensgrenze | Restore verlangt konkrete `FullRemoteVerifier`-Instanz; Schema, Counts, Hashes, Anchor und Union werden vor Aktivierung geprüft | **PASS** |
-| Lokale normative Envelope-Source-of-Truth | Produktive Repositories verwenden weiterhin `secureRecords` in `localDatabase.ts` | **FAIL** |
-| Vollständige Create-/Reconcile-State-Machine | Manifestwrite ist noch an `create()` gekoppelt; persistenter Planned-/Candidate-/Patch-State fehlt | **FAIL** |
-| Sechs normative Fachschemas | Normtexte benennen IDs und Registrybindung, definieren aber keine zulässigen Fachfelder/Typen/Limits; vorhandene Dateien sind Placeholder | **SECURITY/SPEC DECISION REQUIRED** |
-| Vollständige produktive Rotation/Migration | Persistente Phasenhelfer existieren, vollständige Orchestrierung und Repository-Cutover fehlen | **FAIL** |
-
-Der Self-Review hat somit interne FAILs festgestellt. Release bleibt fail-closed; diese
-Datei ist kein Freigabenachweis.
+Externe Freigabegrenzen stehen ausschließlich in
+`PRODUCTION_SECURITY_RELEASE_GATES.md`; dieses Audit ist keine Aussage über
+Live-Google, reale Authenticatoren, Produktionshosting oder externen Audit.
