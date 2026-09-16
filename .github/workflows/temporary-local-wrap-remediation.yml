@@ -23,6 +23,15 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - name: Repair generated-template interpolation
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/remediate-local-wrap.mjs')
+          source = path.read_text()
+          source = source.replace('${mode} unlock.', r'\${mode} unlock.')
+          path.write_text(source)
+          PY
       - name: Apply remediation
         run: node scripts/remediate-local-wrap.mjs
       - name: Validate patch shape
