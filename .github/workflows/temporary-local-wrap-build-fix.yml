@@ -12,7 +12,6 @@ permissions:
 
 jobs:
   patch:
-    if: github.event.head_commit.message == 'Trigger local-wrap build fix'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -23,18 +22,6 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - name: Normalize body-map imports
-        run: |
-          node --input-type=module <<'NODE'
-          import fs from 'node:fs'
-          const path='src/features/pain/bodyMap/BodyMapSelector.tsx'
-          let source=fs.readFileSync(path,'utf8')
-          source=source
-            .replace("import { ShoulderDetailSelector, isShoulderRegionId, shoulderDetailLabel } from './ShoulderDetailSelector'", "import { ShoulderDetailSelector, shoulderDetailLabel, isShoulderRegionId } from './ShoulderDetailSelector'")
-            .replace("import { KneeDetailSelector, isKneeRegionId, kneeDetailLabel } from './KneeDetailSelector'", "import { KneeDetailSelector, kneeDetailLabel, isKneeRegionId } from './KneeDetailSelector'")
-            .replace("import { LowerBackDetailSelector, isLowerBackRegionId, lowerBackDetailLabel } from './LowerBackDetailSelector'", "import { LowerBackDetailSelector, lowerBackDetailLabel, isLowerBackRegionId } from './LowerBackDetailSelector'")
-          fs.writeFileSync(path,source)
-          NODE
       - name: Apply fix
         run: node scripts/fix-local-wrap-build.mjs
       - name: Check diff
@@ -43,9 +30,9 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/features/pain/PainEntryList.tsx src/features/pain/PainEntryFlow.tsx src/features/pain/bodyMap
+          git add src/features/pain/PainEntryList.tsx src/features/pain/PainStatusPrompt.tsx
           git diff --cached --exit-code && exit 1 || true
-          git commit -m "Finish React lint cleanup"
+          git commit -m "Fix pain location metadata imports"
           git push origin HEAD:codex/fix-one-shot-envelope-crash-safety
       - run: npm ci
       - name: Full ESLint
