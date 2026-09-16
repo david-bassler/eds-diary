@@ -36,12 +36,14 @@ const MAX_GRID_ROWS = 100_000
 const MAX_REMOTE_CANONICAL_BYTES = 134_217_728
 const MAX_CANONICAL_ROW_BYTES = 21_936
 
-async function expectedEpochLocator(binding: GoogleTransportBinding): Promise<string> {
+export async function epochLocator(diaryId:string,epochId:string): Promise<string> {
   return base64Url((await sha256(concatBytes(
     utf8('sync-v5/epoch-locator'), new Uint8Array([0]),
-    fixedBase64Url(binding.diaryId, 16), fixedBase64Url(binding.epochId, 16),
+    fixedBase64Url(diaryId, 16), fixedBase64Url(epochId, 16),
   ))).slice(0, 16))
 }
+
+async function expectedEpochLocator(binding: GoogleTransportBinding): Promise<string> { return epochLocator(binding.diaryId,binding.epochId) }
 
 async function expectedAccountBinding(binding: GoogleTransportBinding): Promise<string> {
   return base64Url(await sha256(concatBytes(

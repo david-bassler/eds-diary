@@ -17,7 +17,7 @@ export class SingleWriterCoordinator {
   state: CoordinatorState = 'local_only'
   private verifiedGeneration: number | null = null
   private verifiedRows: ReadonlyArray<readonly string[]> | null = null
-  constructor(private readonly diaryId: string, private readonly epochId: string, private readonly remoteId: string, private readonly transport: RemoteTransport, private readonly codec: TransportProfileCodec, private readonly store: CoordinatorStore) {
+  constructor(private readonly diaryId: string, private readonly epochId: string, private readonly remoteId: string, private readonly transport: RemoteTransport, private readonly codec: TransportProfileCodec, private readonly store: CoordinatorStore,private readonly allowRetirement=false) {
     if (transport.profileId !== codec.profileId) throw new Error('Transport profile mismatch.')
   }
 
@@ -30,7 +30,7 @@ export class SingleWriterCoordinator {
       const snapshot = await this.transport.read(this.remoteId)
       this.codec.validate(snapshot)
       const verified = await this.codec.verifyRemote(snapshot)
-      if (verified.retired) throw new Error('A rotation announcement retired this epoch.')
+      if (verified.retired&&!this.allowRetirement) throw new Error('A rotation announcement retired this epoch.')
       await assertExtendsAnchor(await this.store.readAnchor(), this.diaryId, this.epochId, snapshot.rows)
       this.verifiedGeneration = await this.store.generation()
       this.verifiedRows = snapshot.rows
@@ -51,8 +51,12 @@ export class SingleWriterCoordinator {
       if(this.store.markPending) expectedGeneration=await this.store.markPending(envelope.envelopeId,expectedGeneration)
       if (await this.store.generation() !== expectedGeneration) { this.state = 'security_blocked'; throw new Error('Local security generation changed during sync.') }
       const row = envelopeRow(envelope)
-      try { await this.transport.append(this.remoteId, row) } catch (error) {
-        if (!(error instanceof TransportError) || error.code !== 'unknown_outcome') { this.state = 'error'; throw error }
+      const prior=this.verifiedRows.filter(remoteRow=>remoteRow[0]===row[0])
+      if(prior.some(remoteRow=>remoteRow.length!==3||remoteRow.some((cell,index)=>cell!==row[index]))){this.state='security_blocked';throw new Error('Envelope ID exists with different bytes.')}
+      if(!prior.some(remoteRow=>remoteRow.length===3&&remoteRow.every((cell,index)=>cell===row[index]))){
+        try { await this.transport.append(this.remoteId, row) } catch (error) {
+          if (!(error instanceof TransportError) || error.code !== 'unknown_outcome') { this.state = 'error'; throw error }
+        }
       }
       let snapshot = await this.transport.read(this.remoteId)
       this.codec.validate(snapshot)
@@ -67,7 +71,7 @@ export class SingleWriterCoordinator {
       if(this.store.markRemoteSeen) expectedGeneration=await this.store.markRemoteSeen(envelope.envelopeId,expectedGeneration)
       await assertExtendsAnchor(await this.store.readAnchor(), this.diaryId, this.epochId, snapshot.rows)
       const finalVerified = await this.codec.verifyRemote(snapshot)
-      if (finalVerified.retired || await this.store.generation() !== expectedGeneration) { this.state = 'security_blocked'; throw new Error('Final verification or generation check failed.') }
+      if ((finalVerified.retired&&!this.allowRetirement) || await this.store.generation() !== expectedGeneration) { this.state = 'security_blocked'; throw new Error('Final verification or generation check failed.') }
       await this.store.commitDurable(envelope.envelopeId, await createAnchor(this.diaryId, this.epochId, snapshot.rows), expectedGeneration)
       this.verifiedGeneration=await this.store.generation()
       this.verifiedRows=snapshot.rows

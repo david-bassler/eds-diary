@@ -71,7 +71,7 @@ function validateControl(revision: Revision, currentEpochId: string): void {
 }
 
 function validateDataSchema(revision: Revision, schema: unknown): void {
-  if (revision.record_status === 'deleted') return
+  if (revision.record_status === 'deleted' || revision.record_status === 'control') return
   validateDomainData(schema, revision.record_data)
 }
 
