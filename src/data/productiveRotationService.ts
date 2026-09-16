@@ -5,7 +5,7 @@ import { deriveEpochSalt, randomBytes, recoveryCommitment, sha256 } from '../sec
 import { openEnvelope, type PreparedEnvelope } from '../security/envelopes'
 import { manifestFingerprint, prepareManifest, schemaRegistryHash, SCHEMA_ALLOWLIST, type ProtectedManifest } from '../security/manifest'
 import { activateRecoveredRoot, createRecovery, recoverRootKeyCandidate, type RecoveryArtifact } from '../security/recovery'
-import { createEpochMigrationData, runRotation, type ProductiveRotationState, type RotationOrchestratorDependencies } from '../security/rotation'
+import { createEpochMigrationData, runRotation, type ProductiveRotationState, type RotationOrchestratorDependencies, type RotationPersistence, type RotationState } from '../security/rotation'
 import { validateRevisionGraph, type Revision } from '../security/revisions'
 import { journalInitial, type EpochLocalSecurityState } from '../security/localState'
 import { runCreationStateMachine, type CreationState } from '../sync/core/creation'
@@ -18,6 +18,21 @@ import { DOMAIN_SCHEMA_REGISTRY, IndexedDbCoordinatorStore, IndexedDbRotationRep
 
 interface ConcreteRotationState extends ProductiveRotationState {newKeyId:string;newWrapId:string;creationLocator:string;successorManifestFingerprint:string;createdAt:string}
 export interface CompletedRotation {state:ProductiveRotationState;recovery:RecoveryArtifact;backup:SyncBackupV5}
+export type ProductiveRotationFaultPoint =
+  | 'after-root-wrap'
+  | 'after-freeze'
+  | 'after-source-snapshot'
+  | 'after-successor-create'
+  | 'after-first-copied-head'
+  | 'after-migration-envelope'
+  | 'after-successor-anchor-durable'
+  | 'after-recovery-verified'
+  | 'after-backup-verified'
+  | 'after-announcement-envelope'
+  | 'after-announcement-durable'
+  | 'before-atomic-switch'
+  | 'after-atomic-switch'
+export type ProductiveRotationFault = (point:ProductiveRotationFaultPoint)=>void|Promise<void>
 
 const digest=async(value:unknown)=>base64Url(await sha256(canonicalBytes(value as never)))
 function heads(revisions:readonly Revision[]):Revision[]{const graph=validateRevisionGraph(revisions);return[...graph.headsByRecord.values()].flatMap(ids=>[...ids].map(id=>graph.revisions.get(id)!)).sort((a,b)=>a.revision_id.localeCompare(b.revision_id))}
@@ -33,7 +48,7 @@ export class ProductiveRotationService {
   private successorManifest?:readonly[string,string,string,string]
   private successorRemoteId?:string
   private successorTransport?:GoogleSheetsSingleWriterTransport
-  constructor(private readonly transport:GoogleSheetsSingleWriterTransport,private readonly urs:Uint8Array,private readonly now=()=>new Date().toISOString()){}
+  constructor(private readonly transport:GoogleSheetsSingleWriterTransport,private readonly urs:Uint8Array,private readonly now=()=>new Date().toISOString(),private readonly fault?:ProductiveRotationFault){}
 
   async rotate():Promise<CompletedRotation>{
     const source=await this.repository.verifiedActiveEpoch();this.source=source
@@ -45,8 +60,31 @@ export class ProductiveRotationService {
     if(!recovery||!backup)throw new Error('Completed rotation artifacts are missing.');return{state,recovery,backup}
   }
 
+  private async hit(point:ProductiveRotationFaultPoint):Promise<void>{await this.fault?.(point)}
+
+  private persistence():RotationPersistence{
+    const base=indexedDbRotationPersistence()
+    return{
+      read:()=>base.read(),
+      readBack:()=>base.readBack(),
+      write:async(state:RotationState,hash:string)=>{
+        await base.write(state,hash)
+        const productive=state as ProductiveRotationState
+        if(state.step==='root_wrap_verified')await this.hit('after-root-wrap')
+        else if(state.step==='source_frozen_verified'){
+          if(productive.sourceAnchor&&productive.sourceSemanticSnapshot&&productive.sourceLineageSnapshot)await this.hit('after-source-snapshot')
+          else await this.hit('after-freeze')
+        }
+        else if(state.step==='successor_bound')await this.hit('after-successor-create')
+        else if(state.step==='recovery_verified')await this.hit('after-recovery-verified')
+        else if(state.step==='backup_verified')await this.hit('after-backup-verified')
+        else if(state.step==='announcement_durable')await this.hit('after-announcement-durable')
+      },
+    }
+  }
+
   private dependencies():RotationOrchestratorDependencies{
-    const persistence=indexedDbRotationPersistence()
+    const persistence=this.persistence()
     return{persistence,
       createAndVerifyRootWrap:async raw=>{const state=raw as ConcreteRotationState;if(await this.repository.artifact(`${state.rotationId}:context`))return;const source=this.source??await this.repository.verifiedActiveEpoch(),rootKey=randomBytes(32),salt=await deriveEpochSalt(fromBase64Url(source.context.diaryId),fromBase64Url(state.newEpochId)),account=await this.transport.authenticatedAccountBinding(),commitment=await recoveryCommitment(this.urs,fromBase64Url(source.context.diaryId),source.state.recovery_generation),payload:ProtectedManifest={diary_id:source.context.diaryId,epoch_id:state.newEpochId,key_id:state.newKeyId,recovery_generation:source.state.recovery_generation,recovery_urs_commitment:commitment,diary_marker:'epoch-manifest-v5',crypto_suite:'A256GCM-HKDF-SHA256-v5',sync_profile:'google-sheets-single-writer-v1',created_at:state.createdAt,google_account_binding:account,predecessor_epochs:[{epoch_id:source.context.epochId,manifest_fingerprint:source.context.manifestFingerprint}],record_schema_allowlist:[...SCHEMA_ALLOWLIST],record_schema_registry_hash:await schemaRegistryHash(DOMAIN_SCHEMA_REGISTRY),protocol_limits:{max_payload_bytes:16380,padding_buckets:[1024,2048,4096,8192,16384],max_unique_envelopes:100000,max_unique_canonical_bytes:134217728,max_remote_physical_rows:100000,max_remote_physical_canonical_bytes:134217728,max_canonical_row_bytes:21936}},manifest=await prepareManifest(rootKey,salt,{diaryId:source.context.diaryId,epochId:state.newEpochId},payload),fingerprint=await manifestFingerprint(manifest),context:EpochContext={id:'active',diaryId:source.context.diaryId,epochId:state.newEpochId,keyId:state.newKeyId,manifestFingerprint:fingerprint,wrapId:state.newWrapId},next:EpochLocalSecurityState={...source.state,epoch_id:state.newEpochId,key_id:state.newKeyId,manifest_fingerprint:fingerprint,remote_binding:null,remote_anchor:null,epoch_status:'local_offline',operation_generation:0,rotation_state_ref:null,migration_state_ref:null,local_journal_count:0,local_journal_hash:await journalInitial(source.context.diaryId,state.newEpochId)};await this.repository.persistSuccessor({context,rootKey,state:next});await this.repository.putArtifact(`${state.rotationId}:manifest`,manifestCells(manifest));await this.repository.putArtifact(`${state.rotationId}:context`,context)},
       verifyAndFreezeSource:async()=>{const source=await this.repository.verifiedActiveEpoch();if(source.state.rotation_state_ref?.state!=='source_frozen_verified')throw new Error('Final source snapshot requires a persisted freeze.');const remote=source.state.remote_binding!,material={localEnvelopes:source.envelopes,localHeadRevisionIds:new Set(heads(source.revisions).map(r=>r.revision_id))},verifier=new FullRemoteVerifier({rootKey:source.rootKey,diaryId:source.context.diaryId,epochId:source.context.epochId,expectedManifestFingerprint:source.context.manifestFingerprint,expectedKeyId:source.context.keyId,expectedRecoveryGeneration:source.state.recovery_generation,expectedRecoveryCommitment:source.state.recovery_urs_commitment,expectedGoogleAccountBinding:remote.remote_identity_binding,schemas:DOMAIN_SCHEMA_REGISTRY,oldAnchor:source.state.remote_anchor,...material}),snapshot=await this.transport.read(remote.remote_resource_id);await verifier.verify(snapshot);const hashes=await snapshots(source.revisions);this.source=source;return{anchor:await createAnchor(source.context.diaryId,source.context.epochId,snapshot.rows),semanticSnapshot:hashes.semantic,lineageSnapshot:hashes.lineage}},
@@ -59,7 +97,7 @@ export class ProductiveRotationService {
       createAndTestRestoreBackup:async raw=>{const state=raw as ConcreteRotationState,context=await this.context(state),root=await this.repository.successorRoot(state.newEpochId,state.newWrapId),remoteId=await this.remoteId(state),snapshot=await(await this.successorWire(state)).read(remoteId),envelopes=await this.repository.successorEnvelopes(state.newEpochId),backup=await createBackup({rootKey:root,epochSalt:await deriveEpochSalt(fromBase64Url(context.diaryId),fromBase64Url(state.newEpochId)),diaryId:context.diaryId,epochId:state.newEpochId,keyId:state.newKeyId,manifestFingerprint:context.manifestFingerprint,epochManifestPublic:snapshot.manifest as readonly[string,string,string,string],remoteRows:snapshot.rows as ReadonlyArray<readonly[string,string,string]>,localEnvelopes:envelopes,remoteBound:true,createdAt:this.now()}),verifier=await this.successorVerifier(state,envelopes,null);await testRestoreBackup({rootKey:root,epochSalt:await deriveEpochSalt(fromBase64Url(context.diaryId),fromBase64Url(state.newEpochId)),diaryId:context.diaryId,epochId:state.newEpochId,keyId:state.newKeyId,manifestFingerprint:context.manifestFingerprint},backup,verifier);await this.repository.putArtifact(`${state.rotationId}:backup`,backup);return backup.backup_id},
       prepareAnnouncementEnvelope:async raw=>this.prepareAnnouncement(raw as ConcreteRotationState),
       appendReadbackAndFullVerifyAnnouncement:async raw=>this.publishAnnouncement(raw as ConcreteRotationState),
-      atomicSwitchAndRetireSource:async raw=>{const state=raw as ConcreteRotationState,context=await this.context(state);if(!state.recoveryArtifactId||!state.backupId||state.successorSemanticSnapshot!==state.sourceSemanticSnapshot)throw new Error('Rotation switch prerequisites are incomplete.');if(!await this.repository.artifact(`${state.rotationId}:recovery`)||!await this.repository.artifact(`${state.rotationId}:backup`))throw new Error('Verified recovery or backup artifact is missing.');await this.repository.atomicSwitch(context,state)},
+      atomicSwitchAndRetireSource:async raw=>{const state=raw as ConcreteRotationState,context=await this.context(state),active=await this.repository.verifiedActiveEpoch();if(active.context.epochId===state.newEpochId){if(active.state.epoch_status!=='active')throw new Error('Successor is active context but not active epoch.');return}if(!state.recoveryArtifactId||!state.backupId||state.successorSemanticSnapshot!==state.sourceSemanticSnapshot)throw new Error('Rotation switch prerequisites are incomplete.');if(!await this.repository.artifact(`${state.rotationId}:recovery`)||!await this.repository.artifact(`${state.rotationId}:backup`))throw new Error('Verified recovery or backup artifact is missing.');await this.hit('before-atomic-switch');await this.repository.atomicSwitch(context,state);await this.hit('after-atomic-switch')},
     }
   }
 
@@ -74,13 +112,12 @@ export class ProductiveRotationService {
     const coordinator=new SingleWriterCoordinator(context.diaryId,context.epochId,remote.remote_resource_id,transport,new GoogleSheetsSingleWriterProfileCodec(verifier),new IndexedDbCoordinatorStore(context.epochId,context.wrapId),context.epochId===state.oldEpochId);coordinator.connected();await coordinator.pullVerify();await coordinator.pushPending()
   }
   private async copyHeadsAndMigration(state:ConcreteRotationState):Promise<void>{
-    const source=this.source??await this.repository.verifiedActiveEpoch(),context=await this.context(state),sourceHashes=await snapshots(source.revisions);let active=0,tombstone=0
-    for(const head of sourceHashes.heads){if(head.record_status==='deleted')tombstone++;else active++;const revision=await this.repository.rotationRevision(`${state.rotationId}:copy:${head.revision_id}`,()=>({...head,revision_id:base64Url(randomBytes(32)),parent_revision_ids:[],migration_origin:{sources:[{source_epoch_id:source.context.epochId,source_record_id:head.record_id,source_revision_ids:[head.revision_id]}]},protocol_created_at:state.createdAt}));await this.repository.prepareRotationEnvelope(`${state.rotationId}:copy:${head.revision_id}`,context,revision)}
-    const migrationData=createEpochMigrationData({migration_id:state.rotationId,migration_kind:'normal',source:{source_epoch_id:source.context.epochId,source_manifest_fingerprint:source.context.manifestFingerprint,source_anchor:state.sourceAnchor,source_lineage_snapshot_hash:sourceHashes.lineage,source_semantic_snapshot_hash:sourceHashes.semantic},result_semantic_snapshot_hash:sourceHashes.semantic,active_head_count:active,tombstone_head_count:tombstone}),revision=await this.repository.rotationRevision(`${state.rotationId}:migration`,()=>({record_type:'epoch_migration',record_schema:'epoch-migration-sw-v1',record_id:base64Url(randomBytes(16)),revision_id:base64Url(randomBytes(32)),parent_revision_ids:[],record_status:'control',record_data:migrationData,migration_origin:null,protocol_created_at:state.createdAt}));await this.repository.prepareRotationEnvelope(`${state.rotationId}:migration`,context,revision)
-    await this.syncEpoch(state,context,await this.successorWire(state))
+    const source=this.source??await this.repository.verifiedActiveEpoch(),context=await this.context(state),sourceHashes=await snapshots(source.revisions);let active=0,tombstone=0,copied=0
+    for(const head of sourceHashes.heads){if(head.record_status==='deleted')tombstone++;else active++;const revision=await this.repository.rotationRevision(`${state.rotationId}:copy:${head.revision_id}`,()=>({...head,revision_id:base64Url(randomBytes(32)),parent_revision_ids:[],migration_origin:{sources:[{source_epoch_id:source.context.epochId,source_record_id:head.record_id,source_revision_ids:[head.revision_id]}]},protocol_created_at:state.createdAt}));await this.repository.prepareRotationEnvelope(`${state.rotationId}:copy:${head.revision_id}`,context,revision);copied++;if(copied===1)await this.hit('after-first-copied-head')}
+    const migrationData=createEpochMigrationData({migration_id:state.rotationId,migration_kind:'normal',source:{source_epoch_id:source.context.epochId,source_manifest_fingerprint:source.context.manifestFingerprint,source_anchor:state.sourceAnchor,source_lineage_snapshot_hash:sourceHashes.lineage,source_semantic_snapshot_hash:sourceHashes.semantic},result_semantic_snapshot_hash:sourceHashes.semantic,active_head_count:active,tombstone_head_count:tombstone}),revision=await this.repository.rotationRevision(`${state.rotationId}:migration`,()=>({record_type:'epoch_migration',record_schema:'epoch-migration-sw-v1',record_id:base64Url(randomBytes(16)),revision_id:base64Url(randomBytes(32)),parent_revision_ids:[],record_status:'control',record_data:migrationData,migration_origin:null,protocol_created_at:state.createdAt}));await this.repository.prepareRotationEnvelope(`${state.rotationId}:migration`,context,revision);await this.hit('after-migration-envelope')
+    await this.syncEpoch(state,context,await this.successorWire(state));await this.hit('after-successor-anchor-durable')
   }
   private async successorSemantic(state:ConcreteRotationState,envelopes:readonly PreparedEnvelope[]):Promise<string>{const context=await this.context(state),root=await this.repository.successorRoot(state.newEpochId,state.newWrapId),salt=await deriveEpochSalt(fromBase64Url(context.diaryId),fromBase64Url(state.newEpochId)),revisions:Revision[]=[];for(const envelope of envelopes){const revision=await openEnvelope(root,salt,{diaryId:context.diaryId,epochId:state.newEpochId},envelope);if(revision.record_status!=='control')revisions.push(revision)}return(await snapshots(revisions)).semantic}
-  private async prepareAnnouncement(state:ConcreteRotationState):Promise<void>{const source=this.source??await this.repository.verifiedActiveEpoch(),context=await this.context(state),revision=await this.repository.rotationRevision(`${state.rotationId}:announcement`,()=>({record_type:'rotation_announcement',record_schema:'rotation-announcement-sw-v1',record_id:base64Url(randomBytes(16)),revision_id:base64Url(randomBytes(32)),parent_revision_ids:[],record_status:'control',record_data:{rotation_id:state.rotationId,from_epoch_id:source.context.epochId,successor_epoch_id:state.newEpochId,successor_creation_locator:state.creationLocator,successor_manifest_fingerprint:context.manifestFingerprint,rotation_kind:'normal'},migration_origin:null,protocol_created_at:state.createdAt}));const envelope=await this.repository.prepareRotationEnvelope(`${state.rotationId}:announcement`,source.context,revision);await this.repository.putArtifact(`${state.rotationId}:announcement`,envelope)}
+  private async prepareAnnouncement(state:ConcreteRotationState):Promise<void>{const source=this.source??await this.repository.verifiedActiveEpoch(),context=await this.context(state),revision=await this.repository.rotationRevision(`${state.rotationId}:announcement`,()=>({record_type:'rotation_announcement',record_schema:'rotation-announcement-sw-v1',record_id:base64Url(randomBytes(16)),revision_id:base64Url(randomBytes(32)),parent_revision_ids:[],record_status:'control',record_data:{rotation_id:state.rotationId,from_epoch_id:source.context.epochId,successor_epoch_id:state.newEpochId,successor_creation_locator:state.creationLocator,successor_manifest_fingerprint:context.manifestFingerprint,rotation_kind:'normal'},migration_origin:null,protocol_created_at:state.createdAt}));const envelope=await this.repository.prepareRotationEnvelope(`${state.rotationId}:announcement`,source.context,revision);await this.repository.putArtifact(`${state.rotationId}:announcement`,envelope);await this.hit('after-announcement-envelope')}
   private async publishAnnouncement(state:ConcreteRotationState):Promise<void>{const source=this.source??await this.repository.verifiedActiveEpoch();await this.syncEpoch(state,source.context,this.transport);const material=await this.repository.verifiedEpoch(source.context),snapshot=await this.transport.read(material.state.remote_binding!.remote_resource_id),anchor=await createAnchor(source.context.diaryId,source.context.epochId,snapshot.rows);if(JSON.stringify(anchor)!==JSON.stringify(material.state.remote_anchor))throw new Error('Announcement anchor is not durable.');this.source=material}
-
 }
