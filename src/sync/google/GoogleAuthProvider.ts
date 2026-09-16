@@ -1,4 +1,13 @@
 import type { AuthProvider, IdentityBinding } from '../core/contracts'
+import type { GoogleApiClient } from './GoogleSheetsSingleWriterTransport'
+
+const AUTHENTICATED_CLIENTS=new WeakSet<GoogleApiClient>()
+export function isAuthenticatedGoogleApiClient(client:GoogleApiClient):boolean{return AUTHENTICATED_CLIENTS.has(client)}
+/** Local architecture-test seam. It is fail-closed in every production build. */
+export function issueControlledTestGoogleClient(client:GoogleApiClient):GoogleApiClient{
+  if(import.meta.env.MODE!=='test')throw new Error('Test provider identities are unavailable in production.')
+  AUTHENTICATED_CLIENTS.add(client);return client
+}
 
 /** Main-origin side of the isolated auth handoff. It deliberately accepts no tokens. */
 export class GoogleAuthProvider implements AuthProvider {

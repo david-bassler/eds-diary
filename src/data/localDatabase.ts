@@ -85,7 +85,8 @@ async function wrappingKey(db:IDBDatabase,wrapId:string):Promise<CryptoKey>{cons
 async function initialContext(db:IDBDatabase):Promise<{context:EpochContext;rootKey:Uint8Array;state:EpochLocalSecurityState}>{
   const diaryId=base64Url(randomBytes(16)),epochId=base64Url(randomBytes(16)),keyId=base64Url(randomBytes(16)),rootKey=randomBytes(32),wrapId=base64Url(randomBytes(16)),manifestFingerprint=base64Url(await sha256(canonicalBytes(['local-offline-v5',diaryId,epochId,keyId])))
   const context:EpochContext={id:ACTIVE_CONTEXT,diaryId,epochId,keyId,manifestFingerprint,wrapId},key=await wrappingKey(db,wrapId),wrap=await createBestEffortRootWrap(rootKey,key,{diary_id:diaryId,epoch_id:epochId,key_id:keyId,manifest_fingerprint:manifestFingerprint},fromBase64Url(wrapId)),epochSalt=await deriveEpochSalt(fromBase64Url(diaryId),fromBase64Url(epochId))
-  const state:EpochLocalSecurityState={local_state_version:5,diary_id:diaryId,epoch_id:epochId,key_id:keyId,manifest_fingerprint:manifestFingerprint,recovery_generation:0,remote_binding:null,remote_anchor:null,epoch_status:'local_offline',operation_generation:0,rotation_state_ref:null,migration_state_ref:null,local_journal_count:0,local_journal_hash:await journalInitial(diaryId,epochId)}
+  const recovery_urs_commitment=base64Url(await sha256(canonicalBytes(['local-offline-recovery-v5',diaryId,epochId,keyId])))
+  const state:EpochLocalSecurityState={local_state_version:5,diary_id:diaryId,epoch_id:epochId,key_id:keyId,manifest_fingerprint:manifestFingerprint,recovery_generation:0,recovery_urs_commitment,remote_binding:null,remote_anchor:null,epoch_status:'local_offline',operation_generation:0,rotation_state_ref:null,migration_state_ref:null,local_journal_count:0,local_journal_hash:await journalInitial(diaryId,epochId)}
   const tag=await stateTag(rootKey,epochSalt,state),tx=db.transaction([STORES.context,STORES.wraps,STORES.state],'readwrite');tx.objectStore(STORES.context).add(context);tx.objectStore(STORES.wraps).add({id:epochId,wrap});tx.objectStore(STORES.state).add({id:epochId,state,tag} satisfies StoredState);await complete(tx);return{context,rootKey,state}
 }
 async function loadEpoch(db:IDBDatabase):Promise<{context:EpochContext;rootKey:Uint8Array;state:EpochLocalSecurityState;epochSalt:Uint8Array}>{
@@ -161,6 +162,17 @@ export class IndexedDbCoordinatorStore implements CoordinatorStore {
 }
 
 export async function activeEpochSyncContext():Promise<{diaryId:string;epochId:string;rootKey:Uint8Array;state:EpochLocalSecurityState}>{await ready();const loaded=await loadEpoch(await openDatabase());return{diaryId:loaded.context.diaryId,epochId:loaded.context.epochId,rootKey:loaded.rootKey,state:loaded.state}}
+
+/** Immutable verifier inputs reconstructed from authenticated local storage. */
+export async function activeEpochVerifierMaterial():Promise<{localEnvelopes:PreparedEnvelope[];localHeadRevisionIds:ReadonlySet<string>}>{
+  const db=await openDatabase();await verifyLocalIntegrityFor(db);const loaded=await loadEpoch(db)
+  const tx=db.transaction(STORES.envelopes,'readonly'),items=await result<StoredEnvelope[]>(tx.objectStore(STORES.envelopes).index('byEpoch').getAll(loaded.context.epochId));await complete(tx)
+  const localEnvelopes=items.sort((a,b)=>a.localSeq-b.localSeq).map(({envelopeId,iv,ciphertext,bytesHash})=>({envelopeId,iv,ciphertext,bytesHash}))
+  const revisions=await verifiedEnvelopeRevisions(db),graph=validateRevisionGraph(revisions)
+  return{localEnvelopes,localHeadRevisionIds:new Set([...graph.headsByRecord.values()].flatMap(ids=>[...ids]))}
+}
+
+export const DOMAIN_SCHEMA_REGISTRY:Readonly<Record<string,unknown>>=DOMAIN_SCHEMAS
 
 async function verifyLocalIntegrityFor(db:IDBDatabase):Promise<void>{const loaded=await loadEpoch(db),tx=db.transaction(STORES.envelopes,'readonly'),items=await result<StoredEnvelope[]>(tx.objectStore(STORES.envelopes).index('byEpoch').getAll(loaded.context.epochId));await complete(tx);let hash=await journalInitial(loaded.context.diaryId,loaded.context.epochId),count=0;for(const item of items.sort((a,b)=>a.localSeq-b.localSeq)){count++;if(item.localSeq!==count||item.rowBytes!==decodeUtf8(canonicalBytes([...envelopeRow(item)])))throw new Error('Local envelope journal corruption.');hash=await journalNext(hash,count,item)}if(count!==loaded.state.local_journal_count||hash!==loaded.state.local_journal_hash)throw new Error('Local envelope journal hash failed.')}
 export async function verifyLocalIntegrity():Promise<void>{return verifyLocalIntegrityFor(await openDatabase())}

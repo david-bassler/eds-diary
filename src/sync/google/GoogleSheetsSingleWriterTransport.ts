@@ -2,7 +2,10 @@ import { base64Url, concatBytes, fixedBase64Url, utf8 } from '../../security/cry
 import { sha256 } from '../../security/crypto/core'
 import { canonicalBytes } from '../../security/crypto/canonical'
 import { SINGLE_WRITER_PROFILE, TransportError, type RemoteCandidate, type RemoteSnapshot, type RemoteTransport } from '../core/contracts'
+import { isAuthenticatedGoogleApiClient } from './GoogleAuthProvider'
 
+/** An API client issued by the isolated authentication hand-off. `identity()` is
+ * the immutable subject of that session, not a value entered by application UI. */
 export interface GoogleApiClient { request<T>(url: string, init?: RequestInit): Promise<T>; identity(): string }
 interface Cell { userEnteredValue?: { stringValue?: string; formulaValue?: string; numberValue?: number; boolValue?: boolean }; effectiveValue?: { errorValue?: unknown } }
 interface Sheet { properties?: { sheetId?: number; title?: string; sheetType?: string; gridProperties?: { rowCount?: number; columnCount?: number } }; merges?: unknown[]; data?: Array<{ startRow?: number; rowData?: Array<{ values?: Cell[] }> }> }
@@ -20,7 +23,7 @@ function rawStrings(cells: Cell[], expectedColumns: number): string[] {
   return cells.map((cell)=>{const entered=cell.userEnteredValue;if(!entered||Object.keys(entered).length!==1||typeof entered.stringValue!=='string'||cell.effectiveValue?.errorValue)throw new TransportError('integrity_failure','Only user-entered string values are accepted.');return entered.stringValue})
 }
 
-export interface GoogleTransportBinding {
+interface GoogleTransportBinding {
   diaryId: string
   epochId: string
   /** permissionId returned by drive.about.get, never an email address. */
@@ -52,7 +55,19 @@ async function expectedAccountBinding(binding: GoogleTransportBinding): Promise<
 export class GoogleSheetsSingleWriterTransport implements RemoteTransport {
   readonly profileId = SINGLE_WRITER_PROFILE
   private readonly sheetIds = new Map<string, number>()
-  constructor(private readonly api: GoogleApiClient, private readonly binding?: GoogleTransportBinding) {}
+  private constructor(private readonly api: GoogleApiClient, private readonly binding: GoogleTransportBinding) {}
+  /** Establishes provider identity inside the transport boundary. Neither an
+   * owner permission id nor an account binding is accepted from its caller. */
+  static async fromAuthenticatedSession(api:GoogleApiClient,diaryId:string,epochId:string):Promise<GoogleSheetsSingleWriterTransport>{
+    if(!isAuthenticatedGoogleApiClient(api))throw new TransportError('auth_required','API client was not issued by the authenticated provider boundary.')
+    fixedBase64Url(diaryId,16);fixedBase64Url(epochId,16)
+    const about=await api.request<{user?:{permissionId?:string}}>('https://www.googleapis.com/drive/v3/about?fields=user(permissionId)')
+    const ownerPermissionId=about.user?.permissionId
+    if(!ownerPermissionId||ownerPermissionId!==api.identity())throw new TransportError('auth_required','Provider session identity could not be authenticated.')
+    const partial={diaryId,epochId,ownerPermissionId,googleAccountBinding:''}
+    const googleAccountBinding=await expectedAccountBinding(partial)
+    return new GoogleSheetsSingleWriterTransport(api,{...partial,googleAccountBinding})
+  }
   async authenticatedAccountBinding():Promise<string>{if(!this.binding)throw new TransportError('auth_required','Authenticated provider identity is required.');const derived=await expectedAccountBinding(this.binding);if(derived!==this.binding.googleAccountBinding)throw new TransportError('integrity_failure','Provider identity binding is invalid.');return derived}
 
   async discover(locator: string): Promise<readonly RemoteCandidate[]> {

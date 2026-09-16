@@ -43,13 +43,19 @@ async function saveNext(deps:RotationOrchestratorDependencies,state:ProductiveRo
  * crash; no phase transition is made from an HTTP response alone. */
 export async function runRotation(deps:RotationOrchestratorDependencies,initial:ProductiveRotationState):Promise<ProductiveRotationState>{
   let state=await deps.persistence.read() as ProductiveRotationState|null
-  if(!state){const hash=await rotationStateHash(initial);await deps.persistence.write(initial,hash);const read=await deps.persistence.readBack();if(read.hash!==hash||await rotationStateHash(read.state)!==hash)throw new Error('Initial rotation state readback failed.');state=initial}
+  if(!state){if(initial.step!=='prepared'||!initial.rotationId||!initial.oldEpochId||!initial.newEpochId||initial.oldEpochId===initial.newEpochId)throw new Error('Invalid initial rotation state.');const hash=await rotationStateHash(initial);await deps.persistence.write(initial,hash);const read=await deps.persistence.readBack();if(read.hash!==hash||await rotationStateHash(read.state)!==hash)throw new Error('Initial rotation state readback failed.');state=initial}
   if(state.step==='prepared'){await deps.createAndVerifyRootWrap(state);state=await saveNext(deps,state,'root_wrap_verified')}
   if(state.step==='root_wrap_verified'){
     // Persist/read back the mutation fence before taking the final snapshot.
     state=await saveNext(deps,state,'source_frozen_verified')
     const source=await deps.verifyAndFreezeSource(state)
     state={...state,sourceAnchor:source.anchor,sourceSemanticSnapshot:source.semanticSnapshot,sourceLineageSnapshot:source.lineageSnapshot}
+    const hash=await rotationStateHash(state);await deps.persistence.write(state,hash);const read=await deps.persistence.readBack();if(read.hash!==hash||await rotationStateHash(read.state)!==hash)throw new Error('Frozen source snapshot readback failed.')
+  }
+  // A crash is possible after the freeze fence but before the snapshot record.
+  // Resume therefore reconstructs and persists the snapshot before proceeding.
+  if(state.step==='source_frozen_verified'&&(!state.sourceAnchor||!state.sourceSemanticSnapshot||!state.sourceLineageSnapshot)){
+    const source=await deps.verifyAndFreezeSource(state);state={...state,sourceAnchor:source.anchor,sourceSemanticSnapshot:source.semanticSnapshot,sourceLineageSnapshot:source.lineageSnapshot}
     const hash=await rotationStateHash(state);await deps.persistence.write(state,hash);const read=await deps.persistence.readBack();if(read.hash!==hash||await rotationStateHash(read.state)!==hash)throw new Error('Frozen source snapshot readback failed.')
   }
   if(state.step==='source_frozen_verified'){await deps.verifyRecoverySecret(state);state=await saveNext(deps,state,'recovery_secret_verified')}

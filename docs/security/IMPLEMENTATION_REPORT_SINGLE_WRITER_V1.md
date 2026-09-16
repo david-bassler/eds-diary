@@ -21,6 +21,15 @@ Der Migrationsfortschritt besitzt einen kanonischen Hash, ist über
 `migration_state_ref` authentifiziert und verwendet je Quelle eine deterministische
 Revision-ID für idempotentes Crash-Resume.
 
+Der App-/Data-Lifecycle installiert nach einem authentifizierten Provider-Handoff
+den `SingleWriterSyncService` selbst. Dessen Full-Verifier erhält Fingerprint,
+Key-ID, Recovery-Generation/-Commitment, Anchor, lokale Envelopes und lokale
+Heads ausschließlich aus MAC-/Journal-verifiziertem IndexedDB-State und die
+Schema-Erwartung aus der statischen Registry. Die frühere frei caller-setzbare
+Trust-Struktur ist aus `createGoogle` entfernt. Dirty- und manuelle Full-Syncs
+laufen über denselben sicheren Coordinator; Legacy-Whole-Table-Handler können
+nicht mehr registriert werden.
+
 ### Create/Reconcile
 
 Die persistente State Machine umfasst exakt:
@@ -61,6 +70,11 @@ AEAD-Unwrap liefert nur einen `RecoveredRootCandidate`. Der normale
 Resource-ID und authentifizierte Account-Bindung; erst danach authentifiziert er
 Manifest, URS-Commitment, IDs, Generation, Fingerprint, Anchor, sämtliche
 Envelopes, Graph und Controls und erlaubt die Root-Wrap-Persistenz.
+Der produktive Google-Transport wird über eine authentifizierte Session-Factory
+erzeugt. Die Factory fragt `drive.about.user.permissionId` innerhalb dieser
+Session ab, vergleicht sie mit deren festem Subject und leitet
+`google_account_binding` intern ab; allgemeiner App-Code kann diese Trust-Werte
+nicht mehr an den Konstruktor übergeben.
 
 ## Abschlussstatus
 

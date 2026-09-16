@@ -6,7 +6,7 @@ EDS Diary ist **nicht** als „production secure“ freigegeben.
 
 | Gate | Status | Freigabekriterium |
 |---|---|---|
-| Interner Single-Writer-Kern | Erfüllt | Envelope-/Revision-Cutover, persistente Create-/Reconcile-State-Machine, produktive Rotation/Migration und getrennte Recovery-Bootstrap-Vertrauensgrenze sind implementiert; lokale Build-, Security-/Sync-Test- und gezielte Lint-Gates bleiben grün. |
+| Interner Single-Writer-Kern | Erfüllt | Envelope-/Revision-Cutover, persistente Create-/Reconcile-State-Machine, App-verdrahteter Coordinator, aus authentifiziertem Local-State abgeleitete Verifier-Erwartungen, produktive Rotation/Migration und provider-authentifizierte Recovery-Bootstrap-Vertrauensgrenze sind implementiert; lokale Build-, Security-/Sync-Test- und gezielte Lint-Gates bleiben grün. |
 | Google Auth-Origin | **BLOCKED_EXTERNAL** | Separater statischer Origin, action-gebundener replay-resistenter Handoff; kein Google Runtime JS im Diary-Origin. |
 | Live Google Contract | **BLOCKED_EXTERNAL** | Hostile-Grid-/Permission-/Unknown-Outcome-Suite gegen dediziertes Google-Testkonto. |
 | WebAuthn PRF | **BLOCKED_EXTERNAL** | Reale Authenticator-/Browsermatrix, UV-required und Enrollment-/Recovery-Ceremony. |

@@ -5,6 +5,8 @@ import { activateRecoveredRoot, createRecovery, recoverRootKeyCandidate } from '
 import { advanceRotation, maySwitchRotation, oldEpochWritable, runRotation, type ProductiveRotationState, type RotationState } from '../security/rotation'
 import { FullRemoteVerifier, IndependentBootstrapAuthority, RecoveryBootstrapVerifier } from '../sync/core/remoteVerifier'
 import { InMemoryTransport } from '../sync/testing/InMemoryTransport'
+import { GoogleSheetsSingleWriterTransport, type GoogleApiClient } from '../sync/google/GoogleSheetsSingleWriterTransport'
+import { issueControlledTestGoogleClient } from '../sync/google/GoogleAuthProvider'
 
 const b = (n: number, length: number) => base64Url(new Uint8Array(length).fill(n))
 
@@ -32,9 +34,27 @@ describe('recovery continuity', () => {
     const transport=new InMemoryTransport();transport.remotes.set('locator-resource',{manifest:[],rows:[]})
     await expect(IndependentBootstrapAuthority.fromAuthenticatedGoogleDiscovery(transport as never,'locator','locator-resource')).rejects.toThrow('productive Google identity boundary')
   })
+  it('rejects a self-confirming provider stub and derives identity inside the controlled boundary',async()=>{
+    const diary=b(1,16),epoch=b(2,16),permission='provider-permission-7'
+    const stub:GoogleApiClient={identity:()=>permission,request:async<T>()=>({user:{permissionId:permission}} as T)}
+    await expect(GoogleSheetsSingleWriterTransport.fromAuthenticatedSession(stub,diary,epoch)).rejects.toThrow('authenticated provider boundary')
+    const transport=await GoogleSheetsSingleWriterTransport.fromAuthenticatedSession(issueControlledTestGoogleClient(stub),diary,epoch)
+    expect(await transport.authenticatedAccountBinding()).toMatch(/^[A-Za-z0-9_-]{43}$/)
+    const mismatched=issueControlledTestGoogleClient({...stub,identity:()=> 'different-session'})
+    await expect(GoogleSheetsSingleWriterTransport.fromAuthenticatedSession(mismatched,diary,epoch)).rejects.toThrow('could not be authenticated')
+  })
 })
 
 describe('productive rotation orchestration',()=>{it('persists and executes every irreversible gate in order',async()=>{let persisted:ProductiveRotationState|null=null;let hash='';const calls:string[]=[];const initial:ProductiveRotationState={rotationId:'r',oldEpochId:'o',newEpochId:'n',step:'prepared',copiedEnvelopeIds:[]};const state=await runRotation({persistence:{read:async()=>persisted,write:async(value,nextHash)=>{persisted=structuredClone(value) as ProductiveRotationState;hash=nextHash},readBack:async()=>({state:persisted!,hash})},verifyAndFreezeSource:async()=>({anchor:{},semanticSnapshot:'semantic',lineageSnapshot:'lineage'}),createAndVerifyRootWrap:async()=>{calls.push('wrap')},verifyRecoverySecret:async()=>undefined,planSuccessor:async()=>undefined,createOrReconcileSuccessor:async()=>undefined,copySemanticHeadsAndMigration:async()=>{calls.push('copy')},fullVerifySuccessor:async()=>({semanticSnapshot:'semantic'}),createAndBootstrapRecovery:async()=>{calls.push('recovery');return'a'},createAndTestRestoreBackup:async()=>{calls.push('backup');return'b'},prepareAnnouncementEnvelope:async()=>{calls.push('announcement')},appendReadbackAndFullVerifyAnnouncement:async()=>{calls.push('durable')},atomicSwitchAndRetireSource:async()=>{calls.push('switch')}},initial);expect(state.step).toBe('switched');expect(calls).toEqual(['wrap','copy','recovery','backup','announcement','durable','switch'])})})
+
+describe('rotation crash persistence',()=>{it('resumes after every durable write without duplicating successor or announcement',async()=>{
+  const initial:ProductiveRotationState={rotationId:'rotation',oldEpochId:'old',newEpochId:'new',step:'prepared',copiedEnvelopeIds:[]};let persisted:ProductiveRotationState|null=null,hash='',successors=0,announcements=0;const crashed=new Set<string>()
+  const persistence={read:async()=>persisted,write:async(value:RotationState,nextHash:string)=>{persisted=structuredClone(value) as ProductiveRotationState;hash=nextHash;const key=`${value.step}:${'sourceSemanticSnapshot'in value}`;if(!crashed.has(key)){crashed.add(key);throw new Error('crash')}},readBack:async()=>({state:persisted!,hash})}
+  const deps={persistence,verifyAndFreezeSource:async()=>({anchor:{covered:true},semanticSnapshot:'same',lineageSnapshot:'lineage'}),createAndVerifyRootWrap:async()=>undefined,verifyRecoverySecret:async()=>undefined,planSuccessor:async()=>undefined,createOrReconcileSuccessor:async()=>{successors=1},copySemanticHeadsAndMigration:async()=>undefined,fullVerifySuccessor:async()=>({semanticSnapshot:'same'}),createAndBootstrapRecovery:async()=> 'recovery',createAndTestRestoreBackup:async()=> 'backup',prepareAnnouncementEnvelope:async()=>{announcements=1},appendReadbackAndFullVerifyAnnouncement:async()=>undefined,atomicSwitchAndRetireSource:async()=>undefined}
+  let completed:ProductiveRotationState|undefined
+  while(!completed){try{completed=await runRotation(deps,initial)}catch(error){expect(error).toHaveProperty('message','crash')}}
+  expect(completed.step).toBe('switched');expect(crashed.size).toBe(14);expect(successors).toBe(1);expect(announcements).toBe(1)
+},30_000)})
 
 describe('rotation gates', () => {
   it('freezes before source snapshot and switches only after durable announcement', () => {
