@@ -1,20 +1,26 @@
 import 'fake-indexeddb/auto'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { ProductiveRotationService } from '../data/productiveRotationService'
-import { DOMAIN_SCHEMA_REGISTRY, IndexedDbRotationRepository, __localDatabaseTesting } from '../data/localDatabase'
+import { ProductiveRotationService, type ProductiveRotationFaultPoint } from '../data/productiveRotationService'
+import { DOMAIN_SCHEMA_REGISTRY, IndexedDbRotationRepository, LOCAL_STORES, __localDatabaseTesting, putRecord } from '../data/localDatabase'
 import { fromBase64Url } from '../security/crypto/bytes'
 import { randomBytes, recoveryCommitment } from '../security/crypto/core'
-import { journalInitial, stateTag } from '../security/localState'
+import { stateTag } from '../security/localState'
 import { manifestFingerprint, prepareManifest, schemaRegistryHash, SCHEMA_ALLOWLIST } from '../security/manifest'
 import { epochLocator, GoogleSheetsSingleWriterTransport } from '../sync/google/GoogleSheetsSingleWriterTransport'
 import { issueControlledTestGoogleClient } from '../sync/google/GoogleAuthProvider'
 import { createAnchor } from '../sync/core/prefix'
 
 interface Remote {id:string;name:string;manifest:string[];rows:string[][];properties:Record<string,string>;trashed:boolean}
+type AppendCrashTarget='source'|'successor'|null
+
+const pain={id:'rotation-source',startedAt:'2026-09-16T10:00:00.000Z',endedAt:'',locations:[],intensity:4,qualities:[],cause:'',occursWhen:'',note:'synthetic rotation fixture',createdAt:'2026-09-16T10:00:00.000Z',updatedAt:'2026-09-16T10:00:00.000Z'}
+
 class GoogleBoundary {
   readonly permission='productive-rotation-test-owner'
   readonly remotes=new Map<string,Remote>()
+  readonly appendCounts=new Map<string,number>()
   creates=0
+  crashAfterAppend:AppendCrashTarget=null
   private next=1
   readonly client=issueControlledTestGoogleClient({identity:()=>this.permission,request:<T>(url:string,init?:RequestInit)=>this.request<T>(url,init)})
   private cells(values:readonly string[]){return values.map(value=>({userEnteredValue:{stringValue:value}}))}
@@ -26,7 +32,20 @@ class GoogleBoundary {
     const remote=id?this.remotes.get(decodeURIComponent(id)):undefined
     if(remote&&url.includes('/permissions?'))return{permissions:[{id:this.permission,type:'user',role:'owner',deleted:false}]} as T
     if(remote&&url.includes('/drive/v3/files/')){if(init?.method==='PATCH'){const body=JSON.parse(String(init.body)) as {appProperties?:Record<string,string>;trashed?:boolean};if(body.appProperties)remote.properties={...body.appProperties};if(body.trashed)remote.trashed=true}return{id:remote.id,mimeType:'application/vnd.google-apps.spreadsheet',trashed:remote.trashed,ownedByMe:true,shared:false,isAppAuthorized:true,appProperties:remote.properties} as T}
-    if(remote&&url.includes(':batchUpdate')){const body=JSON.parse(String(init?.body)) as {requests:Array<{updateCells?:{rows:Array<{values:Array<{userEnteredValue:{stringValue:string}}>}>};appendCells?:{rows:Array<{values:Array<{userEnteredValue:{stringValue:string}}>}>}}>};for(const request of body.requests){if(request.updateCells)remote.manifest=request.updateCells.rows[0]!.values.map(value=>value.userEnteredValue.stringValue);if(request.appendCells)remote.rows.push(request.appendCells.rows[0]!.values.map(value=>value.userEnteredValue.stringValue))}return{} as T}
+    if(remote&&url.includes(':batchUpdate')){
+      const body=JSON.parse(String(init?.body)) as {requests:Array<{updateCells?:{rows:Array<{values:Array<{userEnteredValue:{stringValue:string}}>}>};appendCells?:{rows:Array<{values:Array<{userEnteredValue:{stringValue:string}}>}>}}>}
+      for(const request of body.requests){
+        if(request.updateCells)remote.manifest=request.updateCells.rows[0]!.values.map(value=>value.userEnteredValue.stringValue)
+        if(request.appendCells){
+          const row=request.appendCells.rows[0]!.values.map(value=>value.userEnteredValue.stringValue)
+          remote.rows.push(row)
+          const key=`${remote.id}:${row[0]}`;this.appendCounts.set(key,(this.appendCounts.get(key)??0)+1)
+          const matches=this.crashAfterAppend==='source'?remote.id==='source':this.crashAfterAppend==='successor'?remote.id!=='source':false
+          if(matches){const target=this.crashAfterAppend;this.crashAfterAppend=null;throw Object.assign(new Error(`simulated crash after ${target} append`),{status:400})}
+        }
+      }
+      return{} as T
+    }
     if(remote&&url.includes('sheets(properties')&&!url.includes('ranges='))return{sheets:[{properties:{sheetId:1,title:'_m',sheetType:'GRID',gridProperties:{rowCount:1,columnCount:4}},merges:[]},{properties:{sheetId:2,title:'_r',sheetType:'GRID',gridProperties:{rowCount:Math.max(1,remote.rows.length),columnCount:3}},merges:[]}]} as T
     if(remote&&url.includes('ranges=')&&decodeURIComponent(url).includes("'_m'"))return{sheets:[{properties:{sheetId:1,title:'_m'},data:remote.manifest.length?[{startRow:0,rowData:[{values:this.cells(remote.manifest)}]}]:[]}]} as T
     if(remote&&url.includes('ranges=')&&decodeURIComponent(url).includes("'_r'"))return{sheets:[{properties:{sheetId:2,title:'_r'},data:remote.rows.length?[{startRow:0,rowData:remote.rows.map(row=>({values:this.cells(row)}))}]:[]}]} as T
@@ -34,14 +53,82 @@ class GoogleBoundary {
   }
 }
 
+function transactionComplete(tx:IDBTransaction):Promise<void>{return new Promise((resolve,reject)=>{tx.oncomplete=()=>resolve();tx.onabort=()=>reject(tx.error);tx.onerror=()=>reject(tx.error)})}
+function deleteDatabase():Promise<void>{return new Promise((resolve,reject)=>{const request=indexedDB.deleteDatabase('eds-diary');request.onsuccess=()=>resolve();request.onerror=()=>reject(request.error);request.onblocked=()=>reject(new Error('Test database deletion was blocked.'))})}
+
 describe('ProductiveRotationService',()=>{
-  beforeEach(async()=>{indexedDB.deleteDatabase('eds-diary');globalThis.localStorage?.clear?.()})
-  it('rotates through persistent envelopes, coordinators, verified anchors and the atomic switch',async()=>{
-    const urs=randomBytes(32),google=new GoogleBoundary(),repository=new IndexedDbRotationRepository(),source=await repository.verifiedActiveEpoch(),transport=await GoogleSheetsSingleWriterTransport.fromAuthenticatedSession(google.client,source.context.diaryId,source.context.epochId),account=await transport.authenticatedAccountBinding(),createdAt='2026-09-16T12:00:00.000Z',commitment=await recoveryCommitment(urs,fromBase64Url(source.context.diaryId),source.state.recovery_generation)
+  beforeEach(async()=>{await deleteDatabase();globalThis.localStorage?.clear?.()})
+
+  it('survives the productive crash/resume matrix without duplicate creates, appends or semantic revisions',async()=>{
+    const createdAt='2026-09-16T12:00:00.000Z',urs=randomBytes(32),google=new GoogleBoundary(),repository=new IndexedDbRotationRepository()
+    await putRecord(LOCAL_STORES.painEntries,pain)
+    const source=await repository.verifiedActiveEpoch(),sourceRows=source.envelopes.map(envelope=>[envelope.envelopeId,envelope.iv,envelope.ciphertext]),transport=await GoogleSheetsSingleWriterTransport.fromAuthenticatedSession(google.client,source.context.diaryId,source.context.epochId),account=await transport.authenticatedAccountBinding(),commitment=await recoveryCommitment(urs,fromBase64Url(source.context.diaryId),source.state.recovery_generation)
     const manifest=await prepareManifest(source.rootKey,source.epochSalt,{diaryId:source.context.diaryId,epochId:source.context.epochId},{diary_id:source.context.diaryId,epoch_id:source.context.epochId,key_id:source.context.keyId,recovery_generation:source.state.recovery_generation,recovery_urs_commitment:commitment,diary_marker:'epoch-manifest-v5',crypto_suite:'A256GCM-HKDF-SHA256-v5',sync_profile:'google-sheets-single-writer-v1',created_at:createdAt,google_account_binding:account,predecessor_epochs:[],record_schema_allowlist:[...SCHEMA_ALLOWLIST],record_schema_registry_hash:await schemaRegistryHash(DOMAIN_SCHEMA_REGISTRY),protocol_limits:{max_payload_bytes:16380,padding_buckets:[1024,2048,4096,8192,16384],max_unique_envelopes:100000,max_unique_canonical_bytes:134217728,max_remote_physical_rows:100000,max_remote_physical_canonical_bytes:134217728,max_canonical_row_bytes:21936}})
-    const sourceRemote:Remote={id:'source',name:'sync-source',manifest:[manifest.format,manifest.version,manifest.manifestIv,manifest.manifestCiphertext],rows:[],properties:{app_format:'sync-v5',epoch_locator:await epochLocator(source.context.diaryId,source.context.epochId)},trashed:false};google.remotes.set(sourceRemote.id,sourceRemote)
-    const fingerprint=await manifestFingerprint(manifest),db=await __localDatabaseTesting.openDatabase(),anchor=await createAnchor(source.context.diaryId,source.context.epochId,[]),state={...source.state,manifest_fingerprint:fingerprint,recovery_urs_commitment:commitment,epoch_status:'active' as const,remote_binding:{provider_id:'google-sheets-single-writer-v1' as const,remote_resource_id:'source',remote_identity_binding:account},remote_anchor:anchor,local_journal_hash:await journalInitial(source.context.diaryId,source.context.epochId)},tag=await stateTag(source.rootKey,source.epochSalt,state),tx=db.transaction([__localDatabaseTesting.STORES.state,__localDatabaseTesting.STORES.context],'readwrite');tx.objectStore(__localDatabaseTesting.STORES.state).put({id:source.context.epochId,state,tag});tx.objectStore(__localDatabaseTesting.STORES.context).put({...source.context,manifestFingerprint:fingerprint});await new Promise<void>((resolve,reject)=>{tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error)})
-    const result=await new ProductiveRotationService(transport,urs,()=>createdAt).rotate(),active=await repository.verifiedActiveEpoch(),successor=[...google.remotes.values()].find(item=>item.id!=='source')!
-    expect(result.state.step).toBe('switched');expect(google.creates).toBe(1);expect(successor.name).toBe(`sync-${(result.state as typeof result.state&{creationLocator:string}).creationLocator}`);expect(successor.properties.epoch_locator).toBe(await epochLocator(active.context.diaryId,active.context.epochId));expect(successor.name.slice(5)).not.toBe(successor.properties.epoch_locator);expect(fromBase64Url(successor.name.slice(5))).toHaveLength(16);expect(fromBase64Url(successor.properties.epoch_locator!)).toHaveLength(16);expect(successor.rows.length).toBeGreaterThan(0);expect(sourceRemote.rows).toHaveLength(1);expect(active.state.epoch_status).toBe('active');expect(active.state.remote_anchor).not.toBeNull();const retired=await repository.verifiedEpoch({...source.context,manifestFingerprint:fingerprint}),announcement=retired.revisions.find(revision=>revision.record_schema==='rotation-announcement-sw-v1');expect(retired.state.epoch_status).toBe('retired');expect((announcement?.record_data as {successor_creation_locator:string}).successor_creation_locator).toBe(successor.name.slice(5));expect(result.recovery.recovery_artifact_id).toBeTruthy();expect(result.backup.backup_id).toBeTruthy();const successorRows=structuredClone(successor.rows),sourceRows=structuredClone(sourceRemote.rows),resumed=await new ProductiveRotationService(transport,urs,()=>createdAt).rotate();expect(resumed.state.step).toBe('switched');expect(google.creates).toBe(1);expect(successor.rows).toEqual(successorRows);expect(sourceRemote.rows).toEqual(sourceRows)
-  },30_000)
+    const fingerprint=await manifestFingerprint(manifest),sourceContext={...source.context,manifestFingerprint:fingerprint},sourceRemote:Remote={id:'source',name:'sync-source',manifest:[manifest.format,manifest.version,manifest.manifestIv,manifest.manifestCiphertext],rows:sourceRows,properties:{app_format:'sync-v5',epoch_locator:await epochLocator(source.context.diaryId,source.context.epochId)},trashed:false};google.remotes.set(sourceRemote.id,sourceRemote)
+    const db=await __localDatabaseTesting.openDatabase(),anchor=await createAnchor(source.context.diaryId,source.context.epochId,sourceRows),state={...source.state,manifest_fingerprint:fingerprint,recovery_urs_commitment:commitment,epoch_status:'active' as const,remote_binding:{provider_id:'google-sheets-single-writer-v1' as const,remote_resource_id:'source',remote_identity_binding:account},remote_anchor:anchor},tag=await stateTag(source.rootKey,source.epochSalt,state),tx=db.transaction([__localDatabaseTesting.STORES.state,__localDatabaseTesting.STORES.context],'readwrite');tx.objectStore(__localDatabaseTesting.STORES.state).put({id:source.context.epochId,state,tag});tx.objectStore(__localDatabaseTesting.STORES.context).put(sourceContext);await transactionComplete(tx)
+
+    const runFault=async(point:ProductiveRotationFaultPoint)=>{let fired=false;const service=new ProductiveRotationService(transport,urs,()=>createdAt,current=>{if(current===point&&!fired){fired=true;throw new Error(`fault:${point}`)}});await expect(service.rotate()).rejects.toThrow(`fault:${point}`);expect(fired).toBe(true)}
+    await runFault('after-root-wrap')
+    await runFault('after-freeze')
+    await expect(putRecord(LOCAL_STORES.painEntries,{...pain,note:'mutation must stay frozen'})).rejects.toThrow('frozen')
+    await runFault('after-source-snapshot')
+    await runFault('after-successor-create')
+    await runFault('after-first-copied-head')
+    await runFault('after-migration-envelope')
+
+    google.crashAfterAppend='successor'
+    await expect(new ProductiveRotationService(transport,urs,()=>createdAt).rotate()).rejects.toThrow('simulated crash after successor append')
+    expect(google.crashAfterAppend).toBeNull()
+    await runFault('after-successor-anchor-durable')
+    expect([...google.appendCounts.values()].every(count=>count===1)).toBe(true)
+
+    await runFault('after-recovery-verified')
+    await runFault('after-backup-verified')
+    await runFault('after-announcement-envelope')
+
+    google.crashAfterAppend='source'
+    await expect(new ProductiveRotationService(transport,urs,()=>createdAt).rotate()).rejects.toThrow('simulated crash after source append')
+    expect(google.crashAfterAppend).toBeNull()
+    await runFault('after-announcement-durable')
+    expect([...google.appendCounts.values()].every(count=>count===1)).toBe(true)
+
+    await runFault('before-atomic-switch')
+    await runFault('after-atomic-switch')
+
+    const result=await new ProductiveRotationService(transport,urs,()=>createdAt).rotate(),active=await repository.verifiedActiveEpoch(),successors=[...google.remotes.values()].filter(item=>item.id!=='source'&&!item.trashed)
+    expect(result.state.step).toBe('switched')
+    expect(google.creates).toBe(1)
+    expect(successors).toHaveLength(1)
+    const successor=successors[0]!
+    expect(successor.name).toBe(`sync-${(result.state as typeof result.state&{creationLocator:string}).creationLocator}`)
+    expect(successor.properties.epoch_locator).toBe(await epochLocator(active.context.diaryId,active.context.epochId))
+    expect(successor.name.slice(5)).not.toBe(successor.properties.epoch_locator)
+    expect(fromBase64Url(successor.name.slice(5))).toHaveLength(16)
+    expect(fromBase64Url(successor.properties.epoch_locator!)).toHaveLength(16)
+    expect(new Set(successor.rows.map(row=>row[0])).size).toBe(successor.rows.length)
+    expect(new Set(sourceRemote.rows.map(row=>row[0])).size).toBe(sourceRemote.rows.length)
+    expect([...google.appendCounts.values()].every(count=>count===1)).toBe(true)
+    expect(active.state.epoch_status).toBe('active')
+    expect(active.state.remote_anchor?.covered_row_count).toBe(successor.rows.length)
+
+    const retired=await repository.verifiedEpoch(sourceContext),announcements=retired.revisions.filter(revision=>revision.record_schema==='rotation-announcement-sw-v1'),migration=active.revisions.filter(revision=>revision.record_schema==='epoch-migration-sw-v1'),copied=active.revisions.filter(revision=>revision.record_status!=='control')
+    expect(retired.state.epoch_status).toBe('retired')
+    expect(retired.state.remote_anchor?.covered_row_count).toBe(sourceRemote.rows.length)
+    expect(announcements).toHaveLength(1)
+    expect((announcements[0]!.record_data as {successor_creation_locator:string}).successor_creation_locator).toBe(successor.name.slice(5))
+    expect(migration).toHaveLength(1)
+    expect(copied).toHaveLength(1)
+    expect(result.state.successorSemanticSnapshot).toBe(result.state.sourceSemanticSnapshot)
+    expect(result.recovery.recovery_artifact_id).toBeTruthy()
+    expect(result.backup.backup_id).toBeTruthy()
+
+    const successorRows=structuredClone(successor.rows),sourceRowsAfter=structuredClone(sourceRemote.rows),resumed=await new ProductiveRotationService(transport,urs,()=>createdAt).rotate()
+    expect(resumed.state.step).toBe('switched')
+    expect(google.creates).toBe(1)
+    expect(successor.rows).toEqual(successorRows)
+    expect(sourceRemote.rows).toEqual(sourceRowsAfter)
+    expect([...google.appendCounts.values()].every(count=>count===1)).toBe(true)
+
+    await expect(putRecord(LOCAL_STORES.painEntries,{...pain,id:'post-rotation-write',note:'successor remains writable after switched'})).resolves.toBeUndefined()
+  },120_000)
 })
