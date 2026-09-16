@@ -1,10 +1,9 @@
 import fs from 'node:fs'
 
 function replaceOnce(source, before, after, label) {
-  if (!source.includes(before)) throw new Error(`Missing ${label}`)
-  const next = source.replace(before, after)
-  if (next.includes(before)) throw new Error(`Replacement for ${label} was not unique`)
-  return next
+  const count = source.split(before).length - 1
+  if (count !== 1) throw new Error(`Expected exactly one ${label}, found ${count}`)
+  return source.replace(before, after)
 }
 
 const dbPath = 'src/data/localDatabase.ts'
