@@ -22,7 +22,7 @@ export async function journalNext(previous:string,sequence:number,envelope:Pick<
 export async function stateTag(rootKey:Uint8Array,epochSalt:Uint8Array,state:EpochLocalSecurityState):Promise<string>{return base64Url(await hmacSha256(await deriveStateMacKey(rootKey,epochSalt),canonicalBytes(state as never)))}
 export async function verifyStateTag(rootKey:Uint8Array,epochSalt:Uint8Array,state:EpochLocalSecurityState,tag:string):Promise<void>{if(!equalBytes(fixedBase64Url(tag,32),fromBase64Url(await stateTag(rootKey,epochSalt,state))))throw new Error('Local security state MAC failed.')}
 
-function rootWrapHeader(wrap:RootWrap):Omit<RootWrap,'wrapped_root_key'|'wrap_iv'>{const{wrap_iv:_iv,wrapped_root_key:_wrapped,...header}=wrap;return header}
+function rootWrapHeader(wrap:RootWrap):Omit<RootWrap,'wrapped_root_key'|'wrap_iv'>{return{local_wrap_version:wrap.local_wrap_version,mode:wrap.mode,diary_id:wrap.diary_id,epoch_id:wrap.epoch_id,key_id:wrap.key_id,manifest_fingerprint:wrap.manifest_fingerprint,wrap_id:wrap.wrap_id,mode_metadata:wrap.mode_metadata} as Omit<RootWrap,'wrapped_root_key'|'wrap_iv'>}
 const wrapAad=(wrap:Omit<RootWrap,'wrapped_root_key'|'wrap_iv'>)=>canonicalBytes(wrap as never)
 function assertRootKey(rootKey:Uint8Array):void{if(rootKey.byteLength!==32)throw new Error('Root key must contain 32 bytes.')}
 
