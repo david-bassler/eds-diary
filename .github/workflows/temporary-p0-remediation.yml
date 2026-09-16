@@ -6,6 +6,7 @@ on:
       - codex/fix-one-shot-envelope-crash-safety
     paths:
       - scripts/remediate-p0.mjs
+      - .github/p0-remediation-trigger
 
 permissions:
   contents: write
