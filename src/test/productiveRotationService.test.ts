@@ -57,7 +57,7 @@ function transactionComplete(tx:IDBTransaction):Promise<void>{return new Promise
 function deleteDatabase():Promise<void>{return new Promise((resolve,reject)=>{const request=indexedDB.deleteDatabase('eds-diary');request.onsuccess=()=>resolve();request.onerror=()=>reject(request.error);request.onblocked=()=>reject(new Error('Test database deletion was blocked.'))})}
 
 describe('ProductiveRotationService',()=>{
-  beforeEach(async()=>{await deleteDatabase();globalThis.localStorage?.clear?.()})
+  beforeEach(async()=>{await __localDatabaseTesting.resetForTesting();await deleteDatabase();globalThis.localStorage?.clear?.()})
 
   it('survives the productive crash/resume matrix and a second complete rotation',async()=>{
     const createdAt='2026-09-16T12:00:00.000Z',urs=randomBytes(32),google=new GoogleBoundary(),repository=new IndexedDbRotationRepository()
