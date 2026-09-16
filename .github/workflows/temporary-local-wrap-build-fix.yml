@@ -1,4 +1,4 @@
-name: Temporary local-wrap build fix
+name: Temporary React lint remediation
 
 on:
   push:
@@ -14,7 +14,7 @@ jobs:
   patch:
     if: github.event.head_commit.message == 'Trigger local-wrap build fix'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
         with:
@@ -31,11 +31,14 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/data/localDatabase.ts
+          git add src/App.tsx src/features/activity/ActivityPage.tsx src/features/medication/MedicationPage.tsx src/features/pain/PainEntryList.tsx src/features/pain/bodyMap src/features/share/QrShareButton.tsx
           git diff --cached --exit-code && exit 1 || true
-          git commit -m "Fix strong local-wrap build"
+          git commit -m "Fix React effect lint violations"
           git push origin HEAD:codex/fix-one-shot-envelope-crash-safety
       - run: npm ci
-      - run: npm test
-      - run: npm run build
-      - run: npx eslint src/data src/security src/sync src/test
+      - name: Full ESLint
+        run: npm run lint:js
+      - name: Unit tests
+        run: npm test
+      - name: Build
+        run: npm run build
