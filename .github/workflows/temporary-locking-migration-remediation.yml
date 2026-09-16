@@ -1,4 +1,4 @@
-name: Temporary multi-device identity remediation
+name: Temporary explicit conflict merge remediation
 
 on:
   push:
@@ -31,13 +31,13 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/data/localDatabase.ts src/test/localDatabase.test.ts src/test/multiDeviceIdentity.test.ts
+          git add src/data/localDatabase.ts src/test/conflictMerge.test.ts
           git diff --cached --exit-code && exit 1 || true
-          git commit -m "Make record identities device independent"
+          git commit -m "Add explicit record conflict merge path"
           git push origin HEAD:codex/fix-one-shot-envelope-crash-safety
       - run: npm ci
-      - name: Identity tests
-        run: npx vitest run src/test/multiDeviceIdentity.test.ts src/test/localDatabase.test.ts
+      - name: Conflict merge tests
+        run: npx vitest run src/test/conflictMerge.test.ts src/test/revisions.test.ts src/test/localDatabase.test.ts
       - name: Full unit suite
         run: npm test
       - name: Build
