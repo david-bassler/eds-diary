@@ -82,8 +82,6 @@ export function MedicationPage() {
     if (!copyOpen || !copySourceDate) return
 
     let active = true
-    setCopyLoading(true)
-    setCopyError('')
 
     void listMedicationEntries()
       .then((entries) => {
@@ -108,6 +106,7 @@ export function MedicationPage() {
   }, [copyOpen, copySourceDate])
 
   function openCopyDay(): void {
+    setCopyLoading(true)
     setCopySourceDate(previousDate(date))
     setCopyEntries([])
     setCopySelectedIds(new Set())
@@ -191,6 +190,7 @@ export function MedicationPage() {
         emptyMessage="Für diesen Tag sind keine Medikamenteneinnahmen gespeichert."
         errorMessage={copyError}
         onSourceDateChange={(nextDate) => {
+          setCopyLoading(true)
           setCopySourceDate(nextDate)
           setCopyError('')
         }}

@@ -22,7 +22,7 @@ function getQrCodeConstructor(): QrCodeConstructor | undefined {
 export function QrShareButton() {
   const [open, setOpen] = useState(false)
   const [url, setUrl] = useState('')
-  const [generatorAvailable, setGeneratorAvailable] = useState(true)
+  const [generatorAvailable, setGeneratorAvailable] = useState(() => Boolean(getQrCodeConstructor()))
   const dialogRef = useRef<HTMLDialogElement>(null)
   const qrCodeRef = useRef<HTMLDivElement>(null)
   const titleId = useId()
@@ -47,12 +47,8 @@ export function QrShareButton() {
     target.replaceChildren()
 
     const QRCode = getQrCodeConstructor()
-    if (!QRCode) {
-      setGeneratorAvailable(false)
-      return
-    }
+    if (!QRCode) return
 
-    setGeneratorAvailable(true)
     new QRCode(target, {
       text: url,
       width: 256,
@@ -62,6 +58,7 @@ export function QrShareButton() {
   }, [open, url])
 
   function openQrCode(): void {
+    setGeneratorAvailable(Boolean(getQrCodeConstructor()))
     setUrl(window.location.href)
     setOpen(true)
   }

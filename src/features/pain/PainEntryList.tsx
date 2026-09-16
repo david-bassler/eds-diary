@@ -176,7 +176,6 @@ export function PainEntryList({
   const [busyId, setBusyId] = useState<string | null>(null)
 
   const loadEntries = useCallback(async () => {
-    setLoading(true)
     try {
       const [painEntries, activityEntries] = await Promise.all([
         listPainEntries(),

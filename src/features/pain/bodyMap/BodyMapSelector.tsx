@@ -278,10 +278,6 @@ export function BodyMapSelector({ value, onChange }: BodyMapSelectorProps) {
   })
   const detailLocation = detailTarget ? value.find((location) => sameTarget(location, detailTarget)) : undefined
 
-  useEffect(() => {
-    if (detailTarget && !detailLocation) setDetailTarget(null)
-  }, [detailLocation, detailTarget])
-
   function toggle(view: BodyView, regionId: string) {
     if (isSelected(value, view, regionId)) {
       onChange(value.filter((location) => !(location.view === view && location.regionId === regionId)))

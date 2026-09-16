@@ -66,7 +66,7 @@ export function App() {
 
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
-  }, [])
+  }, [activeSection])
 
   function navigate(section: AppSection): void {
     const nextPath = pathForSection(section)

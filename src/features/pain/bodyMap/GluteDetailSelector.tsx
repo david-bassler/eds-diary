@@ -141,8 +141,6 @@ export function GluteDetailSelector({
     let active = true
     const image = new Image()
     image.decoding = 'async'
-    setHitMap(null)
-
     image.onload = () => {
       if (!active) return
       const canvas = document.createElement('canvas')

@@ -373,20 +373,15 @@ export function ActivityPage() {
   useEffect(() => {
     let active = true
 
-    setActiveRangeIndex(null)
-    setActiveDraft(null)
-    setUndoStack([])
-    setRedoStack([])
-    setTimeRanges([])
-    setRangeDetails([])
-    setRangeRecords([])
-
     void listActivityEntries()
       .then((entries) => {
         if (!active) return
 
         const selectedEntries = entriesForDate(entries, date)
-        applyStoredEntries(selectedEntries)
+        const displayNow = localNowTime()
+        setTimeRanges(selectedEntries.map((entry) => ({start: entry.startTime,end: entry.isOngoing ? ongoingDisplayEnd(entry.startTime, entry.date, displayNow) : entry.endTime})))
+        setRangeDetails(selectedEntries.map((entry) => ({activityName: entry.activityName,color: entry.color,note: entry.note,isOngoing: entry.isOngoing})))
+        setRangeRecords([...selectedEntries])
       })
       .catch(() => {
         if (active) {
@@ -415,8 +410,6 @@ export function ActivityPage() {
     if (!copyOpen || !copySourceDate) return
 
     let active = true
-    setCopyLoading(true)
-    setCopyError('')
 
     void listActivityEntries()
       .then((entries) => {
@@ -695,12 +688,24 @@ export function ActivityPage() {
   }
 
   function openCopyDay(): void {
+    setCopyLoading(true)
     setCopySourceDate(previousDate(date))
     setCopyEntries([])
     setCopySelectedIds(new Set())
     setCopyError('')
     setStatus('')
     setCopyOpen(true)
+  }
+
+  function changeDate(nextDate: string): void {
+    setActiveRangeIndex(null)
+    setActiveDraft(null)
+    setUndoStack([])
+    setRedoStack([])
+    setTimeRanges([])
+    setRangeDetails([])
+    setRangeRecords([])
+    setDate(nextDate)
   }
 
   function toggleCopyEntry(id: string, selected: boolean): void {
@@ -823,7 +828,7 @@ export function ActivityPage() {
             type="date"
             required
             value={date}
-            onChange={(event) => setDate(event.target.value)}
+            onChange={(event) => changeDate(event.target.value)}
           />
         </label>
         <div className="activity-page__day-actions">
@@ -1250,6 +1255,7 @@ export function ActivityPage() {
         emptyMessage="Für diesen Tag sind keine Aktivitäten gespeichert."
         errorMessage={copyError}
         onSourceDateChange={(nextDate) => {
+          setCopyLoading(true)
           setCopySourceDate(nextDate)
           setCopyError('')
         }}

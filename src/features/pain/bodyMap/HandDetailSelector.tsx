@@ -203,8 +203,6 @@ export function HandDetailSelector({
     let active = true
     const image = new Image()
     image.decoding = 'async'
-    setHitMap(null)
-
     image.onload = () => {
       if (!active) return
 
