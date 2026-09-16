@@ -1,6 +1,6 @@
 # Implementierungsbericht – Google Sheets Single Writer v1
 
-Stand: 16.09.2026 (finaler Integrationsstand PR #14)
+Stand: 16.09.2026 (finaler Integrationsstand PR #20)
 
 ## Produktiver Stand
 
@@ -29,6 +29,20 @@ Schema-Erwartung aus der statischen Registry. Die frühere frei caller-setzbare
 Trust-Struktur ist aus `createGoogle` entfernt. Dirty- und manuelle Full-Syncs
 laufen über denselben sicheren Coordinator; Legacy-Whole-Table-Handler können
 nicht mehr registriert werden.
+
+### Lokaler Root-Wrap
+
+Der persistente v5-Root-Wrap unterstützt `best-effort`, `passphrase` und `prf`.
+Passphrase-Wraps verwenden die normativen Argon2id-/HKDF-Parameter und werden
+nach Lock nur mit erfolgreicher AEAD-/State-Verifikation wieder aktiviert.
+PRF-Wraps binden Credential-ID, Evaluation-Input, RP-ID und separaten Wrap-Salt.
+Der Browser-Adapter führt eine echte WebAuthn-Registrierung plus anschließende
+Assertion über `navigator.credentials` aus, verlangt in Registrierung und
+Assertion `userVerification:"required"`, beschränkt die Assertion auf die exakt
+persistierte Credential-ID und akzeptiert nur eine echte 32-Byte-PRF-Ausgabe.
+Unsupported PRF, falsche Credential-ID und fehlende/falsch lange Ergebnisse
+schlagen geschlossen fehl. Die reale Authenticator-/Browsermatrix bleibt ein
+externes Produktionsfreigabe-Gate.
 
 ### Create/Reconcile
 
@@ -83,7 +97,8 @@ nicht mehr an den Konstruktor übergeben.
 `SECURITY/SPEC DECISION REQUIRED: none`
 
 `BLOCKED_EXTERNAL`: separater Auth-Origin; echte Google-Testcredentials und
-Testkonto; reale WebAuthn-PRF-Hardware-/Browsermatrix; Produktionshosting,
-CSP und Header; externer Security-/Crypto-Audit.
+Testkonto; reale WebAuthn-PRF-Hardware-/Browsermatrix einschließlich
+End-to-End-Ceremonies; Produktionshosting, CSP und Header; externer
+Security-/Crypto-Audit.
 
 Kein Merge wurde durchgeführt.

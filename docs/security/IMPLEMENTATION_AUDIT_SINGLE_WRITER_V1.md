@@ -1,6 +1,6 @@
 # Implementierungsaudit – Single Writer v1
 
-Stand: 16.09.2026 (finaler Integrationsstand PR #14)
+Stand: 16.09.2026 (finaler Integrationsstand PR #20)
 
 ## Adversarialer Produktpfad-Review
 
@@ -9,6 +9,7 @@ Stand: 16.09.2026 (finaler Integrationsstand PR #14)
 | Helper vorhanden, aber nicht produktiv benutzt | Die Feature-Repositories laufen über `localDatabase` auf dem entschlüsselten Head des Envelope-/Revision-Graphen. Nach dem authentifizierten Provider-Handoff baut `installAuthenticatedGoogleSession` den Service aus dem MAC-gebundenen aktiven Epoch-State neu auf; Dirty- und Full-Trigger besitzen nur noch diesen Coordinator-Slot. Legacy-Whole-Table-Synchronizer werden beim App-Start nicht registriert und ihre Registrierung schlägt geschlossen fehl. |
 | Alter Source-of-Truth-Pfad | `secureRecords` existiert nicht mehr. Die alten Klartext-Stores und der historische Activity-Type-LocalStorage-Key werden ausschließlich nichtdestruktiv inventarisiert und migriert. |
 | Lokale Manipulation | Root-Wrap und `epoch_local_security_state`/State-MAC werden beim Laden geprüft. Jeder normale Fach-Read prüft zusätzlich die vollständige Journalfolge, exakte Rowbytes, Count und Hashkette; State- und Journal-Manipulation sind fatal. |
+| Lokaler Root-Wrap | `best-effort`, Argon2id-Passphrase und WebAuthn-PRF besitzen getrennte Wrap-Pfade. Der WebAuthn-Browserpfad verlangt UV, exakte Credential-ID und eine 32-Byte-Post-Enrollment-PRF-Assertion; Unsupported-/Mismatch-Fälle schlagen geschlossen fehl. Reale Authenticator-/Browservalidierung bleibt externes Release-Gate. |
 | Crash zwischen lokalen Phasen | Envelope-ID-Reservation ist eine eigene persistente Phase. Envelope, Revision, Journal, exakte Rowbytes und Outbox werden danach atomar geschrieben; eine verwaiste Reservation wird nie wiederverwendet. |
 | Create Unknown Outcome | `planned`, Discovery, `create_pending`, Candidate, Manifest, Properties, Final-Reconcile und `bound` werden persistiert/readback-verifiziert. Auch beim Resume aus `create_pending` läuft Discovery vor einem weiteren Create. Vor `bound` wird exakt ein Candidate verlangt. |
 | Generation Race / Durable | Jede Envelope-Operation erfasst ihre eigene aktuelle `operation_generation`; `prepared`, `pending`, `remote_seen` und `durable` werden persistiert. Anchor und `durable` werden in derselben IDB-Transaktion gespeichert. |
@@ -19,13 +20,16 @@ Stand: 16.09.2026 (finaler Integrationsstand PR #14)
 
 ## Lokale Architektur
 
-Der aktive Diary-/Epoch-Kontext verweist auf einen nicht extrahierbaren
-Best-Effort-Wrapping-Key und einen v5-Root-Wrap. Immutable Envelopes und
-Revisionen, Reservationen, Journalsequenz/-hash, exakte kanonische Remote-Rowbytes,
-Outboxstatus sowie der MAC-gebundene Security-State liegen in getrennten
-IndexedDB-Stores. Feature-Lesen rekonstruiert und validiert den Revision-Graphen;
-Schreiben erzeugt stets eine neue Revision und ein einmal verschlüsseltes
-Envelope. Legacy-Quellen bleiben bis nach Zielverifikation unverändert.
+Der aktive Diary-/Epoch-Kontext verweist auf einen v5-Root-Wrap. Im
+Best-Effort-Modus wird dessen AES-256-GCM-Wrapping-Key nicht extrahierbar im
+Browserprofil gehalten; starke lokale Modi verwenden stattdessen den normativen
+Argon2id-Passphrase-KEK oder einen WebAuthn-PRF-abgeleiteten KEK. Immutable
+Envelopes und Revisionen, Reservationen, Journalsequenz/-hash, exakte kanonische
+Remote-Rowbytes, Outboxstatus sowie der MAC-gebundene Security-State liegen in
+getrennten IndexedDB-Stores. Feature-Lesen rekonstruiert und validiert den
+Revision-Graphen; Schreiben erzeugt stets eine neue Revision und ein einmal
+verschlüsseltes Envelope. Legacy-Quellen bleiben bis nach Zielverifikation
+unverändert.
 
 ## Ergebnis
 
