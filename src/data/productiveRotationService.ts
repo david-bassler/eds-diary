@@ -37,7 +37,7 @@ export type ProductiveRotationFault = (point:ProductiveRotationFaultPoint)=>void
 const digest=async(value:unknown)=>base64Url(await sha256(canonicalBytes(value as never)))
 function compareCanonical(left:unknown,right:unknown):number{const a=canonicalBytes(left as never),b=canonicalBytes(right as never),length=Math.min(a.byteLength,b.byteLength);for(let index=0;index<length;index++){if(a[index]!==b[index])return a[index]!-b[index]!}return a.byteLength-b.byteLength}
 function heads(revisions:readonly Revision[]):Revision[]{const graph=validateRevisionGraph(revisions);return[...graph.headsByRecord.values()].flatMap(ids=>[...ids].map(id=>graph.revisions.get(id)!)).sort((a,b)=>a.revision_id.localeCompare(b.revision_id))}
-async function snapshots(revisions:readonly Revision[]):Promise<{semantic:string;lineage:string;heads:Revision[]}>{const selected=heads(revisions),semanticEntries=selected.map(r=>({record_type:r.record_type,record_schema:r.record_schema,record_id:r.record_id,record_status:r.record_status,record_data:r.record_data})).sort(compareCanonical);return{heads:selected,semantic:await digest(semanticEntries),lineage:await digest(selected.map(r=>({record_id:r.record_id,revision_id:r.revision_id,parent_revision_ids:r.parent_revision_ids})))}}
+async function snapshots(revisions:readonly Revision[]):Promise<{semantic:string;lineage:string;heads:Revision[]}>{const selected=heads(revisions).filter(revision=>revision.record_status!=='control'),semanticEntries=selected.map(r=>({record_type:r.record_type,record_schema:r.record_schema,record_id:r.record_id,record_status:r.record_status,record_data:r.record_data})).sort(compareCanonical);return{heads:selected,semantic:await digest(semanticEntries),lineage:await digest(selected.map(r=>({record_id:r.record_id,revision_id:r.revision_id,parent_revision_ids:r.parent_revision_ids})))}}
 const manifestCells=(manifest:Awaited<ReturnType<typeof prepareManifest>>)=>[manifest.format,manifest.version,manifest.manifestIv,manifest.manifestCiphertext] as const
 
 /** Concrete production rotation. Only the provider wire is injected; every
@@ -54,9 +54,9 @@ export class ProductiveRotationService {
   async rotate():Promise<CompletedRotation>{
     const source=await this.repository.verifiedActiveEpoch();this.source=source
     if(!source.state.remote_binding||source.state.remote_binding.remote_resource_id==='')throw new Error('Rotation requires an authenticated remote source.')
-    const existing=await indexedDbRotationPersistence().read() as ConcreteRotationState|null,newEpochId=base64Url(randomBytes(16)),creationLocator=base64Url(randomBytes(16))
+    const stored=await indexedDbRotationPersistence().read() as ConcreteRotationState|null,startFresh=stored?.step==='switched',existing=startFresh?null:stored,newEpochId=base64Url(randomBytes(16)),creationLocator=base64Url(randomBytes(16))
     const initial:ConcreteRotationState=existing??{rotationId:base64Url(randomBytes(32)),oldEpochId:source.context.epochId,newEpochId,newKeyId:base64Url(randomBytes(16)),newWrapId:base64Url(randomBytes(16)),creationLocator,successorManifestFingerprint:'',createdAt:this.now(),step:'prepared',copiedEnvelopeIds:[]}
-    const state=await runRotation(this.dependencies(),initial)
+    const state=await runRotation(this.dependencies(startFresh),initial)
     const recovery=await this.repository.artifact<RecoveryArtifact>(`${state.rotationId}:recovery`),backup=await this.repository.artifact<SyncBackupV5>(`${state.rotationId}:backup`)
     if(!recovery||!backup)throw new Error('Completed rotation artifacts are missing.');return{state,recovery,backup}
   }
@@ -66,10 +66,10 @@ export class ProductiveRotationService {
   /** Only persistence events that are themselves the security boundary are
    * faulted here. Side-effect phases are faulted inside their concrete
    * dependency before the next rotation marker is persisted. */
-  private persistence():RotationPersistence{
-    const base=indexedDbRotationPersistence()
+  private persistence(startFresh=false):RotationPersistence{
+    const base=indexedDbRotationPersistence();let firstRead=true
     return{
-      read:()=>base.read(),
+      read:async()=>{const value=await base.read(),replaceCompleted=startFresh&&firstRead&&value?.step==='switched';firstRead=false;return replaceCompleted?null:value},
       readBack:()=>base.readBack(),
       write:async(state:RotationState,hash:string)=>{
         await base.write(state,hash)
@@ -82,8 +82,8 @@ export class ProductiveRotationService {
     }
   }
 
-  private dependencies():RotationOrchestratorDependencies{
-    const persistence=this.persistence()
+  private dependencies(startFresh=false):RotationOrchestratorDependencies{
+    const persistence=this.persistence(startFresh)
     return{persistence,
       createAndVerifyRootWrap:async raw=>{const state=raw as ConcreteRotationState;if(await this.repository.artifact(`${state.rotationId}:context`))return;const source=this.source??await this.repository.verifiedActiveEpoch(),rootKey=randomBytes(32),salt=await deriveEpochSalt(fromBase64Url(source.context.diaryId),fromBase64Url(state.newEpochId)),account=await this.transport.authenticatedAccountBinding(),commitment=await recoveryCommitment(this.urs,fromBase64Url(source.context.diaryId),source.state.recovery_generation),payload:ProtectedManifest={diary_id:source.context.diaryId,epoch_id:state.newEpochId,key_id:state.newKeyId,recovery_generation:source.state.recovery_generation,recovery_urs_commitment:commitment,diary_marker:'epoch-manifest-v5',crypto_suite:'A256GCM-HKDF-SHA256-v5',sync_profile:'google-sheets-single-writer-v1',created_at:state.createdAt,google_account_binding:account,predecessor_epochs:[{epoch_id:source.context.epochId,manifest_fingerprint:source.context.manifestFingerprint}],record_schema_allowlist:[...SCHEMA_ALLOWLIST],record_schema_registry_hash:await schemaRegistryHash(DOMAIN_SCHEMA_REGISTRY),protocol_limits:{max_payload_bytes:16380,padding_buckets:[1024,2048,4096,8192,16384],max_unique_envelopes:100000,max_unique_canonical_bytes:134217728,max_remote_physical_rows:100000,max_remote_physical_canonical_bytes:134217728,max_canonical_row_bytes:21936}},manifest=await prepareManifest(rootKey,salt,{diaryId:source.context.diaryId,epochId:state.newEpochId},payload),fingerprint=await manifestFingerprint(manifest),context:EpochContext={id:'active',diaryId:source.context.diaryId,epochId:state.newEpochId,keyId:state.newKeyId,manifestFingerprint:fingerprint,wrapId:state.newWrapId},next:EpochLocalSecurityState={...source.state,epoch_id:state.newEpochId,key_id:state.newKeyId,manifest_fingerprint:fingerprint,remote_binding:null,remote_anchor:null,epoch_status:'local_offline',operation_generation:0,rotation_state_ref:null,migration_state_ref:null,local_journal_count:0,local_journal_hash:await journalInitial(source.context.diaryId,state.newEpochId)};await this.repository.persistSuccessor({context,rootKey,state:next});await this.repository.putArtifact(`${state.rotationId}:manifest`,manifestCells(manifest));await this.repository.putArtifact(`${state.rotationId}:context`,context);await this.hit('after-root-wrap')},
       verifyAndFreezeSource:async()=>{const source=await this.repository.verifiedActiveEpoch();if(source.state.rotation_state_ref?.state!=='source_frozen_verified')throw new Error('Final source snapshot requires a persisted freeze.');const remote=source.state.remote_binding!,material={localEnvelopes:source.envelopes,localHeadRevisionIds:new Set(heads(source.revisions).map(r=>r.revision_id))},verifier=new FullRemoteVerifier({rootKey:source.rootKey,diaryId:source.context.diaryId,epochId:source.context.epochId,expectedManifestFingerprint:source.context.manifestFingerprint,expectedKeyId:source.context.keyId,expectedRecoveryGeneration:source.state.recovery_generation,expectedRecoveryCommitment:source.state.recovery_urs_commitment,expectedGoogleAccountBinding:remote.remote_identity_binding,schemas:DOMAIN_SCHEMA_REGISTRY,oldAnchor:source.state.remote_anchor,...material}),snapshot=await this.transport.read(remote.remote_resource_id);await verifier.verify(snapshot);const hashes=await snapshots(source.revisions);this.source=source;return{anchor:await createAnchor(source.context.diaryId,source.context.epochId,snapshot.rows),semanticSnapshot:hashes.semantic,lineageSnapshot:hashes.lineage}},
