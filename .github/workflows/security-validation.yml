@@ -37,8 +37,8 @@ jobs:
       - name: Full unit suite
         run: npm test
 
-      - name: Cryptographic vectors and primitives
-        run: npx vitest run src/test/crypto.test.ts src/test/protocol-vectors.test.ts src/test/localRootWrap.test.ts
+      - name: Cryptographic vectors and local protection
+        run: npx vitest run src/test/crypto.test.ts src/test/protocol-vectors.test.ts src/test/localRootWrap.test.ts src/test/webauthnPrf.test.ts
 
       - name: Google provider contract and auth boundary
         run: npx vitest run src/test/googleTransportContract.test.ts src/test/googleAuthBoundary.test.ts src/test/architecture.test.ts
