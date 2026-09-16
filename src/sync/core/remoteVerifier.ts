@@ -4,7 +4,7 @@ import { validateRevisionGraph, type Revision } from '../../security/revisions'
 import { deriveEpochSalt } from '../../security/crypto/core'
 import { fixedBase64Url } from '../../security/crypto/bytes'
 import { assertExtendsAnchor, type RemoteAnchor } from './prefix'
-import type { RemoteSnapshot, VerifiedRemoteState } from './contracts'
+import { ProviderBoundRemoteTransport, type RemoteSnapshot, type VerifiedRemoteState } from './contracts'
 import { validateDomainData } from '../../security/domainSchemaValidator'
 import type { RecoveredRootCandidate } from '../../security/recovery'
 
@@ -140,11 +140,11 @@ export class FullRemoteVerifier {
  * The resource id comes from neutral discovery/user selection and the account
  * binding from the authenticated provider (or from a separately verified
  * backup), never from decrypted recovery payload fields. */
-export interface IndependentBootstrapAuthority {
-  source:'authenticated-remote'|'verified-backup'
-  remoteResourceId:string
-  authenticatedAccountBinding:string
-  load():Promise<RemoteSnapshot>
+const TRUSTED_AUTHORITIES=new WeakSet<IndependentBootstrapAuthority>()
+export class IndependentBootstrapAuthority {
+  private constructor(readonly source:'authenticated-remote'|'verified-backup',readonly remoteResourceId:string,readonly authenticatedAccountBinding:string,private readonly transport:ProviderBoundRemoteTransport){TRUSTED_AUTHORITIES.add(this)}
+  static async fromAuthenticatedDiscovery(transport:ProviderBoundRemoteTransport,locator:string,remoteResourceId:string,authenticatedAccountBinding:string):Promise<IndependentBootstrapAuthority>{if(!(transport instanceof ProviderBoundRemoteTransport))throw new Error('Recovery authority requires a provider-owned transport.');const candidates=await transport.discover(locator);if(!candidates.some(candidate=>candidate.remoteId===remoteResourceId))throw new Error('Recovery resource was not established by authenticated discovery.');return new IndependentBootstrapAuthority('authenticated-remote',remoteResourceId,authenticatedAccountBinding,transport)}
+  load():Promise<RemoteSnapshot>{return this.transport.read(this.remoteResourceId)}
 }
 
 export interface RecoveryBootstrapOptions {
@@ -158,7 +158,7 @@ export interface RecoveryBootstrapOptions {
  * account authority has been fixed, then authenticated from that resource's
  * manifest and complete prefix. */
 export class RecoveryBootstrapVerifier {
-  constructor(private readonly options:RecoveryBootstrapOptions){if(!options.authority.remoteResourceId||!options.authority.authenticatedAccountBinding)throw new Error('Independent bootstrap authority is incomplete.')}
+  constructor(private readonly options:RecoveryBootstrapOptions){if(!TRUSTED_AUTHORITIES.has(options.authority)||!options.authority.remoteResourceId||!options.authority.authenticatedAccountBinding)throw new Error('Independent bootstrap authority is incomplete or forged.')}
   async verifyCandidate(candidate:RecoveredRootCandidate):Promise<VerifiedRemoteState>{
     const p=candidate.payload,authority=this.options.authority
     if(p.google_account_binding!==authority.authenticatedAccountBinding)throw new Error('Recovery account binding was not independently authenticated.')

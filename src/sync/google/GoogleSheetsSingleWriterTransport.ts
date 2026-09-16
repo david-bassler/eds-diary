@@ -1,6 +1,7 @@
 import { base64Url, concatBytes, fixedBase64Url, utf8 } from '../../security/crypto/bytes'
 import { sha256 } from '../../security/crypto/core'
-import { SINGLE_WRITER_PROFILE, TransportError, type RemoteCandidate, type RemoteSnapshot, type RemoteTransport } from '../core/contracts'
+import { canonicalBytes } from '../../security/crypto/canonical'
+import { ProviderBoundRemoteTransport, SINGLE_WRITER_PROFILE, TransportError, type RemoteCandidate, type RemoteSnapshot } from '../core/contracts'
 
 export interface GoogleApiClient { request<T>(url: string, init?: RequestInit): Promise<T>; identity(): string }
 interface Cell { userEnteredValue?: { stringValue?: string; formulaValue?: string; numberValue?: number; boolValue?: boolean }; effectiveValue?: { errorValue?: unknown } }
@@ -29,7 +30,8 @@ export interface GoogleTransportBinding {
 
 const GRID_CHUNK_ROWS = 1_000
 const MAX_GRID_ROWS = 100_000
-const MAX_CANONICAL_ROW_BYTES = 128 * 1024 * 1024
+const MAX_REMOTE_CANONICAL_BYTES = 134_217_728
+const MAX_CANONICAL_ROW_BYTES = 21_936
 
 async function expectedEpochLocator(binding: GoogleTransportBinding): Promise<string> {
   return base64Url((await sha256(concatBytes(
@@ -47,10 +49,10 @@ async function expectedAccountBinding(binding: GoogleTransportBinding): Promise<
 
 /** Strict Google wire adapter. Large grids are never requested before dimensions
  * are checked, and record data is subsequently fetched in bounded ranges. */
-export class GoogleSheetsSingleWriterTransport implements RemoteTransport {
+export class GoogleSheetsSingleWriterTransport extends ProviderBoundRemoteTransport {
   readonly profileId = SINGLE_WRITER_PROFILE
   private readonly sheetIds = new Map<string, number>()
-  constructor(private readonly api: GoogleApiClient, private readonly binding?: GoogleTransportBinding) {}
+  constructor(private readonly api: GoogleApiClient, private readonly binding?: GoogleTransportBinding) {super()}
 
   async discover(locator: string): Promise<readonly RemoteCandidate[]> {
     try {
@@ -90,13 +92,14 @@ export class GoogleSheetsSingleWriterTransport implements RemoteTransport {
   async patchProperties(remoteId:string,properties:Readonly<Record<string,string>>):Promise<void>{if(Object.keys(properties).sort().join('\0')!=='app_format\0epoch_locator'||properties.app_format!=='sync-v5')throw new TransportError('integrity_failure','Unexpected protocol properties.');try{await this.api.request(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(remoteId)}?fields=id,appProperties`,{method:'PATCH',body:JSON.stringify({appProperties:properties})})}catch(error){throw normalize(error,true)}}
   async orphanCandidates(remoteIds:readonly string[]):Promise<void>{for(const id of [...remoteIds].sort()){try{await this.api.request(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?fields=id,trashed`,{method:'PATCH',body:JSON.stringify({trashed:true})})}catch(error){throw normalize(error,true)}}}
 
-  private async verifyDrive(remoteId: string): Promise<void> {
+  private async verifyDrive(remoteId: string,preBound=false): Promise<void> {
     if (!this.binding) throw new TransportError('integrity_failure', 'Trusted diary/account binding is required.')
     const file = await this.api.request<DriveFile>(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(remoteId)}?fields=id,mimeType,trashed,ownedByMe,shared,driveId,isAppAuthorized,appProperties`)
     if (file.mimeType !== 'application/vnd.google-apps.spreadsheet' || file.trashed !== false || file.ownedByMe !== true || file.shared !== false || file.driveId !== undefined || file.isAppAuthorized !== true) throw new TransportError('integrity_failure', 'Drive file invariants failed.')
     const properties = file.appProperties ?? {}
     const keys = Object.keys(properties).sort()
-    if (keys.length && (keys.join('\0') !== 'app_format\0epoch_locator' || properties.app_format !== 'sync-v5' || properties.epoch_locator !== await expectedEpochLocator(this.binding))) throw new TransportError('integrity_failure', 'Protocol appProperties do not match the trusted epoch.')
+    const empty=keys.length===0
+    if ((!preBound||!empty)&&(keys.join('\0') !== 'app_format\0epoch_locator' || properties.app_format !== 'sync-v5' || properties.epoch_locator !== await expectedEpochLocator(this.binding))) throw new TransportError('integrity_failure', 'Protocol appProperties do not match the trusted epoch.')
     if (this.binding.googleAccountBinding !== await expectedAccountBinding(this.binding)) throw new TransportError('integrity_failure', 'Trusted account binding does not match permissionId.')
     const permissions: Array<{id?: string; type?: string; role?: string; deleted?: boolean}> = []
     let token: string | undefined
@@ -131,9 +134,11 @@ export class GoogleSheetsSingleWriterTransport implements RemoteTransport {
     return rows
   }
 
-  async read(remoteId: string): Promise<RemoteSnapshot> {
+  async inspectCandidate(remoteId:string):Promise<RemoteSnapshot>{return this.readGrid(remoteId,true)}
+  async read(remoteId: string): Promise<RemoteSnapshot> {return this.readGrid(remoteId,false)}
+  private async readGrid(remoteId: string,preBound:boolean): Promise<RemoteSnapshot> {
     try {
-      await this.verifyDrive(remoteId)
+      await this.verifyDrive(remoteId,preBound)
       const structureFields = 'sheets(properties(sheetId,title,sheetType,gridProperties(rowCount,columnCount)),merges)'
       const structure = this.structure(await this.api.request<Spreadsheet>(`https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(remoteId)}?fields=${encodeURIComponent(structureFields)}`))
       this.sheetIds.set(remoteId, structure.records.properties!.sheetId!)
@@ -161,8 +166,10 @@ export class GoogleSheetsSingleWriterTransport implements RemoteTransport {
         const row = physical[index]
         if (!row || row.length === 0) throw new TransportError('integrity_failure', 'The protocol log contains a physical gap.')
         const strings = rawStrings(row, 3)
-        byteCount += strings.reduce((sum, value) => sum + utf8(value).byteLength, 0)
-        if (byteCount > MAX_CANONICAL_ROW_BYTES) throw new TransportError('integrity_failure', 'Remote row byte bound exceeded.')
+        const rowBytes=canonicalBytes(strings).byteLength
+        if(rowBytes>MAX_CANONICAL_ROW_BYTES)throw new TransportError('integrity_failure','Canonical remote row exceeds its byte bound.')
+        byteCount += rowBytes
+        if (byteCount > MAX_REMOTE_CANONICAL_BYTES) throw new TransportError('integrity_failure', 'Remote canonical byte bound exceeded.')
         rows.push(strings)
       }
       return {manifest, rows}

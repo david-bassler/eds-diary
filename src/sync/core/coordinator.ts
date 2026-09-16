@@ -8,6 +8,8 @@ export interface CoordinatorStore {
   readAnchor(): Promise<RemoteAnchor | null>
   pending(): Promise<readonly PreparedEnvelope[]>
   generation(): Promise<number>
+  markPending?(envelopeId: string, expectedGeneration: number): Promise<number>
+  markRemoteSeen?(envelopeId: string, expectedGeneration: number): Promise<number>
   commitDurable(envelopeId: string, anchor: RemoteAnchor, expectedGeneration: number): Promise<void>
 }
 
@@ -41,8 +43,10 @@ export class SingleWriterCoordinator {
   async pushPending(): Promise<void> {
     if (this.state !== 'writer_active' || this.verifiedGeneration === null) throw new Error('Pull and verify is required before push.')
     this.state = 'syncing'
-    const expectedGeneration = this.verifiedGeneration
     for (const envelope of await this.store.pending()) {
+      let expectedGeneration = await this.store.generation()
+      if (this.verifiedGeneration !== expectedGeneration) { this.state = 'security_blocked'; throw new Error('Local security generation changed during sync.') }
+      if(this.store.markPending) expectedGeneration=await this.store.markPending(envelope.envelopeId,expectedGeneration)
       if (await this.store.generation() !== expectedGeneration) { this.state = 'security_blocked'; throw new Error('Local security generation changed during sync.') }
       const row = envelopeRow(envelope)
       try { await this.transport.append(this.remoteId, row) } catch (error) {
@@ -58,10 +62,12 @@ export class SingleWriterCoordinator {
         this.codec.validate(snapshot)
       }
       if (!snapshot.rows.some((remoteRow) => remoteRow.length === 3 && remoteRow.every((cell, index) => cell === row[index]))) { this.state = 'error'; throw new Error('Append could not be reconciled.') }
+      if(this.store.markRemoteSeen) expectedGeneration=await this.store.markRemoteSeen(envelope.envelopeId,expectedGeneration)
       await assertExtendsAnchor(await this.store.readAnchor(), this.diaryId, this.epochId, snapshot.rows)
       const finalVerified = await this.codec.verifyRemote(snapshot)
       if (finalVerified.retired || await this.store.generation() !== expectedGeneration) { this.state = 'security_blocked'; throw new Error('Final verification or generation check failed.') }
       await this.store.commitDurable(envelope.envelopeId, await createAnchor(this.diaryId, this.epochId, snapshot.rows), expectedGeneration)
+      this.verifiedGeneration=await this.store.generation()
     }
     this.state = 'synced'
   }

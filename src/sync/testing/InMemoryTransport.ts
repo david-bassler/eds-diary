@@ -1,7 +1,7 @@
-import type { RemoteCandidate, RemoteSnapshot, RemoteTransport } from '../core/contracts'
-import { SINGLE_WRITER_PROFILE, TransportError } from '../core/contracts'
+import type { RemoteCandidate, RemoteSnapshot } from '../core/contracts'
+import { ProviderBoundRemoteTransport, SINGLE_WRITER_PROFILE, TransportError } from '../core/contracts'
 
-export class InMemoryTransport implements RemoteTransport {
+export class InMemoryTransport extends ProviderBoundRemoteTransport {
   readonly profileId = SINGLE_WRITER_PROFILE
   readonly remotes = new Map<string, RemoteSnapshot>()
   readonly properties = new Map<string,Readonly<Record<string,string>>>()

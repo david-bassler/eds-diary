@@ -3,7 +3,8 @@ import { base64Url } from '../security/crypto/bytes'
 import { recoveryCommitment, randomBytes } from '../security/crypto/core'
 import { activateRecoveredRoot, createRecovery, recoverRootKeyCandidate } from '../security/recovery'
 import { advanceRotation, maySwitchRotation, oldEpochWritable, runRotation, type ProductiveRotationState, type RotationState } from '../security/rotation'
-import { FullRemoteVerifier, RecoveryBootstrapVerifier } from '../sync/core/remoteVerifier'
+import { FullRemoteVerifier, IndependentBootstrapAuthority, RecoveryBootstrapVerifier } from '../sync/core/remoteVerifier'
+import { InMemoryTransport } from '../sync/testing/InMemoryTransport'
 
 const b = (n: number, length: number) => base64Url(new Uint8Array(length).fill(n))
 
@@ -26,8 +27,12 @@ describe('recovery continuity', () => {
     const urs=randomBytes(32),root=randomBytes(32),payload={diary_id:b(1,16),epoch_id:b(2,16),key_id:b(3,16),RK_epoch:base64Url(root),manifest_fingerprint:b(4,32),remote_anchor:{anchor_profile:'google-sheets-single-writer-v1' as const,covered_row_count:0,prefix_hash:b(0,32)},google_account_binding:b(5,32),recovery_generation:1,created_at:'2026-09-15T12:00:00.000Z'},candidate=await recoverRootKeyCandidate(await createRecovery(payload,urs),urs)
     const forged=new FullRemoteVerifier({rootKey:candidate.rootKey,diaryId:payload.diary_id,epochId:payload.epoch_id,expectedManifestFingerprint:payload.manifest_fingerprint,expectedKeyId:payload.key_id,expectedRecoveryGeneration:1,expectedRecoveryCommitment:candidate.recoveryCommitment,expectedGoogleAccountBinding:payload.google_account_binding,schemas:{},oldAnchor:payload.remote_anchor,localEnvelopes:[],localHeadRevisionIds:new Set()})
     await expect(activateRecoveredRoot(candidate,forged as unknown as RecoveryBootstrapVerifier,async()=>undefined)).rejects.toThrow('independently authenticated')
-    const independent=new RecoveryBootstrapVerifier({authority:{source:'authenticated-remote',remoteResourceId:'independently-discovered-file',authenticatedAccountBinding:b(9,32),load:async()=>({manifest:[],rows:[]})},schemas:{}})
-    await expect(activateRecoveredRoot(candidate,independent,async()=>undefined)).rejects.toThrow('independently authenticated')
+    const forgedAuthority={source:'authenticated-remote',remoteResourceId:'independently-discovered-file',authenticatedAccountBinding:payload.google_account_binding,load:async()=>({manifest:[],rows:[]})}
+    expect(()=>new RecoveryBootstrapVerifier({authority:forgedAuthority as never,schemas:{}})).toThrow('forged')
+    const transport=new InMemoryTransport();transport.remotes.set('locator-resource',{manifest:[],rows:[]})
+    const authority=await IndependentBootstrapAuthority.fromAuthenticatedDiscovery(transport,'locator','locator-resource',payload.google_account_binding)
+    const independent=new RecoveryBootstrapVerifier({authority,schemas:{}})
+    await expect(activateRecoveredRoot(candidate,independent,async()=>undefined)).rejects.toThrow()
   })
 })
 

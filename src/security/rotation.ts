@@ -45,7 +45,13 @@ export async function runRotation(deps:RotationOrchestratorDependencies,initial:
   let state=await deps.persistence.read() as ProductiveRotationState|null
   if(!state){const hash=await rotationStateHash(initial);await deps.persistence.write(initial,hash);const read=await deps.persistence.readBack();if(read.hash!==hash||await rotationStateHash(read.state)!==hash)throw new Error('Initial rotation state readback failed.');state=initial}
   if(state.step==='prepared'){await deps.createAndVerifyRootWrap(state);state=await saveNext(deps,state,'root_wrap_verified')}
-  if(state.step==='root_wrap_verified'){const source=await deps.verifyAndFreezeSource(state);state=await saveNext(deps,state,'source_frozen_verified',{sourceAnchor:source.anchor,sourceSemanticSnapshot:source.semanticSnapshot,sourceLineageSnapshot:source.lineageSnapshot})}
+  if(state.step==='root_wrap_verified'){
+    // Persist/read back the mutation fence before taking the final snapshot.
+    state=await saveNext(deps,state,'source_frozen_verified')
+    const source=await deps.verifyAndFreezeSource(state)
+    state={...state,sourceAnchor:source.anchor,sourceSemanticSnapshot:source.semanticSnapshot,sourceLineageSnapshot:source.lineageSnapshot}
+    const hash=await rotationStateHash(state);await deps.persistence.write(state,hash);const read=await deps.persistence.readBack();if(read.hash!==hash||await rotationStateHash(read.state)!==hash)throw new Error('Frozen source snapshot readback failed.')
+  }
   if(state.step==='source_frozen_verified'){await deps.verifyRecoverySecret(state);state=await saveNext(deps,state,'recovery_secret_verified')}
   if(state.step==='recovery_secret_verified'){await deps.planSuccessor(state);state=await saveNext(deps,state,'successor_planned')}
   if(state.step==='successor_planned'){await deps.createOrReconcileSuccessor(state);state=await saveNext(deps,state,'successor_bound')}

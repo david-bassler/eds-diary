@@ -1,6 +1,6 @@
 # Production Security Release Gates
 
-Stand: 15.09.2026
+Stand: 16.09.2026
 
 EDS Diary ist **nicht** als „production secure“ freigegeben.
 

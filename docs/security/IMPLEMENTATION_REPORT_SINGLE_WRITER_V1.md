@@ -1,6 +1,6 @@
 # Implementierungsbericht – Google Sheets Single Writer v1
 
-Stand: 16.09.2026 (kumulativer Stand nach PR #13)
+Stand: 16.09.2026 (finaler Integrationsstand PR #14)
 
 ## Produktiver Stand
 
@@ -13,6 +13,13 @@ Security-State. Pain, Activity, Medication, Prescriptions sowie beide Settings-
 Singletons lesen und schreiben über diesen Head-Graph. `secureRecords` wurde
 entfernt. Legacy-IDB und `eds-diary-activity-types-v1` sind nur noch
 crash-resumable, nichtdestruktive Migrationsquellen.
+
+Fach-Daten und Revision-Wrapper werden vor Reservation und Verschlüsselung mit
+denselben gebündelten Schemas und Semantikregeln wie beim Full-Remote-Verify
+geprüft. Normale Reads validieren State-MAC und das vollständige Envelope-Journal.
+Der Migrationsfortschritt besitzt einen kanonischen Hash, ist über
+`migration_state_ref` authentifiziert und verwendet je Quelle eine deterministische
+Revision-ID für idempotentes Crash-Resume.
 
 ### Create/Reconcile
 
@@ -28,6 +35,11 @@ leeren Duplikaten deterministisch, schreibt die gespeicherten Manifestbytes
 separat und patcht anschließend ausschließlich `app_format` und `epoch_locator`.
 Unknown Outcomes werden nur per Readback/Discovery aufgelöst. Der Google-Create-
 Request enthält kein Manifest mehr.
+
+Der normale Google-Read verlangt die beiden exakten Protocol-AppProperties. Die
+separate Candidate-Inspection erlaubt ausschließlich den ungebundenen Zustand.
+Physische Zeilen werden als JCS-Tripel mit 21.936 Bytes pro Zeile, 100.000 Zeilen
+und 134.217.728 kanonischen Gesamtbytes begrenzt.
 
 ### Rotation und Migration
 
