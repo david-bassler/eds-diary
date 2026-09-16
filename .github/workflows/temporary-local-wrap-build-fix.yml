@@ -23,6 +23,18 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - name: Normalize body-map imports
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs'
+          const path='src/features/pain/bodyMap/BodyMapSelector.tsx'
+          let source=fs.readFileSync(path,'utf8')
+          source=source
+            .replace("import { ShoulderDetailSelector, isShoulderRegionId, shoulderDetailLabel } from './ShoulderDetailSelector'", "import { ShoulderDetailSelector, shoulderDetailLabel, isShoulderRegionId } from './ShoulderDetailSelector'")
+            .replace("import { KneeDetailSelector, isKneeRegionId, kneeDetailLabel } from './KneeDetailSelector'", "import { KneeDetailSelector, kneeDetailLabel, isKneeRegionId } from './KneeDetailSelector'")
+            .replace("import { LowerBackDetailSelector, isLowerBackRegionId, lowerBackDetailLabel } from './LowerBackDetailSelector'", "import { LowerBackDetailSelector, lowerBackDetailLabel, isLowerBackRegionId } from './LowerBackDetailSelector'")
+          fs.writeFileSync(path,source)
+          NODE
       - name: Apply fix
         run: node scripts/fix-local-wrap-build.mjs
       - name: Check diff
