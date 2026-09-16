@@ -13,7 +13,7 @@ import { createAnchor } from '../sync/core/prefix'
 interface Remote {id:string;name:string;manifest:string[];rows:string[][];properties:Record<string,string>;trashed:boolean}
 type AppendCrashTarget='source'|'successor'|null
 
-const pain={id:'rotation-source',startedAt:'2026-09-16T10:00:00.000Z',endedAt:'',locations:[],intensity:4,qualities:[],cause:'',occursWhen:'',note:'synthetic rotation fixture',createdAt:'2026-09-16T10:00:00.000Z',updatedAt:'2026-09-16T10:00:00.000Z'}
+const pain=(id:string)=>({id,startedAt:'2026-09-16T10:00:00.000Z',endedAt:'',locations:[],intensity:4,qualities:[],cause:'',occursWhen:'',note:'synthetic rotation fixture',createdAt:'2026-09-16T10:00:00.000Z',updatedAt:'2026-09-16T10:00:00.000Z'})
 
 class GoogleBoundary {
   readonly permission='productive-rotation-test-owner'
@@ -61,7 +61,9 @@ describe('ProductiveRotationService',()=>{
 
   it('survives the productive crash/resume matrix without duplicate creates, appends or semantic revisions',async()=>{
     const createdAt='2026-09-16T12:00:00.000Z',urs=randomBytes(32),google=new GoogleBoundary(),repository=new IndexedDbRotationRepository()
-    await putRecord(LOCAL_STORES.painEntries,pain)
+    await putRecord(LOCAL_STORES.painEntries,pain('rotation-active'))
+    await putRecord(LOCAL_STORES.painEntries,pain('rotation-tombstone'))
+    await putRecord(LOCAL_STORES.painEntries,{...pain('rotation-tombstone'),status:'deleted' as const})
     const source=await repository.verifiedActiveEpoch(),sourceRows=source.envelopes.map(envelope=>[envelope.envelopeId,envelope.iv,envelope.ciphertext]),transport=await GoogleSheetsSingleWriterTransport.fromAuthenticatedSession(google.client,source.context.diaryId,source.context.epochId),account=await transport.authenticatedAccountBinding(),commitment=await recoveryCommitment(urs,fromBase64Url(source.context.diaryId),source.state.recovery_generation)
     const manifest=await prepareManifest(source.rootKey,source.epochSalt,{diaryId:source.context.diaryId,epochId:source.context.epochId},{diary_id:source.context.diaryId,epoch_id:source.context.epochId,key_id:source.context.keyId,recovery_generation:source.state.recovery_generation,recovery_urs_commitment:commitment,diary_marker:'epoch-manifest-v5',crypto_suite:'A256GCM-HKDF-SHA256-v5',sync_profile:'google-sheets-single-writer-v1',created_at:createdAt,google_account_binding:account,predecessor_epochs:[],record_schema_allowlist:[...SCHEMA_ALLOWLIST],record_schema_registry_hash:await schemaRegistryHash(DOMAIN_SCHEMA_REGISTRY),protocol_limits:{max_payload_bytes:16380,padding_buckets:[1024,2048,4096,8192,16384],max_unique_envelopes:100000,max_unique_canonical_bytes:134217728,max_remote_physical_rows:100000,max_remote_physical_canonical_bytes:134217728,max_canonical_row_bytes:21936}})
     const fingerprint=await manifestFingerprint(manifest),sourceContext={...source.context,manifestFingerprint:fingerprint},sourceRemote:Remote={id:'source',name:'sync-source',manifest:[manifest.format,manifest.version,manifest.manifestIv,manifest.manifestCiphertext],rows:sourceRows,properties:{app_format:'sync-v5',epoch_locator:await epochLocator(source.context.diaryId,source.context.epochId)},trashed:false};google.remotes.set(sourceRemote.id,sourceRemote)
@@ -70,7 +72,7 @@ describe('ProductiveRotationService',()=>{
     const runFault=async(point:ProductiveRotationFaultPoint)=>{let fired=false;const service=new ProductiveRotationService(transport,urs,()=>createdAt,current=>{if(current===point&&!fired){fired=true;throw new Error(`fault:${point}`)}});await expect(service.rotate()).rejects.toThrow(`fault:${point}`);expect(fired).toBe(true)}
     await runFault('after-root-wrap')
     await runFault('after-freeze')
-    await expect(putRecord(LOCAL_STORES.painEntries,{...pain,note:'mutation must stay frozen'})).rejects.toThrow('frozen')
+    await expect(putRecord(LOCAL_STORES.painEntries,{...pain('rotation-active'),note:'mutation must stay frozen'})).rejects.toThrow('frozen')
     await runFault('after-source-snapshot')
     await runFault('after-successor-create')
     await runFault('after-first-copied-head')
@@ -117,7 +119,10 @@ describe('ProductiveRotationService',()=>{
     expect(announcements).toHaveLength(1)
     expect((announcements[0]!.record_data as {successor_creation_locator:string}).successor_creation_locator).toBe(successor.name.slice(5))
     expect(migration).toHaveLength(1)
-    expect(copied).toHaveLength(1)
+    expect((migration[0]!.record_data as {active_head_count:number;tombstone_head_count:number}).active_head_count).toBe(1)
+    expect((migration[0]!.record_data as {active_head_count:number;tombstone_head_count:number}).tombstone_head_count).toBe(1)
+    expect(copied).toHaveLength(2)
+    expect(copied.map(revision=>revision.record_status).sort()).toEqual(['active','deleted'])
     expect(result.state.successorSemanticSnapshot).toBe(result.state.sourceSemanticSnapshot)
     expect(result.recovery.recovery_artifact_id).toBeTruthy()
     expect(result.backup.backup_id).toBeTruthy()
@@ -129,6 +134,6 @@ describe('ProductiveRotationService',()=>{
     expect(sourceRemote.rows).toEqual(sourceRowsAfter)
     expect([...google.appendCounts.values()].every(count=>count===1)).toBe(true)
 
-    await expect(putRecord(LOCAL_STORES.painEntries,{...pain,id:'post-rotation-write',note:'successor remains writable after switched'})).resolves.toBeUndefined()
+    await expect(putRecord(LOCAL_STORES.painEntries,{...pain('post-rotation-write'),note:'successor remains writable after switched'})).resolves.toBeUndefined()
   },120_000)
 })
