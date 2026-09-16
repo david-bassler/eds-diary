@@ -14,17 +14,36 @@ jobs:
   patch:
     if: github.event.head_commit.message == 'Add P0 remediation patch runner'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           ref: codex/fix-one-shot-envelope-crash-safety
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
       - name: Apply remediation
         run: node scripts/remediate-p0.mjs
 
       - name: Validate patch shape
         run: git diff --check
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Security-path lint
+        run: npx eslint src/data src/security src/sync src/test
 
       - name: Commit remediation
         run: |
