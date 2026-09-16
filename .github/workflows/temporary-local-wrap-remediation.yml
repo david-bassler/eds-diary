@@ -1,0 +1,44 @@
+name: Temporary local-wrap remediation
+
+on:
+  push:
+    branches:
+      - codex/fix-one-shot-envelope-crash-safety
+    paths:
+      - .github/local-wrap-remediation-trigger
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message == 'Trigger strong local-wrap remediation'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: codex/fix-one-shot-envelope-crash-safety
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Apply remediation
+        run: node scripts/remediate-local-wrap.mjs
+      - name: Validate patch shape
+        run: git diff --check
+      - name: Commit remediation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/data/localDatabase.ts src/test/localRootWrap.test.ts
+          git diff --cached --exit-code && exit 1 || true
+          git commit -m "Integrate strong local root-wrap modes"
+          git push origin HEAD:codex/fix-one-shot-envelope-crash-safety
+      - run: npm ci
+      - name: Unit tests
+        run: npm test
+      - name: Build
+        run: npm run build
+      - name: Security lint
+        run: npx eslint src/data src/security src/sync src/test
