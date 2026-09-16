@@ -238,7 +238,7 @@ test('stores an optional explicit pain end time', async ({ page }) => {
   await page.getByLabel('Beginnzeit').fill('08:00')
   await page.getByRole('checkbox', { name: 'Endzeitpunkt angeben' }).check()
   await page.getByLabel('Enddatum').fill('2026-09-08')
-  await page.getByLabel('Endzeit').fill('10:30')
+  await page.getByLabel('Endzeit', { exact: true }).fill('10:30')
 
   await page.getByRole('button', { name: 'Speichern' }).click()
   await expect(page.getByText('Schmerzeintrag gespeichert.')).toBeVisible()

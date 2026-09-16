@@ -44,7 +44,7 @@ test('lists, filters, ends, edits and deletes pain entries', async ({ page }) =>
   const activeEntry = page.locator(".pain-entry-list__entry[data-active='true']")
   await activeEntry.locator('summary').click()
   await activeEntry.getByRole('button', { name: 'Jetzt beenden' }).click()
-  await expect(page.getByText('Für diesen Filter gibt es keine Schmerzeinträge.')).toBeVisible()
+  await expect(page.getByText('Für diesen Filter gibt es keine Einträge.')).toBeVisible()
 
   await page.getByRole('button', { name: 'Alle' }).click()
   const completedEntry = page

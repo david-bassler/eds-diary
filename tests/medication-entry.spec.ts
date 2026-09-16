@@ -17,7 +17,7 @@ test('stores a medication intake with current date and time defaults', async ({
   await expect(intake(page).getByLabel('Datum', { exact: true })).not.toHaveValue('')
   await expect(intake(page).getByLabel('Uhrzeit', { exact: true })).not.toHaveValue('')
 
-  await intake(page).getByLabel('Medikament', { exact: true }).fill('Testmedikament')
+  await intake(page).locator('input[list="medication-name-options"]').fill('Testmedikament')
   await intake(page).getByLabel('Dosis', { exact: true }).fill('10 mg')
   await page.getByRole('button', { name: 'Einnahme speichern' }).click()
 
@@ -44,7 +44,7 @@ test('stores a medication intake with current date and time defaults', async ({
 test('uses previously entered medication names as suggestions', async ({
   page,
 }) => {
-  await intake(page).getByLabel('Medikament', { exact: true }).fill('Eigenes Testpräparat')
+  await intake(page).locator('input[list="medication-name-options"]').fill('Eigenes Testpräparat')
   await intake(page).getByLabel('Dosis', { exact: true }).fill('1 Tablette')
   await page.getByRole('button', { name: 'Einnahme speichern' }).click()
 
@@ -107,7 +107,7 @@ test('offers frequent medications as quick access with the latest dose', async (
   await expect(quickAccess.getByRole('button').first()).toContainText('10 mg')
 
   await quickAccess.getByRole('button', { name: /Schnellmittel/ }).click()
-  await expect(intake(page).getByLabel('Medikament', { exact: true })).toHaveValue('Schnellmittel')
+  await expect(intake(page).locator('input[list="medication-name-options"]')).toHaveValue('Schnellmittel')
   await expect(intake(page).getByLabel('Dosis', { exact: true })).toHaveValue('10 mg')
 })
 

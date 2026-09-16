@@ -77,9 +77,7 @@ test('shows date and the time range picker on the activity page', async ({
     page.getByRole('heading', { level: 1, name: 'Aktivitäten' }),
   ).toBeVisible()
   await expect(page.getByLabel('Datum')).not.toHaveValue('')
-  await expect(
-    page.getByRole('heading', { level: 2, name: 'Zeiträume der Aktivität' }),
-  ).toBeVisible()
+  await expect(page.locator('.activity-page__intro')).not.toBeVisible()
   await expect(page.getByTestId('time-range-surface')).toBeVisible()
   await expect.poll(async () => {
     const bounds = await page.locator('#activity-day-start').boundingBox()
@@ -358,6 +356,7 @@ test('stores activity and note separately for each selected range', async ({
   })
   await activityCombobox.focus()
   await expect(activityCombobox).toHaveAttribute('aria-expanded', 'true')
+  await activityCombobox.fill('')
   const activityOptions = page.getByRole('listbox', {
     name: 'Gespeicherte Aktivitäten',
   })
