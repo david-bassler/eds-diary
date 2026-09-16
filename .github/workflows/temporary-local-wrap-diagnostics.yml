@@ -1,0 +1,39 @@
+name: Temporary local-wrap diagnostics
+
+on:
+  push:
+    branches:
+      - codex/fix-one-shot-envelope-crash-safety
+    paths:
+      - .github/local-wrap-diagnostics-trigger
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    if: github.event.head_commit.message == 'Trigger local-wrap diagnostics'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Capture unit output
+        id: tests
+        shell: bash
+        run: |
+          set +e
+          npm test 2>&1 | tee local-wrap-test-output.txt
+          status=${PIPESTATUS[0]}
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: local-wrap-test-output
+          path: local-wrap-test-output.txt
+      - if: steps.tests.outputs.status != '0'
+        run: exit 1
