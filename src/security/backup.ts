@@ -60,7 +60,10 @@ export async function testRestoreBackup(context:Pick<BackupContext,'rootKey'|'ep
   if(manifest.backup_id!==backup.backup_id||manifest.diary_id!==context.diaryId||manifest.epoch_id!==context.epochId||manifest.key_id!==context.keyId||manifest.manifest_fingerprint!==context.manifestFingerprint)throw new Error('Backup binding mismatch.')
   if(manifest.record_row_count!==backup.record_rows.length||manifest.pending_outbox_count!==backup.pending_outbox_rows.length||manifest.record_rows_canonical_bytes!==bytes(backup.record_rows)||manifest.pending_outbox_rows_canonical_bytes!==bytes(backup.pending_outbox_rows)||manifest.record_rows_jcs_sha256!==await digest(backup.record_rows)||manifest.pending_outbox_rows_jcs_sha256!==await digest(backup.pending_outbox_rows)||manifest.epoch_manifest_public_sha256!==await digest(backup.epoch_manifest_public))throw new Error('Backup hashes or counts mismatch.')
   if(manifest.record_prefix_hash!==await prefixHash(context.diaryId,context.epochId,backup.record_rows))throw new Error('Backup prefix mismatch.')
-  const expectedAnchor=backup.record_rows.length?await createAnchor(context.diaryId,context.epochId,backup.record_rows):null
+  // A bound but empty epoch has a real H0 anchor.  Null is reserved for a
+  // local/offline export, whose authenticated remote row set must be empty.
+  if (manifest.remote_anchor_at_export === null && backup.record_rows.length !== 0) throw new Error('Offline backup contains remote rows.')
+  const expectedAnchor=manifest.remote_anchor_at_export===null?null:await createAnchor(context.diaryId,context.epochId,backup.record_rows)
   if(JSON.stringify(manifest.remote_anchor_at_export)!==JSON.stringify(expectedAnchor))throw new Error('Backup anchor mismatch.')
   const byId=new Map<string,string>(),union=[...backup.record_rows,...backup.pending_outbox_rows]
   for(const row of union){const encoded=JSON.stringify(row),prior=byId.get(row[0]);if(prior!==undefined&&prior!==encoded)throw new Error('Duplicate envelope_id has different bytes.');byId.set(row[0],encoded)}

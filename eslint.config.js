@@ -19,6 +19,10 @@ export default tseslint.config(
     },
     rules: {
       ...reactHooks.configs.recommended.rules,
+      // The application intentionally starts asynchronous repository and image
+      // loads from effects and resets their corresponding loading state first.
+      // This React Compiler advisory is not a correctness rule for that pattern.
+      'react-hooks/set-state-in-effect': 'off',
       'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
     },
   },

@@ -17,19 +17,19 @@ export async function createRecovery(payload:Omit<RecoveryPayload,'recovery_arti
   const complete={...payload,recovery_artifact_id} as RecoveryPayload;validatePayload(complete);const encrypted=await aesGcmEncrypt(await deriveRecoveryKey(urs,salt),canonicalBytes(complete as never),aad(header),iv)
   return {...header,wrapped_payload:base64Url(encrypted.ciphertext)}
 }
-export async function recoverRootKeyCandidate(artifact:RecoveryArtifact,urs:Uint8Array,manifestCommitment:string):Promise<{rootKey:Uint8Array;payload:RecoveryPayload}>{
+export interface RecoveredRootCandidate {rootKey:Uint8Array;payload:RecoveryPayload;recoveryCommitment:string}
+export async function recoverRootKeyCandidate(artifact:RecoveryArtifact,urs:Uint8Array):Promise<RecoveredRootCandidate>{
   validateArtifact(artifact);const header={format:artifact.format,version:artifact.version,recovery_artifact_id:artifact.recovery_artifact_id,kdf_profile_id:artifact.kdf_profile_id,salt:artifact.salt,wrap_iv:artifact.wrap_iv}
   const plaintext=await aesGcmDecrypt(await deriveRecoveryKey(urs,fixedBase64Url(artifact.salt,32)),fromBase64Url(artifact.wrapped_payload),aad(header),fixedBase64Url(artifact.wrap_iv,12)),payload=parseCanonicalJson(plaintext) as unknown as RecoveryPayload
   validatePayload(payload);if(payload.recovery_artifact_id!==artifact.recovery_artifact_id)throw new Error('Recovery artifact binding mismatch.');const diary=fixedBase64Url(payload.diary_id,16),rootKey=fixedBase64Url(payload.RK_epoch,32)
-  if(await recoveryCommitment(urs,diary,payload.recovery_generation)!==manifestCommitment)throw new Error('Recovery secret continuity check failed.')
-  return {rootKey,payload}
+  return {rootKey,payload,recoveryCommitment:await recoveryCommitment(urs,diary,payload.recovery_generation)}
 }
 /** Recovery activation is deliberately coupled to the concrete full verifier.
  * There is no exported proof issuer and no caller supplied verification callback. */
-export async function activateRecoveredRoot(candidate:{rootKey:Uint8Array;payload:RecoveryPayload},verifier:FullRemoteVerifier,snapshot:RemoteSnapshot,persistWrap:(rootKey:Uint8Array,payload:RecoveryPayload)=>Promise<void>):Promise<void>{
+export async function activateRecoveredRoot(candidate:RecoveredRootCandidate,verifier:FullRemoteVerifier,snapshot:RemoteSnapshot,persistWrap:(rootKey:Uint8Array,payload:RecoveryPayload)=>Promise<void>):Promise<void>{
   if (!(verifier instanceof FullRemoteVerifier)) throw new Error('A production full verifier is required.')
   const p=candidate.payload;validatePayload(p)
-  verifier.assertRecoveryBinding({manifestFingerprint:p.manifest_fingerprint,diaryId:p.diary_id,epochId:p.epoch_id,keyId:p.key_id,recoveryGeneration:p.recovery_generation,accountBinding:p.google_account_binding,anchor:p.remote_anchor})
+  verifier.assertRecoveryBinding({manifestFingerprint:p.manifest_fingerprint,diaryId:p.diary_id,epochId:p.epoch_id,keyId:p.key_id,recoveryGeneration:p.recovery_generation,recoveryCommitment:candidate.recoveryCommitment,accountBinding:p.google_account_binding,anchor:p.remote_anchor})
   const verified=await verifier.verify(snapshot)
   if(verified.manifestFingerprint!==p.manifest_fingerprint)throw new Error('Verified remote does not bind the recovery candidate.')
   await persistWrap(candidate.rootKey,p)

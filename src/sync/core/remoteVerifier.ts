@@ -5,6 +5,7 @@ import { deriveEpochSalt } from '../../security/crypto/core'
 import { fixedBase64Url } from '../../security/crypto/bytes'
 import { assertExtendsAnchor, type RemoteAnchor } from './prefix'
 import type { RemoteSnapshot, VerifiedRemoteState } from './contracts'
+import { validateDomainData } from '../../security/domainSchemaValidator'
 
 export interface TrustedRemoteContext extends EnvelopeContext {
   rootKey: Uint8Array
@@ -69,15 +70,7 @@ function validateControl(revision: Revision, currentEpochId: string): void {
 
 function validateDataSchema(revision: Revision, schema: unknown): void {
   if (revision.record_status === 'deleted') return
-  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) throw new Error('Bundled record schema is invalid.')
-  const definition=schema as Record<string,unknown>
-  const value=revision.record_data
-  if (definition.type === 'object' && (!value || typeof value !== 'object' || Array.isArray(value))) throw new Error('record_data does not satisfy its bundled schema.')
-  if (definition.additionalProperties === false && definition.properties && typeof definition.properties === 'object' && value && typeof value === 'object') {
-    const allowed=new Set(Object.keys(definition.properties as object))
-    if(Object.keys(value).some((key)=>!allowed.has(key)))throw new Error('record_data contains an unknown property.')
-  }
-  if(Array.isArray(definition.required) && value && typeof value === 'object' && definition.required.some((key)=>typeof key !== 'string' || !(key in value)))throw new Error('record_data is missing a required property.')
+  validateDomainData(schema, revision.record_data)
 }
 
 function validateManifestBindings(manifest: ProtectedManifest, trusted: TrustedRemoteContext): void {
@@ -89,8 +82,8 @@ function validateManifestBindings(manifest: ProtectedManifest, trusted: TrustedR
  * reconciliation. */
 export class FullRemoteVerifier {
   constructor(private readonly trusted: TrustedRemoteContext) {}
-  assertRecoveryBinding(binding: {diaryId:string;epochId:string;keyId:string;manifestFingerprint:string;recoveryGeneration:number;accountBinding:string;anchor:RemoteAnchor|null}): void {
-    if (binding.diaryId !== this.trusted.diaryId || binding.epochId !== this.trusted.epochId || binding.keyId !== this.trusted.expectedKeyId || binding.manifestFingerprint !== this.trusted.expectedManifestFingerprint || binding.recoveryGeneration !== this.trusted.expectedRecoveryGeneration || binding.accountBinding !== this.trusted.expectedGoogleAccountBinding || JSON.stringify(binding.anchor) !== JSON.stringify(this.trusted.oldAnchor)) throw new Error('Recovery candidate does not match the trusted verifier context.')
+  assertRecoveryBinding(binding: {diaryId:string;epochId:string;keyId:string;manifestFingerprint:string;recoveryGeneration:number;recoveryCommitment:string;accountBinding:string;anchor:RemoteAnchor|null}): void {
+    if (binding.diaryId !== this.trusted.diaryId || binding.epochId !== this.trusted.epochId || binding.keyId !== this.trusted.expectedKeyId || binding.manifestFingerprint !== this.trusted.expectedManifestFingerprint || binding.recoveryGeneration !== this.trusted.expectedRecoveryGeneration || binding.recoveryCommitment !== this.trusted.expectedRecoveryCommitment || binding.accountBinding !== this.trusted.expectedGoogleAccountBinding || JSON.stringify(binding.anchor) !== JSON.stringify(this.trusted.oldAnchor)) throw new Error('Recovery candidate does not match the authenticated verifier context.')
   }
   async verify(snapshot: RemoteSnapshot): Promise<VerifiedRemoteState> {
     const cells = parseManifestCells(snapshot.manifest)
