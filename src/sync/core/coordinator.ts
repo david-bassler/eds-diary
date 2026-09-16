@@ -10,6 +10,7 @@ export interface CoordinatorStore {
   generation(): Promise<number>
   markPending?(envelopeId: string, expectedGeneration: number): Promise<number>
   markRemoteSeen?(envelopeId: string, expectedGeneration: number): Promise<number>
+  commitVerifiedPull?(rows: ReadonlyArray<readonly string[]>, anchor: RemoteAnchor, expectedGeneration: number): Promise<number>
   commitDurable(envelopeId: string, anchor: RemoteAnchor, expectedGeneration: number): Promise<void>
 }
 
@@ -32,7 +33,11 @@ export class SingleWriterCoordinator {
       const verified = await this.codec.verifyRemote(snapshot)
       if (verified.retired&&!this.allowRetirement) throw new Error('A rotation announcement retired this epoch.')
       await assertExtendsAnchor(await this.store.readAnchor(), this.diaryId, this.epochId, snapshot.rows)
-      this.verifiedGeneration = await this.store.generation()
+      const generation = await this.store.generation()
+      const anchor = await createAnchor(this.diaryId, this.epochId, snapshot.rows)
+      this.verifiedGeneration = this.store.commitVerifiedPull
+        ? await this.store.commitVerifiedPull(snapshot.rows, anchor, generation)
+        : generation
       this.verifiedRows = snapshot.rows
       this.state = 'writer_active'
     } catch (error) {
