@@ -1,8 +1,3 @@
-import {
-  isGoogleConnected,
-  onGoogleConnection,
-} from './googleSheets'
-
 export type SyncState = 'local' | 'pending' | 'syncing' | 'synced' | 'error'
 
 export interface SyncSnapshot {
@@ -30,7 +25,7 @@ function emit(state: SyncState, error: Error | null = null): void {
   currentSnapshot = {
     state,
     error,
-    connected: isGoogleConnected(),
+    connected: secureSynchronizer !== null,
   }
 
   for (const listener of listeners) listener(currentSnapshot)
@@ -59,8 +54,8 @@ export function registerSyncFeature(
   throw new Error('Legacy whole-table remote writers are disabled; immutable envelopes are the only sync source.')
 }
 
-/** Data-layer-only hook. Authentication installs the coordinator here so all
- * dirty and explicit sync triggers share one verified writer path. */
+/** Data-layer-only hook. Authentication installs the verified coordinator here;
+ * no provider login state on its own grants writer authority. */
 export function installSecureSynchronizer(synchronize:()=>Promise<void>):void{secureSynchronizer=synchronize;refreshSyncState()}
 export function clearSecureSynchronizer():void{secureSynchronizer=null;refreshSyncState()}
 
@@ -138,13 +133,6 @@ export function refreshSyncState(): void {
 export function initializeSyncManager(): void {
   if (initialized) return
   initialized = true
-
-  onGoogleConnection((connected) => {
-    refreshSyncState()
-    // Authentication never confers writer authority. The secure coordinator must
-    // complete pull, cryptographic verification and reconciliation first.
-    if (connected) emit(dirtyVersions.size ? 'pending' : 'local')
-  })
 
   window.addEventListener('online', () => {
     // Online is transport availability, not permission to mutate remote state.
