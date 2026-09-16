@@ -1,0 +1,41 @@
+name: Temporary local-wrap build fix
+
+on:
+  push:
+    branches:
+      - codex/fix-one-shot-envelope-crash-safety
+    paths:
+      - .github/local-wrap-build-fix-trigger
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message == 'Trigger local-wrap build fix'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: codex/fix-one-shot-envelope-crash-safety
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Apply fix
+        run: node scripts/fix-local-wrap-build.mjs
+      - name: Check diff
+        run: git diff --check
+      - name: Commit fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/data/localDatabase.ts
+          git diff --cached --exit-code && exit 1 || true
+          git commit -m "Fix strong local-wrap build"
+          git push origin HEAD:codex/fix-one-shot-envelope-crash-safety
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - run: npx eslint src/data src/security src/sync src/test
