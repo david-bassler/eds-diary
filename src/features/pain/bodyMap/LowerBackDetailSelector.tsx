@@ -5,55 +5,14 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react'
 import type { BodyView } from '../painEntry'
+import { NO_REGION, TAP_MAX_MOVEMENT, LOWER_BACK_REGIONS, LOWER_BACK_IMAGE, lowerBackDetailLabel } from './LowerBackDetailSelector.meta'
+import type { HitMapData } from './LowerBackDetailSelector.meta'
 import './LowerBackDetailSelector.css'
 
 export interface LowerBackDetailSelectorProps {
   value: readonly string[]
   onChange: (regionIds: string[]) => void
   onClose: () => void
-}
-
-interface RegionDefinition {
-  id: string
-  label: string
-  color: readonly [number, number, number]
-}
-
-interface HitMapData {
-  width: number
-  height: number
-  regionAtPixel: Uint8Array
-  boundaryAtPixel: Uint8Array
-}
-
-const NO_REGION = 255
-const TAP_MAX_MOVEMENT = 14
-
-const LOWER_BACK_REGIONS: readonly RegionDefinition[] = [
-  { id: 'lumbar-midline', label: 'LWS Mitte', color: [232, 111, 104] },
-  {
-    id: 'left-paraspinal-lumbar',
-    label: 'Linker paraspinaler Bereich',
-    color: [104, 158, 218],
-  },
-  {
-    id: 'right-paraspinal-lumbar',
-    label: 'Rechter paraspinaler Bereich',
-    color: [120, 190, 130],
-  },
-  { id: 'sacrum', label: 'Kreuzbein', color: [155, 130, 204] },
-  { id: 'left-si-joint', label: 'Linkes SI-Gelenk', color: [242, 199, 94] },
-  { id: 'right-si-joint', label: 'Rechtes SI-Gelenk', color: [225, 147, 184] },
-]
-
-const LOWER_BACK_IMAGE = `${import.meta.env.BASE_URL}body-map/details/lower-back-hitmap.png?v=2`
-
-export function isLowerBackRegionId(regionId: string, view: BodyView): boolean {
-  return view === 'back' && regionId === 'lower-back'
-}
-
-export function lowerBackDetailLabel(regionId: string): string {
-  return LOWER_BACK_REGIONS.find((region) => region.id === regionId)?.label ?? regionId
 }
 
 function colorKey(red: number, green: number, blue: number): string {

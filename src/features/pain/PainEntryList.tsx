@@ -192,8 +192,24 @@ export function PainEntryList({
   }, [])
 
   useEffect(() => {
-    void loadEntries()
-  }, [loadEntries, refreshKey])
+    let active = true
+    void Promise.all([listPainEntries(), listActivityEntries()])
+      .then(([painEntries, activityEntries]) => {
+        if (!active) return
+        setEntries(painEntries)
+        setActivities(activityEntries)
+        setStatus('')
+      })
+      .catch(() => {
+        if (active) setStatus('Die Verlaufsdaten konnten nicht geladen werden.')
+      })
+      .finally(() => {
+        if (active) setLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [refreshKey])
 
   const filteredEntries = useMemo(
     () =>

@@ -5,10 +5,8 @@ import {
   listCustomPainTypes,
 } from './painTypeOptions'
 import type { PainEntry, PainLocation } from './painEntry'
-import {
-  BodyMapSelector,
-  painLocationLabel,
-} from './bodyMap/BodyMapSelector'
+import { BodyMapSelector } from './bodyMap/BodyMapSelector'
+import { painLocationLabel } from './bodyMap/BodyMapSelector.meta'
 import { PainIntensitySelector } from './PainIntensitySelector'
 import './PainEntryFlow.css'
 
