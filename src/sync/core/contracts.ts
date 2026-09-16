@@ -24,15 +24,6 @@ export interface RemoteTransport {
   read(remoteId: string): Promise<RemoteSnapshot>
   append(remoteId: string, row: readonly [string, string, string]): Promise<void>
 }
-/** Nominal base for transports whose discovery/read path owns the provider
- * identity boundary. The runtime brand prevents structurally forged loaders. */
-export abstract class ProviderBoundRemoteTransport implements RemoteTransport {
-  abstract readonly profileId:string
-  abstract discover(locator:string):Promise<readonly RemoteCandidate[]>
-  abstract create(locator:string,manifest:readonly string[]):Promise<void>
-  abstract read(remoteId:string):Promise<RemoteSnapshot>
-  abstract append(remoteId:string,row:readonly [string,string,string]):Promise<void>
-}
 export interface TransportProfileCodec {
   readonly profileId: string
   validate(snapshot: RemoteSnapshot): void

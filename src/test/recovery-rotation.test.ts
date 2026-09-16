@@ -30,9 +30,7 @@ describe('recovery continuity', () => {
     const forgedAuthority={source:'authenticated-remote',remoteResourceId:'independently-discovered-file',authenticatedAccountBinding:payload.google_account_binding,load:async()=>({manifest:[],rows:[]})}
     expect(()=>new RecoveryBootstrapVerifier({authority:forgedAuthority as never,schemas:{}})).toThrow('forged')
     const transport=new InMemoryTransport();transport.remotes.set('locator-resource',{manifest:[],rows:[]})
-    const authority=await IndependentBootstrapAuthority.fromAuthenticatedDiscovery(transport,'locator','locator-resource',payload.google_account_binding)
-    const independent=new RecoveryBootstrapVerifier({authority,schemas:{}})
-    await expect(activateRecoveredRoot(candidate,independent,async()=>undefined)).rejects.toThrow()
+    await expect(IndependentBootstrapAuthority.fromAuthenticatedGoogleDiscovery(transport as never,'locator','locator-resource')).rejects.toThrow('productive Google identity boundary')
   })
 })
 

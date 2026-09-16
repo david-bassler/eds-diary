@@ -6,7 +6,7 @@ import { TransportError, type RemoteTransport, type TransportProfileCodec } from
 export type CoordinatorState = 'local_locked' | 'local_only' | 'authenticated' | 'remote_verifying' | 'remote_verified' | 'writer_active' | 'syncing' | 'synced' | 'conflict' | 'security_blocked' | 'error'
 export interface CoordinatorStore {
   readAnchor(): Promise<RemoteAnchor | null>
-  pending(): Promise<readonly PreparedEnvelope[]>
+  pending(remoteRows: ReadonlyArray<readonly string[]>): Promise<readonly PreparedEnvelope[]>
   generation(): Promise<number>
   markPending?(envelopeId: string, expectedGeneration: number): Promise<number>
   markRemoteSeen?(envelopeId: string, expectedGeneration: number): Promise<number>
@@ -16,12 +16,13 @@ export interface CoordinatorStore {
 export class SingleWriterCoordinator {
   state: CoordinatorState = 'local_only'
   private verifiedGeneration: number | null = null
+  private verifiedRows: ReadonlyArray<readonly string[]> | null = null
   constructor(private readonly diaryId: string, private readonly epochId: string, private readonly remoteId: string, private readonly transport: RemoteTransport, private readonly codec: TransportProfileCodec, private readonly store: CoordinatorStore) {
     if (transport.profileId !== codec.profileId) throw new Error('Transport profile mismatch.')
   }
 
-  connected(): void { this.state = 'authenticated'; this.verifiedGeneration = null }
-  online(): void { if (this.state === 'synced' || this.state === 'writer_active') { this.state = 'authenticated'; this.verifiedGeneration = null } }
+  connected(): void { this.state = 'authenticated'; this.verifiedGeneration = null; this.verifiedRows = null }
+  online(): void { if (this.state === 'synced' || this.state === 'writer_active') { this.state = 'authenticated'; this.verifiedGeneration = null; this.verifiedRows = null } }
 
   async pullVerify(): Promise<void> {
     this.state = 'remote_verifying'
@@ -32,6 +33,7 @@ export class SingleWriterCoordinator {
       if (verified.retired) throw new Error('A rotation announcement retired this epoch.')
       await assertExtendsAnchor(await this.store.readAnchor(), this.diaryId, this.epochId, snapshot.rows)
       this.verifiedGeneration = await this.store.generation()
+      this.verifiedRows = snapshot.rows
       this.state = 'writer_active'
     } catch (error) {
       this.verifiedGeneration = null
@@ -41,9 +43,9 @@ export class SingleWriterCoordinator {
   }
 
   async pushPending(): Promise<void> {
-    if (this.state !== 'writer_active' || this.verifiedGeneration === null) throw new Error('Pull and verify is required before push.')
+    if (this.state !== 'writer_active' || this.verifiedGeneration === null || this.verifiedRows === null) throw new Error('Pull and verify is required before push.')
     this.state = 'syncing'
-    for (const envelope of await this.store.pending()) {
+    for (const envelope of await this.store.pending(this.verifiedRows)) {
       let expectedGeneration = await this.store.generation()
       if (this.verifiedGeneration !== expectedGeneration) { this.state = 'security_blocked'; throw new Error('Local security generation changed during sync.') }
       if(this.store.markPending) expectedGeneration=await this.store.markPending(envelope.envelopeId,expectedGeneration)
@@ -68,6 +70,7 @@ export class SingleWriterCoordinator {
       if (finalVerified.retired || await this.store.generation() !== expectedGeneration) { this.state = 'security_blocked'; throw new Error('Final verification or generation check failed.') }
       await this.store.commitDurable(envelope.envelopeId, await createAnchor(this.diaryId, this.epochId, snapshot.rows), expectedGeneration)
       this.verifiedGeneration=await this.store.generation()
+      this.verifiedRows=snapshot.rows
     }
     this.state = 'synced'
   }

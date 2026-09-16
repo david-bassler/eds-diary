@@ -1,7 +1,7 @@
 import { base64Url, concatBytes, fixedBase64Url, utf8 } from '../../security/crypto/bytes'
 import { sha256 } from '../../security/crypto/core'
 import { canonicalBytes } from '../../security/crypto/canonical'
-import { ProviderBoundRemoteTransport, SINGLE_WRITER_PROFILE, TransportError, type RemoteCandidate, type RemoteSnapshot } from '../core/contracts'
+import { SINGLE_WRITER_PROFILE, TransportError, type RemoteCandidate, type RemoteSnapshot, type RemoteTransport } from '../core/contracts'
 
 export interface GoogleApiClient { request<T>(url: string, init?: RequestInit): Promise<T>; identity(): string }
 interface Cell { userEnteredValue?: { stringValue?: string; formulaValue?: string; numberValue?: number; boolValue?: boolean }; effectiveValue?: { errorValue?: unknown } }
@@ -49,10 +49,11 @@ async function expectedAccountBinding(binding: GoogleTransportBinding): Promise<
 
 /** Strict Google wire adapter. Large grids are never requested before dimensions
  * are checked, and record data is subsequently fetched in bounded ranges. */
-export class GoogleSheetsSingleWriterTransport extends ProviderBoundRemoteTransport {
+export class GoogleSheetsSingleWriterTransport implements RemoteTransport {
   readonly profileId = SINGLE_WRITER_PROFILE
   private readonly sheetIds = new Map<string, number>()
-  constructor(private readonly api: GoogleApiClient, private readonly binding?: GoogleTransportBinding) {super()}
+  constructor(private readonly api: GoogleApiClient, private readonly binding?: GoogleTransportBinding) {}
+  async authenticatedAccountBinding():Promise<string>{if(!this.binding)throw new TransportError('auth_required','Authenticated provider identity is required.');const derived=await expectedAccountBinding(this.binding);if(derived!==this.binding.googleAccountBinding)throw new TransportError('integrity_failure','Provider identity binding is invalid.');return derived}
 
   async discover(locator: string): Promise<readonly RemoteCandidate[]> {
     try {

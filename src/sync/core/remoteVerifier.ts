@@ -4,7 +4,8 @@ import { validateRevisionGraph, type Revision } from '../../security/revisions'
 import { deriveEpochSalt } from '../../security/crypto/core'
 import { fixedBase64Url } from '../../security/crypto/bytes'
 import { assertExtendsAnchor, type RemoteAnchor } from './prefix'
-import { ProviderBoundRemoteTransport, type RemoteSnapshot, type VerifiedRemoteState } from './contracts'
+import type { RemoteSnapshot, VerifiedRemoteState } from './contracts'
+import { GoogleSheetsSingleWriterTransport } from '../google/GoogleSheetsSingleWriterTransport'
 import { validateDomainData } from '../../security/domainSchemaValidator'
 import type { RecoveredRootCandidate } from '../../security/recovery'
 
@@ -142,8 +143,8 @@ export class FullRemoteVerifier {
  * backup), never from decrypted recovery payload fields. */
 const TRUSTED_AUTHORITIES=new WeakSet<IndependentBootstrapAuthority>()
 export class IndependentBootstrapAuthority {
-  private constructor(readonly source:'authenticated-remote'|'verified-backup',readonly remoteResourceId:string,readonly authenticatedAccountBinding:string,private readonly transport:ProviderBoundRemoteTransport){TRUSTED_AUTHORITIES.add(this)}
-  static async fromAuthenticatedDiscovery(transport:ProviderBoundRemoteTransport,locator:string,remoteResourceId:string,authenticatedAccountBinding:string):Promise<IndependentBootstrapAuthority>{if(!(transport instanceof ProviderBoundRemoteTransport))throw new Error('Recovery authority requires a provider-owned transport.');const candidates=await transport.discover(locator);if(!candidates.some(candidate=>candidate.remoteId===remoteResourceId))throw new Error('Recovery resource was not established by authenticated discovery.');return new IndependentBootstrapAuthority('authenticated-remote',remoteResourceId,authenticatedAccountBinding,transport)}
+  private constructor(readonly source:'authenticated-remote'|'verified-backup',readonly remoteResourceId:string,readonly authenticatedAccountBinding:string,private readonly transport:GoogleSheetsSingleWriterTransport){TRUSTED_AUTHORITIES.add(this)}
+  static async fromAuthenticatedGoogleDiscovery(transport:GoogleSheetsSingleWriterTransport,locator:string,remoteResourceId:string):Promise<IndependentBootstrapAuthority>{if(!(transport instanceof GoogleSheetsSingleWriterTransport))throw new Error('Recovery authority requires the productive Google identity boundary.');const authenticatedAccountBinding=await transport.authenticatedAccountBinding();const candidates=await transport.discover(locator);if(!candidates.some(candidate=>candidate.remoteId===remoteResourceId))throw new Error('Recovery resource was not established by authenticated discovery.');return new IndependentBootstrapAuthority('authenticated-remote',remoteResourceId,authenticatedAccountBinding,transport)}
   load():Promise<RemoteSnapshot>{return this.transport.read(this.remoteResourceId)}
 }
 
