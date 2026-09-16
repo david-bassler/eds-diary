@@ -52,6 +52,11 @@ async function expectedAccountBinding(binding: GoogleTransportBinding): Promise<
   )))
 }
 
+const AUTHENTICATED_TRANSPORTS=new WeakSet<GoogleSheetsSingleWriterTransport>()
+export function isAuthenticatedGoogleTransport(value:unknown):value is GoogleSheetsSingleWriterTransport{
+  return typeof value==='object'&&value!==null&&AUTHENTICATED_TRANSPORTS.has(value as GoogleSheetsSingleWriterTransport)
+}
+
 /** Strict Google wire adapter. Large grids are never requested before dimensions
  * are checked, and record data is subsequently fetched in bounded ranges. */
 export class GoogleSheetsSingleWriterTransport implements RemoteTransport {
@@ -68,7 +73,9 @@ export class GoogleSheetsSingleWriterTransport implements RemoteTransport {
     if(!ownerPermissionId||ownerPermissionId!==api.identity())throw new TransportError('auth_required','Provider session identity could not be authenticated.')
     const partial={diaryId,epochId,ownerPermissionId,googleAccountBinding:''}
     const googleAccountBinding=await expectedAccountBinding(partial)
-    return new GoogleSheetsSingleWriterTransport(api,{...partial,googleAccountBinding})
+    const transport=new GoogleSheetsSingleWriterTransport(api,{...partial,googleAccountBinding})
+    AUTHENTICATED_TRANSPORTS.add(transport)
+    return transport
   }
   async authenticatedAccountBinding():Promise<string>{if(!this.binding)throw new TransportError('auth_required','Authenticated provider identity is required.');const derived=await expectedAccountBinding(this.binding);if(derived!==this.binding.googleAccountBinding)throw new TransportError('integrity_failure','Provider identity binding is invalid.');return derived}
   /** Rebinds the same authenticated provider session to a successor epoch. */
