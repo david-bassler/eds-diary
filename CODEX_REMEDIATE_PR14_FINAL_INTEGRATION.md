@@ -1,8 +1,21 @@
-# Codex Remediation – PR #15 Final Closure
+# Codex Remediation – PR #16 Final Closure
 
-Status: **VERBINDLICHER ABSCHLUSSAUFTRAG** für den kumulativen Stand von PR #15.
+Status: **VERBINDLICHER RESTAUFTRAG** für den kumulativen Stand von PR #16.
 
-Dieser Auftrag ersetzt die frühere Fassung dieser Datei. Viele Einzelprobleme aus PR #14 wurden inzwischen verbessert. Der Stand ist aber **noch nicht intern abgeschlossen**. Die unten aufgeführten Punkte sind konkrete, im Repository lösbare Restblocker. Solange auch nur einer davon offen ist, sind die Aussagen `TODO_INTERNAL: none`, `DONE` oder „final“ unzulässig.
+Diese Fassung ersetzt alle früheren Fassungen dieser Datei.
+
+PR #16 hat mehrere frühere Restpunkte tatsächlich geschlossen:
+
+- Write-Heads werden aus verifizierten immutable Envelopes rekonstruiert;
+- ein echter `IndexedDbCoordinatorStore` existiert;
+- mehrere lokale Envelopes können über den echten Store durable werden;
+- Migration läuft unter dem Diary-Lock;
+- Creation-Persistence bindet ihren persistierten Zustand an `operation_generation`;
+- die öffentlich subclassbare `ProviderBoundRemoteTransport`-Basis wurde entfernt.
+
+Diese Punkte nicht zurückbauen.
+
+Der Checkout ist trotzdem **noch nicht intern abgeschlossen**. Solange einer der folgenden Abschnitte 1–5 nicht PASS ist, sind `TODO_INTERNAL: none`, `DONE`, `final`, „vollständig umgesetzt“ oder eine Merge-Empfehlung unzulässig.
 
 Nicht mergen.
 
@@ -16,520 +29,425 @@ Nicht mergen.
 6. diese Datei
 7. bestehender Code
 
-Bestehender Code, PR-Beschreibung, Tests und Implementierungsberichte sind **nicht** Source of Truth.
+Bestehender Code, PR-Beschreibung, Implementierungsbericht und bereits grüne Tests sind nicht Source of Truth.
 
 ---
 
-# 0. Arbeitsregel – nicht verhandelbar
+# 0. Arbeitsregel – zwingend
 
-Arbeite Abschnitt **1 bis 9 in Reihenfolge** ab.
+Arbeite Abschnitt **1 bis 5 in Reihenfolge** ab.
 
 Für jeden Abschnitt:
 
-1. Ist-Zustand im Produktpfad nachvollziehen.
+1. Ist-Zustand im gesamten kumulativen Produktpfad nachvollziehen.
 2. Produktcode vollständig korrigieren/verdrahten.
-3. Geforderte positive, negative und Crash-/Race-Tests schreiben.
-4. Gezielt ausführen.
-5. Abschnitt erst `PASS` nennen, wenn die Acceptance Criteria tatsächlich erfüllt sind.
+3. Positive, negative, Crash-/Resume-, Race- und adversarial Tests gemäß Abschnitt ergänzen.
+4. Tests tatsächlich ausführen.
+5. Acceptance Criteria prüfen.
+6. Erst dann den Abschnitt als `PASS` markieren und zum nächsten wechseln.
 
-Ein Helper, Interface, abstrakter Callback, Test-Double oder isolierter Service zählt **nicht** als produktive Implementierung, solange kein realer Produktpfad ihn benutzt.
+Ein Helper, Service, Interface, Factory, Callback, Test-Double oder exportierter Entry Point zählt **nicht** als produktive Umsetzung, solange der reale App-/Data-Layer ihn nicht benutzt.
 
-Ein grüner Mock-Test ist kein Nachweis für einen produktiven End-to-End-Pfad.
+Ein Mock-Orchestrator-Test zählt nicht als Rotation-End-to-End-Test.
 
-Wenn beim Self-Review ein weiterer intern lösbarer Fehler gefunden wird, ist er Teil dieses Auftrags und muss vor Abschluss behoben werden.
+Ein Klassenname wie `GoogleSheetsSingleWriterTransport` ist keine Trust-Grenze, wenn beliebiger Produktcode ihn mit selbst gewählten Trust-Daten konstruieren kann.
+
+Wenn beim Self-Review ein weiterer in-repo lösbarer Fehler gefunden wird, gehört er zu diesem Auftrag und muss vor Abschluss behoben werden.
 
 ---
 
-# 1. Sicheren Single-Writer-Sync wirklich in den Produktpfad verdrahten – KRITISCH
+# 1. Sicheren Single-Writer-Sync wirklich zum App-Produktpfad machen – KRITISCH
 
-## Aktuelles Problem
+## Aktueller Stand
 
-`initializeDataLayer()` initialisiert weiterhin nur den alten `syncManager`.
+PR #16 hat mit `SingleWriterSyncService` und `IndexedDbCoordinatorStore` erstmals eine echte interne Sync-Komposition geschaffen.
 
-Der `syncManager` verwaltet Feature-Handler/Dirty-Flags, registriert aber keinen produktiven `SingleWriterCoordinator`, keinen produktiven `CoordinatorStore` für die Envelope-Outbox und keinen produktiven sicheren Google-Transport/Codec-Pfad.
+Aber `initializeDataLayer()` stellt aktuell nur
 
-Der alte `googleSheets.ts`-Pfad existiert weiterhin; `connectGoogle()` ist aktuell absichtlich gesperrt. Dass der getrennte Auth-Origin extern fehlt, ist zulässig. Dass der **interne sichere Sync-Pfad nicht produktiv verdrahtet ist**, ist dagegen ein internes TODO.
+- `registerSingleWriterSync(service)` und
+- `synchronizeDataLayer()`
+
+bereit.
+
+Der PR zeigt noch keinen realen App-/Provider-Lifecycle, der nach erfolgreicher authentifizierter Remote-Bindung den Service tatsächlich erzeugt, registriert und als einzigen produktiven Remote-Sync-Pfad verwendet.
+
+`initializeDataLayer()` initialisiert weiterhin den alten `syncManager`. Der Legacy-Whole-Table-Writer darf nicht wieder produktiv werden.
 
 ## Änderung
 
-Implementiere einen konkreten produktiven Single-Writer-Sync-Service und verdrahte ihn in den Data-Layer.
+Verdrahte den sicheren Single-Writer-Service als **einzigen internen produktiven Sync-Pfad**.
 
-Er muss intern mindestens verbinden:
+Erforderlich:
 
-- aktive Diary-/Epoch-Identität aus der lokalen Source of Truth;
-- produktiven `CoordinatorStore` auf Basis von `localDatabase`;
-- `pendingEnvelopes(...)` aus immutable Envelopes;
-- `transitionOutbox(..., 'pending', ...)`;
-- `transitionOutbox(..., 'remote_seen', ...)`;
-- `commitDurableAck(...)`;
-- `SingleWriterCoordinator`;
-- produktiven `GoogleSheetsSingleWriterTransport`;
-- produktiven `GoogleSheetsSingleWriterProfileCodec` + `FullRemoteVerifier`;
-- persistentes Remote Binding / Anchor / Generation;
-- Pull-before-Push vor Writer-Autorität.
+- ein konkreter interner Lifecycle vom authentifizierten Provider-/Remote-Binding zum `SingleWriterSyncService`;
+- dieser Lifecycle wird vom App-/Data-Layer tatsächlich aufgerufen;
+- lokaler Dirty-/Sync-Trigger führt zum sicheren Single-Writer-Service, nicht zu einem Legacy-Whole-Table-Writer;
+- Pull + Full Verify erfolgt vor Writer-Autorität;
+- Envelope-Outbox bleibt einzige produktive Remote-Write-Quelle;
+- Reload kann den sicheren Service aus authentifiziertem persistentem Binding erneut herstellen, sobald Provider-Auth verfügbar ist;
+- wenn der produktive separate Auth-Origin noch fehlt, bleibt die Google-Aktivierung fail-closed, aber **das interne Wiring ist vollständig vorhanden und getestet**.
 
-Der Service darf wegen fehlendem produktiven Auth-Origin **fail-closed** bleiben, muss intern aber vollständig verdrahtet und mit einem InMemory-/Test-Provider ausführbar sein.
+Der externe Auth-Origin ist kein Grund, intern nur eine manuell aufzurufende Registrierungsfunktion stehen zu lassen.
 
-Der alte Values-/Whole-table-Pfad darf nicht wieder zum produktiven Writer werden.
+## Sicherheitskritischer Verifier-Kontext
+
+`SingleWriterSyncService.createGoogle()` darf **keine sicherheitskritischen erwarteten Trust-Werte frei vom Caller übernehmen**.
+
+Insbesondere dürfen diese Werte nicht einfach über ein caller-konstruiertes `TrustedRemoteContext`/`Omit<...>` vertrauenswürdig werden:
+
+- erwarteter Manifest-Fingerprint;
+- Key-ID;
+- Recovery Generation;
+- Recovery Commitment;
+- Google Account Binding;
+- alter Remote Anchor;
+- lokale immutable Envelopes / lokale Heads.
+
+Diese Werte müssen aus den dafür normativ vorgesehenen authentifizierten lokalen Zuständen, statischen Schema-Registry-Daten und verifizierten immutable Envelopes abgeleitet werden.
+
+Falls ein notwendiger Wert noch nicht authentifiziert persistent vorhanden ist, ist das ein interner Implementierungsfehler, der in diesem Auftrag zu schließen ist; nicht durch einen freien Funktionsparameter umgehen.
 
 ## Tests
 
-Mindestens ein Integrationstest muss den echten produktiven Store-Adapter + echten Coordinator + echte Envelope-Outbox verwenden:
+Mindestens:
 
-1. 3 gültige lokale Envelopes erzeugen;
-2. Pull/Verify;
-3. `prepared -> pending -> remote_seen -> durable` für alle drei tatsächlich in IndexedDB persistieren;
-4. Generation korrekt fortschreiben;
-5. Anchor atomar aktualisieren;
-6. Reload;
-7. keine bereits durable Row erneut als pending behandeln.
-
-Zusätzlich:
-
+- App-/Data-Layer-Lifecycle erzeugt nach authentifiziertem Test-Binding den echten `SingleWriterSyncService`;
+- 3 lokale Envelopes laufen über echten `IndexedDbCoordinatorStore` vollständig `prepared -> pending -> remote_seen -> durable`;
+- Reload und erneuter Service-Aufbau behandeln durable Rows nicht erneut als pending;
 - Unknown Outcome bei Envelope 2;
-- stale Generation zwischen Remote-Read und Durable-Commit;
-- Same-ID/different-bytes;
-- fehlendes/manipuliertes Outbox-Flag wird aus immutable Envelopes korrekt rekonstruiert.
+- stale Generation zwischen Remote-I/O und Durable-Commit;
+- Same-ID/different-bytes fatal;
+- fehlendes/manipuliertes Outbox-Flag wird aus immutable Envelopes rekonstruiert;
+- ohne authentifiziertes Binding kein Sync;
+- sicherheitskritische Verifier-Erwartungen können nicht vom allgemeinen Caller überschrieben werden.
 
 ### Acceptance
 
-Der sichere Coordinator ist nicht mehr nur Bibliothekscode/Testcode, sondern der interne Produkt-Sync-Pfad. Fehlender externer Auth-Origin blockiert lediglich das echte Google-Login, nicht die interne Implementierung.
+Der sichere Coordinator ist der intern verwendete Produkt-Sync-Pfad. Es existiert kein nur manuell registrierbarer „Produktservice“, während der reale App-Lifecycle ihn nicht benutzt.
 
 ---
 
-# 2. Rotation wirklich produktiv implementieren und aufrufen – KRITISCH
+# 2. Rotation als echten produktiven End-to-End-Pfad implementieren – KRITISCH
 
 ## Aktuelles Problem
 
-`runRotation()` ist weiterhin ein Orchestrator aus Dependency-Callbacks.
+PR #16 ändert `rotation.ts` nicht.
 
-Das ist als Struktur zulässig, aber im Produkt existiert weiterhin kein nachgewiesener konkreter Satz produktiver Dependencies und kein echter Produkt-Aufrufer. Der bestehende Test ersetzt die kritischen Operationen weiterhin durch triviale Mock-Callbacks.
+`runRotation()` ist weiterhin ein Callback-Orchestrator. Der bisherige Test ersetzt die entscheidenden Operationen durch triviale Callbacks.
 
-Damit ist der frühere Punkt „Rotation besitzt konkrete produktive Dependencies und einen echten Aufrufer“ **nicht erfüllt**.
+Damit ist die zentrale Definition-of-Done weiterhin nicht erfüllt:
+
+> Rotation besitzt konkrete produktive Dependencies, einen echten Produkt-Aufrufer und Crash-/Resume-Nachweise über jede persistente Phase.
 
 ## Änderung
 
-Implementiere konkrete produktive Rotation-Dependencies und einen echten Produkt-Service/API, der `runRotation()` tatsächlich aufruft.
+Implementiere konkrete produktive Rotation-Dependencies und einen realen Produkt-Service/API, der `runRotation()` tatsächlich verwendet.
 
-Die konkreten Dependencies müssen reale Operationen ausführen:
+Die Implementierung muss reale bestehende Komponenten verbinden, nicht nur gleichnamige Callbacks definieren:
 
-- Successor RK erzeugen;
-- Successor Root-Wrap erzeugen und readback-verifizieren;
-- Freeze persistent + readback VOR finalem Source-Snapshot;
-- finalen Source-State aus verifizierten immutable Envelopes lesen;
-- Source Full Verify / Anchor / Lineage-/Semantic-Snapshot;
-- Successor planned state;
-- Successor über die **produktive** `runCreationStateMachine` + IndexedDB CreationPersistence erzeugen/binden;
-- aktive und Tombstone-Heads wirklich als neue Revisionen/Envelopes kopieren;
-- echtes `epoch-migration-sw-v1` erzeugen;
-- Successor mit echtem `FullRemoteVerifier` vollständig prüfen;
-- Semantic Snapshot Gleichheit erzwingen;
-- echtes Recovery Artifact erzeugen und über den produktiven unabhängigen Bootstrap prüfen;
-- echtes v5 Backup erzeugen und über den produktiven Verifier test-restoren;
-- echtes verschlüsseltes `rotation-announcement-sw-v1` in der alten Epoche erzeugen;
-- über den echten Coordinator/Transport append + Readback + Full Verify;
-- `announcement_durable` erst danach persistieren;
-- aktiven Epoch-Kontext atomar auf Successor schalten;
-- Source `retired` setzen.
+1. Successor RK erzeugen.
+2. Successor Root-Wrap erzeugen und readback-verifizieren.
+3. Freeze persistent setzen und readback-verifizieren.
+4. Erst **nach** persistentem Freeze finalen Source-State aus verifizierten immutable Envelopes neu lesen.
+5. Source Full Verify + finalen Anchor + Lineage-/Semantic-Snapshot bilden.
+6. Successor planned state persistent anlegen.
+7. Successor über die produktive `runCreationStateMachine` mit echter IndexedDB-CreationPersistence erstellen/binden.
+8. Aktive und Tombstone-Heads wirklich als neue Revisionen/Envelopes in den Successor übertragen.
+9. Echtes `epoch-migration-sw-v1` erzeugen.
+10. Successor mit echtem `FullRemoteVerifier` vollständig prüfen.
+11. Bei normaler Rotation Semantic Snapshot Source == Successor erzwingen.
+12. Echtes Recovery Artifact erzeugen und über die produktive unabhängige Bootstrap-Grenze erfolgreich prüfen.
+13. Echtes v5 Backup erzeugen und über den produktiven Full-Verifier test-restoren.
+14. Echtes verschlüsseltes `rotation-announcement-sw-v1` in der Source-Epoche erzeugen.
+15. Über echten Coordinator/Transport append, readback und Full Verify durchführen.
+16. Erst danach `announcement_durable` persistieren.
+17. Aktiven Epoch-Kontext atomar auf Successor schalten.
+18. Source `retired` setzen.
 
-Keine dieser Operationen darf nur durch einen Callback-Namen behauptet werden.
+Alle Schritte müssen nach Crash/Reload idempotent resumierbar sein.
 
-## Tests
+Abort nur vor durable Announcement. Nach durable Announcement kein Rollback.
 
-Mindestens ein integrierter Rotationstest mit:
+## Tests – zwingend integriert
+
+Mindestens ein integrierter Test mit:
 
 - fake IndexedDB;
-- echten Crypto-/Envelope-/Revision-Komponenten;
-- echten Creation-/Rotation-Persistences;
+- echten Root-/Envelope-/Revision-/Manifest-/Backup-/Recovery-Komponenten;
+- echter CreationPersistence;
+- echter RotationPersistence;
 - echtem Coordinator;
-- InMemoryTransport nur als externe Providergrenze.
+- InMemory-/Fake-Provider nur an der externen Netzwerkgrenze.
 
-Fault Injection/Reload nach **jeder** persistenten Rotationphase.
+Keine Mock-Callbacks für die eigentliche Rotation-Semantik.
+
+Fault Injection/Reload nach **jeder** persistierten Rotationsphase.
 
 Zusätzlich beweisen:
 
-- Mutation nach persistiertem Freeze schlägt fehl;
-- finaler Snapshot erfolgt erst nach Freeze;
+- Feature-Mutation zwischen Freeze und finalem Source-Snapshot schlägt fehl;
+- finaler Snapshot erfolgt tatsächlich erst nach Freeze;
+- Successor-Semantik stimmt bei normaler Rotation exakt überein;
+- Recovery-Bootstrap und Backup-Test-Restore liegen vor Announcement;
 - kein Switch vor durable Announcement;
-- kein Abort nach durable Announcement;
-- Resume ist idempotent und erzeugt keine zweiten Successor-/Announcement-Artefakte.
+- kein Abort danach;
+- Resume erzeugt keinen zweiten Successor und kein zweites Announcement.
 
 ### Acceptance
 
-`runRotation()` wird von realem Produktcode mit konkreten normativen Implementierungen aufgerufen. Ein reiner Callback-Orchestrator-Test reicht nicht.
+`runRotation()` wird von realem Produktcode mit konkreten Implementierungen benutzt. Ein Callback-Orchestrator plus Mock-Test ist FAIL.
 
 ---
 
-# 3. Recovery Bootstrap Authority wirklich unabhängig und nicht forgebar machen – KRITISCH
+# 3. Recovery-/Remote-Trust-Boundary vollständig schließen – KRITISCH
 
-## Aktuelles Problem
+## Aktueller Fortschritt
 
-`IndependentBootstrapAuthority` ist verbessert, aber die Factory erhält weiterhin `authenticatedAccountBinding` als frei vom Caller gelieferten String.
+PR #16 entfernt die öffentlich subclassbare `ProviderBoundRemoteTransport`-Basis und bindet `IndependentBootstrapAuthority` konkret an `GoogleSheetsSingleWriterTransport`.
 
-Außerdem ist `ProviderBoundRemoteTransport` öffentlich exportiert und beliebiger Anwendungscode kann eine eigene Subklasse bauen. Ein `instanceof ProviderBoundRemoteTransport` beweist daher nicht, dass das Account Binding tatsächlich aus einem authentifizierten Provider-Identity-Pfad stammt.
+Das ist eine Verbesserung, aber noch keine ausreichende Trust-Grenze.
 
-Der aktuelle Test beweist nur, dass ein nacktes Objekt nicht als Authority akzeptiert wird. Er beweist nicht den eigentlichen Angriff mit passenden Recovery-Werten + selbst gebautem providerähnlichem Transport.
+## Verbleibendes Problem
+
+`GoogleSheetsSingleWriterTransport` hat weiterhin einen öffentlichen Konstruktor mit caller-geliefertem:
+
+- `GoogleApiClient`;
+- `GoogleTransportBinding`;
+- `ownerPermissionId`;
+- `googleAccountBinding`.
+
+`authenticatedAccountBinding()` leitet den Hash aus dem **bereits caller-gelieferten** `ownerPermissionId` ab und vergleicht ihn mit dem ebenfalls caller-gelieferten Binding.
+
+Ein konkreter Klassenname allein beweist also noch nicht, dass `permissionId` wirklich aus der aktuell authentifizierten Google-Identity-Session stammt.
+
+`GoogleApiClient.identity()` ist für diese Vertrauensentscheidung derzeit nicht die nachgewiesene Quelle.
+
+Zusätzlich darf der normale Sync-Service seinen `FullRemoteVerifier` nicht aus frei caller-gelieferten erwarteten Trust-Werten zusammensetzen (siehe Abschnitt 1).
 
 ## Änderung
 
-Die Recovery Authority muss ausschließlich aus einer **vertrauenswürdigen produktiven Provider-Identity-Grenze** entstehen.
+Schaffe eine echte produktive Provider-Identity-Grenze:
 
-Erforderliche Invariante:
+- produktiver Google-Transport/Recovery-Authority kann nur über eine Factory erzeugt werden, die an die tatsächlich authentifizierte Provider-Session gebunden ist;
+- `permissionId` wird innerhalb dieser Grenze über die authentifizierte Provider-API bestimmt/verifiziert;
+- normative `google_account_binding` wird dort intern abgeleitet;
+- allgemeiner App-Code kann `ownerPermissionId` oder Account Binding nicht als vertrauenswürdige Tatsache einspeisen;
+- Discovery und spätere Snapshot-Loads verwenden dieselbe authentifizierte Provider-Session und konkrete Resource-ID;
+- kein frei injizierbarer Recovery-Loader;
+- kein öffentlich konstruierbares Objekt mit selbst gewählten Strings darf dieselbe Authority erzeugen;
+- Backup-Authority darf nur aus vollständig verifiziertem Backup-Import entstehen.
 
-- der Caller darf `authenticatedAccountBinding` nicht als vertrauenswürdige Tatsache einspeisen;
-- die Authority liest/erzeugt das Account Binding selbst aus dem aktuell authentifizierten Provider-Identity-Ergebnis (`permissionId` -> normative Binding-Ableitung);
-- `remote_resource_id` stammt aus Discovery innerhalb derselben Authority/Provider-Session;
-- Snapshot wird intern über genau diese Resource geladen;
-- kein frei injizierbarer Loader;
-- kein öffentlich subclassbares nominales Basiskonstrukt darf allein die Trust-Grenze darstellen;
-- Backup-Authority analog nur aus einem vollständig verifizierten Backup-Importpfad.
+Der separate produktive Auth-Origin darf extern geblockt bleiben. Die **interne Trust-API und deren lokale Testbarkeit** müssen trotzdem vollständig implementiert sein.
 
-Geeignete Lösungen sind z.B. module-private Capability/Brand + Factory innerhalb des produktiven Google-Provider-Moduls oder eine gleichwertige Grenze. Keine Security-Semantik erfinden; entscheidend ist, dass beliebiger App-Code die Authority nicht mit selbst gewählten Strings/Loadern erzeugen kann.
+## Adversarial Tests
 
-## Adversarial Test – zwingend
+Der folgende Angriff MUSS scheitern:
 
-Dieser Angriff muss scheitern:
+1. Recovery Artifact + korrekte URS öffnen.
+2. Diary/Epoch/Key/Fingerprint/AccountBinding/Anchor/Commitment aus Candidate übernehmen.
+3. eigenen API-/Transport-artigen Stub mit passenden Antworten bauen.
+4. selbst gewählte `permissionId` und passendes Binding einsetzen.
+5. eigene Resource/Snapshot liefern.
+6. versuchen, daraus eine akzeptierte Bootstrap-Authority und Recovery-Aktivierung zu erzeugen.
 
-1. Recovery Artifact + korrekte URS öffnen;
-2. alle passenden Candidate-Werte übernehmen;
-3. einen eigenen Transport/Provider-ähnlichen Loader bauen;
-4. passendes Account Binding selbst einsetzen;
-5. eigene Remote-Ressource/Snapshot liefern;
-6. versuchen, eine akzeptierte Bootstrap-Authority zu erzeugen.
+Zusätzlich darf allgemeiner Caller-Code keinen normalen `FullRemoteVerifier` mit frei überschriebenem erwarteten Fingerprint/Key/Recovery/Binding in den produktiven Google-Sync-Pfad einschleusen können.
 
-MUSS scheitern.
+## Positivtest
 
-Positivtest:
+Mit einer kontrollierten Test-Provider-Identity-Grenze:
 
-- echte Test-Provider-Identity liefert `permissionId`;
-- Authority leitet Binding selbst ab;
+- Identity-/Permission-ID wird innerhalb der Provider-Grenze bestimmt;
+- Binding intern abgeleitet;
 - Discovery bindet konkrete Resource;
-- vollständiger Manifest/Anchor/Envelope/Graph-Verify;
-- erst danach Recovery-Aktivierung erfolgreich.
+- vollständiger Manifest-/Anchor-/Envelope-/Graph-Verify erfolgreich;
+- Recovery-Aktivierung danach erfolgreich.
+
+Echte Google-Credentials sind für diesen lokalen Architekturtest nicht nötig. Live-Google-Validierung bleibt zusätzlich `BLOCKED_EXTERNAL`.
+
+### Acceptance
+
+Recovery- und normaler Sync-Trust stammen aus authentifizierter Provider-/Local-State-Herkunft, nicht aus passenden Werten, die ein Caller selbst zusammensetzen kann.
 
 ---
 
-# 4. Write-Pfad darf den separaten `revisions`-Store nicht als Source of Truth verwenden – KRITISCH
+# 4. Fehlende Fault-Injection-/Crash-/Race-Matrix vollständig nachholen – KRITISCH
 
-## Aktuelles Problem
+PR #16 nennt diese Lücke selbst ausdrücklich. Der Auftrag ist nicht fertig, solange die Matrix fehlt.
 
-Normale Reads rekonstruieren den Graph inzwischen aus verifizierten immutable Envelopes.
+## 4.1 Create/Reconcile
 
-`persistRevision()` bestimmt Parents/Heads aber weiterhin aus `STORES.revisions`.
+Tests mindestens für:
 
-Dieser Store ist nicht die kryptographische Source of Truth. Wird er gelöscht/manipuliert, kann ein neuer Write auf einem falschen Parent-Graphen aufbauen, obwohl das Envelope-Journal korrekt ist.
-
-## Änderung
-
-Vor jeder Fachmutation unter dem Diary-Lock:
-
-1. State-MAC prüfen;
-2. vollständige Envelope-Journalintegrität prüfen;
-3. immutable Envelopes öffnen;
-4. Revision-Graph daraus rekonstruieren/validieren;
-5. Parents/Heads **ausschließlich daraus** bestimmen;
-6. erst dann neue Revision validieren/reservieren/encrypten/persistieren.
-
-`STORES.revisions` darf höchstens Cache/Index sein.
-
-Wenn er behalten wird:
-
-- vollständig gegen Envelope-Graph beweisen oder bei Abweichung rekonstruieren;
-- niemals zur alleinigen Parent-/Head-Entscheidung verwenden.
-
-## Tests
-
-- `revisions`-Store vollständig löschen, Envelopes intakt -> nächster Write verwendet trotzdem korrekten Parent;
-- Revision-Cache mit falschem Head manipulieren -> keine falsche Branch-Erzeugung;
-- Journal-/Envelope-Manipulation -> Write fail-closed;
-- normaler Update erzeugt Parent auf dem tatsächlichen Envelope-Head.
-
----
-
-# 5. Legacy-Migration vollständig unter Diary-Lock + Generation absichern – KRITISCH
-
-## Aktuelles Problem
-
-Migration-State ist jetzt gehasht und über `migration_state_ref` gebunden. `migrateLegacy()`/`saveMigration()` laufen aber nicht als vollständig serialisierte Security-Mutation unter dem diary-spezifischen Web Lock.
-
-`persistRevision()` wird von normalen Feature-Writes unter Lock aufgerufen, von der Migration aber direkt.
-
-Damit bleiben konkurrierende lokale Mutationen/Generation-Races während Migration möglich.
-
-## Änderung
-
-Migration muss dieselbe Security-Mutationsgrenze verwenden wie normale Writes:
-
-- diary-spezifischer Exclusive Web Lock;
-- innerhalb des Locks State neu lesen;
-- State-MAC/Journal verifizieren;
-- Migrationsphase + Ref/Hash + Generation atomar fortschreiben;
-- per-Source Zielpersistenz idempotent;
-- vor/nach jeder Phase Generation konsistent;
-- keine parallele Fachmutation darf den Migrationssnapshot unbemerkt verändern.
-
-Deadlocks vermeiden: ggf. locked/unlocked interne Varianten definieren; nicht denselben Lock rekursiv anfordern.
-
-## Tests
-
-- konkurrierender Feature-Write während Backfill;
-- Crash nach Ziel-Envelope vor completed marker;
-- Resume erzeugt keine zweite Revision;
-- stale Migration callback kann neueren State nicht überschreiben;
-- manipulierter Migration-State/Ref/Hash fatal;
-- Activity-Type-LocalStorage weiterhin enthalten.
-
----
-
-# 6. Creation-Persistence an authentifizierte Generation binden – KRITISCH
-
-## Aktuelles Problem
-
-`CreationState.operationGeneration` existiert, aber `runCreationStateMachine()` vergleicht ihn nicht zuverlässig vor und nach Remote-I/O mit dem aktuellen MAC-authentifizierten Epoch-State.
-
-`indexedDbCreationPersistence.write()` erhöht `operation_generation`, gibt die neue Generation aber nicht an die State Machine zurück. Damit kann der CreationState einen veralteten Generation-Wert tragen.
-
-## Änderung
-
-Creation-State/Persistence-API so ändern, dass jede persistierte Phase an die **aktuelle authentifizierte Epoch-Generation** gebunden ist.
-
-Vor jedem mutierenden Remote-Schritt:
-
-1. unter Lock State lesen;
-2. Creation-Intent + erwartete Generation atomar persistieren/readback-verifizieren;
-3. Lock lösen;
-4. Remote-I/O;
-5. Lock neu erwerben;
-6. State neu lesen;
-7. nur wenn erwartete Generation noch gültig ist, Outcome/Reconcile-State committen;
-8. sonst stale callback fail-closed.
-
-Creation-Persistence muss Operation-State-Hash und Generation gemeinsam beweisen.
-
-## Tests
-
-- lokale Fachmutation zwischen Manifest-Write und Reconcile;
-- lokale Security-State-Mutation zwischen Property-PATCH und Reconcile;
-- stale Create callback nach neuerem Creation-State;
-- manipuliertes Operation-State-Objekt/Hash;
-- Reload behält korrekte Generation-Bindung.
-
----
-
-# 7. Outbox-Phasen mit echtem IndexedDB-CoordinatorStore beweisen – HOCH
-
-## Aktuelles Problem
-
-Der neue Coordinator unterstützt `markPending` und `markRemoteSeen`. Die vorhandenen Mehrfach-Envelope-Tests verwenden aber einen Fake-Store, der diese Hooks gar nicht implementiert.
-
-Damit ist die reale produktive Kette
-
-`prepared -> pending -> remote_seen -> durable`
-
-mit `transitionOutbox()` und `commitDurableAck()` noch nicht end-to-end bewiesen.
-
-## Änderung
-
-Implementiere/exportiere einen konkreten `CoordinatorStore`-Adapter über `localDatabase`, der mindestens nutzt:
-
-- aktuellen Anchor;
-- `pendingEnvelopes(remoteRows)` bzw. normativ äquivalente Rekonstruktion;
-- authentifizierte Generation;
-- `transitionOutbox(...,'pending',...)`;
-- `transitionOutbox(...,'remote_seen',...)`;
-- `commitDurableAck(...)`.
-
-Dieser Adapter muss der produktive Sync-Service aus Abschnitt 1 verwenden.
-
-## Tests
-
-Mit echter fake-IDB:
-
-- jede Phase im Store inspizieren und beweisen;
-- Crash nach `pending`;
-- Crash nach `remote_seen`;
-- Reload setzt korrekt fort;
-- fehlendes Outbox-Flag wird aus immutable Envelopes rekonstruiert;
-- stale Generation blockiert;
-- 3+ Envelopes vollständig durable.
-
----
-
-# 8. Fehlende Fault-Injection-/Adversarial-Matrix vervollständigen – KRITISCH
-
-Die derzeit 36 Tests sind kein ausreichender Nachweis für die DONE-Behauptungen.
-
-Mindestens folgende Fälle müssen als echte Tests vorhanden sein:
-
-## Create/Reconcile
-
-- Crash/Reload nach jeder persistenten Phase;
-- verlorene Create-Response;
+- Crash/Reload nach jeder persistenten Creation-Phase;
+- Create Request serverseitig erfolgreich, Response verloren;
 - Crash direkt nach serverseitigem Create;
-- verlorene Manifest-Write-Response;
-- Crash direkt nach Manifest-Write;
-- verlorene Property-PATCH-Response;
-- Crash direkt nach Property-PATCH;
-- verlorene Orphan-PATCH-Response;
-- zwei empty candidates;
-- bound + empty;
-- partial + empty;
+- bereits existierender empty Candidate bei Resume -> kein zweiter Create;
+- Manifest Write erfolgreich, Response verloren;
+- Crash nach Manifest Write vor State-Commit;
+- Property PATCH erfolgreich, Response verloren;
+- Crash nach Property PATCH vor State-Commit;
+- Orphan PATCH erfolgreich, Response verloren;
+- zwei empty Candidates;
+- canonical + empty;
 - zwei partial;
 - zwei manifesttragende;
 - conflicting + expected;
-- exakt ein nicht-getrashter Candidate vor `bound`.
+- final `bound` nur bei exakt einem nicht-getrashten canonical Candidate;
+- stale `operation_generation` vor/nach Remote-I/O fail-closed.
 
-## Local/Outbox
+## 4.2 Legacy Migration
 
-- Envelope löschen -> normaler Read und Write fail-closed;
-- `local_seq` manipulieren;
-- Rowbytes manipulieren;
-- State-MAC manipulieren;
-- Revision-Cache manipulieren;
-- 3+ Envelopes mit echten Outbox-Phasen;
-- Generation Race;
-- Unknown Outcome bei mittlerem Envelope;
-- fehlendes Outbox-Flag.
+Tests mindestens für:
 
-## Migration
+- Crash vor Backfill;
+- Crash nach Ziel-Envelope vor `completedKeys`;
+- Reload/Resume ohne zweite semantische Revision;
+- Crash während Verify;
+- Crash unmittelbar vor Cutover;
+- paralleler Feature-Write;
+- stale Generation;
+- manipuliertes Migration-State-Objekt;
+- falscher State-Hash/Ref;
+- gefälschtes `verified:true`;
+- Activity-Type-LocalStorage enthalten;
+- ID-Kollision fatal.
 
-- Crash nach jedem relevanten persistierten Schritt;
-- insbesondere nach Ziel-Envelope vor completed marker;
-- Concurrent Feature Mutation;
-- State-Ref/Hash-Tamper;
-- idempotenter Resume.
+## 4.3 Outbox / Coordinator
 
-## Rotation
+Mit echtem `IndexedDbCoordinatorStore`:
 
-- echter integrierter Produktpfad, nicht Callback-Mock;
-- Crash/Reload nach jeder persistenten Phase;
-- Freeze vor Snapshot;
-- Concurrent Mutation nach Freeze abgelehnt;
-- Successor Verify Fehler;
-- Recovery Bootstrap Fehler;
-- Backup Restore Fehler;
-- Announcement Unknown Outcome;
-- kein Switch vor durable;
-- kein Abort danach.
+- Crash nach `prepared`;
+- Crash nach `pending` vor Append;
+- Append Unknown Outcome;
+- `remote_seen` persistiert;
+- Crash nach `remote_seen` vor finalem Verify/Durable;
+- Reload und korrekter Resume;
+- 3+ Envelopes;
+- stale Generation;
+- Same-ID/different-bytes;
+- fehlendes/manipuliertes Outbox-Flag rekonstruiert;
+- Anchor + Durable-Ack atomar.
 
-## Recovery
+## 4.4 Rotation
 
-- self-confirmation mit korrekten Candidate-Werten + selbst gebautem providerähnlichem Transport scheitert;
-- positiver echter providergebundener Bootstrap gelingt.
+Die vollständige Matrix aus Abschnitt 2, einschließlich Reload nach jeder persistenten Phase.
 
-## Google
+## 4.5 Recovery
 
-- strict bound read ohne Properties fatal;
-- pre-bound inspection separat;
-- zusätzliche/falsche Properties;
+- echter Self-Confirmation-Angriff mit passenden Candidate-Werten scheitert;
+- selbst gebauter providerähnlicher Stub kann keine trusted Authority erzeugen;
+- normaler produktiver Sync kann keinen caller-gefälschten `TrustedRemoteContext` einschleusen;
+- positiver kontrollierter Provider-Bootstrap gelingt.
+
+## 4.6 Google Transport lokal
+
+Beibehalten/ergänzen:
+
+- bound Read ohne Protocol-AppProperties fatal;
+- pre-bound Candidate Inspection separat;
+- falsche/zusätzliche AppProperties fatal;
+- `epoch_locator` exakt;
 - nichtstandardmäßige Sheet IDs;
 - `startRow != 0`;
-- physical gap;
-- Discovery/Permissions Pagination;
-- Row exakt 21936 akzeptiert, darüber fatal;
-- Gesamtlimit exakt akzeptiert, darüber fatal;
-- Retry-Duplikat zählt physisch mehrfach.
+- physische Lücke;
+- Pagination;
+- 21.936-Byte-Row-Grenze;
+- 134.217.728 Gesamtbytes;
+- 100.000 physische Rows;
+- byteidentisches Retry zählt physisch mehrfach.
 
-Tests dürfen nicht bloß interne Helper aufrufen, wenn die Anforderung einen Produktpfad betrifft.
+### Acceptance
+
+Keine Security-DONE-Behauptung beruht nur auf Happy-Path- oder Mock-Tests.
 
 ---
 
-# 9. Finaler Self-Review, Dokumentation und Abschlussgate – ZWINGEND
+# 5. Finaler adversarialer Abschlussreview und Gates – ZWINGEND
 
-Erst nachdem 1–8 PASS sind:
+Erst wenn Abschnitte 1–4 PASS sind:
 
-## Adversarialer Self-Review
+## Adversarialer Review des gesamten kumulativen Checkouts
 
-Beantworte anhand des Codes, nicht anhand der Dokumentation:
+Frage explizit und belege mit Code/Test:
 
-- Gibt es einen produktiven Aufruf von `SingleWriterCoordinator` mit echtem Local Store Adapter?
-- Gibt es einen produktiven Aufruf von `runRotation()` mit konkreten Dependencies?
-- Kann beliebiger App-Code eine Recovery Authority mit selbst gewähltem Account Binding erzeugen?
-- Bestimmt irgendein Write Parents/Heads aus einem nicht verifizierten Cache statt aus Envelopes?
-- Läuft jede Security-Mutation unter dem Diary-Lock?
-- Kann ein stale Creation-/Migration-/Sync-Callback neueren State überschreiben?
-- Werden Outbox-Zwischenzustände wirklich persistiert und nach Reload fortgesetzt?
-- Existiert vor `bound` garantiert genau eine kanonische Remote-Datei?
-- Ist der alte Google Values-Pfad garantiert kein produktiver Writer?
+- Wird der sichere Single-Writer-Service vom realen Data-/App-Lifecycle benutzt?
+- Existiert irgendein erreichbarer Legacy-Whole-Table-Remote-Writer?
+- Kann allgemeiner Caller-Code sicherheitskritische Verifier-Erwartungen selbst setzen?
+- Kann allgemeiner Caller-Code eine Recovery-Authority aus selbst gewählten Providerwerten bauen?
+- Werden Write-Parents ausschließlich aus verifizierten immutable Envelopes bestimmt?
+- Prüfen normale Reads Journal + State-MAC?
+- Kann ein manipuliertes Outbox-Flag ein Envelope verschwinden lassen?
+- Funktioniert `prepared -> pending -> remote_seen -> durable` nach Crash/Reload?
+- Läuft Create nach Unknown Outcome ohne Duplikatbildung weiter?
+- Bleibt vor `bound` exakt ein Candidate?
+- Läuft Migration unter Lock und crash-idempotent?
+- Ist Freeze persistent, bevor der finale Rotation-Snapshot gelesen wird?
+- Benutzt Produktcode echte Rotation-Dependencies?
+- Erfolgt Switch nur nach durable Announcement?
+- Sind Recovery + Backup vor Announcement erfolgreich getestet?
+- Kann stale Generation irgendeinen neueren Security-State überschreiben?
 
-Wenn eine Antwort problematisch ist: weiterarbeiten, nicht abschließen.
+Wenn eine Antwort nicht eindeutig PASS ist: **nicht abschließen; beheben und erneut testen.**
 
 ## Qualitätsgates
 
-Ausführen und exakte Ergebnisse dokumentieren:
+Ausführen und exakt dokumentieren:
 
 - `npm run build`
 - vollständiges `npm test`
 - Argon2id Golden Vector ohne Skip
-- gezieltes ESLint für Data/Security/Sync/Test
+- gezieltes ESLint für `src/data`, `src/security`, `src/sync`, relevante Tests
 - `npm run lint:css`
-- Storybook Build, sofern Repository-Gate
+- `npm run build-storybook`, sofern weiterhin Repository-Gate
 - `git diff --check`
 
-Keine Regeln abschwächen.
+Keine Lint-/Style-/Test-Regeln abschwächen.
 
-GitHub-CI fehlt derzeit; lokale Ergebnisse ausdrücklich als lokal bezeichnen.
+Globale bestehende UI-Lint-/E2E-Baselinefehler dürfen nur als Baseline dokumentiert werden, wenn sie nachweislich unabhängig sind. Relevante UI-Smokes für geänderte Data-/Sync-Pfade trotzdem ausführen.
 
 ## Dokumentation
 
-Erst jetzt aktualisieren:
+Erst nach erfolgreichem Code-/Test-Abschluss aktualisieren:
 
 - `docs/security/IMPLEMENTATION_AUDIT_SINGLE_WRITER_V1.md`
 - `docs/security/IMPLEMENTATION_REPORT_SINGLE_WRITER_V1.md`
 - `docs/security/PRODUCTION_SECURITY_RELEASE_GATES.md`
 
-`TODO_INTERNAL: none` ist ausschließlich zulässig, wenn **alle Abschnitte 1–8 PASS** sind.
+`TODO_INTERNAL: none` nur, wenn Abschnitt 1–5 vollständig PASS ist.
+
+`SECURITY/SPEC DECISION REQUIRED: none` nur, wenn keine echte ungelöste Normlücke gefunden wurde.
+
+Zulässige `BLOCKED_EXTERNAL` sind ausschließlich:
+
+- separater produktiver Auth-Origin;
+- echte Google-Testcredentials/Testkonto für Live-Provider-Validierung;
+- reale WebAuthn-PRF-Hardware-/Browsermatrix;
+- Produktionshosting/CSP/Header;
+- externer Security-/Crypto-Audit.
+
+Ein fehlender interner Caller, Adapter, Provider-Factory, Rotation-Service, Test oder Crash-/Resume-Pfad ist **niemals** `BLOCKED_EXTERNAL`.
 
 ---
 
 # Definition of Done
 
-Der Auftrag ist erst fertig, wenn gleichzeitig gilt:
+Der Auftrag ist erst fertig, wenn ALLE Aussagen wahr sind:
 
-1. sicherer Single-Writer-Sync ist intern produktiv verdrahtet;
-2. echter IndexedDB-CoordinatorStore ist produktiv in Benutzung;
-3. Outbox-Phasen sind end-to-end bewiesen;
-4. Rotation besitzt konkrete produktive Dependencies + realen Aufrufer;
-5. Recovery Authority kann nicht durch beliebigen App-Code selbst erzeugt werden;
-6. Write-Parents stammen aus verifizierten immutable Envelopes, nicht aus einem unverifizierten Revision-Cache;
-7. Migration läuft vollständig unter authentifizierter Lock-/Generation-Grenze;
-8. Creation Remote-I/O ist gegen authentifizierte Generation/stale callbacks gebunden;
-9. geforderte Fault-Injection-/Adversarial-Tests sind vorhanden und grün;
-10. Self-Review findet keinen intern lösbaren Restpunkt;
-11. Dokumentation behauptet nur tatsächlich nachgewiesene Eigenschaften.
+1. Der sichere Single-Writer-Service ist der intern tatsächlich verwendete App-/Data-Sync-Pfad.
+2. Sicherheitskritische `FullRemoteVerifier`-Erwartungen stammen aus authentifizierter lokaler/Provider-Herkunft und sind nicht frei caller-setzbar.
+3. Rotation besitzt konkrete produktive Implementierungen, einen echten Aufrufer und End-to-End-Crash/Resume-Tests.
+4. Recovery Authority kann nicht durch selbst gewählte Providerwerte/API-Stubs gefälscht werden.
+5. Create/Migration/Outbox/Rotation/Recovery besitzen die verlangte Fault-Injection-/Adversarial-Abdeckung.
+6. Alle internen Findings des finalen adversarialen Reviews sind behoben.
+7. Qualitätsgates wurden nicht abgeschwächt.
+8. Dokumentation entspricht dem tatsächlichen Code.
 
-Erwarteter Abschluss:
+Erwarteter Endzustand:
 
 `TODO_INTERNAL: none`
 
 `SECURITY/SPEC DECISION REQUIRED: none`
 
-`BLOCKED_EXTERNAL` darf ausschließlich enthalten:
-
-- separater produktiver Auth-Origin;
-- echte Google-Testcredentials/Testkonto;
-- reale WebAuthn-PRF-Hardware-/Browsermatrix;
-- Produktionshosting/CSP/Header;
-- externer Security-/Crypto-Audit.
-
-Ein fehlender produktiver interner Aufruf, Adapter, Test oder Wiring-Pfad ist **niemals** `BLOCKED_EXTERNAL`.
-
-## Abschlussbericht – verpflichtendes Format
-
-- verwendeter Branch + PR + Head SHA;
-- Abschnitt 1: PASS/FAIL + konkrete Dateien + Tests;
-- Abschnitt 2: PASS/FAIL + konkrete Dateien + Tests;
-- Abschnitt 3: PASS/FAIL + konkrete Dateien + Tests;
-- Abschnitt 4: PASS/FAIL + konkrete Dateien + Tests;
-- Abschnitt 5: PASS/FAIL + konkrete Dateien + Tests;
-- Abschnitt 6: PASS/FAIL + konkrete Dateien + Tests;
-- Abschnitt 7: PASS/FAIL + konkrete Dateien + Tests;
-- Abschnitt 8: PASS/FAIL + konkrete Tests;
-- Abschnitt 9: PASS/FAIL + ausgeführte Gates;
-- `TODO_INTERNAL`;
-- `SECURITY/SPEC DECISION REQUIRED`;
-- `BLOCKED_EXTERNAL`.
-
-Wenn irgendein Abschnitt 1–8 `FAIL` ist, darf der Task **nicht** freiwillig als abgeschlossen markiert werden. Arbeite weiter.
+Nur echte `BLOCKED_EXTERNAL` gemäß obiger Liste.
 
 Kein Merge.
