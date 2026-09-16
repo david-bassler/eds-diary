@@ -25,6 +25,8 @@ import medicationEntrySchema from '../security/schemas/medication-entry.v1.schem
 import medicationPrescriptionSchema from '../security/schemas/medication-prescription.v1.schema.json'
 import painTypeSettingsSchema from '../security/schemas/pain-type-settings.v1.schema.json'
 import activityTypeSettingsSchema from '../security/schemas/activity-type-settings.v1.schema.json'
+import epochMigrationSchema from '../security/schemas/epoch-migration-sw.v1.schema.json'
+import rotationAnnouncementSchema from '../security/schemas/rotation-announcement-sw.v1.schema.json'
 import { validateRevision } from '../security/revisions'
 
 const DATABASE_NAME = 'eds-diary'
@@ -45,7 +47,7 @@ const STORES = {
 const LEGACY_ACTIVITY_TYPES = 'eds-diary-activity-types-v1'
 const ACTIVE_CONTEXT = 'active'
 
-interface EpochContext { id:'active'; diaryId:string; epochId:string; keyId:string; manifestFingerprint:string; wrapId:string }
+export interface EpochContext { id:'active'; diaryId:string; epochId:string; keyId:string; manifestFingerprint:string; wrapId:string }
 interface StoredEnvelope extends PreparedEnvelope { id:string; epochId:string; localSeq:number; rowBytes:string }
 export type OutboxStatus = 'prepared'|'pending'|'remote_seen'|'durable'
 export interface StoredOutbox { id:string; epochId:string; envelopeId:string; rowBytes:string; status:OutboxStatus }
@@ -64,6 +66,7 @@ const DOMAIN_SCHEMAS:Readonly<Record<string,unknown>>={
   'pain-entry/v1':painEntrySchema,'activity-entry/v1':activityEntrySchema,
   'medication-entry/v1':medicationEntrySchema,'medication-prescription/v1':medicationPrescriptionSchema,
   'pain-type-settings/v1':painTypeSettingsSchema,'activity-type-settings/v1':activityTypeSettingsSchema,
+  'epoch-migration-sw-v1':epochMigrationSchema,'rotation-announcement-sw-v1':rotationAnnouncementSchema,
 }
 function profileFor(store:LocalStoreName,id?:string):{recordType:string;recordSchema:string}{if(store!==LOCAL_STORES.settings)return STORE_PROFILE[store];return id==='activity-types'||id==='activity-type-settings'?{recordType:'activity_type_settings',recordSchema:'activity-type-settings/v1'}:STORE_PROFILE.settings}
 
@@ -173,6 +176,39 @@ export async function activeEpochVerifierMaterial():Promise<{localEnvelopes:Prep
 }
 
 export const DOMAIN_SCHEMA_REGISTRY:Readonly<Record<string,unknown>>=DOMAIN_SCHEMAS
+
+export interface VerifiedEpochMaterial {context:EpochContext;state:EpochLocalSecurityState;rootKey:Uint8Array;epochSalt:Uint8Array;envelopes:PreparedEnvelope[];revisions:Revision[]}
+
+/** Rotation-only repository.  It deliberately exposes verified immutable
+ * material rather than mutable feature tables and writes successor objects in
+ * one IndexedDB transaction. */
+export class IndexedDbRotationRepository {
+  async putArtifact(id:string,value:unknown):Promise<void>{const db=await openDatabase(),tx=db.transaction(STORES.operations,'readwrite');tx.objectStore(STORES.operations).put({id:`rotation-artifact:${id}`,value:structuredClone(value)});await complete(tx)}
+  async artifact<T>(id:string):Promise<T|null>{const db=await openDatabase(),tx=db.transaction(STORES.operations,'readonly'),value=await result<{value:T}|undefined>(tx.objectStore(STORES.operations).get(`rotation-artifact:${id}`));await complete(tx);return value?.value??null}
+  async verifiedActiveEpoch():Promise<VerifiedEpochMaterial>{
+    const db=await openDatabase();await verifyLocalIntegrityFor(db);const loaded=await loadEpoch(db)
+    const tx=db.transaction(STORES.envelopes,'readonly'),stored=await result<StoredEnvelope[]>(tx.objectStore(STORES.envelopes).index('byEpoch').getAll(loaded.context.epochId));await complete(tx)
+    const envelopes=stored.sort((a,b)=>a.localSeq-b.localSeq).map(({envelopeId,iv,ciphertext,bytesHash})=>({envelopeId,iv,ciphertext,bytesHash}));const revisions=[] as Revision[]
+    for(const envelope of envelopes)revisions.push(await openEnvelope(loaded.rootKey,loaded.epochSalt,{diaryId:loaded.context.diaryId,epochId:loaded.context.epochId},envelope))
+    validateRevisionGraph(revisions);return{...loaded,envelopes,revisions}
+  }
+  async persistSuccessor(input:{context:EpochContext;rootKey:Uint8Array;state:EpochLocalSecurityState}):Promise<void>{
+    const db=await openDatabase(),key=await wrappingKey(db,input.context.wrapId),wrap=await createBestEffortRootWrap(input.rootKey,key,{diary_id:input.context.diaryId,epoch_id:input.context.epochId,key_id:input.context.keyId,manifest_fingerprint:input.context.manifestFingerprint},fromBase64Url(input.context.wrapId)),opened=await openBestEffortRootWrap(wrap,key);if(base64Url(opened)!==base64Url(input.rootKey))throw new Error('Successor root-wrap readback failed.')
+    const salt=await deriveEpochSalt(fromBase64Url(input.context.diaryId),fromBase64Url(input.context.epochId)),tag=await stateTag(input.rootKey,salt,input.state),tx=db.transaction([STORES.wraps,STORES.state],'readwrite')
+    tx.objectStore(STORES.wraps).put({id:input.context.epochId,wrap});tx.objectStore(STORES.state).put({id:input.context.epochId,state:input.state,tag} satisfies StoredState);await complete(tx)
+    const check=db.transaction([STORES.wraps,STORES.state],'readonly'),storedWrap=await result<{wrap:RootWrap}|undefined>(check.objectStore(STORES.wraps).get(input.context.epochId)),state=await result<StoredState|undefined>(check.objectStore(STORES.state).get(input.context.epochId));await complete(check);if(!storedWrap||!state)throw new Error('Successor staging readback failed.');await verifyStateTag(input.rootKey,salt,state.state,state.tag);await openBestEffortRootWrap(storedWrap.wrap,key)
+  }
+  async successorRoot(epochId:string,wrapId:string):Promise<Uint8Array>{const db=await openDatabase(),tx=db.transaction(STORES.wraps,'readonly'),stored=await result<{wrap:RootWrap}|undefined>(tx.objectStore(STORES.wraps).get(epochId));await complete(tx);if(!stored)throw new Error('Successor root wrap missing.');return openBestEffortRootWrap(stored.wrap,await wrappingKey(db,wrapId))}
+  async persistSuccessorEnvelope(epochId:string,rootKey:Uint8Array,revision:Revision,envelope:PreparedEnvelope):Promise<void>{
+    const db=await openDatabase(),read=db.transaction(STORES.envelopes,'readonly'),existing=await result<StoredEnvelope|undefined>(read.objectStore(STORES.envelopes).get(envelope.envelopeId));await complete(read);if(existing){if(existing.rowBytes!==decodeUtf8(canonicalBytes([...envelopeRow(envelope)])))throw new Error('Successor envelope ID collision.');return}
+    const stateTx=db.transaction(STORES.state,'readonly'),stored=await result<StoredState|undefined>(stateTx.objectStore(STORES.state).get(epochId));await complete(stateTx);if(!stored)throw new Error('Successor state missing.');const sequence=stored.state.local_journal_count+1,rowBytes=decodeUtf8(canonicalBytes([...envelopeRow(envelope)])),next={...stored.state,local_journal_count:sequence,local_journal_hash:await journalNext(stored.state.local_journal_hash,sequence,envelope)},salt=await deriveEpochSalt(fromBase64Url(next.diary_id),fromBase64Url(epochId)),tag=await stateTag(rootKey,salt,next),tx=db.transaction([STORES.envelopes,STORES.revisions,STORES.state],'readwrite');tx.objectStore(STORES.envelopes).add({...envelope,id:envelope.envelopeId,epochId,localSeq:sequence,rowBytes} satisfies StoredEnvelope);tx.objectStore(STORES.revisions).add({id:revision.revision_id,epochId,sequence,revision} satisfies StoredRevision);tx.objectStore(STORES.state).put({id:epochId,state:next,tag} satisfies StoredState);await complete(tx)
+  }
+  async successorEnvelopes(epochId:string):Promise<PreparedEnvelope[]>{const db=await openDatabase(),tx=db.transaction(STORES.envelopes,'readonly'),items=await result<StoredEnvelope[]>(tx.objectStore(STORES.envelopes).index('byEpoch').getAll(epochId));await complete(tx);return items.sort((a,b)=>a.localSeq-b.localSeq).map(({envelopeId,iv,ciphertext,bytesHash})=>({envelopeId,iv,ciphertext,bytesHash}))}
+  async atomicSwitch(successor:EpochContext,rotation:RotationState,remote:{resourceId:string;identityBinding:string;anchor:RemoteAnchor}):Promise<void>{
+    const db=await openDatabase(),source=await loadEpoch(db),successorRoot=await this.successorRoot(successor.epochId,successor.wrapId),salt=await deriveEpochSalt(fromBase64Url(successor.diaryId),fromBase64Url(successor.epochId)),read=db.transaction(STORES.state,'readonly'),stored=await result<StoredState|undefined>(read.objectStore(STORES.state).get(successor.epochId));await complete(read);if(!stored)throw new Error('Successor state missing.')
+    const hash=await rotationStateHash(rotation),ref={operation_id:rotation.rotationId,state:rotation.step,state_record_hash:hash},oldState={...source.state,epoch_status:'retired' as const,operation_generation:source.state.operation_generation+1},newState={...stored.state,epoch_status:'active' as const,remote_binding:{provider_id:'google-sheets-single-writer-v1' as const,remote_resource_id:remote.resourceId,remote_identity_binding:remote.identityBinding},remote_anchor:remote.anchor,rotation_state_ref:ref,operation_generation:stored.state.operation_generation+1},oldTag=await stateTag(source.rootKey,source.epochSalt,oldState),newTag=await stateTag(successorRoot,salt,newState),tx=db.transaction([STORES.context,STORES.state],'readwrite');tx.objectStore(STORES.context).put(successor);tx.objectStore(STORES.state).put({id:source.context.epochId,state:oldState,tag:oldTag} satisfies StoredState);tx.objectStore(STORES.state).put({id:successor.epochId,state:newState,tag:newTag} satisfies StoredState);await complete(tx)
+  }
+}
 
 async function verifyLocalIntegrityFor(db:IDBDatabase):Promise<void>{const loaded=await loadEpoch(db),tx=db.transaction(STORES.envelopes,'readonly'),items=await result<StoredEnvelope[]>(tx.objectStore(STORES.envelopes).index('byEpoch').getAll(loaded.context.epochId));await complete(tx);let hash=await journalInitial(loaded.context.diaryId,loaded.context.epochId),count=0;for(const item of items.sort((a,b)=>a.localSeq-b.localSeq)){count++;if(item.localSeq!==count||item.rowBytes!==decodeUtf8(canonicalBytes([...envelopeRow(item)])))throw new Error('Local envelope journal corruption.');hash=await journalNext(hash,count,item)}if(count!==loaded.state.local_journal_count||hash!==loaded.state.local_journal_hash)throw new Error('Local envelope journal hash failed.')}
 export async function verifyLocalIntegrity():Promise<void>{return verifyLocalIntegrityFor(await openDatabase())}

@@ -30,5 +30,5 @@ function validateManifest(p:ProtectedManifest,c:ManifestContext):void{
   if(!Array.isArray(p.predecessor_epochs)||p.predecessor_epochs.length>1)throw new Error('Manifest predecessors mismatch.')
   for(const predecessor of p.predecessor_epochs){if(Object.keys(predecessor).sort().join(',')!=='epoch_id,manifest_fingerprint')throw new Error('Manifest predecessor schema mismatch.');fixedBase64Url(predecessor.epoch_id,16);fixedBase64Url(predecessor.manifest_fingerprint,32)}
   const expected={max_payload_bytes:16380,padding_buckets:[1024,2048,4096,8192,16384],max_unique_envelopes:100000,max_unique_canonical_bytes:134217728,max_remote_physical_rows:100000,max_remote_physical_canonical_bytes:134217728,max_canonical_row_bytes:21936}
-  if(JSON.stringify(p.protocol_limits)!==JSON.stringify(expected))throw new Error('Manifest limits mismatch.')
+  if(new TextDecoder().decode(canonicalBytes(p.protocol_limits as never))!==new TextDecoder().decode(canonicalBytes(expected)))throw new Error('Manifest limits mismatch.')
 }

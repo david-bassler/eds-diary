@@ -69,6 +69,8 @@ export class GoogleSheetsSingleWriterTransport implements RemoteTransport {
     return new GoogleSheetsSingleWriterTransport(api,{...partial,googleAccountBinding})
   }
   async authenticatedAccountBinding():Promise<string>{if(!this.binding)throw new TransportError('auth_required','Authenticated provider identity is required.');const derived=await expectedAccountBinding(this.binding);if(derived!==this.binding.googleAccountBinding)throw new TransportError('integrity_failure','Provider identity binding is invalid.');return derived}
+  /** Rebinds the same authenticated provider session to a successor epoch. */
+  forEpoch(diaryId:string,epochId:string):Promise<GoogleSheetsSingleWriterTransport>{return GoogleSheetsSingleWriterTransport.fromAuthenticatedSession(this.api,diaryId,epochId)}
 
   async discover(locator: string): Promise<readonly RemoteCandidate[]> {
     try {

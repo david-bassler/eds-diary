@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { base64Url } from '../security/crypto/bytes'
-import { recoveryCommitment, randomBytes } from '../security/crypto/core'
+import { base64Url, concatBytes, fixedBase64Url, utf8 } from '../security/crypto/bytes'
+import { deriveEpochSalt, recoveryCommitment, randomBytes } from '../security/crypto/core'
 import { activateRecoveredRoot, createRecovery, recoverRootKeyCandidate } from '../security/recovery'
+import { manifestFingerprint, prepareManifest, schemaRegistryHash, SCHEMA_ALLOWLIST } from '../security/manifest'
+import { prepareEnvelope, envelopeRow } from '../security/envelopes'
+import { singletonRecordId, type Revision } from '../security/revisions'
+import { createAnchor } from '../sync/core/prefix'
+import { DOMAIN_SCHEMA_REGISTRY } from '../data/localDatabase'
 import { advanceRotation, maySwitchRotation, oldEpochWritable, runRotation, type ProductiveRotationState, type RotationState } from '../security/rotation'
 import { FullRemoteVerifier, IndependentBootstrapAuthority, RecoveryBootstrapVerifier } from '../sync/core/remoteVerifier'
 import { InMemoryTransport } from '../sync/testing/InMemoryTransport'
@@ -11,6 +16,24 @@ import { issueControlledTestGoogleClient } from '../sync/google/GoogleAuthProvid
 const b = (n: number, length: number) => base64Url(new Uint8Array(length).fill(n))
 
 describe('recovery continuity', () => {
+  it('activates only after authenticated discovery and a complete positive bootstrap verification',async()=>{
+    const diary=b(31,16),epoch=b(32,16),keyId=b(33,16),root=randomBytes(32),urs=randomBytes(32),permission='controlled-provider-permission',generation=4,commitment=await recoveryCommitment(urs,new Uint8Array(16).fill(31),generation)
+    const locator=base64Url((await (await import('../security/crypto/core')).sha256(concatBytes(utf8('sync-v5/epoch-locator'),new Uint8Array([0]),fixedBase64Url(diary,16),fixedBase64Url(epoch,16)))).slice(0,16));let manifest:readonly string[]=[],rows:ReadonlyArray<readonly string[]>=[]
+    const client=issueControlledTestGoogleClient({identity:()=>permission,request:async<T>(url:string)=>{
+      if(url.includes('/about?'))return{user:{permissionId:permission}} as T
+      if(url.includes('/files?q='))return{files:[{id:'remote-positive',name:'sync-recovery-locator'}]} as T
+      if(url.includes('/permissions?'))return{permissions:[{id:permission,type:'user',role:'owner',deleted:false}]} as T
+      if(url.includes('/drive/v3/files/'))return{mimeType:'application/vnd.google-apps.spreadsheet',trashed:false,ownedByMe:true,shared:false,isAppAuthorized:true,appProperties:{app_format:'sync-v5',epoch_locator:locator}} as T
+      if(url.includes('ranges=')&&url.includes("'_m'"))return{sheets:[{properties:{title:'_m'},data:[{startRow:0,rowData:[{values:manifest.map(value=>({userEnteredValue:{stringValue:value}}))}]}]}]} as T
+      if(url.includes('ranges=')&&url.includes("'_r'"))return{sheets:[{properties:{title:'_r'},data:[{startRow:0,rowData:rows.map(row=>({values:row.map(value=>({userEnteredValue:{stringValue:value}}))}))}]}]} as T
+      if(url.includes('sheets(properties'))return{sheets:[{properties:{sheetId:1,title:'_m',sheetType:'GRID',gridProperties:{rowCount:1,columnCount:4}}},{properties:{sheetId:2,title:'_r',sheetType:'GRID',gridProperties:{rowCount:1,columnCount:3}}}]} as T
+      throw new Error(`Unexpected test request: ${url}`)
+    }})
+    const transport=await GoogleSheetsSingleWriterTransport.fromAuthenticatedSession(client,diary,epoch),account=await transport.authenticatedAccountBinding(),salt=await deriveEpochSalt(new Uint8Array(16).fill(31),new Uint8Array(16).fill(32)),protectedManifest={diary_id:diary,epoch_id:epoch,key_id:keyId,recovery_generation:generation,recovery_urs_commitment:commitment,diary_marker:'epoch-manifest-v5' as const,crypto_suite:'A256GCM-HKDF-SHA256-v5' as const,sync_profile:'google-sheets-single-writer-v1' as const,created_at:'2026-09-16T10:00:00.000Z',google_account_binding:account,predecessor_epochs:[],record_schema_allowlist:[...SCHEMA_ALLOWLIST],record_schema_registry_hash:await schemaRegistryHash(DOMAIN_SCHEMA_REGISTRY),protocol_limits:{max_payload_bytes:16380 as const,padding_buckets:[1024,2048,4096,8192,16384],max_unique_envelopes:100000 as const,max_unique_canonical_bytes:134217728 as const,max_remote_physical_rows:100000 as const,max_remote_physical_canonical_bytes:134217728 as const,max_canonical_row_bytes:21936 as const}},preparedManifest=await prepareManifest(root,salt,{diaryId:diary,epochId:epoch},protectedManifest),fingerprint=await manifestFingerprint(preparedManifest);manifest=[preparedManifest.format,preparedManifest.version,preparedManifest.manifestIv,preparedManifest.manifestCiphertext]
+    const revision:Revision={record_type:'pain_type_settings',record_schema:'pain-type-settings/v1',record_id:await singletonRecordId(diary,'pain_type_settings'),revision_id:b(41,32),parent_revision_ids:[],record_status:'active',record_data:{values:['synthetic']},migration_origin:null,protocol_created_at:'2026-09-16T10:00:00.000Z'},envelope=await prepareEnvelope(root,salt,{diaryId:diary,epochId:epoch},revision,{reserve:async()=>undefined,persist:async()=>undefined});rows=[envelopeRow(envelope)]
+    const artifact=await createRecovery({diary_id:diary,epoch_id:epoch,key_id:keyId,RK_epoch:base64Url(root),manifest_fingerprint:fingerprint,remote_anchor:await createAnchor(diary,epoch,rows),google_account_binding:account,recovery_generation:generation,created_at:'2026-09-16T10:01:00.000Z'},urs),candidate=await recoverRootKeyCandidate(artifact,urs),authority=await IndependentBootstrapAuthority.fromAuthenticatedGoogleDiscovery(transport,'recovery-locator','remote-positive'),verifier=new RecoveryBootstrapVerifier({authority,schemas:DOMAIN_SCHEMA_REGISTRY});let persisted=false
+    await activateRecoveredRoot(candidate,verifier,async()=>{persisted=true});expect(persisted).toBe(true)
+  })
   it('returns an untrusted candidate whose commitment still requires authenticated bootstrap verification', async () => {
     const urs = randomBytes(32)
     const root = randomBytes(32)
