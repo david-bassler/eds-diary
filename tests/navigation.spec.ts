@@ -48,7 +48,9 @@ test('switches between the primary app sections', async ({ page }) => {
   await expect(
     page.getByRole('heading', { level: 2, name: 'App installieren' }),
   ).toBeVisible()
-  await expect(page.getByText('Datenspeicherung', { exact: true })).toBeVisible()
+  await expect(page.locator('summary.google-sync-settings__summary')).toContainText(
+    'Datenspeicherung',
+  )
 
   await expect(
     navigation.getByRole('link', { name: 'Konfiguration' }),
@@ -56,18 +58,22 @@ test('switches between the primary app sections', async ({ page }) => {
 })
 
 
-test('uses the configured OAuth client without asking for a client ID', async ({
+test('uses secure first-time Google enablement without a client-id field', async ({
   page,
 }) => {
   const navigation = page.getByRole('navigation', { name: 'Hauptnavigation' })
 
   await navigation.getByRole('link', { name: 'Konfiguration' }).click()
-  await page.getByText('Datenspeicherung', { exact: true }).click()
+  const storage = page.locator('details.google-sync-settings')
+  await storage.locator('summary').click()
 
-  await expect(page.getByLabel('OAuth Client-ID')).toHaveCount(0)
+  await expect(storage.getByLabel('OAuth Client-ID')).toHaveCount(0)
   await expect(
-    page.getByRole('button', { name: 'Mit Google verbinden' }),
+    storage.getByRole('button', { name: 'Recovery-Schlüssel erzeugen' }),
   ).toBeEnabled()
+  await expect(
+    storage.getByRole('button', { name: 'Google sicher aktivieren' }),
+  ).toBeDisabled()
 })
 
 test('uses browser history for primary navigation', async ({ page }) => {

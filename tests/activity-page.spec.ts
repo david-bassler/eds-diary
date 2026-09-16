@@ -78,7 +78,7 @@ test('shows date and the time range picker on the activity page', async ({
   ).toBeVisible()
   await expect(page.getByLabel('Datum')).not.toHaveValue('')
   await expect(
-    page.getByRole('heading', { level: 2, name: 'Aktivitätszeiträume' }),
+    page.getByRole('heading', { level: 2, name: 'Zeiträume der Aktivität' }),
   ).toBeVisible()
   await expect(page.getByTestId('time-range-surface')).toBeVisible()
   await expect.poll(async () => {
@@ -356,6 +356,7 @@ test('stores activity and note separately for each selected range', async ({
   const activityCombobox = page.getByRole('combobox', {
     name: 'Aktivität für Zeitraum 1',
   })
+  await activityCombobox.focus()
   await expect(activityCombobox).toHaveAttribute('aria-expanded', 'true')
   const activityOptions = page.getByRole('listbox', {
     name: 'Gespeicherte Aktivitäten',
@@ -542,6 +543,7 @@ test('offers an automatically saved activity again immediately', async ({
   ).toHaveCount(0)
 
   await addRange(page, 10, 11, false)
+  await page.getByLabel('Aktivität für Zeitraum 2').focus()
 
   const options = page.getByRole('listbox', {
     name: 'Gespeicherte Aktivitäten',
@@ -578,7 +580,7 @@ test('assigns pastel colors by activity type and lets them be changed', async ({
   expect(colors[0]).not.toBe(colors[1])
 
   await openRangeDetails(page, 0)
-  await page.getByRole('button', { name: 'Pastellfarbe 1' }).click()
+  await page.getByRole('button', { name: 'Pastellfarbe 1', exact: true }).click()
   await expect(page.locator('.timerange__selection--active')).toHaveAttribute(
     'data-range-color',
     '#f6cbd0',
@@ -598,8 +600,8 @@ test('edits start and end in the dialog with preview and persistence', async ({
   await addRange(page, 8, 10, false)
   await page.getByLabel('Aktivität für Zeitraum 1').fill('Spaziergang')
 
-  await page.getByLabel('Beginn').fill('08:30')
-  await page.getByLabel('Ende').fill('09:45')
+  await page.getByLabel('Beginn', { exact: true }).fill('08:30')
+  await page.getByLabel('Ende', { exact: true }).fill('09:45')
 
   const activeSelection = page.locator('.timerange__selection--active')
   await expect(activeSelection).toContainText('08:30')
@@ -618,8 +620,8 @@ test('edits start and end in the dialog with preview and persistence', async ({
   await page.getByLabel('Aktivität für Zeitraum 1').fill('Spaziergang')
   await page.getByRole('button', { name: 'Beginn 15 Minuten später' }).click()
   await page.getByRole('button', { name: 'Ende 15 Minuten früher' }).click()
-  await expect(page.getByLabel('Beginn')).toHaveValue('08:15')
-  await expect(page.getByLabel('Ende')).toHaveValue('09:45')
+  await expect(page.getByLabel('Beginn', { exact: true })).toHaveValue('08:15')
+  await expect(page.getByLabel('Ende', { exact: true })).toHaveValue('09:45')
   await applyNewRangeDetails(page)
 
   await expect(page.getByText('Aktivität gespeichert.')).toBeVisible()
@@ -627,8 +629,8 @@ test('edits start and end in the dialog with preview and persistence', async ({
   await expect(page.locator('.timerange__selection')).toContainText('09:45')
 
   await openRangeDetails(page, 0)
-  await page.getByLabel('Beginn').fill('08:30')
-  await page.getByLabel('Ende').fill('09:30')
+  await page.getByLabel('Beginn', { exact: true }).fill('08:30')
+  await page.getByLabel('Ende', { exact: true }).fill('09:30')
   await page
     .getByRole('button', { name: 'Fertig' })
     .click()

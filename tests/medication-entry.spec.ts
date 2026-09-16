@@ -1,5 +1,8 @@
 import { expect, test } from '@playwright/test'
 
+const intake = (page: import('@playwright/test').Page) =>
+  page.locator('section[aria-labelledby="medication-entry-form-title"]')
+
 test.beforeEach(async ({ page }) => {
   await page.goto('/')
   await page
@@ -11,11 +14,11 @@ test.beforeEach(async ({ page }) => {
 test('stores a medication intake with current date and time defaults', async ({
   page,
 }) => {
-  await expect(page.getByLabel('Datum')).not.toHaveValue('')
-  await expect(page.getByLabel('Uhrzeit')).not.toHaveValue('')
+  await expect(intake(page).getByLabel('Datum', { exact: true })).not.toHaveValue('')
+  await expect(intake(page).getByLabel('Uhrzeit', { exact: true })).not.toHaveValue('')
 
-  await page.getByLabel('Medikament').fill('Testmedikament')
-  await page.getByLabel('Dosis').fill('10 mg')
+  await intake(page).getByLabel('Medikament', { exact: true }).fill('Testmedikament')
+  await intake(page).getByLabel('Dosis', { exact: true }).fill('10 mg')
   await page.getByRole('button', { name: 'Einnahme speichern' }).click()
 
   await expect(
@@ -41,8 +44,8 @@ test('stores a medication intake with current date and time defaults', async ({
 test('uses previously entered medication names as suggestions', async ({
   page,
 }) => {
-  await page.getByLabel('Medikament').fill('Eigenes Testpräparat')
-  await page.getByLabel('Dosis').fill('1 Tablette')
+  await intake(page).getByLabel('Medikament', { exact: true }).fill('Eigenes Testpräparat')
+  await intake(page).getByLabel('Dosis', { exact: true }).fill('1 Tablette')
   await page.getByRole('button', { name: 'Einnahme speichern' }).click()
 
   await expect(
@@ -104,14 +107,14 @@ test('offers frequent medications as quick access with the latest dose', async (
   await expect(quickAccess.getByRole('button').first()).toContainText('10 mg')
 
   await quickAccess.getByRole('button', { name: /Schnellmittel/ }).click()
-  await expect(page.getByLabel('Medikament')).toHaveValue('Schnellmittel')
-  await expect(page.getByLabel('Dosis')).toHaveValue('10 mg')
+  await expect(intake(page).getByLabel('Medikament', { exact: true })).toHaveValue('Schnellmittel')
+  await expect(intake(page).getByLabel('Dosis', { exact: true })).toHaveValue('10 mg')
 })
 
 test('copies selected medication intakes from the previous day', async ({
   page,
 }) => {
-  await page.getByLabel('Datum').fill('2026-09-08')
+  await intake(page).getByLabel('Datum', { exact: true }).fill('2026-09-08')
 
   await page.evaluate(async () => {
     const repository = await import(
