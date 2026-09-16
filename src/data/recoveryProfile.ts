@@ -1,0 +1,61 @@
+import { base64Url, decodeUtf8, fromBase64Url, randomBytes } from '../security/crypto/bytes'
+import { canonicalBytes } from '../security/crypto/canonical'
+import { deriveEpochSalt, sha256 } from '../security/crypto/core'
+import { envelopeRow, openEnvelope, type PreparedEnvelope } from '../security/envelopes'
+import { createBestEffortRootWrap, journalInitial, journalNext, openBestEffortRootWrap, stateTag, verifyStateTag, type EpochLocalSecurityState, type RootWrap } from '../security/localState'
+import type { RecoveredRootCandidate, RecoveryPersistenceProof } from '../security/recovery'
+import { validateRevisionGraph, type Revision } from '../security/revisions'
+import { validateDomainData } from '../security/domainSchemaValidator'
+import { createAnchor } from '../sync/core/prefix'
+import type { VerifiedRecoveryBootstrap } from '../sync/core/remoteVerifier'
+
+const DATABASE_VERSION = 8
+const DEFAULT_DATABASE_NAME = 'eds-diary'
+const LEGACY_STORES = ['painEntries','medicationEntries','medicationPrescriptions','activityEntries','settings'] as const
+const STORES = {
+  context:'epochContexts',wraps:'rootWraps',wrappingKeys:'wrappingKeys',reservations:'envelopeReservations',
+  envelopes:'envelopes',outbox:'outbox',state:'epochSecurityState',migration:'migrationState',operations:'operationState',
+} as const
+const ACTIVE_CONTEXT = 'active'
+
+type Row = readonly [string,string,string]
+interface StoredEnvelope extends PreparedEnvelope {id:string;epochId:string;localSeq:number;rowBytes:string}
+
+function requestResult<T>(request:IDBRequest<T>):Promise<T>{return new Promise((resolve,reject)=>{request.addEventListener('success',()=>resolve(request.result),{once:true});request.addEventListener('error',()=>reject(request.error??new Error('IndexedDB request failed.')),{once:true})})}
+function transactionDone(tx:IDBTransaction):Promise<void>{return new Promise((resolve,reject)=>{tx.addEventListener('complete',()=>resolve(),{once:true});tx.addEventListener('abort',()=>reject(tx.error??new Error('IndexedDB transaction aborted.')),{once:true});tx.addEventListener('error',()=>reject(tx.error??new Error('IndexedDB transaction failed.')),{once:true})})}
+
+function openRecoveryDatabase(name:string):Promise<IDBDatabase>{return new Promise((resolve,reject)=>{const request=indexedDB.open(name,DATABASE_VERSION);request.addEventListener('upgradeneeded',()=>{const db=request.result;for(const store of LEGACY_STORES)if(!db.objectStoreNames.contains(store))db.createObjectStore(store,{keyPath:'id'});for(const name of Object.values(STORES))if(!db.objectStoreNames.contains(name)){const store=db.createObjectStore(name,{keyPath:'id'});if(name===STORES.envelopes||name===STORES.outbox)store.createIndex('byEpoch','epochId')}});request.addEventListener('success',()=>resolve(request.result),{once:true});request.addEventListener('error',()=>reject(request.error??new Error('Recovery database open failed.')),{once:true})})}
+async function deleteRecoveryDatabase(name:string):Promise<void>{await new Promise<void>((resolve,reject)=>{const request=indexedDB.deleteDatabase(name);request.addEventListener('success',()=>resolve(),{once:true});request.addEventListener('error',()=>reject(request.error??new Error('Recovery database cleanup failed.')),{once:true});request.addEventListener('blocked',()=>reject(new Error('Recovery database cleanup was blocked.')),{once:true})})}
+
+async function assertFresh(db:IDBDatabase):Promise<void>{const names=[...LEGACY_STORES,...Object.values(STORES)],tx=db.transaction(names,'readonly');for(const name of names){const count=await requestResult(tx.objectStore(name).count());if(count!==0){tx.abort();throw new Error('Recovery activation requires a fresh local profile.')}}await transactionDone(tx)}
+function sameBytes(left:Uint8Array,right:Uint8Array):boolean{return left.byteLength===right.byteLength&&left.every((byte,index)=>byte===right[index])}
+
+export interface RecoveredProfileOptions {databaseName?:string;cleanupAfterVerify?:boolean}
+
+/** Persists a verified recovery bootstrap into an otherwise-empty IndexedDB profile,
+ * then opens the freshly persisted root wrap and verifies state MAC, journal and
+ * every envelope before returning a positive activation proof. */
+export async function persistRecoveredProfile(candidate:RecoveredRootCandidate,bootstrap:VerifiedRecoveryBootstrap,schemas:Readonly<Record<string,unknown>>,options:RecoveredProfileOptions={}):Promise<RecoveryPersistenceProof>{
+  const databaseName=options.databaseName??DEFAULT_DATABASE_NAME,db=await openRecoveryDatabase(databaseName)
+  try{
+    await assertFresh(db)
+    const payload=candidate.payload,wrapId=base64Url(randomBytes(16)),wrappingKey=await crypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']),wrap=await createBestEffortRootWrap(candidate.rootKey,wrappingKey,{diary_id:payload.diary_id,epoch_id:payload.epoch_id,key_id:payload.key_id,manifest_fingerprint:payload.manifest_fingerprint},fromBase64Url(wrapId)),opened=await openBestEffortRootWrap(wrap,wrappingKey)
+    if(!sameBytes(opened,candidate.rootKey))throw new Error('Fresh recovery root-wrap readback failed.')
+
+    const rows=bootstrap.verified.snapshot.rows,byId=new Map<string,string>(),envelopes:StoredEnvelope[]=[];let journal=await journalInitial(payload.diary_id,payload.epoch_id),sequence=0
+    for(const raw of rows){if(raw.length!==3)throw new Error('Verified recovery row has invalid shape.');const row=raw as Row,rowBytes=decodeUtf8(canonicalBytes([...row])),prior=byId.get(row[0]);if(prior!==undefined){if(prior!==rowBytes)throw new Error('Recovery envelope ID exists with different bytes.');continue}byId.set(row[0],rowBytes);const envelope:PreparedEnvelope={envelopeId:row[0],iv:row[1],ciphertext:row[2],bytesHash:base64Url(await sha256(canonicalBytes([...row])))},revision=await openEnvelope(candidate.rootKey,await deriveEpochSalt(fromBase64Url(payload.diary_id),fromBase64Url(payload.epoch_id)),{diaryId:payload.diary_id,epochId:payload.epoch_id},envelope);if(revision.record_status!=='deleted')validateDomainData(schemas[revision.record_schema],revision.record_data);sequence++;journal=await journalNext(journal,sequence,envelope);envelopes.push({...envelope,id:envelope.envelopeId,epochId:payload.epoch_id,localSeq:sequence,rowBytes})}
+
+    const revisions:Revision[]=[];const epochSalt=await deriveEpochSalt(fromBase64Url(payload.diary_id),fromBase64Url(payload.epoch_id));for(const envelope of envelopes)revisions.push(await openEnvelope(candidate.rootKey,epochSalt,{diaryId:payload.diary_id,epochId:payload.epoch_id},envelope));validateRevisionGraph(revisions)
+    const remoteBinding=bootstrap.remoteBinding,remoteAnchor=remoteBinding?await createAnchor(payload.diary_id,payload.epoch_id,rows):null,state:EpochLocalSecurityState={local_state_version:5,diary_id:payload.diary_id,epoch_id:payload.epoch_id,key_id:payload.key_id,manifest_fingerprint:payload.manifest_fingerprint,recovery_generation:payload.recovery_generation,recovery_urs_commitment:candidate.recoveryCommitment,remote_binding:remoteBinding,remote_anchor:remoteAnchor,epoch_status:remoteBinding?'active':'offline_restored',operation_generation:0,rotation_state_ref:null,migration_state_ref:null,local_journal_count:sequence,local_journal_hash:journal},tag=await stateTag(candidate.rootKey,epochSalt,state),context={id:ACTIVE_CONTEXT,diaryId:payload.diary_id,epochId:payload.epoch_id,keyId:payload.key_id,manifestFingerprint:payload.manifest_fingerprint,wrapId}
+    const tx=db.transaction([STORES.context,STORES.wraps,STORES.wrappingKeys,STORES.state,STORES.envelopes,STORES.outbox],'readwrite');tx.objectStore(STORES.context).add(context);tx.objectStore(STORES.wraps).add({id:payload.epoch_id,wrap});tx.objectStore(STORES.wrappingKeys).add({id:wrapId,key:wrappingKey});tx.objectStore(STORES.state).add({id:payload.epoch_id,state,tag});for(const envelope of envelopes){tx.objectStore(STORES.envelopes).add(envelope);tx.objectStore(STORES.outbox).add({id:envelope.envelopeId,epochId:payload.epoch_id,envelopeId:envelope.envelopeId,rowBytes:envelope.rowBytes,status:remoteBinding?'durable':'pending'})}await transactionDone(tx)
+
+    const read=db.transaction([STORES.context,STORES.wraps,STORES.wrappingKeys,STORES.state,STORES.envelopes],'readonly'),storedContext=await requestResult<{id:string;diaryId:string;epochId:string;keyId:string;manifestFingerprint:string;wrapId:string}|undefined>(read.objectStore(STORES.context).get(ACTIVE_CONTEXT)),storedWrap=await requestResult<{id:string;wrap:RootWrap}|undefined>(read.objectStore(STORES.wraps).get(payload.epoch_id)),storedKey=await requestResult<{id:string;key:CryptoKey}|undefined>(read.objectStore(STORES.wrappingKeys).get(wrapId)),storedState=await requestResult<{id:string;state:EpochLocalSecurityState;tag:string}|undefined>(read.objectStore(STORES.state).get(payload.epoch_id)),storedEnvelopes=await requestResult<StoredEnvelope[]>(read.objectStore(STORES.envelopes).index('byEpoch').getAll(payload.epoch_id));await transactionDone(read)
+    if(!storedContext||storedContext.epochId!==payload.epoch_id||!storedWrap||!storedKey||!storedState)throw new Error('Fresh recovery persistence readback failed.')
+    const reopened=await openBestEffortRootWrap(storedWrap.wrap,storedKey.key);if(!sameBytes(reopened,candidate.rootKey))throw new Error('Fresh recovery unlock failed.');await verifyStateTag(reopened,epochSalt,storedState.state,storedState.tag)
+    let readbackJournal=await journalInitial(payload.diary_id,payload.epoch_id),readbackCount=0;const readbackRevisions:Revision[]=[];for(const envelope of storedEnvelopes.sort((a,b)=>a.localSeq-b.localSeq)){readbackCount++;if(envelope.localSeq!==readbackCount||envelope.rowBytes!==decodeUtf8(canonicalBytes([...envelopeRow(envelope)])))throw new Error('Fresh recovery journal row mismatch.');readbackJournal=await journalNext(readbackJournal,readbackCount,envelope);readbackRevisions.push(await openEnvelope(reopened,epochSalt,{diaryId:payload.diary_id,epochId:payload.epoch_id},envelope))}validateRevisionGraph(readbackRevisions);if(readbackCount!==storedState.state.local_journal_count||readbackJournal!==storedState.state.local_journal_hash)throw new Error('Fresh recovery journal hash mismatch.')
+    return{rootWrapReadback:true,stateMacVerified:true,envelopeJournalVerified:true}
+  }finally{
+    db.close()
+    if(options.cleanupAfterVerify)await deleteRecoveryDatabase(databaseName)
+  }
+}
