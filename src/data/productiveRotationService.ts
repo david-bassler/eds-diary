@@ -35,8 +35,9 @@ export type ProductiveRotationFaultPoint =
 export type ProductiveRotationFault = (point:ProductiveRotationFaultPoint)=>void|Promise<void>
 
 const digest=async(value:unknown)=>base64Url(await sha256(canonicalBytes(value as never)))
+function compareCanonical(left:unknown,right:unknown):number{const a=canonicalBytes(left as never),b=canonicalBytes(right as never),length=Math.min(a.byteLength,b.byteLength);for(let index=0;index<length;index++){if(a[index]!==b[index])return a[index]!-b[index]!}return a.byteLength-b.byteLength}
 function heads(revisions:readonly Revision[]):Revision[]{const graph=validateRevisionGraph(revisions);return[...graph.headsByRecord.values()].flatMap(ids=>[...ids].map(id=>graph.revisions.get(id)!)).sort((a,b)=>a.revision_id.localeCompare(b.revision_id))}
-async function snapshots(revisions:readonly Revision[]):Promise<{semantic:string;lineage:string;heads:Revision[]}>{const selected=heads(revisions);return{heads:selected,semantic:await digest(selected.map(r=>({record_type:r.record_type,record_schema:r.record_schema,record_id:r.record_id,record_status:r.record_status,record_data:r.record_data}))),lineage:await digest(selected.map(r=>({record_id:r.record_id,revision_id:r.revision_id,parent_revision_ids:r.parent_revision_ids})))}}
+async function snapshots(revisions:readonly Revision[]):Promise<{semantic:string;lineage:string;heads:Revision[]}>{const selected=heads(revisions),semanticEntries=selected.map(r=>({record_type:r.record_type,record_schema:r.record_schema,record_id:r.record_id,record_status:r.record_status,record_data:r.record_data})).sort(compareCanonical);return{heads:selected,semantic:await digest(semanticEntries),lineage:await digest(selected.map(r=>({record_id:r.record_id,revision_id:r.revision_id,parent_revision_ids:r.parent_revision_ids})))}}
 const manifestCells=(manifest:Awaited<ReturnType<typeof prepareManifest>>)=>[manifest.format,manifest.version,manifest.manifestIv,manifest.manifestCiphertext] as const
 
 /** Concrete production rotation. Only the provider wire is injected; every
