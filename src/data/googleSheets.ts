@@ -27,7 +27,8 @@ export function getGoogleConfig(): GoogleConfig {
 }
 
 /** @deprecated Manual spreadsheet binding is forbidden by the secure profile. */
-export function setGoogleConfig(_next: GoogleConfig): GoogleConfig {
+export function setGoogleConfig(next: GoogleConfig): GoogleConfig {
+  void next
   return disabled()
 }
 
@@ -77,39 +78,44 @@ export function columnName(count: number): string {
 }
 
 /** @deprecated Legacy plaintext/table-shaped remote creation is disabled. */
-export async function createSpreadsheet(_sheetSpecs: SheetSpecs): Promise<GoogleConfig> {
+export async function createSpreadsheet(sheetSpecs: SheetSpecs): Promise<GoogleConfig> {
+  void sheetSpecs
   return disabled()
 }
 
 /** @deprecated Legacy plaintext/table-shaped remote reads are disabled. */
-export async function batchGetValues(_ranges: readonly string[]): Promise<Array<{ values?: SheetCell[][] }>> {
+export async function batchGetValues(ranges: readonly string[]): Promise<Array<{ values?: SheetCell[][] }>> {
+  void ranges
   return disabled()
 }
 
 /** @deprecated Legacy plaintext/table-shaped remote writes are disabled. */
 export async function batchWriteValues(
-  _data: ReadonlyArray<{
+  data: ReadonlyArray<{
     range: string
     majorDimension: 'ROWS'
     values: readonly (readonly SheetCell[])[]
   }>,
 ): Promise<void> {
+  void data
   return disabled()
 }
 
 /** @deprecated Legacy plaintext/table-shaped remote writes are disabled. */
-export async function batchClearValues(_ranges: readonly string[]): Promise<void> {
+export async function batchClearValues(ranges: readonly string[]): Promise<void> {
+  void ranges
   return disabled()
 }
 
 /** @deprecated Legacy plaintext/table-shaped remote mutation is disabled. */
-export async function ensureSheets(_sheetSpecs: SheetSpecs): Promise<void> {
+export async function ensureSheets(sheetSpecs: SheetSpecs): Promise<void> {
+  void sheetSpecs
   return disabled()
 }
 
 /** @deprecated Legacy whole-table writers are disabled. */
 export async function replaceTables(
-  _tables: Record<
+  tables: Record<
     string,
     {
       headers: readonly string[]
@@ -117,30 +123,37 @@ export async function replaceTables(
     }
   >,
 ): Promise<void> {
+  void tables
   return disabled()
 }
 
 /** @deprecated Legacy whole-table writers are disabled. */
 export async function replaceTable(
-  _title: string,
-  _headers: readonly string[],
-  _rows: readonly (readonly SheetCell[])[],
+  title: string,
+  headers: readonly string[],
+  rows: readonly (readonly SheetCell[])[],
 ): Promise<void> {
+  void title
+  void headers
+  void rows
   return disabled()
 }
 
 /** @deprecated Legacy whole-table readers are disabled. */
 export async function loadTables(
-  _sheetSpecs: SheetSpecs,
+  sheetSpecs: SheetSpecs,
 ): Promise<Record<string, SheetCell[][]>> {
+  void sheetSpecs
   return disabled()
 }
 
 /** @deprecated Legacy whole-table readers are disabled. */
 export async function loadTable(
-  _title: string,
-  _headers: readonly string[],
+  title: string,
+  headers: readonly string[],
 ): Promise<SheetCell[][]> {
+  void title
+  void headers
   return disabled()
 }
 
