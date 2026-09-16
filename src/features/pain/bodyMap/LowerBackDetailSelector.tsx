@@ -4,7 +4,6 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
-import type { BodyView } from '../painEntry'
 import { NO_REGION, TAP_MAX_MOVEMENT, LOWER_BACK_REGIONS, LOWER_BACK_IMAGE, lowerBackDetailLabel } from './LowerBackDetailSelector.meta'
 import type { HitMapData } from './LowerBackDetailSelector.meta'
 import './LowerBackDetailSelector.css'

@@ -1,5 +1,5 @@
 import type { BodyView, PainLocation } from '../painEntry'
-import { handDetailLabel, isHandRegionId } from './HandDetailSelector.meta'
+import { handDetailLabel } from './HandDetailSelector.meta'
 import { headDetailLabel, isHeadRegionId } from './HeadDetailSelector.meta'
 import { shoulderDetailLabel, isShoulderRegionId } from './ShoulderDetailSelector.meta'
 import { hipDetailLabel, isHipRegionId } from './HipDetailSelector.meta'

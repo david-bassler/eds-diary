@@ -4,7 +4,6 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
-import type { BodyView } from '../painEntry'
 import { NO_REGION, TAP_MAX_MOVEMENT, GLUTE_REGIONS, GLUTE_IMAGE, gluteDetailLabel } from './GluteDetailSelector.meta'
 import type { HitMapData } from './GluteDetailSelector.meta'
 import './GluteDetailSelector.css'
