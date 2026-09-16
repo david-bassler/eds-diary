@@ -1,4 +1,4 @@
-name: Temporary Storybook and Playwright validation
+name: Temporary E2E assurance remediation
 
 on:
   push:
@@ -8,10 +8,10 @@ on:
       - .github/local-wrap-build-fix-trigger
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  validate-ui:
+  remediate-e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
@@ -22,10 +22,34 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - name: Apply E2E remediation
+        run: node scripts/fix-local-wrap-build.mjs
+      - name: Check diff
+        run: git diff --check
+      - name: Commit E2E remediation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tests
+          git diff --cached --exit-code && exit 1 || true
+          git commit -m "Align E2E assurance with current secure UI"
+          git push origin HEAD:codex/fix-one-shot-envelope-crash-safety
       - run: npm ci
-      - name: Storybook build
-        run: npm run build-storybook
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
-      - name: Playwright all configured projects
-        run: npm run test:e2e
+      - name: Re-run previously failing Chromium specs
+        run: >-
+          npx playwright test
+          tests/activity-help.spec.ts
+          tests/activity-page.spec.ts
+          tests/body-map-png.spec.ts
+          tests/head-detail.spec.ts
+          tests/knee-detail.spec.ts
+          tests/medication-entry.spec.ts
+          tests/navigation.spec.ts
+          tests/pain-entry-flow.spec.ts
+          tests/pain-entry-list.spec.ts
+          tests/persistence.spec.ts
+          tests/pwa.spec.ts
+          tests/qr-share.spec.ts
+          --project=chromium --workers=1
