@@ -1,0 +1,36 @@
+name: Temporary P0 remediation
+
+on:
+  push:
+    branches:
+      - codex/fix-one-shot-envelope-crash-safety
+    paths:
+      - scripts/remediate-p0.mjs
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message == 'Add P0 remediation patch runner'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: codex/fix-one-shot-envelope-crash-safety
+
+      - name: Apply remediation
+        run: node scripts/remediate-p0.mjs
+
+      - name: Validate patch shape
+        run: git diff --check
+
+      - name: Commit remediation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/data/localDatabase.ts src/data/productiveRotationService.ts src/sync/core/coordinator.ts src/test/sync.test.ts src/test/localDatabase.test.ts
+          git diff --cached --exit-code && exit 1 || true
+          git commit -m "Fix verified pull persistence and plaintext revision storage"
+          git push origin HEAD:codex/fix-one-shot-envelope-crash-safety
