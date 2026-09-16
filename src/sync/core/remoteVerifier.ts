@@ -1,8 +1,10 @@
 import { openEnvelope, type EnvelopeContext, type PreparedEnvelope } from '../../security/envelopes'
 import { openManifest, manifestFingerprint, parseManifestCells, schemaRegistryHash, SCHEMA_ALLOWLIST, type ProtectedManifest } from '../../security/manifest'
 import { validateRevisionGraph, type Revision } from '../../security/revisions'
-import { deriveEpochSalt } from '../../security/crypto/core'
-import { fixedBase64Url } from '../../security/crypto/bytes'
+import { deriveEpochSalt, sha256 } from '../../security/crypto/core'
+import { base64Url, fixedBase64Url } from '../../security/crypto/bytes'
+import { canonicalBytes } from '../../security/crypto/canonical'
+import type { SyncBackupV5 } from '../../security/backup'
 import { assertExtendsAnchor, type RemoteAnchor } from './prefix'
 import type { RemoteSnapshot, VerifiedRemoteState } from './contracts'
 import { GoogleSheetsSingleWriterTransport, isAuthenticatedGoogleTransport } from '../google/GoogleSheetsSingleWriterTransport'
@@ -138,14 +140,18 @@ export class FullRemoteVerifier {
 }
 
 /** Trust material that is deliberately unavailable in a RecoveryArtifact.
- * The resource id comes from neutral discovery/user selection and the account
- * binding from the authenticated provider (or from a separately verified
- * backup), never from decrypted recovery payload fields. */
+ * Remote authority is fixed by authenticated discovery. Backup authority is
+ * fixed by an independently selected backup document whose exact bytes are
+ * hashed at capability creation and rechecked before candidate verification. */
+export type RecoveryRemoteBinding={provider_id:'google-sheets-single-writer-v1';remote_resource_id:string;remote_identity_binding:string}
+export interface VerifiedRecoveryBootstrap {source:'authenticated-remote'|'verified-backup';verified:VerifiedRemoteState;remoteBinding:RecoveryRemoteBinding|null}
 const TRUSTED_AUTHORITIES=new WeakSet<IndependentBootstrapAuthority>()
 export class IndependentBootstrapAuthority {
-  private constructor(readonly source:'authenticated-remote'|'verified-backup',readonly remoteResourceId:string,readonly authenticatedAccountBinding:string,private readonly transport:GoogleSheetsSingleWriterTransport){TRUSTED_AUTHORITIES.add(this)}
-  static async fromAuthenticatedGoogleDiscovery(transport:GoogleSheetsSingleWriterTransport,locator:string,remoteResourceId:string):Promise<IndependentBootstrapAuthority>{if(!isAuthenticatedGoogleTransport(transport))throw new Error('Recovery authority requires the productive Google identity boundary.');const authenticatedAccountBinding=await transport.authenticatedAccountBinding();const candidates=await transport.discover(locator);if(!candidates.some(candidate=>candidate.remoteId===remoteResourceId))throw new Error('Recovery resource was not established by authenticated discovery.');return new IndependentBootstrapAuthority('authenticated-remote',remoteResourceId,authenticatedAccountBinding,transport)}
-  load():Promise<RemoteSnapshot>{return this.transport.read(this.remoteResourceId)}
+  private constructor(readonly source:'authenticated-remote'|'verified-backup',readonly remoteResourceId:string|null,readonly authenticatedAccountBinding:string|null,private readonly transport:GoogleSheetsSingleWriterTransport|null,private readonly backup:SyncBackupV5|null,private readonly backupDigest:string|null){TRUSTED_AUTHORITIES.add(this)}
+  static async fromAuthenticatedGoogleDiscovery(transport:GoogleSheetsSingleWriterTransport,locator:string,remoteResourceId:string):Promise<IndependentBootstrapAuthority>{if(!isAuthenticatedGoogleTransport(transport))throw new Error('Recovery authority requires the productive Google identity boundary.');const authenticatedAccountBinding=await transport.authenticatedAccountBinding();const candidates=await transport.discover(locator);if(!candidates.some(candidate=>candidate.remoteId===remoteResourceId))throw new Error('Recovery resource was not established by authenticated discovery.');return new IndependentBootstrapAuthority('authenticated-remote',remoteResourceId,authenticatedAccountBinding,transport,null,null)}
+  static async fromIndependentBackup(backup:SyncBackupV5):Promise<IndependentBootstrapAuthority>{if(!backup||typeof backup!=='object'||backup.format!=='sync-backup-v5'||backup.backup_format_version!==5)throw new Error('Recovery backup authority requires a sync-backup-v5 document.');const bytes=canonicalBytes(backup as never);if(bytes.byteLength>256*1024*1024)throw new Error('Recovery backup exceeds the supported bound.');return new IndependentBootstrapAuthority('verified-backup',null,null,null,backup,base64Url(await sha256(bytes)))}
+  async loadRemote():Promise<RemoteSnapshot>{if(this.source!=='authenticated-remote'||!this.transport||!this.remoteResourceId)throw new Error('Bootstrap authority is not a remote authority.');return this.transport.read(this.remoteResourceId)}
+  async loadBackup():Promise<SyncBackupV5>{if(this.source!=='verified-backup'||!this.backup||!this.backupDigest)throw new Error('Bootstrap authority is not a backup authority.');const digest=base64Url(await sha256(canonicalBytes(this.backup as never)));if(digest!==this.backupDigest)throw new Error('Independently selected recovery backup changed after authority creation.');return this.backup}
 }
 
 export interface RecoveryBootstrapOptions {
@@ -154,17 +160,19 @@ export interface RecoveryBootstrapOptions {
 }
 
 /** A recovery-specific verifier. Unlike FullRemoteVerifier, it has no caller
- * supplied expected diary/epoch/key/fingerprint/commitment/anchor fields. Those
- * values are read from the candidate only after an independent resource and
- * account authority has been fixed, then authenticated from that resource's
- * manifest and complete prefix. */
+ * supplied trusted manifest fields. Candidate fields become usable only after
+ * they have been checked against an independently fixed remote or backup. */
 export class RecoveryBootstrapVerifier {
-  constructor(private readonly options:RecoveryBootstrapOptions){if(!TRUSTED_AUTHORITIES.has(options.authority)||!options.authority.remoteResourceId||!options.authority.authenticatedAccountBinding)throw new Error('Independent bootstrap authority is incomplete or forged.')}
-  async verifyCandidate(candidate:RecoveredRootCandidate):Promise<VerifiedRemoteState>{
+  constructor(private readonly options:RecoveryBootstrapOptions){if(!TRUSTED_AUTHORITIES.has(options.authority))throw new Error('Independent bootstrap authority is incomplete or forged.');if(options.authority.source==='authenticated-remote'&&(!options.authority.remoteResourceId||!options.authority.authenticatedAccountBinding))throw new Error('Independent remote authority is incomplete.')}
+  async verifyCandidate(candidate:RecoveredRootCandidate):Promise<VerifiedRecoveryBootstrap>{
     const p=candidate.payload,authority=this.options.authority
-    if(p.google_account_binding!==authority.authenticatedAccountBinding)throw new Error('Recovery account binding was not independently authenticated.')
-    if(p.remote_anchor===null)throw new Error('Remote recovery requires a non-null independently checked anchor.')
-    const verifier=new FullRemoteVerifier({rootKey:candidate.rootKey,diaryId:p.diary_id,epochId:p.epoch_id,expectedManifestFingerprint:p.manifest_fingerprint,expectedKeyId:p.key_id,expectedRecoveryGeneration:p.recovery_generation,expectedRecoveryCommitment:candidate.recoveryCommitment,expectedGoogleAccountBinding:authority.authenticatedAccountBinding,schemas:this.options.schemas,oldAnchor:p.remote_anchor,localEnvelopes:[],localHeadRevisionIds:new Set()})
-    return verifier.verify(await authority.load())
+    if(authority.source==='authenticated-remote'){
+      if(p.google_account_binding!==authority.authenticatedAccountBinding)throw new Error('Recovery account binding was not independently authenticated.')
+      if(p.remote_anchor===null)throw new Error('Remote recovery requires a non-null independently checked anchor.')
+      const verifier=new FullRemoteVerifier({rootKey:candidate.rootKey,diaryId:p.diary_id,epochId:p.epoch_id,expectedManifestFingerprint:p.manifest_fingerprint,expectedKeyId:p.key_id,expectedRecoveryGeneration:p.recovery_generation,expectedRecoveryCommitment:candidate.recoveryCommitment,expectedGoogleAccountBinding:authority.authenticatedAccountBinding!,schemas:this.options.schemas,oldAnchor:p.remote_anchor,localEnvelopes:[],localHeadRevisionIds:new Set()}),verified=await verifier.verify(await authority.loadRemote())
+      return{source:'authenticated-remote',verified,remoteBinding:{provider_id:'google-sheets-single-writer-v1',remote_resource_id:authority.remoteResourceId!,remote_identity_binding:authority.authenticatedAccountBinding!}}
+    }
+    const backup=await authority.loadBackup(),epochSalt=await deriveEpochSalt(fixedBase64Url(p.diary_id,16),fixedBase64Url(p.epoch_id,16)),verifier=new FullRemoteVerifier({rootKey:candidate.rootKey,diaryId:p.diary_id,epochId:p.epoch_id,expectedManifestFingerprint:p.manifest_fingerprint,expectedKeyId:p.key_id,expectedRecoveryGeneration:p.recovery_generation,expectedRecoveryCommitment:candidate.recoveryCommitment,expectedGoogleAccountBinding:p.google_account_binding,schemas:this.options.schemas,oldAnchor:p.remote_anchor,localEnvelopes:[],localHeadRevisionIds:new Set()}),backupModule=await import('../../security/backup'),rows=await backupModule.testRestoreBackup({rootKey:candidate.rootKey,epochSalt,diaryId:p.diary_id,epochId:p.epoch_id,keyId:p.key_id,manifestFingerprint:p.manifest_fingerprint},backup,verifier),verified=await verifier.verify({manifest:backup.epoch_manifest_public,rows})
+    return{source:'verified-backup',verified,remoteBinding:null}
   }
 }

@@ -2,7 +2,7 @@ import { aesGcmDecrypt,aesGcmEncrypt,deriveRecoveryKey,randomBytes,recoveryCommi
 import { base64Url,fixedBase64Url,fromBase64Url } from './crypto/bytes'
 import { canonicalBytes,parseCanonicalJson } from './crypto/canonical'
 import type { RemoteAnchor } from '../sync/core/prefix'
-import { RecoveryBootstrapVerifier } from '../sync/core/remoteVerifier'
+import { RecoveryBootstrapVerifier, type VerifiedRecoveryBootstrap } from '../sync/core/remoteVerifier'
 
 export interface RecoveryArtifact {format:'sync-recovery-v5';version:5;recovery_artifact_id:string;kdf_profile_id:'recovery-hkdf-v5-1';salt:string;wrap_iv:string;wrapped_payload:string}
 export interface RecoveryPayload {recovery_artifact_id:string;diary_id:string;epoch_id:string;key_id:string;RK_epoch:string;manifest_fingerprint:string;remote_anchor:RemoteAnchor|null;google_account_binding:string;recovery_generation:number;created_at:string}
@@ -25,10 +25,13 @@ export async function recoverRootKeyCandidate(artifact:RecoveryArtifact,urs:Uint
 }
 /** Activation accepts only a bootstrap verifier whose remote/backup locator and
  * account authority were established independently of the recovery artifact. */
-export async function activateRecoveredRoot(candidate:RecoveredRootCandidate,verifier:RecoveryBootstrapVerifier,persistWrap:(rootKey:Uint8Array,payload:RecoveryPayload)=>Promise<void>):Promise<void>{
+export interface RecoveryPersistenceProof {rootWrapReadback:true;stateMacVerified:true;envelopeJournalVerified:true}
+export async function activateRecoveredRoot(candidate:RecoveredRootCandidate,verifier:RecoveryBootstrapVerifier,persistVerifiedProfile:(candidate:RecoveredRootCandidate,bootstrap:VerifiedRecoveryBootstrap)=>Promise<RecoveryPersistenceProof>):Promise<VerifiedRecoveryBootstrap>{
   if (!(verifier instanceof RecoveryBootstrapVerifier)) throw new Error('An independently authenticated bootstrap verifier is required.')
   const p=candidate.payload;validatePayload(p)
-  const verified=await verifier.verifyCandidate(candidate)
-  if(verified.manifestFingerprint!==p.manifest_fingerprint)throw new Error('Verified remote does not bind the recovery candidate.')
-  await persistWrap(candidate.rootKey,p)
+  const bootstrap=await verifier.verifyCandidate(candidate)
+  if(bootstrap.verified.manifestFingerprint!==p.manifest_fingerprint)throw new Error('Verified bootstrap does not bind the recovery candidate.')
+  const proof=await persistVerifiedProfile(candidate,bootstrap)
+  if(!proof||proof.rootWrapReadback!==true||proof.stateMacVerified!==true||proof.envelopeJournalVerified!==true)throw new Error('Recovered root was not persistently wrapped and readback-verified.')
+  return bootstrap
 }
