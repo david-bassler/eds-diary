@@ -1,0 +1,48 @@
+name: Security Validation
+
+on:
+  push:
+    branches:
+      - codex/fix-one-shot-envelope-crash-safety
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Full unit suite
+        run: npm test
+
+      - name: Productive rotation crash matrix
+        run: npx vitest run src/test/productiveRotationService.test.ts
+
+      - name: Coordinator reconciliation tests
+        run: npx vitest run src/test/localDatabase.test.ts
+
+      - name: Build
+        run: npm run build
+
+      - name: ESLint security and data paths
+        run: npx eslint src/data src/security src/sync src/test
+
+      - name: Stylelint
+        run: npm run lint:css
+
+      - name: Diff whitespace check
+        run: git diff --check
