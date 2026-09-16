@@ -1,4 +1,4 @@
-name: Temporary E2E assurance remediation
+name: Temporary final E2E assurance remediation
 
 on:
   push:
@@ -22,38 +22,29 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - name: Repair remediation expectations
-        run: |
-          sed -i "s/, 5, 'medication name scope')/, 3, 'medication name scope')/" scripts/fix-local-wrap-build.mjs
-          sed -i "s/, 4, 'medication dose scope')/, 3, 'medication dose scope')/" scripts/fix-local-wrap-build.mjs
-      - name: Apply E2E remediation
+      - name: Apply final remediation
         run: node scripts/fix-local-wrap-build.mjs
       - name: Check diff
         run: git diff --check
-      - name: Commit E2E remediation
+      - name: Commit remediation
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add tests
+          git add src/data/localDatabase.ts tests
           git diff --cached --exit-code && exit 1 || true
-          git commit -m "Align E2E assurance with current secure UI"
+          git commit -m "Fix encrypted pain-type identity and E2E assumptions"
           git push origin HEAD:codex/fix-one-shot-envelope-crash-safety
       - run: npm ci
+      - name: Unit suite
+        run: npm test
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
-      - name: Re-run previously failing Chromium specs
+      - name: Re-run remaining Chromium specs
         run: >-
           npx playwright test
           tests/activity-help.spec.ts
           tests/activity-page.spec.ts
-          tests/body-map-png.spec.ts
-          tests/head-detail.spec.ts
-          tests/knee-detail.spec.ts
           tests/medication-entry.spec.ts
-          tests/navigation.spec.ts
           tests/pain-entry-flow.spec.ts
           tests/pain-entry-list.spec.ts
-          tests/persistence.spec.ts
-          tests/pwa.spec.ts
-          tests/qr-share.spec.ts
           --project=chromium --workers=1
