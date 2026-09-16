@@ -6,6 +6,7 @@ import { GoogleSheetsSingleWriterProfileCodec } from '../sync/google/GoogleSheet
 import { TestRemoteVerifier } from '../sync/testing/TestRemoteVerifier'
 import { openEnvelope } from '../security/envelopes'
 import { base64Url, randomBytes } from '../security/crypto/bytes'
+import { stateTag } from '../security/localState'
 
 const pain=(id:string)=>({id,startedAt:'2026-09-15T10:00:00.000Z',endedAt:'',locations:[],intensity:4,qualities:[],cause:'',occursWhen:'',note:'synthetic fixture',createdAt:'2026-09-15T10:00:00.000Z',updatedAt:'2026-09-15T10:00:00.000Z'})
 beforeAll(async()=>{await new Promise<void>((resolve,reject)=>{const request=indexedDB.open('eds-diary',5);request.onupgradeneeded=()=>{for(const name of ['painEntries','medicationEntries','medicationPrescriptions','activityEntries','settings'])if(!request.result.objectStoreNames.contains(name))request.result.createObjectStore(name,{keyPath:'id'});request.transaction!.objectStore('painEntries').put(pain('legacy-1'));};request.onsuccess=()=>{request.result.close();resolve()};request.onerror=()=>reject(request.error)})})
@@ -29,6 +30,20 @@ describe('productive IndexedDB coordinator store',()=>{it('persists every envelo
   expect(await store.pending(snapshot.rows)).toEqual([])
   const conflicting=snapshot.rows.map(row=>[...row]);conflicting[0]![2]=`${conflicting[0]![2]}corrupt`
   await expect(store.pending(conflicting)).rejects.toThrow('Envelope ID exists with different bytes.')
+})
+
+it('reconciles remote-present prepared, pending, remote_seen and stale durable rows without another append',async()=>{
+  const db=await import('../data/localDatabase'),raw=await db.__localDatabaseTesting.openDatabase(),active=await db.__localDatabaseTesting.loadEpoch(raw),stores=db.__localDatabaseTesting.STORES
+  const envelopeTx=raw.transaction(stores.envelopes,'readonly'),envelopes=await new Promise<Array<{envelopeId:string;iv:string;ciphertext:string;localSeq:number}>>((resolve,reject)=>{const request=envelopeTx.objectStore(stores.envelopes).index('byEpoch').getAll(active.context.epochId);request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error)})
+  const remoteRows=envelopes.sort((a,b)=>a.localSeq-b.localSeq).map(item=>[item.envelopeId,item.iv,item.ciphertext]),target=envelopes.at(-1);if(!target)throw new Error('Expected a local immutable envelope.')
+  const readOutbox=async()=>{const tx=raw.transaction(stores.outbox,'readonly'),item=await new Promise<{id:string;epochId:string;envelopeId:string;rowBytes:string;status:'prepared'|'pending'|'remote_seen'|'durable'}>((resolve,reject)=>{const request=tx.objectStore(stores.outbox).get(target.envelopeId);request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error)});return item}
+  const setOutbox=async(status:'prepared'|'pending'|'remote_seen'|'durable')=>{const item=await readOutbox(),tx=raw.transaction(stores.outbox,'readwrite');tx.objectStore(stores.outbox).put({...item,status});await new Promise<void>((resolve,reject)=>{tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error)})}
+  const clearAnchor=async()=>{const loaded=await db.__localDatabaseTesting.loadEpoch(raw),state={...loaded.state,remote_anchor:null},tag=await stateTag(loaded.rootKey,loaded.epochSalt,state),tx=raw.transaction(stores.state,'readwrite');tx.objectStore(stores.state).put({id:loaded.context.epochId,state,tag});await new Promise<void>((resolve,reject)=>{tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error)})}
+  const transport=new InMemoryTransport(),remoteId='reconcile-existing-remote',manifest=['sync-v5','5','AAAAAAAAAAAAAAAA','AAAAAAAAAAAAAAAAAAAAAA'],store=new db.IndexedDbCoordinatorStore(active.context.epochId)
+  for(const status of ['prepared','pending','remote_seen','durable'] as const){await clearAnchor();await setOutbox(status);transport.remotes.set(remoteId,{manifest,rows:remoteRows});transport.appendAttempts=[];const coordinator=new SingleWriterCoordinator(active.context.diaryId,active.context.epochId,remoteId,transport,new GoogleSheetsSingleWriterProfileCodec(new TestRemoteVerifier()),store);coordinator.connected();await coordinator.pullVerify();await coordinator.pushPending();expect(transport.appendAttempts).toHaveLength(0);expect((await readOutbox()).status).toBe('durable');expect((await db.__localDatabaseTesting.loadEpoch(raw)).state.remote_anchor?.covered_row_count).toBe(remoteRows.length)}
+  expect(await store.pending(remoteRows)).toEqual([])
+  await clearAnchor();await setOutbox('durable');const missingTarget=remoteRows.filter(row=>row[0]!==target.envelopeId);expect((await store.pending(missingTarget)).map(item=>item.envelopeId)).toContain(target.envelopeId)
+  const conflicting=remoteRows.map(row=>[...row]);const targetRow=conflicting.find(row=>row[0]===target.envelopeId)!;targetRow[2]=`${targetRow[2]}corrupt`;await expect(store.pending(conflicting)).rejects.toThrow('Envelope ID exists with different bytes.')
 })})
 
 describe('immutable envelope write authority',()=>{it('uses the verified envelope head after the revision cache is deleted',async()=>{
