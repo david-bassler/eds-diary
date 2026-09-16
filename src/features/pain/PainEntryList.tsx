@@ -7,7 +7,7 @@ import {
   listPainEntries,
   savePainEntry,
 } from './painRepository'
-import { painLocationLabel } from './bodyMap/BodyMapSelector'
+import { painLocationLabel } from './bodyMap/BodyMapSelector.meta'
 import './PainEntryList.css'
 
 export interface PainEntryListProps {
