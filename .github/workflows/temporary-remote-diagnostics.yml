@@ -1,0 +1,44 @@
+name: Temporary remote enablement diagnostics
+
+on:
+  push:
+    branches:
+      - codex/fix-one-shot-envelope-crash-safety
+    paths:
+      - .github/remote-diagnostics-trigger
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    if: github.event.head_commit.message == 'Trigger remote enablement diagnostics'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Unit tests with captured output
+        id: tests
+        shell: bash
+        run: |
+          set +e
+          npm test 2>&1 | tee remote-enable-test-output.txt
+          status=${PIPESTATUS[0]}
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Upload diagnostics
+        uses: actions/upload-artifact@v4
+        with:
+          name: remote-enable-test-output
+          path: remote-enable-test-output.txt
+      - name: Fail if tests failed
+        if: steps.tests.outputs.status != '0'
+        run: exit 1
