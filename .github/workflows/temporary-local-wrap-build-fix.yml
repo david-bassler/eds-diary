@@ -31,9 +31,9 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/App.tsx src/features/activity/ActivityPage.tsx src/features/medication/MedicationPage.tsx src/features/pain/PainEntryList.tsx src/features/pain/bodyMap src/features/share/QrShareButton.tsx
+          git add src/features/pain/PainEntryList.tsx src/features/pain/PainEntryFlow.tsx src/features/pain/bodyMap
           git diff --cached --exit-code && exit 1 || true
-          git commit -m "Fix React effect lint violations"
+          git commit -m "Finish React lint cleanup"
           git push origin HEAD:codex/fix-one-shot-envelope-crash-safety
       - run: npm ci
       - name: Full ESLint
