@@ -33,6 +33,15 @@ jobs:
       - name: Validate patch shape
         run: git diff --check
 
+      - name: Commit remediation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/data/localDatabase.ts src/data/productiveRotationService.ts src/sync/core/coordinator.ts src/test/sync.test.ts src/test/localDatabase.test.ts
+          git diff --cached --exit-code && exit 1 || true
+          git commit -m "Fix verified pull persistence and plaintext revision storage"
+          git push origin HEAD:codex/fix-one-shot-envelope-crash-safety
+
       - name: Install dependencies
         run: npm ci
 
@@ -44,12 +53,3 @@ jobs:
 
       - name: Security-path lint
         run: npx eslint src/data src/security src/sync src/test
-
-      - name: Commit remediation
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/data/localDatabase.ts src/data/productiveRotationService.ts src/sync/core/coordinator.ts src/test/sync.test.ts src/test/localDatabase.test.ts
-          git diff --cached --exit-code && exit 1 || true
-          git commit -m "Fix verified pull persistence and plaintext revision storage"
-          git push origin HEAD:codex/fix-one-shot-envelope-crash-safety
