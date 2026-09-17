@@ -20,7 +20,9 @@ test.describe('security product flows',()=>{
     await page.goto('/konfiguration')
     await expect(page.getByRole('heading',{level:1,name:'Konfiguration'})).toBeVisible()
     await expect(page.getByText('Fachliche Konflikte')).toBeVisible()
-    await expect(page.getByRole('link',{name:/Wiederherstellung/})).toHaveAttribute('href','?mode=recovery')
+    const storage=page.locator('details.google-sync-settings')
+    await storage.locator('summary').click()
+    await expect(storage.getByRole('link',{name:/Wiederherstellung/})).toHaveAttribute('href','?mode=recovery')
   })
 
   test('auth-origin entry fails closed when deployment configuration is absent',async({page})=>{
