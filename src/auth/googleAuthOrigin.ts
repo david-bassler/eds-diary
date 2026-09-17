@@ -24,7 +24,7 @@ function fail(message: string): void { status.textContent = message; login.hidde
 function validOrigin(value: string): string | null {
   try {
     const origin = new URL(value).origin
-    if (origin !== value || !configuredOrigins.includes(origin) || origin === location.origin) return null
+    if (origin !== value || !configuredOrigins.includes(origin)) return null
     return origin
   } catch { return null }
 }
