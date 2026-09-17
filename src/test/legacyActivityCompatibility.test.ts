@@ -81,6 +81,11 @@ async function seed(options?: { completed?: boolean }): Promise<void> {
         updatedAt: '2026-09-09T09:00:00.000Z',
       })
 
+      transaction.objectStore('activityEntries').put({
+        id: 'legacy-deleted',
+        status: 'deleted',
+      })
+
       if (options?.completed) {
         transaction.objectStore('migrationState').put({
           id: 'legacy-v1',
@@ -118,7 +123,7 @@ async function readActivity(id: string): Promise<Record<string, unknown>> {
 describe('legacy activity compatibility', () => {
   beforeEach(deleteDatabase)
 
-  it('reconstructs every field that was added after the original ActivityEntry shape', async () => {
+  it('reconstructs added fields and removes only redundant active status metadata', async () => {
     await seed()
 
     await normalizeLegacyActivityEntriesForSecureMigration()
@@ -127,14 +132,18 @@ describe('legacy activity compatibility', () => {
       color: defaultActivityColor('Spaziergang'),
       isOngoing: false,
     })
+    expect(await readActivity('pre-color')).not.toHaveProperty('status')
     expect(await readActivity('pre-ongoing')).toMatchObject({
       color: '#f6cbd0',
       isOngoing: false,
     })
+    expect(await readActivity('pre-ongoing')).not.toHaveProperty('status')
     expect(await readActivity('already-current')).toMatchObject({
       color: '#c6e3ee',
       isOngoing: true,
     })
+    expect(await readActivity('already-current')).not.toHaveProperty('status')
+    expect(await readActivity('legacy-deleted')).toEqual({ id: 'legacy-deleted', status: 'deleted' })
   })
 
   it('does not repair present malformed values', async () => {
@@ -153,5 +162,6 @@ describe('legacy activity compatibility', () => {
     const legacy = await readActivity('pre-color')
     expect(legacy).not.toHaveProperty('color')
     expect(legacy).not.toHaveProperty('isOngoing')
+    expect(legacy.status).toBe('active')
   })
 })
