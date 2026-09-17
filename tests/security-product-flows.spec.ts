@@ -22,7 +22,11 @@ test.describe('security product flows',()=>{
     await expect(page.getByText('Fachliche Konflikte')).toBeVisible()
     const storage=page.locator('details.google-sync-settings')
     await storage.locator('summary').click()
-    await expect(storage.getByRole('link',{name:/Wiederherstellung/})).toHaveAttribute('href','?mode=recovery')
+    await expect(storage).toHaveAttribute('open','')
+    const recoveryLink=storage.locator('a[href="?mode=recovery"]')
+    await expect(recoveryLink).toBeVisible()
+    await recoveryLink.click()
+    await expect(page.getByRole('heading',{name:'Tagebuch wiederherstellen'})).toBeVisible()
   })
 
   test('auth-origin entry fails closed when deployment configuration is absent',async({page})=>{
