@@ -61,14 +61,16 @@ export async function normalizeLegacyActivityEntriesForSecureMigration(): Promis
 
     if (database.objectStoreNames.contains(MIGRATION_STORE)) {
       const read = database.transaction(MIGRATION_STORE, 'readonly')
+      const readDone = complete(read)
       const state = await requestResult<LegacyMigrationState | undefined>(
         read.objectStore(MIGRATION_STORE).get(MIGRATION_ID),
       )
-      await complete(read)
+      await readDone
       if (state?.phase === 'cutover' && state.verified === true) return
     }
 
     const transaction = database.transaction(ACTIVITY_STORE, 'readwrite')
+    const transactionDone = complete(transaction)
     const store = transaction.objectStore(ACTIVITY_STORE)
     const cursorRequest = store.openCursor()
 
@@ -98,7 +100,7 @@ export async function normalizeLegacyActivityEntriesForSecureMigration(): Promis
       )
     })
 
-    await complete(transaction)
+    await transactionDone
   } finally {
     database.close()
   }
