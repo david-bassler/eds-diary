@@ -182,13 +182,13 @@
   cursor: pointer;
 }
 
-.google-sync-settings button:hover:not(:disabled) {
-  background: rgb(37 48 43 / 7%);
-}
-
 .google-sync-settings button:disabled {
   cursor: not-allowed;
   opacity: 0.48;
+}
+
+.google-sync-settings button:hover:not(:disabled) {
+  background: rgb(37 48 43 / 7%);
 }
 
 .google-sync-settings .google-sync-settings__primary {
@@ -266,7 +266,7 @@
   opacity: 0.82;
 }
 
-@media (max-width: 560px) {
+@media (width <= 560px) {
   .google-sync-settings__header,
   .google-sync-settings__connected {
     grid-template-columns: 1fr;
