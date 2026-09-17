@@ -131,7 +131,7 @@
   height: 20px;
 }
 
-@media (max-width: 480px) {
+@media (width <= 480px) {
   .hip-detail-selector__heading,
   .hip-detail-selector__selection {
     align-items: stretch;

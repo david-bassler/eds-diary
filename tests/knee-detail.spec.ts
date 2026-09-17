@@ -21,7 +21,7 @@ test('selects front knee detail regions from the normalized hit map', async ({
   })
 
   const detail = page.getByRole('region', {
-    name: 'Rechtes Knie genauer auswählen',
+    name: 'Rechtes Knie Vorderseite genauer auswählen',
   })
   await expect(detail).toBeVisible()
   await expect(detail.locator('.knee-detail-selector__artwork')).toHaveAttribute(
@@ -68,7 +68,7 @@ test('mirrors the right-knee asset for the anatomical left knee', async ({
   })
 
   const detail = page.getByRole('region', {
-    name: 'Linkes Knie genauer auswählen',
+    name: 'Linkes Knie Vorderseite genauer auswählen',
   })
   await expect(detail).toBeVisible()
   await expect(detail.locator('.knee-detail-selector__artwork')).toHaveAttribute(

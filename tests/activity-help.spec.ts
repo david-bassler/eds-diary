@@ -8,9 +8,7 @@ test('keeps activity explanations behind the help button', async ({ page }) => {
   ).toHaveCount(0)
   await expect(page.getByText('Zeiträume der Aktivität')).not.toBeVisible()
   await expect(page.getByText(/Mit der Maus ziehst du senkrecht/)).not.toBeVisible()
-  await expect(
-    page.getByText('Änderungen werden automatisch gespeichert.'),
-  ).not.toBeVisible()
+  await expect(page.locator('.activity-page__autosave-note')).not.toBeVisible()
 
   await page.getByRole('button', { name: 'Hilfe zu Aktivitäten' }).click()
 

@@ -1,0 +1,58 @@
+.local-security-settings {
+  margin-block: 1rem;
+  border: 1px solid var(--color-border, #ccd5df);
+  border-radius: 0.75rem;
+  background: var(--color-surface, #fff);
+}
+
+.local-security-settings > summary {
+  min-height: 44px;
+  padding: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.local-security-settings__content {
+  display: grid;
+  gap: 1rem;
+  padding: 0 1rem 1rem;
+}
+
+.local-security-settings__boundary,
+.local-security-settings__message {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.local-security-settings__form {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.local-security-settings__form label {
+  display: grid;
+  gap: 0.35rem;
+  font-weight: 600;
+}
+
+.local-security-settings__form input,
+.local-security-settings__form button {
+  min-height: 44px;
+  font: inherit;
+}
+
+.local-security-settings__form input {
+  padding: 0.6rem;
+  border: 1px solid var(--color-border, #8693a0);
+  border-radius: 0.45rem;
+}
+
+.local-security-settings__form button {
+  padding: 0.6rem 1rem;
+}
+
+.local-security-settings--gate {
+  max-width: 38rem;
+  margin: 4rem auto;
+  padding: 1rem;
+}

@@ -7,7 +7,7 @@ import {
   listPainEntries,
   savePainEntry,
 } from './painRepository'
-import { painLocationLabel } from './bodyMap/BodyMapSelector'
+import { painLocationLabel } from './bodyMap/BodyMapSelector.meta'
 import './PainEntryList.css'
 
 export interface PainEntryListProps {
@@ -176,7 +176,6 @@ export function PainEntryList({
   const [busyId, setBusyId] = useState<string | null>(null)
 
   const loadEntries = useCallback(async () => {
-    setLoading(true)
     try {
       const [painEntries, activityEntries] = await Promise.all([
         listPainEntries(),
@@ -193,8 +192,24 @@ export function PainEntryList({
   }, [])
 
   useEffect(() => {
-    void loadEntries()
-  }, [loadEntries, refreshKey])
+    let active = true
+    void Promise.all([listPainEntries(), listActivityEntries()])
+      .then(([painEntries, activityEntries]) => {
+        if (!active) return
+        setEntries(painEntries)
+        setActivities(activityEntries)
+        setStatus('')
+      })
+      .catch(() => {
+        if (active) setStatus('Die Verlaufsdaten konnten nicht geladen werden.')
+      })
+      .finally(() => {
+        if (active) setLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [refreshKey])
 
   const filteredEntries = useMemo(
     () =>

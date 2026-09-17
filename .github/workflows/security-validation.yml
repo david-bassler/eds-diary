@@ -1,0 +1,77 @@
+name: Security Validation
+
+on:
+  push:
+    branches:
+      - main
+      - codex/fix-one-shot-envelope-crash-safety
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Production dependency audit
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: TypeScript typecheck
+        run: npx tsc -b --pretty false
+
+      - name: Full unit suite
+        run: npm test
+
+      - name: Cryptographic vectors and local protection
+        run: npx vitest run src/test/crypto.test.ts src/test/protocol-vectors.test.ts src/test/localRootWrap.test.ts src/test/webauthnPrf.test.ts
+
+      - name: Google provider contract and auth boundary
+        run: npx vitest run src/test/googleTransportContract.test.ts src/test/googleAuthBoundary.test.ts src/test/architecture.test.ts
+
+      - name: Single-writer state machine and reconciliation
+        run: npx vitest run src/test/stateMachine.test.ts src/test/sync.test.ts src/test/localDatabase.test.ts
+
+      - name: Recovery, backup and fresh-profile bootstrap
+        run: npx vitest run src/test/recovery-rotation.test.ts src/test/creation-backup.test.ts
+
+      - name: Legacy migration catch-up
+        run: npx vitest run src/test/legacyMigrationCatchup.test.ts
+
+      - name: Productive rotation crash matrix
+        run: npx vitest run src/test/productiveRotationService.test.ts
+
+      - name: Production build
+        run: npm run build
+
+      - name: ESLint
+        run: npm run lint:js
+
+      - name: Stylelint
+        run: npm run lint:css
+
+      - name: Storybook build
+        run: npm run build-storybook
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Playwright full configured browser matrix
+        run: npm run test:e2e
+
+      - name: Diff whitespace check
+        run: git diff --check

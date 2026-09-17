@@ -32,19 +32,19 @@ test('lists, filters, ends, edits and deletes pain entries', async ({ page }) =>
 
   await page.getByRole('button', { name: 'Übersicht' }).click()
 
-  await expect(page.getByText('synthetischer aktiver Schmerz')).toBeVisible()
-  await expect(page.getByText('synthetischer abgeschlossener Schmerz')).toBeVisible()
+  await expect(page.locator('.pain-entry-list__entry').filter({ hasText: 'synthetischer aktiver Schmerz' })).toBeVisible()
+  await expect(page.locator('.pain-entry-list__entry').filter({ hasText: 'synthetischer abgeschlossener Schmerz' })).toBeVisible()
   await expect(page.getByText('Hinten: Unterer Rücken')).toBeVisible()
   await expect(page.getByText('7/10')).toBeVisible()
 
   await page.getByRole('button', { name: 'Aktiv' }).click()
-  await expect(page.getByText('synthetischer aktiver Schmerz')).toBeVisible()
-  await expect(page.getByText('synthetischer abgeschlossener Schmerz')).toHaveCount(0)
+  await expect(page.locator('.pain-entry-list__entry').filter({ hasText: 'synthetischer aktiver Schmerz' })).toBeVisible()
+  await expect(page.locator('.pain-entry-list__entry').filter({ hasText: 'synthetischer abgeschlossener Schmerz' })).toHaveCount(0)
 
   const activeEntry = page.locator(".pain-entry-list__entry[data-active='true']")
   await activeEntry.locator('summary').click()
   await activeEntry.getByRole('button', { name: 'Jetzt beenden' }).click()
-  await expect(page.getByText('Für diesen Filter gibt es keine Schmerzeinträge.')).toBeVisible()
+  await expect(page.getByText('Für diesen Filter gibt es keine Einträge.')).toBeVisible()
 
   await page.getByRole('button', { name: 'Alle' }).click()
   const completedEntry = page
@@ -59,7 +59,7 @@ test('lists, filters, ends, edits and deletes pain entries', async ({ page }) =>
   await page.getByLabel('Notizen (optional)').fill('synthetisch bearbeitet')
   await page.getByRole('button', { name: 'Änderungen speichern' }).click()
 
-  await expect(page.getByText('synthetisch bearbeitet')).toBeVisible()
+  await expect(page.locator('.pain-entry-list__entry').filter({ hasText: 'synthetisch bearbeitet' })).toBeVisible()
 
   const editedEntry = page
     .locator('.pain-entry-list__entry')
@@ -67,5 +67,5 @@ test('lists, filters, ends, edits and deletes pain entries', async ({ page }) =>
   await editedEntry.locator('summary').click()
   page.once('dialog', (dialog) => void dialog.accept())
   await editedEntry.getByRole('button', { name: 'Löschen' }).click()
-  await expect(page.getByText('synthetisch bearbeitet')).toHaveCount(0)
+  await expect(page.locator('.pain-entry-list__entry').filter({ hasText: 'synthetisch bearbeitet' })).toHaveCount(0)
 })

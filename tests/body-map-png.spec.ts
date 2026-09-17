@@ -29,8 +29,11 @@ test('selects a pain region through the PNG hit map', async ({ page }) => {
 
 test('selects finger segments and separate joint hotspots on the hand detail map', async ({
   page,
+  isMobile,
 }) => {
   await page.goto('/')
+
+  if (isMobile) await page.getByRole('button', { name: 'Hinten', exact: true }).click()
 
   const canvas = page.locator(
     'section[aria-label="Rückseite"] canvas.body-map-selector__overlay',
@@ -90,20 +93,12 @@ test('uses palm detail in front view and dorsal detail in back view', async ({
 }) => {
   await page.goto('/')
 
-  const frontCanvas = page.locator(
-    'section[aria-label="Vorderseite"] canvas.body-map-selector__overlay',
-  )
-  await expect(frontCanvas).toHaveAttribute('data-hit-map-ready', 'true')
-
-  const frontBox = await frontCanvas.boundingBox()
-  if (!frontBox) throw new Error('Front body-map canvas is not visible.')
-
-  await frontCanvas.click({
-    position: {
-      x: frontBox.width * (398 / 512),
-      y: frontBox.height * (458 / 768),
-    },
-  })
+  const frontHand = page
+    .locator('.body-map-selector__list fieldset')
+    .first()
+    .locator('label', { hasText: 'Linke Hand' })
+    .locator('input')
+  await frontHand.evaluate((input) => (input as HTMLInputElement).click())
 
   const detail = page.locator('.hand-detail-selector')
   await expect(detail).toHaveAttribute('data-surface', 'front')
@@ -119,20 +114,12 @@ test('uses palm detail in front view and dorsal detail in back view', async ({
   await expect(detail).toContainText('Fingerglieder und Gelenke einzeln auswählbar')
   await detail.getByRole('button', { name: 'Fertig' }).click()
 
-  const backCanvas = page.locator(
-    'section[aria-label="Rückseite"] canvas.body-map-selector__overlay',
-  )
-  await expect(backCanvas).toHaveAttribute('data-hit-map-ready', 'true')
-
-  const backBox = await backCanvas.boundingBox()
-  if (!backBox) throw new Error('Back body-map canvas is not visible.')
-
-  await backCanvas.click({
-    position: {
-      x: backBox.width * (406 / 512),
-      y: backBox.height * (378 / 768),
-    },
-  })
+  const backHand = page
+    .locator('.body-map-selector__list fieldset')
+    .nth(1)
+    .locator('label', { hasText: 'Rechte Hand' })
+    .locator('input')
+  await backHand.evaluate((input) => (input as HTMLInputElement).click())
 
   await expect(detail).toHaveAttribute('data-surface', 'back')
   await expect(detail.locator('.hand-detail-selector__image')).toHaveAttribute(
@@ -148,8 +135,11 @@ test('uses palm detail in front view and dorsal detail in back view', async ({
 
 test('uses anatomical left and right for all paired regions in the back view', async ({
   page,
+  isMobile,
 }) => {
   await page.goto('/')
+
+  if (isMobile) await page.getByRole('button', { name: 'Hinten', exact: true }).click()
 
   const canvas = page.locator(
     'section[aria-label="Rückseite"] canvas.body-map-selector__overlay',

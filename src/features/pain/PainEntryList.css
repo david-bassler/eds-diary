@@ -292,13 +292,13 @@
   font-weight: 650;
 }
 
-@media (max-width: 720px) {
+@media (width <= 720px) {
   .pain-entry-list__print-button {
     margin-left: 0;
   }
 }
 
-@media (max-width: 520px) {
+@media (width <= 520px) {
   .pain-entry-list__filters,
   .pain-entry-list__day-header,
   .pain-entry-list__summary-bottom {
@@ -425,13 +425,13 @@
     cursor: default;
   }
 
-  .pain-entry-list__entry > .pain-entry-list__details {
-    display: grid !important;
-  }
-
   .pain-entry-list__details {
     gap: 2mm;
     padding-top: 0;
+  }
+
+  .pain-entry-list__entry > .pain-entry-list__details {
+    display: grid !important;
   }
 
   .pain-entry-list__details dl > div {

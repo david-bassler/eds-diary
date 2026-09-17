@@ -279,7 +279,7 @@
   font-weight: 650;
 }
 
-@media (min-width: 560px) {
+@media (width >= 560px) {
   .pain-entry-flow__datetime {
     grid-template-columns: 1fr 1fr;
   }

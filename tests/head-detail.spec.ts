@@ -44,7 +44,7 @@ test('stores multiple head detail regions with the coarse head location', async 
   await page.getByRole('button', { name: 'Weiter' }).click()
   await page
     .getByRole('slider', { name: 'Schmerzstärke von 0 bis 10' })
-    .fill('5')
+    .fill('6')
   await page.getByRole('button', { name: 'Weiter' }).click()
   await page.getByRole('button', { name: 'Dumpf' }).click()
   await page.getByRole('button', { name: 'Speichern' }).click()
@@ -67,7 +67,7 @@ test('stores multiple head detail regions with the coarse head location', async 
 test('keeps head locations without detail data compatible', async ({ page }) => {
   const label = await page.evaluate(async () => {
     const bodyMap = await import(
-      '/src/features/pain/bodyMap/BodyMapSelector.tsx'
+      '/src/features/pain/bodyMap/BodyMapSelector.meta.ts'
     )
     return bodyMap.painLocationLabel({ view: 'front', regionId: 'head' })
   })

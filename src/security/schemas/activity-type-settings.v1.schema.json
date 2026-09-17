@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "activity-type-settings/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["values"],
+  "properties": {
+    "values": {
+      "type": "array",
+      "maxItems": 96,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "color"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1, "maxLength": 120, "pattern": "^\\S(?:[\\s\\S]*\\S)?$"},
+          "color": {"enum": ["#f6cbd0", "#f6d7bd", "#f3e2b8", "#dfe8bc", "#cbe7ca", "#c7e8dc", "#c6e3ee", "#cddbf2", "#d8d0ef", "#e5cdec", "#efcde1", "#ead5c7"]}
+        }
+      }
+    }
+  }
+}

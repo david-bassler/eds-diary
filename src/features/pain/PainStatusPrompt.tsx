@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import type { PainEntry } from './painEntry'
-import { painLocationLabel } from './bodyMap/BodyMapSelector'
+import { painLocationLabel } from './bodyMap/BodyMapSelector.meta'
 import {
   listPainEntries,
   savePainEntry,

@@ -4,6 +4,8 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
+import { NO_REGION, TAP_MAX_MOVEMENT, SHOULDER_REGIONS, SHOULDER_IMAGE, shoulderDetailLabel } from './ShoulderDetailSelector.meta'
+import type { HitMapData } from './ShoulderDetailSelector.meta'
 import './ShoulderDetailSelector.css'
 
 export type ShoulderSide = 'left' | 'right'
@@ -13,61 +15,6 @@ export interface ShoulderDetailSelectorProps {
   value: readonly string[]
   onChange: (regionIds: string[]) => void
   onClose: () => void
-}
-
-interface RegionDefinition {
-  id: string
-  label: string
-  color: readonly [number, number, number]
-}
-
-interface HitMapData {
-  width: number
-  height: number
-  regionAtPixel: Uint8Array
-  boundaryAtPixel: Uint8Array
-}
-
-const NO_REGION = 255
-const TAP_MAX_MOVEMENT = 14
-
-const SHOULDER_REGIONS: readonly RegionDefinition[] = [
-  {
-    id: 'clavicular-shoulder-base',
-    label: 'Schulterbasis',
-    color: [232, 154, 177],
-  },
-  { id: 'ac-joint', label: 'Schulterdach / AC-Gelenk', color: [244, 203, 92] },
-  {
-    id: 'anterior-deltoid',
-    label: 'Vordere Schulter',
-    color: [234, 112, 108],
-  },
-  {
-    id: 'lateral-shoulder',
-    label: 'Seitliche Schulter',
-    color: [104, 154, 218],
-  },
-  {
-    id: 'inferior-shoulder-axillary',
-    label: 'Untere Schulter / Achsel',
-    color: [116, 190, 126],
-  },
-  {
-    id: 'proximal-upper-arm',
-    label: 'Oberarmansatz',
-    color: [166, 135, 214],
-  },
-]
-
-const SHOULDER_IMAGE = `${import.meta.env.BASE_URL}body-map/details/shoulder-right-hitmap.png?v=1`
-
-export function isShoulderRegionId(regionId: string): boolean {
-  return regionId === 'left-shoulder' || regionId === 'right-shoulder'
-}
-
-export function shoulderDetailLabel(regionId: string): string {
-  return SHOULDER_REGIONS.find((region) => region.id === regionId)?.label ?? regionId
 }
 
 function colorKey(red: number, green: number, blue: number): string {
@@ -148,8 +95,6 @@ export function ShoulderDetailSelector({
     let active = true
     const image = new Image()
     image.decoding = 'async'
-    setHitMap(null)
-
     image.onload = () => {
       if (!active) return
       const canvas = document.createElement('canvas')

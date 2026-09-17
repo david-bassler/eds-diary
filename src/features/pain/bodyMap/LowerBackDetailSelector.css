@@ -113,7 +113,7 @@
   height: 20px;
 }
 
-@media (max-width: 480px) {
+@media (width <= 480px) {
   .lower-back-detail-selector__heading,
   .lower-back-detail-selector__selection {
     align-items: stretch;

@@ -1,9 +1,3 @@
-import {
-  isGoogleConnected,
-  isGoogleSyncReady,
-  onGoogleConnection,
-} from './googleSheets'
-
 export type SyncState = 'local' | 'pending' | 'syncing' | 'synced' | 'error'
 
 export interface SyncSnapshot {
@@ -12,12 +6,6 @@ export interface SyncSnapshot {
   connected: boolean
 }
 
-interface SyncHandler {
-  push: () => Promise<void>
-  full: () => Promise<void>
-}
-
-const handlers = new Map<string, SyncHandler>()
 const dirtyVersions = new Map<string, number>()
 const listeners = new Set<(snapshot: SyncSnapshot) => void>()
 
@@ -26,6 +14,7 @@ let timer: number | null = null
 let running: Promise<void> | null = null
 let requestedFull = false
 let initialized = false
+let secureSynchronizer:(()=>Promise<void>)|null=null
 let currentSnapshot: SyncSnapshot = {
   state: 'local',
   error: null,
@@ -36,7 +25,7 @@ function emit(state: SyncState, error: Error | null = null): void {
   currentSnapshot = {
     state,
     error,
-    connected: isGoogleConnected(),
+    connected: secureSynchronizer !== null,
   }
 
   for (const listener of listeners) listener(currentSnapshot)
@@ -61,11 +50,14 @@ export function registerSyncFeature(
     full?: () => Promise<void>
   },
 ): void {
-  handlers.set(name, {
-    push: handler.push,
-    full: handler.full ?? handler.push,
-  })
+  void name;void handler
+  throw new Error('Legacy whole-table remote writers are disabled; immutable envelopes are the only sync source.')
 }
+
+/** Data-layer-only hook. Authentication installs the verified coordinator here;
+ * no provider login state on its own grants writer authority. */
+export function installSecureSynchronizer(synchronize:()=>Promise<void>):void{secureSynchronizer=synchronize;refreshSyncState()}
+export function clearSecureSynchronizer():void{secureSynchronizer=null;refreshSyncState()}
 
 export function markDirty(name: string): void {
   version += 1
@@ -74,7 +66,7 @@ export function markDirty(name: string): void {
 
   if (timer !== null) window.clearTimeout(timer)
 
-  if (isGoogleSyncReady()) {
+  if (secureSynchronizer) {
     timer = window.setTimeout(() => {
       void syncPending()
     }, 1400)
@@ -83,23 +75,15 @@ export function markDirty(name: string): void {
 
 async function performPass(full: boolean): Promise<void> {
   emit('syncing')
-  const names = full ? [...handlers.keys()] : [...dirtyVersions.keys()]
-
-  for (const name of names) {
-    const handler = handlers.get(name)
-    if (!handler) continue
-
-    const capturedVersion = dirtyVersions.get(name)
-    await (full ? handler.full() : handler.push())
-
-    if (dirtyVersions.get(name) === capturedVersion) {
-      dirtyVersions.delete(name)
-    }
-  }
+  void full
+  if(!secureSynchronizer)throw new Error('Secure single-writer sync is not authenticated.')
+  const captured=new Map(dirtyVersions)
+  await secureSynchronizer()
+  for(const[name,value]of captured)if(dirtyVersions.get(name)===value)dirtyVersions.delete(name)
 }
 
 async function run(full: boolean): Promise<void> {
-  if (!isGoogleSyncReady()) {
+  if (!secureSynchronizer) {
     emit(dirtyVersions.size ? 'pending' : 'local')
     return
   }
@@ -140,7 +124,7 @@ export function refreshSyncState(): void {
   emit(
     dirtyVersions.size
       ? 'pending'
-      : isGoogleSyncReady()
+      : secureSynchronizer
         ? 'synced'
         : 'local',
   )
@@ -150,12 +134,8 @@ export function initializeSyncManager(): void {
   if (initialized) return
   initialized = true
 
-  onGoogleConnection((connected) => {
-    refreshSyncState()
-    if (connected && isGoogleSyncReady()) void syncAll().catch(() => {})
-  })
-
   window.addEventListener('online', () => {
-    if (isGoogleSyncReady()) void syncPending().catch(() => {})
+    // Online is transport availability, not permission to mutate remote state.
+    if (secureSynchronizer) emit(dirtyVersions.size ? 'pending' : 'local')
   })
 }

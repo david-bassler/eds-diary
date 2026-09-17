@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 
 test('shows the current page URL as a QR code', async ({ page }) => {
   await page.route(
-    'https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js',
+    '**/vendor/qrcodejs/qrcode.min.js',
     async (route) => {
       await route.fulfill({
         status: 200,

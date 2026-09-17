@@ -91,7 +91,7 @@
   padding: 0 12px;
 }
 
-@media (max-width: 480px) {
+@media (width <= 480px) {
   .hand-detail-selector__heading,
   .hand-detail-selector__selection {
     align-items: stretch;

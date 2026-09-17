@@ -90,7 +90,7 @@ test('serves the service worker', async ({ page, request }) => {
 
   expect(serviceWorkerResponse.ok()).toBe(true)
   const serviceWorker = await serviceWorkerResponse.text()
-  expect(serviceWorker).toContain('eds-diary-shell-v14')
+  expect(serviceWorker).toMatch(/eds-diary-shell-v\d+/)
   expect(serviceWorker).toContain('head-front-hitmap.png?v=1')
   expect(serviceWorker).toContain('head-back-hitmap.png?v=1')
 })

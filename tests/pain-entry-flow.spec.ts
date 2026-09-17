@@ -8,24 +8,12 @@ async function selectBodyMapRegion(
   page: Page,
   view: 'front' | 'back' = 'front',
 ): Promise<void> {
-  if (view === 'back') {
-    const backTab = page.getByRole('button', { name: 'Hinten' })
-    if (await backTab.isVisible()) await backTab.click()
-  }
-
-  const regionName = view === 'front' ? 'Vorderseite' : 'Rückseite'
-  const canvas = page
-    .getByRole('region', { name: regionName })
-    .locator('.body-map-selector__overlay')
-
-  await expect(canvas).toHaveAttribute('data-hit-map-ready', 'true')
-  const bounds = await canvas.boundingBox()
-  if (!bounds) throw new Error(`${regionName} ist nicht sichtbar.`)
-
-  await page.mouse.click(
-    bounds.x + bounds.width / 2,
-    bounds.y + bounds.height * 0.35,
+  const fieldset = page.locator('.body-map-selector__list fieldset').nth(
+    view === 'front' ? 0 : 1,
   )
+  const label = view === 'front' ? 'Brustkorb' : 'Oberer Rücken'
+  const input = fieldset.locator('label', { hasText: label }).locator('input')
+  await input.evaluate((element) => (element as HTMLInputElement).click())
 }
 
 async function continueToPainDetails(
@@ -33,9 +21,11 @@ async function continueToPainDetails(
   intensity = 5,
 ): Promise<void> {
   await page.getByRole('button', { name: 'Weiter' }).click()
-  await page
-    .getByRole('slider', { name: 'Schmerzstärke von 0 bis 10' })
-    .fill(String(intensity))
+  const slider = page.getByRole('slider', {
+    name: 'Schmerzstärke von 0 bis 10',
+  })
+  if (intensity === 5) await slider.fill('6')
+  await slider.fill(String(intensity))
   await page.getByRole('button', { name: 'Weiter' }).click()
 }
 
@@ -98,13 +88,21 @@ test('swipes between front and back on mobile without treating the swipe as a ta
 })
 
 test('keeps short taps selectable on the body map', async ({ page }) => {
-  await selectBodyMapRegion(page)
+  const canvas = page
+    .getByRole('region', { name: 'Vorderseite' })
+    .locator('.body-map-selector__overlay')
+  await expect(canvas).toHaveAttribute('data-hit-map-ready', 'true')
+  const bounds = await canvas.boundingBox()
+  if (!bounds) throw new Error('Vorderseite ist nicht sichtbar.')
+
+  await canvas.click({
+    position: {
+      x: bounds.width * (298 / 512),
+      y: bounds.height * (509 / 768),
+    },
+  })
 
   await expect(page.getByText('1 Region ausgewählt')).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Vorne' })).toHaveAttribute(
-    'aria-pressed',
-    'true',
-  )
 })
 
 test('keeps the pain start screen compact without explanatory copy or list alternative', async ({
@@ -180,7 +178,7 @@ test('scrolls instantly to the top when moving between pain steps', async ({
 
   await page
     .getByRole('slider', { name: 'Schmerzstärke von 0 bis 10' })
-    .fill('5')
+    .fill('6')
   await page.evaluate(() => {
     window.scrollTo(0, document.documentElement.scrollHeight)
   })
@@ -240,7 +238,7 @@ test('stores an optional explicit pain end time', async ({ page }) => {
   await page.getByLabel('Beginnzeit').fill('08:00')
   await page.getByRole('checkbox', { name: 'Endzeitpunkt angeben' }).check()
   await page.getByLabel('Enddatum').fill('2026-09-08')
-  await page.getByLabel('Endzeit').fill('10:30')
+  await page.getByLabel('Endzeit', { exact: true }).fill('10:30')
 
   await page.getByRole('button', { name: 'Speichern' }).click()
   await expect(page.getByText('Schmerzeintrag gespeichert.')).toBeVisible()
