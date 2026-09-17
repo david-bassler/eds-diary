@@ -87,8 +87,12 @@ function legacyDefaultActivityColor(activityName: unknown): string {
  *   were introduced;
  * - missing isOngoing -> false, matching the pre-ongoing activity semantics.
  *
- * Existing values are never repaired or rewritten. If a present value is
- * malformed, the strict domain validator still fails closed.
+ * Historical active records also stored `status: "active"` inside the app
+ * object. The secure revision protocol stores active/deleted as `record_status`
+ * instead, so active status is deliberately omitted from `record_data`. Remove
+ * only that exact redundant legacy marker before migration. Tombstones and any
+ * malformed present value remain untouched and therefore still fail closed when
+ * appropriate.
  */
 export async function normalizeLegacyActivityEntriesForSecureMigration(): Promise<void> {
   const database = await openDatabase()
@@ -124,15 +128,18 @@ export async function normalizeLegacyActivityEntriesForSecureMigration(): Promis
           const record = value as Record<string, unknown>
           const missingColor = !Object.prototype.hasOwnProperty.call(record, 'color')
           const missingIsOngoing = !Object.prototype.hasOwnProperty.call(record, 'isOngoing')
+          const hasRedundantActiveStatus = record.status === 'active'
 
-          if (missingColor || missingIsOngoing) {
-            cursor.update({
+          if (missingColor || missingIsOngoing || hasRedundantActiveStatus) {
+            const normalized: Record<string, unknown> = {
               ...record,
               ...(missingColor
                 ? { color: legacyDefaultActivityColor(record.activityName) }
                 : {}),
               ...(missingIsOngoing ? { isOngoing: false } : {}),
-            })
+            }
+            if (hasRedundantActiveStatus) delete normalized.status
+            cursor.update(normalized)
           }
         }
         cursor.continue()
