@@ -11,6 +11,8 @@ import { PainStatusPrompt } from './features/pain/PainStatusPrompt'
 import { QrShareButton } from './features/share/QrShareButton'
 import { GoogleSyncSettings } from './features/settings/GoogleSyncSettings'
 import { InstallAppSettings } from './features/settings/InstallAppSettings'
+import { LOCAL_SECURITY_CHANGED_EVENT, LocalSecuritySettings } from './features/settings/LocalSecuritySettings'
+import { localRootWrapStatus } from './data/localDatabase'
 import {
   pathForSection,
   sectionFromPathname,
@@ -44,11 +46,18 @@ const PAGE_COPY: Record<
 }
 
 export function App() {
+  const [localRootLocked,setLocalRootLocked]=useState<boolean|null>(null)
   const [activeSection, setActiveSection] = useState<AppSection>(() =>
     sectionFromPathname(window.location.pathname),
   )
   const activityHelpDialogRef = useRef<HTMLDialogElement>(null)
   const page = PAGE_COPY[activeSection]
+
+  useEffect(()=>{
+    const refresh=()=>{void localRootWrapStatus().then(status=>setLocalRootLocked(status.initialized&&status.locked)).catch(()=>setLocalRootLocked(true))}
+    refresh();window.addEventListener(LOCAL_SECURITY_CHANGED_EVENT,refresh)
+    return()=>window.removeEventListener(LOCAL_SECURITY_CHANGED_EVENT,refresh)
+  },[])
 
   useEffect(() => {
     const canonicalPath = pathForSection(activeSection)
@@ -77,6 +86,9 @@ export function App() {
 
     setActiveSection(section)
   }
+
+  if(localRootLocked===null)return <main className="app"><p role="status">Lokaler Sicherheitsstatus wird geprüft …</p></main>
+  if(localRootLocked)return <main className="app"><LocalSecuritySettings unlockOnly/></main>
 
   return (
     <>
@@ -128,6 +140,7 @@ export function App() {
             {activeSection === 'configuration' ? (
               <>
                 <InstallAppSettings />
+                <LocalSecuritySettings />
                 <GoogleSyncSettings />
               </>
             ) : null}

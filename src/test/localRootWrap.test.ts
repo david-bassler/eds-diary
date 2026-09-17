@@ -34,4 +34,11 @@ describe('strong local root wraps',()=>{
     await unlockActiveRootWithPrf(material.credentialId,material.prfOutput)
     expect(await getRecord<{id:string}>(LOCAL_STORES.painEntries,stored.id)).toMatchObject({id:stored.id})
   })
+
+  for(const field of ['diaryId','epochId','keyId','manifestFingerprint','wrapId'] as const)it(`fails closed when unauthenticated EpochContext.${field} is changed`,async()=>{
+    await putRecord(LOCAL_STORES.painEntries,pain(`context-${field}`))
+    const db=await __localDatabaseTesting.openDatabase(),tx=db.transaction(__localDatabaseTesting.STORES.context,'readwrite'),store=tx.objectStore(__localDatabaseTesting.STORES.context),context=await new Promise<Record<string,unknown>>((resolve,reject)=>{const request=store.get('active');request.onsuccess=()=>resolve(request.result as Record<string,unknown>);request.onerror=()=>reject(request.error)})
+    context[field]=base64Url(randomBytes(16));store.put(context);await new Promise<void>((resolve,reject)=>{tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error)})
+    await expect(getAllRecords(LOCAL_STORES.painEntries)).rejects.toThrow(/context does not match|Incomplete local epoch/)
+  })
 })

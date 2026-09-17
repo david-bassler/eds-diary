@@ -70,8 +70,8 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
-      - name: Playwright critical journeys
-        run: npm run test:e2e -- --project=chromium
+      - name: Playwright full configured browser matrix
+        run: npm run test:e2e
 
       - name: Diff whitespace check
         run: git diff --check
