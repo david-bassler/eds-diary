@@ -52,10 +52,24 @@ export function GoogleSyncSettings() {
 
   useEffect(() => {
     const removeSyncListener = onSyncState(setSyncSnapshot)
-    void googleRemoteSessionStatus().then((value) => setRequiresEnablement(value.mode === 'local_offline')).catch((cause) => {
-      setStatus({ message: cause instanceof Error ? cause.message : 'Lokaler Sicherheitsstatus konnte nicht gelesen werden.', kind: 'bad' })
-    })
-    void currentRecoveryArtifact().then(() => setRecoveryArtifactAvailable(true)).catch(() => setRecoveryArtifactAvailable(false))
+    void (async () => {
+      try {
+        const value = await googleRemoteSessionStatus()
+        setRequiresEnablement(value.mode === 'local_offline')
+        try {
+          await currentRecoveryArtifact()
+          setRecoveryArtifactAvailable(true)
+        } catch {
+          setRecoveryArtifactAvailable(false)
+        }
+      } catch (cause) {
+        const reason = cause instanceof Error ? cause.message : 'Unbekannter Fehler.'
+        setStatus({
+          message: `Lokale Daten konnten nicht für die sichere Synchronisierung vorbereitet werden: ${reason}`,
+          kind: 'bad',
+        })
+      }
+    })()
     return removeSyncListener
   }, [])
 
