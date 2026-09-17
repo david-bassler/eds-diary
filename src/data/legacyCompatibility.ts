@@ -1,5 +1,12 @@
 const DATABASE_NAME = 'eds-diary'
 const ACTIVITY_STORE = 'activityEntries'
+const LEGACY_RECORD_STORES = [
+  'painEntries',
+  'medicationEntries',
+  'medicationPrescriptions',
+  'activityEntries',
+  'settings',
+] as const
 const MIGRATION_STORE = 'migrationState'
 const MIGRATION_ID = 'legacy-v1'
 
@@ -80,26 +87,27 @@ function legacyDefaultActivityColor(activityName: unknown): string {
 }
 
 /**
- * The original ActivityEntry already contained note/status/timestamps. Two
- * required fields were introduced later: color and then isOngoing. Reconstruct
- * only those genuinely absent historical fields before strict secure migration:
+ * Compatibility normalization before the secure migration starts or resumes.
+ *
+ * The old plaintext model stored `status: "active"` as record metadata across
+ * multiple stores. The secure revision protocol stores active/deleted separately
+ * as `record_status`, while `record_data` deliberately excludes `status`. Remove
+ * only that exact redundant active marker for every legacy store. Tombstones and
+ * malformed present values stay untouched and therefore still fail closed.
+ *
+ * Activity entries additionally gained two required fields over time. Rebuild
+ * only genuinely absent historical fields:
  * - missing color -> the exact deterministic pastel default used when colors
  *   were introduced;
  * - missing isOngoing -> false, matching the pre-ongoing activity semantics.
  *
- * Historical active records also stored `status: "active"` inside the app
- * object. The secure revision protocol stores active/deleted as `record_status`
- * instead, so active status is deliberately omitted from `record_data`. Remove
- * only that exact redundant legacy marker before migration. Tombstones and any
- * malformed present value remain untouched and therefore still fail closed when
- * appropriate.
+ * The exported function name is kept for compatibility with the existing data
+ * layer entry point, even though the normalization now covers all legacy stores.
  */
 export async function normalizeLegacyActivityEntriesForSecureMigration(): Promise<void> {
   const database = await openDatabase()
 
   try {
-    if (!database.objectStoreNames.contains(ACTIVITY_STORE)) return
-
     if (database.objectStoreNames.contains(MIGRATION_STORE)) {
       const read = database.transaction(MIGRATION_STORE, 'readonly')
       const readDone = complete(read)
@@ -110,49 +118,58 @@ export async function normalizeLegacyActivityEntriesForSecureMigration(): Promis
       if (state?.phase === 'cutover' && state.verified === true) return
     }
 
-    const transaction = database.transaction(ACTIVITY_STORE, 'readwrite')
-    const transactionDone = complete(transaction)
-    const store = transaction.objectStore(ACTIVITY_STORE)
-    const cursorRequest = store.openCursor()
+    for (const storeName of LEGACY_RECORD_STORES) {
+      if (!database.objectStoreNames.contains(storeName)) continue
 
-    await new Promise<void>((resolve, reject) => {
-      cursorRequest.addEventListener('success', () => {
-        const cursor = cursorRequest.result
-        if (!cursor) {
-          resolve()
-          return
-        }
+      const transaction = database.transaction(storeName, 'readwrite')
+      const transactionDone = complete(transaction)
+      const store = transaction.objectStore(storeName)
+      const cursorRequest = store.openCursor()
 
-        const value = cursor.value
-        if (value && typeof value === 'object' && !Array.isArray(value)) {
-          const record = value as Record<string, unknown>
-          const isDeleted = record.status === 'deleted'
-          const missingColor = !isDeleted && !Object.prototype.hasOwnProperty.call(record, 'color')
-          const missingIsOngoing = !isDeleted && !Object.prototype.hasOwnProperty.call(record, 'isOngoing')
-          const hasRedundantActiveStatus = record.status === 'active'
-
-          if (missingColor || missingIsOngoing || hasRedundantActiveStatus) {
-            const normalized: Record<string, unknown> = {
-              ...record,
-              ...(missingColor
-                ? { color: legacyDefaultActivityColor(record.activityName) }
-                : {}),
-              ...(missingIsOngoing ? { isOngoing: false } : {}),
-            }
-            if (hasRedundantActiveStatus) delete normalized.status
-            cursor.update(normalized)
+      await new Promise<void>((resolve, reject) => {
+        cursorRequest.addEventListener('success', () => {
+          const cursor = cursorRequest.result
+          if (!cursor) {
+            resolve()
+            return
           }
-        }
-        cursor.continue()
-      })
-      cursorRequest.addEventListener(
-        'error',
-        () => reject(cursorRequest.error ?? new Error('Legacy activity normalization failed.')),
-        { once: true },
-      )
-    })
 
-    await transactionDone
+          const value = cursor.value
+          if (value && typeof value === 'object' && !Array.isArray(value)) {
+            const record = value as Record<string, unknown>
+            const isDeleted = record.status === 'deleted'
+            const hasRedundantActiveStatus = record.status === 'active'
+            const isActivity = storeName === ACTIVITY_STORE
+            const missingColor =
+              isActivity && !isDeleted && !Object.prototype.hasOwnProperty.call(record, 'color')
+            const missingIsOngoing =
+              isActivity &&
+              !isDeleted &&
+              !Object.prototype.hasOwnProperty.call(record, 'isOngoing')
+
+            if (missingColor || missingIsOngoing || hasRedundantActiveStatus) {
+              const normalized: Record<string, unknown> = {
+                ...record,
+                ...(missingColor
+                  ? { color: legacyDefaultActivityColor(record.activityName) }
+                  : {}),
+                ...(missingIsOngoing ? { isOngoing: false } : {}),
+              }
+              if (hasRedundantActiveStatus) delete normalized.status
+              cursor.update(normalized)
+            }
+          }
+          cursor.continue()
+        })
+        cursorRequest.addEventListener(
+          'error',
+          () => reject(cursorRequest.error ?? new Error('Legacy compatibility normalization failed.')),
+          { once: true },
+        )
+      })
+
+      await transactionDone
+    }
   } finally {
     database.close()
   }

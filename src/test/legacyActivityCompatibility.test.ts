@@ -17,11 +17,10 @@ async function seed(options?: { completed?: boolean }): Promise<void> {
     const request = indexedDB.open('eds-diary', 8)
     request.addEventListener('upgradeneeded', () => {
       const database = request.result
-      if (!database.objectStoreNames.contains('activityEntries')) {
-        database.createObjectStore('activityEntries', { keyPath: 'id' })
-      }
-      if (!database.objectStoreNames.contains('migrationState')) {
-        database.createObjectStore('migrationState', { keyPath: 'id' })
+      for (const storeName of ['activityEntries', 'painEntries', 'migrationState']) {
+        if (!database.objectStoreNames.contains(storeName)) {
+          database.createObjectStore(storeName, { keyPath: 'id' })
+        }
       }
       const transaction = request.transaction!
 
@@ -86,6 +85,17 @@ async function seed(options?: { completed?: boolean }): Promise<void> {
         status: 'deleted',
       })
 
+      // Other legacy stores used the same redundant active/deleted metadata.
+      transaction.objectStore('painEntries').put({
+        id: 'legacy-pain-active',
+        note: 'keep me',
+        status: 'active',
+      })
+      transaction.objectStore('painEntries').put({
+        id: 'legacy-pain-deleted',
+        status: 'deleted',
+      })
+
       if (options?.completed) {
         transaction.objectStore('migrationState').put({
           id: 'legacy-v1',
@@ -102,7 +112,7 @@ async function seed(options?: { completed?: boolean }): Promise<void> {
   })
 }
 
-async function readActivity(id: string): Promise<Record<string, unknown>> {
+async function readRecord(storeName: string, id: string): Promise<Record<string, unknown>> {
   const database = await new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open('eds-diary')
     request.addEventListener('success', () => resolve(request.result), { once: true })
@@ -110,8 +120,8 @@ async function readActivity(id: string): Promise<Record<string, unknown>> {
   })
   try {
     return await new Promise<Record<string, unknown>>((resolve, reject) => {
-      const transaction = database.transaction('activityEntries', 'readonly')
-      const request = transaction.objectStore('activityEntries').get(id)
+      const transaction = database.transaction(storeName, 'readonly')
+      const request = transaction.objectStore(storeName).get(id)
       request.addEventListener('success', () => resolve(request.result), { once: true })
       request.addEventListener('error', () => reject(request.error), { once: true })
     })
@@ -120,10 +130,12 @@ async function readActivity(id: string): Promise<Record<string, unknown>> {
   }
 }
 
+const readActivity = (id: string) => readRecord('activityEntries', id)
+
 describe('legacy activity compatibility', () => {
   beforeEach(deleteDatabase)
 
-  it('reconstructs added fields and removes only redundant active status metadata', async () => {
+  it('reconstructs activity fields and removes redundant active status metadata across stores', async () => {
     await seed()
 
     await normalizeLegacyActivityEntriesForSecureMigration()
@@ -144,6 +156,15 @@ describe('legacy activity compatibility', () => {
     })
     expect(await readActivity('already-current')).not.toHaveProperty('status')
     expect(await readActivity('legacy-deleted')).toEqual({ id: 'legacy-deleted', status: 'deleted' })
+
+    expect(await readRecord('painEntries', 'legacy-pain-active')).toEqual({
+      id: 'legacy-pain-active',
+      note: 'keep me',
+    })
+    expect(await readRecord('painEntries', 'legacy-pain-deleted')).toEqual({
+      id: 'legacy-pain-deleted',
+      status: 'deleted',
+    })
   })
 
   it('does not repair present malformed values', async () => {
@@ -163,5 +184,6 @@ describe('legacy activity compatibility', () => {
     expect(legacy).not.toHaveProperty('color')
     expect(legacy).not.toHaveProperty('isOngoing')
     expect(legacy.status).toBe('active')
+    expect((await readRecord('painEntries', 'legacy-pain-active')).status).toBe('active')
   })
 })
