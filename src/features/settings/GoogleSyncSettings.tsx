@@ -45,6 +45,7 @@ export function GoogleSyncSettings() {
   const [status, setStatus] = useState<StatusMessage>({ message: 'Nicht mit Google authentifiziert.', kind: 'neutral' })
   const [busy, setBusy] = useState(false)
   const [requiresEnablement, setRequiresEnablement] = useState<boolean | null>(null)
+  const [recoveryArtifactAvailable, setRecoveryArtifactAvailable] = useState(false)
   const [recoverySecret, setRecoverySecret] = useState('')
   const [recoverySaved, setRecoverySaved] = useState(false)
   const [artifacts, setArtifacts] = useState<ExportArtifacts | null>(null)
@@ -54,6 +55,7 @@ export function GoogleSyncSettings() {
     void googleRemoteSessionStatus().then((value) => setRequiresEnablement(value.mode === 'local_offline')).catch((cause) => {
       setStatus({ message: cause instanceof Error ? cause.message : 'Lokaler Sicherheitsstatus konnte nicht gelesen werden.', kind: 'bad' })
     })
+    void currentRecoveryArtifact().then(() => setRecoveryArtifactAvailable(true)).catch(() => setRecoveryArtifactAvailable(false))
     return removeSyncListener
   }, [])
 
@@ -87,6 +89,7 @@ export function GoogleSyncSettings() {
         if (urs.byteLength !== 32) throw new Error('Recovery-Schlüssel ist ungültig.')
         const result = await enableAuthenticatedGoogleSession(api, urs)
         setArtifacts({ recovery: result.recovery, backup: result.backup })
+        setRecoveryArtifactAvailable(true)
         setRequiresEnablement(false)
         setStatus({ message: 'Neue verschlüsselte Remote-Epoche wurde erstellt und vollständig verifiziert. Recovery-Artefakt und Backup jetzt herunterladen.', kind: 'good' })
       } else {
@@ -125,7 +128,7 @@ export function GoogleSyncSettings() {
     }
   }
 
-  async function exportRecovery():Promise<void>{setBusy(true);try{downloadJson('eds-diary-recovery.json',await currentRecoveryArtifact());setStatus({message:'Verifiziertes Recovery-Artefakt exportiert. Bewahre den Recovery-Schlüssel weiterhin getrennt auf.',kind:'good'})}catch(cause){setStatus({message:cause instanceof Error?cause.message:'Export fehlgeschlagen.',kind:'bad'})}finally{setBusy(false)}}
+  async function exportRecovery():Promise<void>{setBusy(true);try{downloadJson('eds-diary-recovery.json',await currentRecoveryArtifact());setRecoveryArtifactAvailable(true);setStatus({message:'Verifiziertes Recovery-Artefakt exportiert. Bewahre den Recovery-Schlüssel weiterhin getrennt auf.',kind:'good'})}catch(cause){setStatus({message:cause instanceof Error?cause.message:'Export fehlgeschlagen.',kind:'bad'})}finally{setBusy(false)}}
   async function exportBackup():Promise<void>{setBusy(true);try{const provider=providerRef.current;if(!provider)throw new Error('Verbinde zuerst das gebundene Google-Konto, damit Remote-Daten vollständig verifiziert werden.');downloadJson('eds-diary-backup.json',await createCurrentVerifiedBackup(provider.getApiClient()));setStatus({message:'Aktuelles verschlüsseltes Backup einschließlich lokaler ausstehender Änderungen wurde verifiziert und exportiert.',kind:'good'})}catch(cause){setStatus({message:cause instanceof Error?cause.message:'Backup-Export fehlgeschlagen.',kind:'bad'})}finally{setBusy(false)}}
 
   return (
@@ -170,7 +173,7 @@ export function GoogleSyncSettings() {
           </div>
         ) : null}
 
-        {!requiresEnablement ? <div className="google-sync-settings__actions"><button type="button" disabled={busy} onClick={()=>void exportRecovery()}>Recovery-Artefakt erneut exportieren</button><button type="button" disabled={busy||!syncSnapshot.connected} onClick={()=>void exportBackup()}>Aktuelles verifiziertes Backup exportieren</button></div> : null}
+        {(recoveryArtifactAvailable || !requiresEnablement) ? <div className="google-sync-settings__actions">{recoveryArtifactAvailable ? <button type="button" disabled={busy} onClick={()=>void exportRecovery()}>Recovery-Artefakt erneut exportieren</button> : null}{!requiresEnablement ? <button type="button" disabled={busy||!syncSnapshot.connected} onClick={()=>void exportBackup()}>Aktuelles verifiziertes Backup exportieren</button> : null}</div> : null}
         <p><a href="?mode=recovery">Wiederherstellung in einem frischen Browserprofil öffnen</a></p>
 
         <p className="google-sync-settings__status" data-kind={status.kind} aria-live="polite">{status.message}</p>
