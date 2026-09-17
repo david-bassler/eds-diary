@@ -1,6 +1,7 @@
 import 'fake-indexeddb/auto'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { normalizeLegacyActivityEntriesForSecureMigration } from '../data/legacyCompatibility'
+import { defaultActivityColor } from '../features/activity/activityColors'
 
 async function deleteDatabase(): Promise<void> {
   await new Promise<void>((resolve, reject) => {
@@ -23,31 +24,63 @@ async function seed(options?: { completed?: boolean }): Promise<void> {
         database.createObjectStore('migrationState', { keyPath: 'id' })
       }
       const transaction = request.transaction!
+
+      // Original ActivityEntry shape: before both color and isOngoing existed.
       transaction.objectStore('activityEntries').put({
-        id: 'legacy-activity',
-        date: '2026-09-08',
+        id: 'pre-color',
+        date: '2026-09-07',
         startTime: '08:00',
         endTime: '09:00',
         activityName: 'Spaziergang',
-        color: '#cccccc',
         note: '',
         status: 'active',
-        createdAt: '2026-09-08T06:00:00.000Z',
-        updatedAt: '2026-09-08T06:00:00.000Z',
+        createdAt: '2026-09-07T06:00:00.000Z',
+        updatedAt: '2026-09-07T06:00:00.000Z',
       })
+
+      // Window after colors were introduced but before ongoing activities.
+      transaction.objectStore('activityEntries').put({
+        id: 'pre-ongoing',
+        date: '2026-09-08',
+        startTime: '09:00',
+        endTime: '10:00',
+        activityName: 'Arbeit',
+        color: '#f6cbd0',
+        note: '',
+        status: 'active',
+        createdAt: '2026-09-08T07:00:00.000Z',
+        updatedAt: '2026-09-08T07:00:00.000Z',
+      })
+
       transaction.objectStore('activityEntries').put({
         id: 'already-current',
-        date: '2026-09-08',
+        date: '2026-09-09',
         startTime: '10:00',
         endTime: '',
         isOngoing: true,
         activityName: 'Pause',
+        color: '#c6e3ee',
+        note: '',
+        status: 'active',
+        createdAt: '2026-09-09T08:00:00.000Z',
+        updatedAt: '2026-09-09T08:00:00.000Z',
+      })
+
+      // Present malformed values are not silently repaired by compatibility code.
+      transaction.objectStore('activityEntries').put({
+        id: 'present-malformed-color',
+        date: '2026-09-09',
+        startTime: '11:00',
+        endTime: '12:00',
+        isOngoing: false,
+        activityName: 'Test',
         color: '#cccccc',
         note: '',
         status: 'active',
-        createdAt: '2026-09-08T08:00:00.000Z',
-        updatedAt: '2026-09-08T08:00:00.000Z',
+        createdAt: '2026-09-09T09:00:00.000Z',
+        updatedAt: '2026-09-09T09:00:00.000Z',
       })
+
       if (options?.completed) {
         transaction.objectStore('migrationState').put({
           id: 'legacy-v1',
@@ -85,13 +118,31 @@ async function readActivity(id: string): Promise<Record<string, unknown>> {
 describe('legacy activity compatibility', () => {
   beforeEach(deleteDatabase)
 
-  it('maps a missing legacy isOngoing field to false and preserves current values', async () => {
+  it('reconstructs every field that was added after the original ActivityEntry shape', async () => {
     await seed()
 
     await normalizeLegacyActivityEntriesForSecureMigration()
 
-    expect((await readActivity('legacy-activity')).isOngoing).toBe(false)
-    expect((await readActivity('already-current')).isOngoing).toBe(true)
+    expect(await readActivity('pre-color')).toMatchObject({
+      color: defaultActivityColor('Spaziergang'),
+      isOngoing: false,
+    })
+    expect(await readActivity('pre-ongoing')).toMatchObject({
+      color: '#f6cbd0',
+      isOngoing: false,
+    })
+    expect(await readActivity('already-current')).toMatchObject({
+      color: '#c6e3ee',
+      isOngoing: true,
+    })
+  })
+
+  it('does not repair present malformed values', async () => {
+    await seed()
+
+    await normalizeLegacyActivityEntriesForSecureMigration()
+
+    expect((await readActivity('present-malformed-color')).color).toBe('#cccccc')
   })
 
   it('does not rewrite the legacy source after verified cutover', async () => {
@@ -99,6 +150,8 @@ describe('legacy activity compatibility', () => {
 
     await normalizeLegacyActivityEntriesForSecureMigration()
 
-    expect(await readActivity('legacy-activity')).not.toHaveProperty('isOngoing')
+    const legacy = await readActivity('pre-color')
+    expect(legacy).not.toHaveProperty('color')
+    expect(legacy).not.toHaveProperty('isOngoing')
   })
 })

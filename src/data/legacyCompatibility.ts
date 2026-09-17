@@ -3,6 +3,24 @@ const ACTIVITY_STORE = 'activityEntries'
 const MIGRATION_STORE = 'migrationState'
 const MIGRATION_ID = 'legacy-v1'
 
+// Frozen copy of the palette/default algorithm introduced with activity colors.
+// This belongs to the historical migration contract: changing the product palette
+// later must not change how pre-color records are reconstructed.
+const LEGACY_ACTIVITY_PASTEL_COLORS = [
+  '#f6cbd0',
+  '#f6d7bd',
+  '#f3e2b8',
+  '#dfe8bc',
+  '#cbe7ca',
+  '#c7e8dc',
+  '#c6e3ee',
+  '#cddbf2',
+  '#d8d0ef',
+  '#e5cdec',
+  '#efcde1',
+  '#ead5c7',
+] as const
+
 interface LegacyMigrationState {
   phase?: string
   verified?: boolean
@@ -47,11 +65,30 @@ function requestResult<T>(request: IDBRequest<T>): Promise<T> {
   })
 }
 
+function legacyDefaultActivityColor(activityName: unknown): string {
+  const name = typeof activityName === 'string' ? activityName : ''
+  const key = name.trim().toLocaleLowerCase('de')
+  if (!key) return LEGACY_ACTIVITY_PASTEL_COLORS[6]
+
+  let hash = 2166136261
+  for (let index = 0; index < key.length; index += 1) {
+    hash ^= key.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+
+  return LEGACY_ACTIVITY_PASTEL_COLORS[(hash >>> 0) % LEGACY_ACTIVITY_PASTEL_COLORS.length]
+}
+
 /**
- * Activity entries created before the ongoing-activity feature did not contain
- * `isOngoing`. The product semantics at that time were exactly equivalent to
- * `isOngoing: false`. Normalize only that missing legacy field before the
- * strict v5 schema migration runs; existing values are never rewritten.
+ * The original ActivityEntry already contained note/status/timestamps. Two
+ * required fields were introduced later: color and then isOngoing. Reconstruct
+ * only those genuinely absent historical fields before strict secure migration:
+ * - missing color -> the exact deterministic pastel default used when colors
+ *   were introduced;
+ * - missing isOngoing -> false, matching the pre-ongoing activity semantics.
+ *
+ * Existing values are never repaired or rewritten. If a present value is
+ * malformed, the strict domain validator still fails closed.
  */
 export async function normalizeLegacyActivityEntriesForSecureMigration(): Promise<void> {
   const database = await openDatabase()
@@ -83,13 +120,20 @@ export async function normalizeLegacyActivityEntriesForSecureMigration(): Promis
         }
 
         const value = cursor.value
-        if (
-          value &&
-          typeof value === 'object' &&
-          !Array.isArray(value) &&
-          !Object.prototype.hasOwnProperty.call(value, 'isOngoing')
-        ) {
-          cursor.update({ ...value, isOngoing: false })
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
+          const record = value as Record<string, unknown>
+          const missingColor = !Object.prototype.hasOwnProperty.call(record, 'color')
+          const missingIsOngoing = !Object.prototype.hasOwnProperty.call(record, 'isOngoing')
+
+          if (missingColor || missingIsOngoing) {
+            cursor.update({
+              ...record,
+              ...(missingColor
+                ? { color: legacyDefaultActivityColor(record.activityName) }
+                : {}),
+              ...(missingIsOngoing ? { isOngoing: false } : {}),
+            })
+          }
         }
         cursor.continue()
       })
