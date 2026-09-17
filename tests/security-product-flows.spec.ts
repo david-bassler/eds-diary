@@ -16,6 +16,32 @@ test.describe('security product flows',()=>{
     await expect(status).not.toContainText('JSON is not canonical')
   })
 
+  test('backup-restored profile exposes recovery re-export before Google re-enablement',async({page})=>{
+    await page.goto('/google-auth/')
+    await page.evaluate(async()=>{
+      const modulePath='/src/data/recoveryProfile.ts'
+      const recoveryModule=await import(modulePath) as {persistRecoveredProfile:(candidate:unknown,bootstrap:unknown,schemas:Readonly<Record<string,unknown>>,options:unknown)=>Promise<unknown>}
+      const b64=(length:number,fill:number)=>{
+        const bytes=new Uint8Array(length).fill(fill)
+        return btoa(String.fromCharCode(...bytes)).replaceAll('+','-').replaceAll('/','_').replace(/=+$/u,'')
+      }
+      const diary=b64(16,1),epoch=b64(16,2),keyId=b64(16,3),fingerprint=b64(32,4),artifactId=b64(16,6)
+      const candidate={rootKey:crypto.getRandomValues(new Uint8Array(32)),recoveryCommitment:b64(32,5),payload:{recovery_artifact_id:artifactId,diary_id:diary,epoch_id:epoch,key_id:keyId,RK_epoch:b64(32,7),manifest_fingerprint:fingerprint,remote_anchor:null,google_account_binding:b64(32,8),recovery_generation:1,created_at:'2026-09-17T12:00:00.000Z'}}
+      const bootstrap={source:'verified-backup',verified:{snapshot:{manifest:[],rows:[]},manifestFingerprint:fingerprint,retired:false,verifiedEnvelopeIds:new Set<string>()},remoteBinding:null}
+      const artifact={format:'sync-recovery-v5',version:5,recovery_artifact_id:artifactId,kdf_profile_id:'recovery-hkdf-v5-1',salt:b64(32,9),wrap_iv:b64(12,10),wrapped_payload:b64(16,11)}
+      await recoveryModule.persistRecoveredProfile(candidate,bootstrap,{}, {recoveryArtifact:artifact})
+    })
+    await page.goto('/konfiguration')
+    const storage=page.locator('details.google-sync-settings')
+    await storage.locator('summary').click()
+    await expect(storage.getByRole('button',{name:'Recovery-Artefakt erneut exportieren'})).toBeVisible()
+    await expect(storage.getByRole('button',{name:'Google sicher aktivieren'})).toBeVisible()
+    const downloadPromise=page.waitForEvent('download')
+    await storage.getByRole('button',{name:'Recovery-Artefakt erneut exportieren'}).click()
+    const download=await downloadPromise
+    expect(download.suggestedFilename()).toBe('eds-diary-recovery.json')
+  })
+
   test('configuration exposes recovery and explicit conflict-resolution entry points',async({page})=>{
     await page.goto('/konfiguration')
     await expect(page.getByRole('heading',{level:1,name:'Konfiguration'})).toBeVisible()
