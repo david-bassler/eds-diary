@@ -39,7 +39,7 @@ test.describe('security product flows',()=>{
           request.transaction!.objectStore('painEntries').put({
             id:'legacy-pain',
             startedAt:'2026-09-07T07:00:00.000Z',
-            endedAt:'',
+            endedAt:'2026-09-07T08:00:00.000Z',
             locations:[],
             intensity:4,
             qualities:[],
@@ -48,7 +48,7 @@ test.describe('security product flows',()=>{
             note:'',
             status:'active',
             createdAt:'2026-09-07T07:00:00.000Z',
-            updatedAt:'2026-09-07T07:00:00.000Z',
+            updatedAt:'2026-09-07T08:00:00.000Z',
           })
         }
         request.onsuccess=()=>{request.result.close();resolve()}
