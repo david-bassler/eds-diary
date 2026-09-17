@@ -59,6 +59,25 @@ async function seedLegacyActiveRecords(): Promise<void> {
   })
 }
 
+async function readLegacyRecord(storeName: string, id: string): Promise<Record<string, unknown>> {
+  const database = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open('eds-diary')
+    request.onsuccess = () => resolve(request.result)
+    request.onerror = () => reject(request.error)
+  })
+
+  try {
+    const tx = database.transaction(storeName, 'readonly')
+    return await new Promise<Record<string, unknown>>((resolve, reject) => {
+      const request = tx.objectStore(storeName).get(id)
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+  } finally {
+    database.close()
+  }
+}
+
 describe('legacy active status compatibility', () => {
   beforeEach(async () => {
     vi.resetModules()
@@ -66,41 +85,14 @@ describe('legacy active status compatibility', () => {
     await seedLegacyActiveRecords()
   })
 
-  it('prepares an active legacy pain record for secure migration', async () => {
+  it('prepares active legacy pain and medication records for secure migration', async () => {
     const { googleRemoteSessionStatus } = await import('../data/initializeDataLayer')
     await expect(googleRemoteSessionStatus()).resolves.toMatchObject({ mode: 'local_offline' })
 
-    const database = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open('eds-diary')
-      request.onsuccess = () => resolve(request.result)
-      request.onerror = () => reject(request.error)
-    })
-    const tx = database.transaction('painEntries', 'readonly')
-    const value = await new Promise<Record<string, unknown>>((resolve, reject) => {
-      const request = tx.objectStore('painEntries').get('pain-active')
-      request.onsuccess = () => resolve(request.result)
-      request.onerror = () => reject(request.error)
-    })
-    expect(value).not.toHaveProperty('status')
-    database.close()
-  })
+    const pain = await readLegacyRecord('painEntries', 'pain-active')
+    const medication = await readLegacyRecord('medicationEntries', 'med-active')
 
-  it('prepares an active legacy medication record for secure migration', async () => {
-    const { googleRemoteSessionStatus } = await import('../data/initializeDataLayer')
-    await expect(googleRemoteSessionStatus()).resolves.toMatchObject({ mode: 'local_offline' })
-
-    const database = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open('eds-diary')
-      request.onsuccess = () => resolve(request.result)
-      request.onerror = () => reject(request.error)
-    })
-    const tx = database.transaction('medicationEntries', 'readonly')
-    const value = await new Promise<Record<string, unknown>>((resolve, reject) => {
-      const request = tx.objectStore('medicationEntries').get('med-active')
-      request.onsuccess = () => resolve(request.result)
-      request.onerror = () => reject(request.error)
-    })
-    expect(value).not.toHaveProperty('status')
-    database.close()
+    expect(pain).not.toHaveProperty('status')
+    expect(medication).not.toHaveProperty('status')
   })
 })
