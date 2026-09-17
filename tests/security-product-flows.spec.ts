@@ -16,7 +16,7 @@ test.describe('security product flows',()=>{
     await expect(status).not.toContainText('JSON is not canonical')
   })
 
-  test('pre-color active activity prepares successfully and exposes a guided Google setup',async({page})=>{
+  test('active legacy records across stores prepare successfully and expose a guided Google setup',async({page})=>{
     await page.goto('/google-auth/')
     await page.evaluate(async()=>{
       await new Promise<void>((resolve,reject)=>{
@@ -35,6 +35,20 @@ test.describe('security product flows',()=>{
             status:'active',
             createdAt:'2026-09-07T06:00:00.000Z',
             updatedAt:'2026-09-07T06:00:00.000Z',
+          })
+          request.transaction!.objectStore('painEntries').put({
+            id:'legacy-pain',
+            startedAt:'2026-09-07T07:00:00.000Z',
+            endedAt:'',
+            locations:[],
+            intensity:4,
+            qualities:[],
+            cause:'',
+            occursWhen:'',
+            note:'',
+            status:'active',
+            createdAt:'2026-09-07T07:00:00.000Z',
+            updatedAt:'2026-09-07T07:00:00.000Z',
           })
         }
         request.onsuccess=()=>{request.result.close();resolve()}
