@@ -1,11 +1,11 @@
+import { assertAllowedGoogleApiRequest } from './googleAuthRpcPolicy'
+
 interface TokenResponse { access_token?: string; error?: string; expires_in?: number }
 interface TokenClient { requestAccessToken(options?: { prompt?: string }): void }
 interface GoogleAccounts { oauth2: { initTokenClient(options: { client_id: string; scope: string; callback: (response: TokenResponse) => void; error_callback: () => void }): TokenClient; revoke(token: string, callback: () => void): void } }
 
 declare global { interface Window { google?: { accounts: GoogleAccounts } } }
 
-const API_ORIGINS = new Set(['https://www.googleapis.com', 'https://sheets.googleapis.com'])
-const ALLOWED_METHODS = new Set(['GET', 'POST', 'PATCH'])
 const ACTION = /^[A-Za-z0-9_-]{32,128}$/
 const params = new URLSearchParams(location.search)
 const actionId = params.get('action_id') ?? ''
@@ -50,10 +50,9 @@ async function rpc(port: MessagePort, data: Record<string, unknown>): Promise<vo
   try {
     if (!accessToken || data.type !== 'eds-diary/google-api-request/v1' || !requestId) throw new Error('Ungültige API-Anfrage.')
     const url = new URL(String(data.url ?? ''))
-    if (url.protocol !== 'https:' || !API_ORIGINS.has(url.origin)) throw new Error('API-Origin ist nicht erlaubt.')
     const init = (data.init ?? {}) as { method?: string; headers?: Record<string, string>; body?: string }
     const method = (init.method ?? 'GET').toUpperCase()
-    if (!ALLOWED_METHODS.has(method)) throw new Error('HTTP-Methode ist nicht erlaubt.')
+    assertAllowedGoogleApiRequest(url, method)
     const headers = new Headers(init.headers)
     if (headers.has('authorization')) throw new Error('Authorization darf nicht übergeben werden.')
     headers.set('Authorization', `Bearer ${accessToken}`)

@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { fromBase64Url, base64Url, randomBytes } from '../../security/crypto/bytes'
-import { parseCanonicalJson } from '../../security/crypto/canonical'
+import { parseStrictJson } from '../../security/crypto/canonical'
 import { recoverRootKeyCandidate, activateRecoveredRoot, type RecoveryArtifact } from '../../security/recovery'
 import type { SyncBackupV5 } from '../../security/backup'
 import { DOMAIN_SCHEMA_REGISTRY } from '../../data/localDatabase'
@@ -14,7 +14,7 @@ type Method = 'backup' | 'google'
 
 async function readJson(file: File, maximum: number): Promise<unknown> {
   if (file.size <= 0 || file.size > maximum) throw new Error('Die Datei ist leer oder überschreitet die erlaubte Größe.')
-  return parseCanonicalJson(new Uint8Array(await file.arrayBuffer()))
+  return parseStrictJson(new Uint8Array(await file.arrayBuffer()))
 }
 
 export function RecoverySettings() {
@@ -51,7 +51,7 @@ export function RecoverySettings() {
         authority = await IndependentBootstrapAuthority.fromAuthenticatedGoogleDiscovery(transport, locator, discovered[0]!.remoteId)
       }
       const verifier = new RecoveryBootstrapVerifier({ authority, schemas: DOMAIN_SCHEMA_REGISTRY })
-      await activateRecoveredRoot(candidate, verifier, (verifiedCandidate, bootstrap) => persistRecoveredProfile(verifiedCandidate, bootstrap, DOMAIN_SCHEMA_REGISTRY))
+      await activateRecoveredRoot(candidate, verifier, (verifiedCandidate, bootstrap) => persistRecoveredProfile(verifiedCandidate, bootstrap, DOMAIN_SCHEMA_REGISTRY, { recoveryArtifact: artifactValue }))
       setStatus('Wiederherstellung und vollständiger lokaler Readback waren erfolgreich. Die App wird neu geladen; richte danach einen neuen starken lokalen Schutz ein.')
       window.setTimeout(() => { location.href = '/configuration' }, 800)
     } catch (cause) {

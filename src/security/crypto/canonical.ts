@@ -23,12 +23,24 @@ export function canonicalJson(value: CanonicalValue): string {
   return result
 }
 
-export function parseCanonicalJson(bytes: Uint8Array): CanonicalValue {
+/** Strict import parser for user-supplied JSON documents.  It rejects duplicate
+ * properties and non-I-JSON values but deliberately does not require the source
+ * bytes themselves to be JCS-canonical.  This keeps legacy pretty-printed exports
+ * importable while all cryptographic comparisons still use canonicalJson/Bytes. */
+export function parseStrictJson(bytes: Uint8Array): CanonicalValue {
   const source = decodeUtf8(bytes)
   rejectDuplicateProperties(source)
   const parsed: unknown = JSON.parse(source)
-  if (canonicalJson(parsed as CanonicalValue) !== source) throw new Error('JSON is not canonical JCS or contains unsupported values.')
+  assertIJson(parsed as CanonicalValue)
+  canonicalJson(parsed as CanonicalValue)
   return parsed as CanonicalValue
+}
+
+export function parseCanonicalJson(bytes: Uint8Array): CanonicalValue {
+  const source = decodeUtf8(bytes)
+  const parsed = parseStrictJson(bytes)
+  if (canonicalJson(parsed) !== source) throw new Error('JSON is not canonical JCS or contains unsupported values.')
+  return parsed
 }
 
 /** JSON.parse silently applies last-key-wins.  This small grammar walk records

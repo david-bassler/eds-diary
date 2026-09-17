@@ -3,10 +3,11 @@ import type { RecoveryArtifact } from '../security/recovery'
 import { FullRemoteVerifier } from '../sync/core/remoteVerifier'
 import { GoogleSheetsSingleWriterTransport, type GoogleApiClient } from '../sync/google/GoogleSheetsSingleWriterTransport'
 import { activeEpochSyncContext, activeEpochVerifierMaterial, DOMAIN_SCHEMA_REGISTRY, storedRotationArtifact } from './localDatabase'
+import { storedRecoveredRecoveryArtifact } from './recoveryProfile'
 import { deriveEpochSalt } from '../security/crypto/core'
 import { fromBase64Url } from '../security/crypto/bytes'
 
-export async function currentRecoveryArtifact():Promise<RecoveryArtifact>{const artifact=await storedRotationArtifact<RecoveryArtifact>('recovery');if(!artifact)throw new Error('Für die aktive Epoche ist kein verifiziertes Recovery-Artefakt gespeichert.');return artifact}
+export async function currentRecoveryArtifact():Promise<RecoveryArtifact>{const artifact=await storedRotationArtifact<RecoveryArtifact>('recovery')??await storedRecoveredRecoveryArtifact();if(!artifact)throw new Error('Für die aktive Epoche ist kein verifiziertes Recovery-Artefakt gespeichert.');return artifact}
 
 export async function createCurrentVerifiedBackup(api:GoogleApiClient):Promise<SyncBackupV5>{
   const active=await activeEpochSyncContext(),binding=active.state.remote_binding
