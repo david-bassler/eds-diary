@@ -3,10 +3,17 @@ import { SingleWriterSyncService } from './singleWriterSyncService'
 import type { GoogleApiClient } from '../sync/google/GoogleSheetsSingleWriterTransport'
 import { GoogleSheetsSingleWriterTransport } from '../sync/google/GoogleSheetsSingleWriterTransport'
 import { activeEpochSyncContext } from './localDatabase'
+import { normalizeLegacyActivityEntriesForSecureMigration } from './legacyCompatibility'
 import { ProductiveRotationService, type CompletedRotation } from './productiveRotationService'
 
 let initialized = false
 let secureSync:SingleWriterSyncService|null=null
+let legacyCompatibilityPromise:Promise<void>|null=null
+
+function ensureLegacyCompatibility():Promise<void>{
+  legacyCompatibilityPromise??=normalizeLegacyActivityEntriesForSecureMigration()
+  return legacyCompatibilityPromise
+}
 
 export interface GoogleRemoteSessionStatus {
   mode:'local_offline'|'remote_bound'
@@ -21,6 +28,7 @@ export async function synchronizeDataLayer():Promise<void>{if(!secureSync)throw 
 /** Called by the authenticated provider hand-off. It reconstructs the product
  * service from the MAC-authenticated active remote binding. */
 export async function installAuthenticatedGoogleSession(api:GoogleApiClient):Promise<void>{
+  await ensureLegacyCompatibility()
   const service=await SingleWriterSyncService.createGoogle(api)
   secureSync=service
   installSecureSynchronizer(()=>service.synchronize())
@@ -28,6 +36,7 @@ export async function installAuthenticatedGoogleSession(api:GoogleApiClient):Pro
 export function clearAuthenticatedRemoteSession():void{secureSync=null;clearSecureSynchronizer()}
 
 export async function googleRemoteSessionStatus():Promise<GoogleRemoteSessionStatus>{
+  await ensureLegacyCompatibility()
   const active=await activeEpochSyncContext(),binding=active.state.remote_binding
   return{mode:binding?'remote_bound':'local_offline',epochId:active.epochId,remoteResourceId:binding?.remote_resource_id??null}
 }
@@ -37,6 +46,7 @@ export async function googleRemoteSessionStatus():Promise<GoogleRemoteSessionSta
  * than binding the local-offline pseudo-manifest in place. */
 export async function enableAuthenticatedGoogleSession(api:GoogleApiClient,urs:Uint8Array):Promise<CompletedRotation>{
   if(urs.byteLength!==32)throw new Error('Recovery secret must contain 32 bytes.')
+  await ensureLegacyCompatibility()
   const active=await activeEpochSyncContext()
   if(active.state.remote_binding||active.state.remote_anchor||active.state.epoch_status!=='local_offline')throw new Error('The active epoch is not eligible for first remote enablement.')
   const transport=await GoogleSheetsSingleWriterTransport.fromAuthenticatedSession(api,active.diaryId,active.epochId)
@@ -47,6 +57,7 @@ export async function enableAuthenticatedGoogleSession(api:GoogleApiClient,urs:U
 
 /** Product entry point used by an already remote-bound authenticated settings lifecycle. */
 export async function rotateAuthenticatedGoogleSession(api:GoogleApiClient,urs:Uint8Array):Promise<CompletedRotation>{
+  await ensureLegacyCompatibility()
   const active=await activeEpochSyncContext(),transport=await GoogleSheetsSingleWriterTransport.fromAuthenticatedSession(api,active.diaryId,active.epochId)
   const result=await new ProductiveRotationService(transport,urs).rotate()
   await installAuthenticatedGoogleSession(api)
