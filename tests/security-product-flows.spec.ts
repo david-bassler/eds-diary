@@ -17,7 +17,8 @@ test.describe('security product flows',()=>{
   })
 
   test('configuration exposes recovery and explicit conflict-resolution entry points',async({page})=>{
-    await page.goto('/configuration')
+    await page.goto('/konfiguration')
+    await expect(page.getByRole('heading',{level:1,name:'Konfiguration'})).toBeVisible()
     await expect(page.getByText('Fachliche Konflikte')).toBeVisible()
     await expect(page.getByRole('link',{name:/Wiederherstellung/})).toHaveAttribute('href','?mode=recovery')
   })
