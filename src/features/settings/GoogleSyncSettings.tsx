@@ -20,12 +20,13 @@ import { createCurrentVerifiedBackup, currentRecoveryArtifact } from '../../data
 type StatusKind = 'neutral' | 'good' | 'bad'
 interface StatusMessage { message: string; kind: StatusKind }
 interface ExportArtifacts { recovery: unknown; backup: unknown }
+interface StorageSetupState { requiresEnablement: boolean; recoveryArtifactAvailable: boolean }
 
 function syncDescription(snapshot: SyncSnapshot): string {
   if (snapshot.state === 'syncing') return 'Synchronisierung läuft …'
-  if (snapshot.state === 'synced') return 'Lokal und verschlüsselt mit Google synchronisiert.'
-  if (snapshot.state === 'pending') return snapshot.connected ? 'Lokal gespeichert · Synchronisierung steht aus.' : 'Lokal gespeichert · Google ist nicht authentifiziert.'
-  if (snapshot.state === 'error') return snapshot.error?.message ?? 'Synchronisierung fehlgeschlagen.'
+  if (snapshot.state === 'synced') return 'Mit Google synchronisiert.'
+  if (snapshot.state === 'pending') return snapshot.connected ? 'Änderungen warten auf Synchronisierung.' : 'Nur lokal gespeichert.'
+  if (snapshot.state === 'error') return 'Synchronisierung benötigt Aufmerksamkeit.'
   return 'Nur lokal in diesem Browser gespeichert.'
 }
 
@@ -39,11 +40,25 @@ function downloadJson(filename: string, value: unknown): void {
   URL.revokeObjectURL(url)
 }
 
+async function readStorageSetupState(): Promise<StorageSetupState> {
+  const value = await googleRemoteSessionStatus()
+  const recoveryArtifactAvailable = await currentRecoveryArtifact().then(
+    () => true,
+    () => false,
+  )
+  return {
+    requiresEnablement: value.mode === 'local_offline',
+    recoveryArtifactAvailable,
+  }
+}
+
 export function GoogleSyncSettings() {
   const providerRef = useRef<GoogleAuthProvider | null>(null)
   const [syncSnapshot, setSyncSnapshot] = useState(getSyncSnapshot)
-  const [status, setStatus] = useState<StatusMessage>({ message: 'Nicht mit Google authentifiziert.', kind: 'neutral' })
+  const [status, setStatus] = useState<StatusMessage | null>(null)
   const [busy, setBusy] = useState(false)
+  const [preparing, setPreparing] = useState(true)
+  const [preparationError, setPreparationError] = useState<string | null>(null)
   const [requiresEnablement, setRequiresEnablement] = useState<boolean | null>(null)
   const [recoveryArtifactAvailable, setRecoveryArtifactAvailable] = useState(false)
   const [recoverySecret, setRecoverySecret] = useState('')
@@ -52,45 +67,70 @@ export function GoogleSyncSettings() {
 
   useEffect(() => {
     const removeSyncListener = onSyncState(setSyncSnapshot)
-    void (async () => {
-      try {
-        const value = await googleRemoteSessionStatus()
-        setRequiresEnablement(value.mode === 'local_offline')
-        try {
-          await currentRecoveryArtifact()
-          setRecoveryArtifactAvailable(true)
-        } catch {
-          setRecoveryArtifactAvailable(false)
-        }
-      } catch (cause) {
-        const reason = cause instanceof Error ? cause.message : 'Unbekannter Fehler.'
-        setStatus({
-          message: `Lokale Daten konnten nicht für die sichere Synchronisierung vorbereitet werden: ${reason}`,
-          kind: 'bad',
-        })
-      }
-    })()
-    return removeSyncListener
+    let cancelled = false
+
+    void readStorageSetupState().then(
+      (value) => {
+        if (cancelled) return
+        setRequiresEnablement(value.requiresEnablement)
+        setRecoveryArtifactAvailable(value.recoveryArtifactAvailable)
+        setPreparationError(null)
+        setPreparing(false)
+      },
+      (cause: unknown) => {
+        if (cancelled) return
+        setRequiresEnablement(null)
+        setPreparationError(cause instanceof Error ? cause.message : 'Unbekannter interner Fehler.')
+        setPreparing(false)
+      },
+    )
+
+    return () => {
+      cancelled = true
+      removeSyncListener()
+    }
   }, [])
+
+  function retryPreparation(): void {
+    setPreparing(true)
+    setPreparationError(null)
+    void readStorageSetupState().then(
+      (value) => {
+        setRequiresEnablement(value.requiresEnablement)
+        setRecoveryArtifactAvailable(value.recoveryArtifactAvailable)
+        setPreparationError(null)
+        setPreparing(false)
+      },
+      (cause: unknown) => {
+        setRequiresEnablement(null)
+        setPreparationError(cause instanceof Error ? cause.message : 'Unbekannter interner Fehler.')
+        setPreparing(false)
+      },
+    )
+  }
 
   function generateRecoverySecret(): void {
     setRecoverySecret(base64Url(randomBytes(32)))
     setRecoverySaved(false)
     setArtifacts(null)
-    setStatus({ message: 'Recovery-Schlüssel erzeugt. Speichere ihn getrennt und bestätige das, bevor Google aktiviert wird.', kind: 'neutral' })
+    setStatus({
+      message: 'Recovery-Schlüssel erstellt. Speichere ihn außerhalb dieser App.',
+      kind: 'neutral',
+    })
   }
 
   async function copyRecoverySecret(): Promise<void> {
     if (!recoverySecret) return
     await navigator.clipboard.writeText(recoverySecret)
-    setStatus({ message: 'Recovery-Schlüssel in die Zwischenablage kopiert.', kind: 'good' })
+    setStatus({ message: 'Recovery-Schlüssel kopiert.', kind: 'good' })
   }
 
   async function connectAndSync(): Promise<void> {
     setBusy(true)
+    setStatus(null)
     try {
       const authOrigin = import.meta.env.VITE_GOOGLE_AUTH_ORIGIN as string | undefined
-      if (!authOrigin) throw new Error('Der separate Google-Auth-Origin ist für diese Installation nicht konfiguriert.')
+      if (!authOrigin) throw new Error('Google-Anmeldung ist für diese Installation noch nicht konfiguriert.')
       const provider = providerRef.current ?? new GoogleAuthProvider(authOrigin)
       providerRef.current = provider
       const actionId = base64Url(randomBytes(32))
@@ -98,19 +138,20 @@ export function GoogleSyncSettings() {
       const api = provider.getApiClient()
       const remote = await googleRemoteSessionStatus()
       if (remote.mode === 'local_offline') {
-        if (!recoverySecret || !recoverySaved) throw new Error('Vor der ersten Google-Aktivierung muss der Recovery-Schlüssel separat gespeichert und bestätigt werden.')
+        if (!recoverySecret || !recoverySaved) {
+          throw new Error('Speichere zuerst den Recovery-Schlüssel und bestätige Schritt 1.')
+        }
         const urs = fromBase64Url(recoverySecret)
         if (urs.byteLength !== 32) throw new Error('Recovery-Schlüssel ist ungültig.')
         const result = await enableAuthenticatedGoogleSession(api, urs)
         setArtifacts({ recovery: result.recovery, backup: result.backup })
         setRecoveryArtifactAvailable(true)
         setRequiresEnablement(false)
-        setStatus({ message: 'Neue verschlüsselte Remote-Epoche wurde erstellt und vollständig verifiziert. Recovery-Artefakt und Backup jetzt herunterladen.', kind: 'good' })
       } else {
         await installAuthenticatedGoogleSession(api)
-        setStatus({ message: 'Google-Identität und gespeicherte Remote-Bindung wurden authentifiziert.', kind: 'good' })
       }
       await syncAll()
+      setStatus({ message: 'Google ist verbunden und die Daten sind synchronisiert.', kind: 'good' })
     } catch (cause) {
       setStatus({ message: cause instanceof Error ? cause.message : 'Google-Verbindung fehlgeschlagen.', kind: 'bad' })
     } finally {
@@ -122,7 +163,7 @@ export function GoogleSyncSettings() {
     setBusy(true)
     try {
       await syncAll()
-      setStatus({ message: 'Vollständig verifiziert und synchronisiert.', kind: 'good' })
+      setStatus({ message: 'Synchronisierung abgeschlossen.', kind: 'good' })
     } catch (cause) {
       setStatus({ message: cause instanceof Error ? cause.message : 'Synchronisierung fehlgeschlagen.', kind: 'bad' })
     } finally {
@@ -136,62 +177,192 @@ export function GoogleSyncSettings() {
       await providerRef.current?.disconnect()
       providerRef.current = null
       clearAuthenticatedRemoteSession()
-      setStatus({ message: 'Google-Sitzung getrennt. Die verschlüsselten lokalen Daten bleiben erhalten.', kind: 'neutral' })
+      setStatus({ message: 'Google-Verbindung getrennt. Deine lokalen Daten bleiben erhalten.', kind: 'neutral' })
     } finally {
       setBusy(false)
     }
   }
 
-  async function exportRecovery():Promise<void>{setBusy(true);try{downloadJson('eds-diary-recovery.json',await currentRecoveryArtifact());setRecoveryArtifactAvailable(true);setStatus({message:'Verifiziertes Recovery-Artefakt exportiert. Bewahre den Recovery-Schlüssel weiterhin getrennt auf.',kind:'good'})}catch(cause){setStatus({message:cause instanceof Error?cause.message:'Export fehlgeschlagen.',kind:'bad'})}finally{setBusy(false)}}
-  async function exportBackup():Promise<void>{setBusy(true);try{const provider=providerRef.current;if(!provider)throw new Error('Verbinde zuerst das gebundene Google-Konto, damit Remote-Daten vollständig verifiziert werden.');downloadJson('eds-diary-backup.json',await createCurrentVerifiedBackup(provider.getApiClient()));setStatus({message:'Aktuelles verschlüsseltes Backup einschließlich lokaler ausstehender Änderungen wurde verifiziert und exportiert.',kind:'good'})}catch(cause){setStatus({message:cause instanceof Error?cause.message:'Backup-Export fehlgeschlagen.',kind:'bad'})}finally{setBusy(false)}}
+  async function exportRecovery(): Promise<void> {
+    setBusy(true)
+    try {
+      downloadJson('eds-diary-recovery.json', await currentRecoveryArtifact())
+      setRecoveryArtifactAvailable(true)
+      setStatus({ message: 'Recovery-Datei exportiert.', kind: 'good' })
+    } catch (cause) {
+      setStatus({ message: cause instanceof Error ? cause.message : 'Export fehlgeschlagen.', kind: 'bad' })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function exportBackup(): Promise<void> {
+    setBusy(true)
+    try {
+      const provider = providerRef.current
+      if (!provider) throw new Error('Verbinde zuerst dein Google-Konto.')
+      downloadJson('eds-diary-backup.json', await createCurrentVerifiedBackup(provider.getApiClient()))
+      setStatus({ message: 'Aktuelles verschlüsseltes Backup exportiert.', kind: 'good' })
+    } catch (cause) {
+      setStatus({ message: cause instanceof Error ? cause.message : 'Backup-Export fehlgeschlagen.', kind: 'bad' })
+    } finally {
+      setBusy(false)
+    }
+  }
 
   return (
-    <details className="google-sync-settings">
-      <summary className="google-sync-settings__summary">
-        Datenspeicherung
-        <span className="google-sync-settings__state" data-state={syncSnapshot.state}>{syncDescription(syncSnapshot)}</span>
-      </summary>
+    <section className="google-sync-settings" aria-labelledby="google-sync-settings-heading">
+      <header className="google-sync-settings__header">
+        <div>
+          <h2 id="google-sync-settings-heading">Google-Synchronisierung</h2>
+          <p className="google-sync-settings__state" data-state={syncSnapshot.state}>
+            {syncDescription(syncSnapshot)}
+          </p>
+        </div>
+        {syncSnapshot.connected ? <span className="google-sync-settings__badge">Verbunden</span> : null}
+      </header>
 
       <div className="google-sync-settings__content">
-        <p className="google-sync-settings__privacy">
-          Fachliche Tagebuchdaten werden als verschlüsselte immutable Envelopes gespeichert. Google-Anmeldung und Tokens laufen auf einem getrennten Auth-Origin; dieser App-Origin erhält nur einen gebundenen API-Kanal.
-        </p>
-
-        {requiresEnablement ? (
-          <div className="google-sync-settings__field">
-            <span>Recovery-Schlüssel für die erste Remote-Epoche</span>
-            <input type="text" readOnly value={recoverySecret} placeholder="Noch nicht erzeugt" aria-label="Recovery-Schlüssel" />
-            <div className="google-sync-settings__actions">
-              <button type="button" onClick={generateRecoverySecret} disabled={busy}>Recovery-Schlüssel erzeugen</button>
-              <button type="button" onClick={() => void copyRecoverySecret()} disabled={busy || !recoverySecret}>Kopieren</button>
-            </div>
-            <label>
-              <input type="checkbox" checked={recoverySaved} disabled={!recoverySecret || busy} onChange={(event) => setRecoverySaved(event.target.checked)} />
-              Ich habe den Recovery-Schlüssel getrennt gespeichert.
-            </label>
+        {preparing ? (
+          <div className="google-sync-settings__preparing" role="status">
+            <strong>Lokale Daten werden vorbereitet …</strong>
+            <span>Beim ersten Einrichten kann das einen Moment dauern.</span>
           </div>
         ) : null}
 
-        <div className="google-sync-settings__actions">
-          <button type="button" onClick={() => void connectAndSync()} disabled={busy || requiresEnablement === null || Boolean(requiresEnablement && (!recoverySecret || !recoverySaved))}>
-            {requiresEnablement ? 'Google sicher aktivieren' : 'Mit Google verbinden'}
-          </button>
-          <button type="button" onClick={() => void synchronize()} disabled={busy || !syncSnapshot.connected}>Jetzt synchronisieren</button>
-          <button type="button" onClick={() => void disconnect()} disabled={busy || !syncSnapshot.connected}>Google-Sitzung trennen</button>
-        </div>
+        {!preparing && preparationError ? (
+          <div className="google-sync-settings__problem" role="alert">
+            <strong>Google-Synchronisierung konnte noch nicht vorbereitet werden.</strong>
+            <p>Deine lokalen Tagebuchdaten bleiben erhalten. Versuche die Vorbereitung erneut.</p>
+            <button type="button" className="google-sync-settings__primary" onClick={retryPreparation}>
+              Erneut versuchen
+            </button>
+            <details className="google-sync-settings__technical-error">
+              <summary>Technische Details</summary>
+              <code>{preparationError}</code>
+            </details>
+          </div>
+        ) : null}
+
+        {!preparing && !preparationError && requiresEnablement ? (
+          <div className="google-sync-settings__setup">
+            <div className="google-sync-settings__intro">
+              <h3>Google-Konto verbinden</h3>
+              <p>
+                Deine Tagebuchdaten werden verschlüsselt, bevor sie dein Gerät verlassen. Die App legt dafür ein eigenes Google Sheet in deinem Konto an.
+              </p>
+            </div>
+
+            <ol className="google-sync-settings__steps">
+              <li className="google-sync-settings__step" data-complete={recoverySaved || undefined}>
+                <span className="google-sync-settings__step-number">1</span>
+                <div>
+                  <strong>Recovery-Schlüssel speichern</strong>
+                  <p>Damit kannst du dein Tagebuch wiederherstellen, wenn dieses Browserprofil verloren geht. Der Schlüssel wird nicht in der App gespeichert.</p>
+                  {!recoverySecret ? (
+                    <button type="button" className="google-sync-settings__primary" onClick={generateRecoverySecret} disabled={busy}>
+                      Recovery-Schlüssel erstellen
+                    </button>
+                  ) : (
+                    <div className="google-sync-settings__recovery">
+                      <label htmlFor="google-sync-recovery-key">Recovery-Schlüssel</label>
+                      <input id="google-sync-recovery-key" type="text" readOnly value={recoverySecret} />
+                      <button type="button" onClick={() => void copyRecoverySecret()} disabled={busy}>Kopieren</button>
+                      <label className="google-sync-settings__confirmation">
+                        <input
+                          type="checkbox"
+                          checked={recoverySaved}
+                          disabled={busy}
+                          onChange={(event) => setRecoverySaved(event.target.checked)}
+                        />
+                        Ich habe den Schlüssel außerhalb dieser App gespeichert.
+                      </label>
+                    </div>
+                  )}
+                </div>
+              </li>
+
+              <li className="google-sync-settings__step" data-disabled={!recoverySaved || undefined}>
+                <span className="google-sync-settings__step-number">2</span>
+                <div>
+                  <strong>Mit Google verbinden</strong>
+                  <p>Du meldest dich bei Google an. Danach erstellt die App den verschlüsselten Speicher und startet die erste Synchronisierung.</p>
+                  {recoverySaved ? (
+                    <button type="button" className="google-sync-settings__primary" onClick={() => void connectAndSync()} disabled={busy}>
+                      {busy ? 'Verbindung wird hergestellt …' : 'Mit Google verbinden'}
+                    </button>
+                  ) : (
+                    <p className="google-sync-settings__hint">Zuerst Schritt 1 abschließen.</p>
+                  )}
+                </div>
+              </li>
+            </ol>
+          </div>
+        ) : null}
+
+        {!preparing && !preparationError && requiresEnablement === false && !syncSnapshot.connected ? (
+          <div className="google-sync-settings__setup">
+            <div className="google-sync-settings__intro">
+              <h3>Google-Konto verbinden</h3>
+              <p>Dieses Tagebuch ist bereits für Google eingerichtet. Melde dich mit dem gebundenen Google-Konto an, um zu synchronisieren.</p>
+            </div>
+            <button type="button" className="google-sync-settings__primary" onClick={() => void connectAndSync()} disabled={busy}>
+              {busy ? 'Verbindung wird hergestellt …' : 'Mit Google verbinden'}
+            </button>
+          </div>
+        ) : null}
+
+        {!preparing && !preparationError && syncSnapshot.connected ? (
+          <div className="google-sync-settings__connected">
+            <div>
+              <strong>Google ist verbunden.</strong>
+              <p>{syncDescription(syncSnapshot)}</p>
+            </div>
+            <div className="google-sync-settings__actions">
+              <button type="button" className="google-sync-settings__primary" onClick={() => void synchronize()} disabled={busy}>
+                Jetzt synchronisieren
+              </button>
+              <button type="button" onClick={() => void disconnect()} disabled={busy}>Verbindung trennen</button>
+            </div>
+          </div>
+        ) : null}
 
         {artifacts ? (
-          <div className="google-sync-settings__actions">
-            <button type="button" onClick={() => downloadJson('eds-diary-recovery.json', artifacts.recovery)}>Recovery-Artefakt herunterladen</button>
-            <button type="button" onClick={() => downloadJson('eds-diary-backup.json', artifacts.backup)}>Verifiziertes Backup herunterladen</button>
+          <div className="google-sync-settings__important">
+            <strong>Wiederherstellungsdateien jetzt speichern</strong>
+            <p>Bewahre diese Dateien getrennt vom Recovery-Schlüssel auf.</p>
+            <div className="google-sync-settings__actions">
+              <button type="button" onClick={() => downloadJson('eds-diary-recovery.json', artifacts.recovery)}>Recovery-Datei herunterladen</button>
+              <button type="button" onClick={() => downloadJson('eds-diary-backup.json', artifacts.backup)}>Backup herunterladen</button>
+            </div>
           </div>
         ) : null}
 
-        {(recoveryArtifactAvailable || !requiresEnablement) ? <div className="google-sync-settings__actions">{recoveryArtifactAvailable ? <button type="button" disabled={busy} onClick={()=>void exportRecovery()}>Recovery-Artefakt erneut exportieren</button> : null}{!requiresEnablement ? <button type="button" disabled={busy||!syncSnapshot.connected} onClick={()=>void exportBackup()}>Aktuelles verifiziertes Backup exportieren</button> : null}</div> : null}
-        <p><a href="?mode=recovery">Wiederherstellung in einem frischen Browserprofil öffnen</a></p>
+        {status ? (
+          <p className="google-sync-settings__status" data-kind={status.kind} role="status" aria-live="polite">{status.message}</p>
+        ) : null}
 
-        <p className="google-sync-settings__status" data-kind={status.kind} aria-live="polite">{status.message}</p>
+        {!preparing && !preparationError ? (
+          <details className="google-sync-settings__advanced">
+            <summary>Backup &amp; Wiederherstellung</summary>
+            <div className="google-sync-settings__advanced-content">
+              <div className="google-sync-settings__actions">
+                {recoveryArtifactAvailable ? (
+                  <button type="button" disabled={busy} onClick={() => void exportRecovery()}>Recovery-Datei erneut exportieren</button>
+                ) : null}
+                {syncSnapshot.connected ? (
+                  <button type="button" disabled={busy} onClick={() => void exportBackup()}>Aktuelles Backup exportieren</button>
+                ) : null}
+              </div>
+              <a href="?mode=recovery">Tagebuch wiederherstellen</a>
+              <details className="google-sync-settings__technical-details">
+                <summary>Technische Details zur Speicherung</summary>
+                <p>Die Tagebuchdaten werden als verschlüsselte, unveränderliche Datensätze gespeichert. Google-Anmeldung und Tokens laufen auf einem getrennten Auth-Origin und werden nicht an den Tagebuch-Origin weitergegeben.</p>
+              </details>
+            </div>
+          </details>
+        ) : null}
       </div>
-    </details>
+    </section>
   )
 }

@@ -16,6 +16,46 @@ test.describe('security product flows',()=>{
     await expect(status).not.toContainText('JSON is not canonical')
   })
 
+  test('pre-color active activity prepares successfully and exposes a guided Google setup',async({page})=>{
+    await page.goto('/google-auth/')
+    await page.evaluate(async()=>{
+      await new Promise<void>((resolve,reject)=>{
+        const request=indexedDB.open('eds-diary',5)
+        request.onupgradeneeded=()=>{
+          for(const name of ['painEntries','medicationEntries','medicationPrescriptions','activityEntries','settings']){
+            if(!request.result.objectStoreNames.contains(name))request.result.createObjectStore(name,{keyPath:'id'})
+          }
+          request.transaction!.objectStore('activityEntries').put({
+            id:'legacy-walk',
+            date:'2026-09-07',
+            startTime:'08:00',
+            endTime:'09:00',
+            activityName:'Spaziergang',
+            note:'',
+            status:'active',
+            createdAt:'2026-09-07T06:00:00.000Z',
+            updatedAt:'2026-09-07T06:00:00.000Z',
+          })
+        }
+        request.onsuccess=()=>{request.result.close();resolve()}
+        request.onerror=()=>reject(request.error)
+      })
+    })
+
+    await page.goto('/konfiguration')
+    const storage=page.locator('section.google-sync-settings')
+    await expect(storage.getByRole('heading',{name:'Google-Synchronisierung'})).toBeVisible()
+    await expect(storage.getByRole('heading',{name:'Google-Konto verbinden'})).toBeVisible()
+    await expect(storage.getByText('Google-Synchronisierung konnte noch nicht vorbereitet werden.')).toBeHidden()
+    await expect(storage.getByRole('button',{name:'Recovery-Schlüssel erstellen'})).toBeVisible()
+
+    await storage.getByRole('button',{name:'Recovery-Schlüssel erstellen'}).click()
+    await expect(storage.getByLabel('Recovery-Schlüssel')).not.toHaveValue('')
+    await expect(storage.getByText('Zuerst Schritt 1 abschließen.')).toBeVisible()
+    await storage.getByLabel('Ich habe den Schlüssel außerhalb dieser App gespeichert.').check()
+    await expect(storage.getByRole('button',{name:'Mit Google verbinden'})).toBeVisible()
+  })
+
   test('backup-restored profile exposes recovery re-export before Google re-enablement',async({page})=>{
     await page.goto('/google-auth/')
     await page.evaluate(async()=>{
@@ -32,12 +72,12 @@ test.describe('security product flows',()=>{
       await recoveryModule.persistRecoveredProfile(candidate,bootstrap,{}, {recoveryArtifact:artifact})
     })
     await page.goto('/konfiguration')
-    const storage=page.locator('details.google-sync-settings')
-    await storage.locator('summary').click()
-    await expect(storage.getByRole('button',{name:'Recovery-Artefakt erneut exportieren'})).toBeVisible()
-    await expect(storage.getByRole('button',{name:'Google sicher aktivieren'})).toBeVisible()
+    const storage=page.locator('section.google-sync-settings')
+    await storage.getByText('Backup & Wiederherstellung').click()
+    await expect(storage.getByRole('button',{name:'Recovery-Datei erneut exportieren'})).toBeVisible()
+    await expect(storage.getByRole('button',{name:'Recovery-Schlüssel erstellen'})).toBeVisible()
     const downloadPromise=page.waitForEvent('download')
-    await storage.getByRole('button',{name:'Recovery-Artefakt erneut exportieren'}).click()
+    await storage.getByRole('button',{name:'Recovery-Datei erneut exportieren'}).click()
     const download=await downloadPromise
     expect(download.suggestedFilename()).toBe('eds-diary-recovery.json')
   })
@@ -46,9 +86,8 @@ test.describe('security product flows',()=>{
     await page.goto('/konfiguration')
     await expect(page.getByRole('heading',{level:1,name:'Konfiguration'})).toBeVisible()
     await expect(page.getByText('Fachliche Konflikte')).toBeVisible()
-    const storage=page.locator('details.google-sync-settings')
-    await storage.locator('summary').click()
-    await expect(storage).toHaveAttribute('open','')
+    const storage=page.locator('section.google-sync-settings')
+    await storage.getByText('Backup & Wiederherstellung').click()
     const recoveryLink=storage.locator('a[href="?mode=recovery"]')
     await expect(recoveryLink).toBeVisible()
     await recoveryLink.click()
