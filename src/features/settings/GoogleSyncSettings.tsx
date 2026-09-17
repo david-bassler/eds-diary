@@ -53,11 +53,10 @@ export function GoogleSyncSettings() {
   const [artifacts, setArtifacts] = useState<ExportArtifacts | null>(null)
 
   const loadStorageState = useCallback(async (): Promise<void> => {
-    setPreparing(true)
-    setPreparationError(null)
     try {
       const value = await googleRemoteSessionStatus()
       setRequiresEnablement(value.mode === 'local_offline')
+      setPreparationError(null)
       try {
         await currentRecoveryArtifact()
         setRecoveryArtifactAvailable(true)
@@ -77,6 +76,12 @@ export function GoogleSyncSettings() {
     void loadStorageState()
     return removeSyncListener
   }, [loadStorageState])
+
+  function retryPreparation(): void {
+    setPreparing(true)
+    setPreparationError(null)
+    void loadStorageState()
+  }
 
   function generateRecoverySecret(): void {
     setRecoverySecret(base64Url(randomBytes(32)))
@@ -203,7 +208,7 @@ export function GoogleSyncSettings() {
           <div className="google-sync-settings__problem" role="alert">
             <strong>Google-Synchronisierung konnte noch nicht vorbereitet werden.</strong>
             <p>Deine lokalen Tagebuchdaten bleiben erhalten. Versuche die Vorbereitung erneut.</p>
-            <button type="button" className="google-sync-settings__primary" onClick={() => void loadStorageState()}>
+            <button type="button" className="google-sync-settings__primary" onClick={retryPreparation}>
               Erneut versuchen
             </button>
             <details className="google-sync-settings__technical-error">
