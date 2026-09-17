@@ -42,13 +42,10 @@ function downloadJson(filename: string, value: unknown): void {
 
 async function readStorageSetupState(): Promise<StorageSetupState> {
   const value = await googleRemoteSessionStatus()
-  let recoveryArtifactAvailable = false
-  try {
-    await currentRecoveryArtifact()
-    recoveryArtifactAvailable = true
-  } catch {
-    recoveryArtifactAvailable = false
-  }
+  const recoveryArtifactAvailable = await currentRecoveryArtifact().then(
+    () => true,
+    () => false,
+  )
   return {
     requiresEnablement: value.mode === 'local_offline',
     recoveryArtifactAvailable,
