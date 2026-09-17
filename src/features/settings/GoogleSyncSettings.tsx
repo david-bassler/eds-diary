@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { base64Url, fromBase64Url, randomBytes } from '../../security/crypto/bytes'
 import { canonicalJson } from '../../security/crypto/canonical'
 import { GoogleAuthProvider } from '../../sync/google/GoogleAuthProvider'
@@ -20,6 +20,7 @@ import { createCurrentVerifiedBackup, currentRecoveryArtifact } from '../../data
 type StatusKind = 'neutral' | 'good' | 'bad'
 interface StatusMessage { message: string; kind: StatusKind }
 interface ExportArtifacts { recovery: unknown; backup: unknown }
+interface StorageSetupState { requiresEnablement: boolean; recoveryArtifactAvailable: boolean }
 
 function syncDescription(snapshot: SyncSnapshot): string {
   if (snapshot.state === 'syncing') return 'Synchronisierung läuft …'
@@ -39,6 +40,21 @@ function downloadJson(filename: string, value: unknown): void {
   URL.revokeObjectURL(url)
 }
 
+async function readStorageSetupState(): Promise<StorageSetupState> {
+  const value = await googleRemoteSessionStatus()
+  let recoveryArtifactAvailable = false
+  try {
+    await currentRecoveryArtifact()
+    recoveryArtifactAvailable = true
+  } catch {
+    recoveryArtifactAvailable = false
+  }
+  return {
+    requiresEnablement: value.mode === 'local_offline',
+    recoveryArtifactAvailable,
+  }
+}
+
 export function GoogleSyncSettings() {
   const providerRef = useRef<GoogleAuthProvider | null>(null)
   const [syncSnapshot, setSyncSnapshot] = useState(getSyncSnapshot)
@@ -52,35 +68,48 @@ export function GoogleSyncSettings() {
   const [recoverySaved, setRecoverySaved] = useState(false)
   const [artifacts, setArtifacts] = useState<ExportArtifacts | null>(null)
 
-  const loadStorageState = useCallback(async (): Promise<void> => {
-    try {
-      const value = await googleRemoteSessionStatus()
-      setRequiresEnablement(value.mode === 'local_offline')
-      setPreparationError(null)
-      try {
-        await currentRecoveryArtifact()
-        setRecoveryArtifactAvailable(true)
-      } catch {
-        setRecoveryArtifactAvailable(false)
-      }
-    } catch (cause) {
-      setRequiresEnablement(null)
-      setPreparationError(cause instanceof Error ? cause.message : 'Unbekannter interner Fehler.')
-    } finally {
-      setPreparing(false)
-    }
-  }, [])
-
   useEffect(() => {
     const removeSyncListener = onSyncState(setSyncSnapshot)
-    void loadStorageState()
-    return removeSyncListener
-  }, [loadStorageState])
+    let cancelled = false
+
+    void readStorageSetupState().then(
+      (value) => {
+        if (cancelled) return
+        setRequiresEnablement(value.requiresEnablement)
+        setRecoveryArtifactAvailable(value.recoveryArtifactAvailable)
+        setPreparationError(null)
+        setPreparing(false)
+      },
+      (cause: unknown) => {
+        if (cancelled) return
+        setRequiresEnablement(null)
+        setPreparationError(cause instanceof Error ? cause.message : 'Unbekannter interner Fehler.')
+        setPreparing(false)
+      },
+    )
+
+    return () => {
+      cancelled = true
+      removeSyncListener()
+    }
+  }, [])
 
   function retryPreparation(): void {
     setPreparing(true)
     setPreparationError(null)
-    void loadStorageState()
+    void readStorageSetupState().then(
+      (value) => {
+        setRequiresEnablement(value.requiresEnablement)
+        setRecoveryArtifactAvailable(value.recoveryArtifactAvailable)
+        setPreparationError(null)
+        setPreparing(false)
+      },
+      (cause: unknown) => {
+        setRequiresEnablement(null)
+        setPreparationError(cause instanceof Error ? cause.message : 'Unbekannter interner Fehler.')
+        setPreparing(false)
+      },
+    )
   }
 
   function generateRecoverySecret(): void {
