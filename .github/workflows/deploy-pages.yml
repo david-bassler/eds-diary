@@ -37,6 +37,9 @@ jobs:
       - name: Build
         env:
           VITE_BASE_PATH: /eds-diary/
+          VITE_GOOGLE_AUTH_ORIGIN: https://david-bassler.github.io/eds-diary/google-auth/
+          VITE_DIARY_ORIGINS: https://david-bassler.github.io
+          VITE_GOOGLE_CLIENT_ID: 708446377117-vhj86jrhngsj0i289vffdl4q1nfri7c3.apps.googleusercontent.com
         run: npm run build
 
       - name: Upload Pages artifact
@@ -73,6 +76,10 @@ jobs:
             exit 1
           fi
           base_url="${{ steps.deployment.outputs.page_url }}"
+          curl --fail --show-error --silent --location \
+            --output /tmp/google-auth.html "${base_url}google-auth/?verify=${{ github.sha }}"
+          test -s /tmp/google-auth.html
+          grep -q "Google-Anmeldung" /tmp/google-auth.html
           for file in front-gray.png front-hitmap.png back-gray.png back-hitmap.png; do
             curl --fail --show-error --silent --location \
               --output "/tmp/${file}" "${base_url}body-map/${file}?verify=${{ github.sha }}"
