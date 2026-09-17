@@ -126,8 +126,9 @@ export async function normalizeLegacyActivityEntriesForSecureMigration(): Promis
         const value = cursor.value
         if (value && typeof value === 'object' && !Array.isArray(value)) {
           const record = value as Record<string, unknown>
-          const missingColor = !Object.prototype.hasOwnProperty.call(record, 'color')
-          const missingIsOngoing = !Object.prototype.hasOwnProperty.call(record, 'isOngoing')
+          const isDeleted = record.status === 'deleted'
+          const missingColor = !isDeleted && !Object.prototype.hasOwnProperty.call(record, 'color')
+          const missingIsOngoing = !isDeleted && !Object.prototype.hasOwnProperty.call(record, 'isOngoing')
           const hasRedundantActiveStatus = record.status === 'active'
 
           if (missingColor || missingIsOngoing || hasRedundantActiveStatus) {
