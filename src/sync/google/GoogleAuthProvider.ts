@@ -111,23 +111,24 @@ export function issueControlledTestGoogleClient(client: GoogleApiClient): Google
   return client
 }
 
-/** Main-origin side of the isolated auth handoff. Tokens and Google runtime code
- * remain on the separate auth origin; the diary receives only a bound RPC port. */
+/** Main-page side of the Google auth handoff. The auth page can temporarily be
+ * hosted on the same origin for testing; the MessagePort boundary remains in place. */
 export class GoogleAuthProvider implements AuthProvider {
   private binding: IdentityBinding | null = null
   private client: AuthOriginGoogleApiClient | null = null
 
-  constructor(private readonly authOrigin: string) {}
+  constructor(private readonly authUrl: string) {}
 
   async authenticate(actionId: string): Promise<IdentityBinding> {
-    const authOrigin = new URL(this.authOrigin).origin
-    if (!this.authOrigin || authOrigin === window.location.origin) {
-      throw new Error('Google auth requires a separately configured static auth origin.')
+    if (!this.authUrl) throw new Error('Google auth URL is not configured.')
+    const url = new URL(this.authUrl, window.location.href)
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+      throw new Error('Google auth URL must use HTTP or HTTPS.')
     }
+    const authOrigin = url.origin
     if (!/^[A-Za-z0-9_-]{32,128}$/.test(actionId)) throw new Error('Invalid auth action binding.')
     await this.disconnect()
 
-    const url = new URL('/google-auth/', authOrigin)
     url.searchParams.set('action_id', actionId)
     url.searchParams.set('return_origin', window.location.origin)
     const popup = window.open(url, 'eds-diary-google-auth', 'popup,width=520,height=720')
