@@ -29,8 +29,11 @@ test('selects a pain region through the PNG hit map', async ({ page }) => {
 
 test('selects finger segments and separate joint hotspots on the hand detail map', async ({
   page,
+  isMobile,
 }) => {
   await page.goto('/')
+
+  if (isMobile) await page.getByRole('button', { name: 'Hinten', exact: true }).click()
 
   const canvas = page.locator(
     'section[aria-label="Rückseite"] canvas.body-map-selector__overlay',
@@ -132,8 +135,11 @@ test('uses palm detail in front view and dorsal detail in back view', async ({
 
 test('uses anatomical left and right for all paired regions in the back view', async ({
   page,
+  isMobile,
 }) => {
   await page.goto('/')
+
+  if (isMobile) await page.getByRole('button', { name: 'Hinten', exact: true }).click()
 
   const canvas = page.locator(
     'section[aria-label="Rückseite"] canvas.body-map-selector__overlay',

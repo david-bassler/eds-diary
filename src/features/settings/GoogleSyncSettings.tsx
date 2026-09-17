@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { base64Url, fromBase64Url, randomBytes } from '../../security/crypto/bytes'
+import { canonicalJson } from '../../security/crypto/canonical'
 import { GoogleAuthProvider } from '../../sync/google/GoogleAuthProvider'
 import {
   clearAuthenticatedRemoteSession,
@@ -14,6 +15,7 @@ import {
   type SyncSnapshot,
 } from '../../data/syncManager'
 import './GoogleSyncSettings.css'
+import { createCurrentVerifiedBackup, currentRecoveryArtifact } from '../../data/artifactExports'
 
 type StatusKind = 'neutral' | 'good' | 'bad'
 interface StatusMessage { message: string; kind: StatusKind }
@@ -28,7 +30,7 @@ function syncDescription(snapshot: SyncSnapshot): string {
 }
 
 function downloadJson(filename: string, value: unknown): void {
-  const blob = new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' })
+  const blob = new Blob([canonicalJson(value as never)], { type: 'application/json' })
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url
@@ -123,6 +125,9 @@ export function GoogleSyncSettings() {
     }
   }
 
+  async function exportRecovery():Promise<void>{setBusy(true);try{downloadJson('eds-diary-recovery.json',await currentRecoveryArtifact());setStatus({message:'Verifiziertes Recovery-Artefakt exportiert. Bewahre den Recovery-Schlüssel weiterhin getrennt auf.',kind:'good'})}catch(cause){setStatus({message:cause instanceof Error?cause.message:'Export fehlgeschlagen.',kind:'bad'})}finally{setBusy(false)}}
+  async function exportBackup():Promise<void>{setBusy(true);try{const provider=providerRef.current;if(!provider)throw new Error('Verbinde zuerst das gebundene Google-Konto, damit Remote-Daten vollständig verifiziert werden.');downloadJson('eds-diary-backup.json',await createCurrentVerifiedBackup(provider.getApiClient()));setStatus({message:'Aktuelles verschlüsseltes Backup einschließlich lokaler ausstehender Änderungen wurde verifiziert und exportiert.',kind:'good'})}catch(cause){setStatus({message:cause instanceof Error?cause.message:'Backup-Export fehlgeschlagen.',kind:'bad'})}finally{setBusy(false)}}
+
   return (
     <details className="google-sync-settings">
       <summary className="google-sync-settings__summary">
@@ -164,6 +169,9 @@ export function GoogleSyncSettings() {
             <button type="button" onClick={() => downloadJson('eds-diary-backup.json', artifacts.backup)}>Verifiziertes Backup herunterladen</button>
           </div>
         ) : null}
+
+        {!requiresEnablement ? <div className="google-sync-settings__actions"><button type="button" disabled={busy} onClick={()=>void exportRecovery()}>Recovery-Artefakt erneut exportieren</button><button type="button" disabled={busy||!syncSnapshot.connected} onClick={()=>void exportBackup()}>Aktuelles verifiziertes Backup exportieren</button></div> : null}
+        <p><a href="?mode=recovery">Wiederherstellung in einem frischen Browserprofil öffnen</a></p>
 
         <p className="google-sync-settings__status" data-kind={status.kind} aria-live="polite">{status.message}</p>
       </div>

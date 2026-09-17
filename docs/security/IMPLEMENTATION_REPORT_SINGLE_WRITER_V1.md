@@ -90,13 +90,30 @@ Session ab, vergleicht sie mit deren festem Subject und leitet
 `google_account_binding` intern ab; allgemeiner App-Code kann diese Trust-Werte
 nicht mehr an den Konstruktor übergeben.
 
+### Produktintegration
+
+Die Konfiguration stellt Recovery über ein unabhängig ausgewähltes Backup oder
+über authentifizierte Google-Discovery bereit. Erst der vollständige
+`RecoveryBootstrapVerifier` darf das frische Profil persistieren; der anschließende
+Readback prüft RootWrap, State-MAC, Journal und Envelope-Graph. Recovery- und
+aktuelle Backup-Artefakte bleiben nach Reload exportierbar. Remote-Backups lesen
+und verifizieren den Remote-State erneut und nehmen lokale pending Envelopes auf.
+
+Offene Fachkonflikte werden mit sämtlichen aktiven und Tombstone-Heads angezeigt.
+Der Benutzer wählt ausdrücklich eine Ausgangsvariante und bearbeitet das finale
+Ergebnis; `mergeRecord` übernimmt einschließlich der gestuften >8-Head-Merges.
+
+Der Vite-Multipage-Build erzeugt `/google-auth/` als separat deploybares statisches
+Artefakt. Google Runtime und Bearer-Token verbleiben dort; der Diary-Origin erhält
+nur einen action- und origin-gebundenen MessagePort mit erlaubter RPC-Teilmenge.
+
 ## Abschlussstatus
 
-`TODO_INTERNAL: none`
+`TODO_INTERNAL: Dedizierte Browser-E2E-Abdeckung der neuen Recovery-, Re-Export- und Auth-Origin-Flows ausstehend.`
 
 `SECURITY/SPEC DECISION REQUIRED: none`
 
-`BLOCKED_EXTERNAL`: separater Auth-Origin; echte Google-Testcredentials und
+`BLOCKED_EXTERNAL`: Deployment auf getrennte Diary-/Auth-Origins; echte Google-Testcredentials und
 Testkonto; reale WebAuthn-PRF-Hardware-/Browsermatrix einschließlich
 End-to-End-Ceremonies; Produktionshosting, CSP und Header; externer
 Security-/Crypto-Audit.

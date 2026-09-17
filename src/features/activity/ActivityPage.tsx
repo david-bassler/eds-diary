@@ -205,6 +205,7 @@ export function ActivityPage() {
   const [copyBusy, setCopyBusy] = useState(false)
   const [copyError, setCopyError] = useState('')
   const detailsDialogRef = useRef<HTMLDialogElement>(null)
+  const createdRangeRef = useRef<{index:number;range:TimeRange}|null>(null)
   const scrollSnapTimerRef = useRef<number | null>(null)
 
   function applyStoredEntries(storedEntries: readonly ActivityEntry[]): void {
@@ -445,6 +446,7 @@ export function ActivityPage() {
   }
 
   function openRangeDetails(index: number): void {
+    createdRangeRef.current=null
     const range = timeRanges[index]
     if (!range) return
 
@@ -462,6 +464,15 @@ export function ActivityPage() {
   }
 
   function openCreatedRange(index: number, range: TimeRange): void {
+    createdRangeRef.current={index,range}
+    // Pointer completion and the dialog can be observed in the same browser
+    // task. Persist the completed range here as well as in onChange so closing
+    // the dialog immediately cannot expose a stale pre-drag render.
+    setTimeRanges((current) => current.length > index
+      ? current.map((item, itemIndex) => itemIndex === index ? range : item)
+      : [...current, range])
+    setRangeDetails((current) => current[index] ? current : [...current, emptyDetails()])
+    setRangeRecords((current) => current.length > index ? current : [...current, null])
     setActiveRangeIndex(index)
     setActiveDraft({
       start: range.start,
@@ -500,6 +511,8 @@ export function ActivityPage() {
   }
 
   function discardRangeDetails(): void {
+    const created=createdRangeRef.current
+    if(created){setTimeRanges(current=>current.length>created.index?current:[...current,created.range]);setRangeDetails(current=>current.length>created.index?current:[...current,emptyDetails()]);setRangeRecords(current=>current.length>created.index?current:[...current,null]);createdRangeRef.current=null}
     setActivitySuggestionsOpen(false)
     setActiveDraft(null)
     setActiveRangeIndex(null)
@@ -593,6 +606,7 @@ export function ActivityPage() {
       await deleteActivityEntry(storedRecord.id)
       await refreshCurrentDate()
       rememberUndo(before)
+      createdRangeRef.current=null
       setActiveDraft(null)
       setActiveRangeIndex(null)
       setStatus('Aktivität entfernt.')
@@ -656,6 +670,7 @@ export function ActivityPage() {
       await saveActivityTypeColor(activityName, activityColor)
       await refreshCurrentDate()
       rememberUndo(before)
+      createdRangeRef.current=null
       setActiveDraft(null)
       setActiveRangeIndex(null)
       setStatus(storedRecord ? 'Aktivität aktualisiert.' : 'Aktivität gespeichert.')
@@ -765,7 +780,10 @@ export function ActivityPage() {
   }
 
   const draftValidationMessage = rangeError(activeDraft)
-  const previewRanges = timeRanges.map((range, index) => {
+  const previewSource = activeDraft && activeRangeIndex !== null && activeRangeIndex >= timeRanges.length
+    ? [...timeRanges, { start: activeDraft.start, end: activeDraft.end }]
+    : timeRanges
+  const previewRanges = previewSource.map((range, index) => {
     if (activeRangeIndex === index && activeDraft && !draftValidationMessage) {
       return {
         start: activeDraft.start,
@@ -922,7 +940,6 @@ export function ActivityPage() {
           event.preventDefault()
           discardRangeDetails()
         }}
-        onClose={discardRangeDetails}
       >
         {activeDraft && activeRangeIndex !== null ? (
           <div className="activity-page__dialog-card">
@@ -1120,18 +1137,16 @@ export function ActivityPage() {
                       <button
                         type="button"
                         aria-label="Beginn 15 Minuten früher"
-                        onClick={() =>
-                          adjustDraftTime('start', -TIME_STEP_MINUTES)
-                        }
+                        onPointerDown={() => adjustDraftTime('start', -TIME_STEP_MINUTES)}
+                        onClick={(event) => { if(event.detail===0)adjustDraftTime('start',-TIME_STEP_MINUTES) }}
                       >
                         −15 min
                       </button>
                       <button
                         type="button"
                         aria-label="Beginn 15 Minuten später"
-                        onClick={() =>
-                          adjustDraftTime('start', TIME_STEP_MINUTES)
-                        }
+                        onPointerDown={() => adjustDraftTime('start', TIME_STEP_MINUTES)}
+                        onClick={(event) => { if(event.detail===0)adjustDraftTime('start',TIME_STEP_MINUTES) }}
                       >
                         +15 min
                       </button>
@@ -1169,18 +1184,16 @@ export function ActivityPage() {
                           <button
                             type="button"
                             aria-label="Ende 15 Minuten früher"
-                            onClick={() =>
-                              adjustDraftTime('end', -TIME_STEP_MINUTES)
-                            }
+                            onPointerDown={() => adjustDraftTime('end', -TIME_STEP_MINUTES)}
+                            onClick={(event) => { if(event.detail===0)adjustDraftTime('end',-TIME_STEP_MINUTES) }}
                           >
                             −15 min
                           </button>
                           <button
                             type="button"
                             aria-label="Ende 15 Minuten später"
-                            onClick={() =>
-                              adjustDraftTime('end', TIME_STEP_MINUTES)
-                            }
+                            onPointerDown={() => adjustDraftTime('end', TIME_STEP_MINUTES)}
+                            onClick={(event) => { if(event.detail===0)adjustDraftTime('end',TIME_STEP_MINUTES) }}
                           >
                             +15 min
                           </button>

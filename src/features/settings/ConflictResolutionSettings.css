@@ -1,0 +1,50 @@
+.conflict-settings {
+  padding: 1rem;
+  border: 1px solid rgb(37 48 43 / 20%);
+  border-radius: 1rem;
+}
+
+.conflict-settings summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  cursor: pointer;
+}
+
+.conflict-settings__case {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.conflict-settings__heads {
+  display: grid;
+  gap: 1rem;
+}
+
+.conflict-settings__heads article {
+  min-width: 0;
+  padding: 1rem;
+  border-radius: 0.75rem;
+  background: rgb(37 48 43 / 7%);
+}
+
+.conflict-settings pre {
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.conflict-settings label {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.conflict-settings button {
+  min-height: 44px;
+}
+
+@media (width >= 700px) {
+  .conflict-settings__heads {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

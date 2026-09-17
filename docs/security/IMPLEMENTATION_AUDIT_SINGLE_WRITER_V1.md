@@ -17,6 +17,9 @@ Stand: 16.09.2026 (finaler Integrationsstand PR #20)
 | Mutation nach Freeze | Alle Phasen ab `source_frozen_verified` blockieren Feature-Mutationen persistent. |
 | Switch vor Announcement | Die Rotation orchestriert Copy, Full Verify, Semantic-Gleichheit, Recovery-Bootstrap, Backup-Test-Restore und Announcement-Full-Verify; Switch ist nur nach `announcement_durable` erreichbar. |
 | Recovery Self-Confirmation | `recoverRootKeyCandidate` aktiviert nichts. Der Google-Transport besitzt keinen öffentlichen Konstruktor, akzeptiert weder Permission-ID noch Account-Binding und kann nur mit einem von der Auth-Grenze ausgegebenen Client entstehen. Er liest die Permission-ID selbst über `drive.about`, gleicht sie mit der unveränderlichen Session-Identity ab und leitet das Binding intern ab. Ein selbst bestätigender Stub und ein frei gebauter Loader werden abgelehnt. |
+| Produktive Recovery-Aktivierung | Der dedizierte frische Recovery-Modus parst URS und Artefakte strikt, legt Google-Ressourcen ausschließlich durch authentifizierte Discovery fest oder bindet ein unabhängig ausgewähltes Backup und persistiert erst nach Full Verify mit vollständigem Readback. |
+| Fachkonflikte | Die Konfiguration zeigt alle Heads und Tombstones ohne automatische Gewinnerwahl. Das ausdrücklich bearbeitete Ergebnis läuft über `mergeRecord` und damit auch bei 9/17 Heads über gestufte, protokollbegrenzte Merge-Revisionen. |
+| Auth-Origin | `/google-auth/` ist ein eigener statischer Build-Entry. Return-Origin-Allowlist, Opener, Action-ID und MessagePort werden gebunden; Google Runtime und Tokens verlassen diesen Origin nicht. |
 
 ## Lokale Architektur
 
@@ -33,7 +36,7 @@ unverändert.
 
 ## Ergebnis
 
-`TODO_INTERNAL: none`
+`TODO_INTERNAL: Dedizierte Browser-E2E-Abdeckung der neuen Recovery-, Re-Export- und Auth-Origin-Flows ausstehend.`
 
 `SECURITY/SPEC DECISION REQUIRED: none`
 

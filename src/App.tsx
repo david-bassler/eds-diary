@@ -12,6 +12,8 @@ import { QrShareButton } from './features/share/QrShareButton'
 import { GoogleSyncSettings } from './features/settings/GoogleSyncSettings'
 import { InstallAppSettings } from './features/settings/InstallAppSettings'
 import { LOCAL_SECURITY_CHANGED_EVENT, LocalSecuritySettings } from './features/settings/LocalSecuritySettings'
+import { RecoverySettings } from './features/settings/RecoverySettings'
+import { ConflictResolutionSettings } from './features/settings/ConflictResolutionSettings'
 import { localRootWrapStatus } from './data/localDatabase'
 import {
   pathForSection,
@@ -46,6 +48,7 @@ const PAGE_COPY: Record<
 }
 
 export function App() {
+  const recoveryMode = new URLSearchParams(window.location.search).get('mode') === 'recovery'
   const [localRootLocked,setLocalRootLocked]=useState<boolean|null>(null)
   const [activeSection, setActiveSection] = useState<AppSection>(() =>
     sectionFromPathname(window.location.pathname),
@@ -54,10 +57,11 @@ export function App() {
   const page = PAGE_COPY[activeSection]
 
   useEffect(()=>{
+    if(recoveryMode)return
     const refresh=()=>{void localRootWrapStatus().then(status=>setLocalRootLocked(status.initialized&&status.locked)).catch(()=>setLocalRootLocked(true))}
     refresh();window.addEventListener(LOCAL_SECURITY_CHANGED_EVENT,refresh)
     return()=>window.removeEventListener(LOCAL_SECURITY_CHANGED_EVENT,refresh)
-  },[])
+  },[recoveryMode])
 
   useEffect(() => {
     const canonicalPath = pathForSection(activeSection)
@@ -87,6 +91,7 @@ export function App() {
     setActiveSection(section)
   }
 
+  if(recoveryMode)return <RecoverySettings />
   if(localRootLocked===null)return <main className="app"><p role="status">Lokaler Sicherheitsstatus wird geprüft …</p></main>
   if(localRootLocked)return <main className="app"><LocalSecuritySettings unlockOnly/></main>
 
@@ -142,6 +147,7 @@ export function App() {
                 <InstallAppSettings />
                 <LocalSecuritySettings />
                 <GoogleSyncSettings />
+                <ConflictResolutionSettings />
               </>
             ) : null}
           </section>

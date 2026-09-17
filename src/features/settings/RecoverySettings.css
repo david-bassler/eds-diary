@@ -1,0 +1,18 @@
+.recovery-settings {
+  display: grid;
+  max-width: 44rem;
+  margin: 2rem auto;
+  padding: 1rem;
+  gap: 1rem;
+}
+
+.recovery-settings fieldset,
+.recovery-settings label {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.recovery-settings button,
+.recovery-settings input {
+  min-height: 44px;
+}

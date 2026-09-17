@@ -33,6 +33,7 @@ async function addRange(
   endHour: number,
   closeDetails = true,
 ): Promise<void> {
+  const previousCount = await page.locator('.timerange__selection').count()
   const surface = page.getByTestId('time-range-surface')
   const bounds = await surface.boundingBox()
   if (!bounds) throw new Error('Zeitpicker ist nicht sichtbar.')
@@ -49,7 +50,10 @@ async function addRange(
     page.getByRole('dialog', { name: 'Aktivität eintragen' }),
   ).toBeVisible()
 
-  if (closeDetails) await closeRangeDetails(page)
+  if (closeDetails) {
+    await closeRangeDetails(page)
+    await expect(page.locator('.timerange__selection')).toHaveCount(previousCount + 1)
+  }
 }
 
 async function openRangeDetails(
@@ -618,6 +622,7 @@ test('edits start and end in the dialog with preview and persistence', async ({
   await openRangeDetails(page, 0)
   await page.getByLabel('Aktivität für Zeitraum 1').fill('Spaziergang')
   await page.getByRole('button', { name: 'Beginn 15 Minuten später' }).click()
+  await expect(page.getByLabel('Beginn', { exact: true })).toHaveValue('08:15')
   await page.getByRole('button', { name: 'Ende 15 Minuten früher' }).click()
   await expect(page.getByLabel('Beginn', { exact: true })).toHaveValue('08:15')
   await expect(page.getByLabel('Ende', { exact: true })).toHaveValue('09:45')
