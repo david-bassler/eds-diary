@@ -1,6 +1,6 @@
 # Implementierungsbericht – Google Sheets Single Writer v1
 
-Stand: 16.09.2026 (finaler Integrationsstand PR #20)
+Stand: 17.09.2026 (Integrationsstand PR #22)
 
 ## Produktiver Stand
 
@@ -41,7 +41,8 @@ Assertion über `navigator.credentials` aus, verlangt in Registrierung und
 Assertion `userVerification:"required"`, beschränkt die Assertion auf die exakt
 persistierte Credential-ID und akzeptiert nur eine echte 32-Byte-PRF-Ausgabe.
 Unsupported PRF, falsche Credential-ID und fehlende/falsch lange Ergebnisse
-schlagen geschlossen fehl. Die reale Authenticator-/Browsermatrix bleibt ein
+schlagen geschlossen fehl. Starke RootWrap-Modi bleiben auch über produktive
+Epoch-Rotation erhalten. Die reale Authenticator-/Browsermatrix bleibt ein
 externes Produktionsfreigabe-Gate.
 
 ### Create/Reconcile
@@ -95,9 +96,24 @@ nicht mehr an den Konstruktor übergeben.
 Die Konfiguration stellt Recovery über ein unabhängig ausgewähltes Backup oder
 über authentifizierte Google-Discovery bereit. Erst der vollständige
 `RecoveryBootstrapVerifier` darf das frische Profil persistieren; der anschließende
-Readback prüft RootWrap, State-MAC, Journal und Envelope-Graph. Recovery- und
-aktuelle Backup-Artefakte bleiben nach Reload exportierbar. Remote-Backups lesen
-und verifizieren den Remote-State erneut und nehmen lokale pending Envelopes auf.
+Readback prüft RootWrap, State-MAC, Journal und Envelope-Graph.
+
+Importierte Recovery-/Backup-Dateien werden strikt auf gültiges JSON, Duplicate
+Keys und I-JSON geprüft, müssen aber nicht bytegenau JCS-formatiert sein. Dadurch
+bleiben frühere von der Anwendung mit eingerücktem JSON exportierte Artefakte
+wiederherstellbar; kryptographische Hash-/Bytevergleiche verwenden weiterhin
+kanonische JCS-Darstellung.
+
+Ein Backup-Restore ohne bestehendes Remote-Binding wird als `local_offline`
+persistiert. Dadurch kann der vorhandene authentifizierte `remote_enablement`-
+Pfad anschließend eine neue Remote-Epoche erzeugen, statt an einem nur lokal
+verstandenen Zwischenstatus zu scheitern.
+
+Das bei Recovery erfolgreich verifizierte Recovery-Artefakt wird unabhängig von
+`rotation_state_ref` epochgebunden dauerhaft gespeichert und readback-geprüft.
+Es ist deshalb nach Reload und bereits vor erneuter Google-Aktivierung wieder
+exportierbar. Remote-Backups werden vor Export erneut vollständig verifiziert und
+nehmen lokale pending Envelopes auf.
 
 Offene Fachkonflikte werden mit sämtlichen aktiven und Tombstone-Heads angezeigt.
 Der Benutzer wählt ausdrücklich eine Ausgangsvariante und bearbeitet das finale
@@ -105,17 +121,36 @@ Ergebnis; `mergeRecord` übernimmt einschließlich der gestuften >8-Head-Merges.
 
 Der Vite-Multipage-Build erzeugt `/google-auth/` als separat deploybares statisches
 Artefakt. Google Runtime und Bearer-Token verbleiben dort; der Diary-Origin erhält
-nur einen action- und origin-gebundenen MessagePort mit erlaubter RPC-Teilmenge.
+nur einen action- und origin-gebundenen MessagePort. Die RPC-Capability erlaubt
+nur die vom Single-Writer-Transport tatsächlich verwendeten Drive-/Sheets-
+Endpunktfamilien und Methoden; fremde Google-API-Pfade schlagen geschlossen fehl.
+
+### Interne Validierung
+
+Die automatisierte Validation umfasst zusätzlich zu den bestehenden Crypto-,
+Single-Writer-, Recovery-, Rotation- und Migrationssuites gezielte Regressionen
+für:
+
+- Import früherer pretty-printed Artefakte bei weiterem Duplicate-Key-Reject,
+- Backup-Restore als erneut remote-aktivierbares Profil,
+- dauerhafte Recovery-Artefakt-Persistenz und Re-Export,
+- minimale Auth-Origin-RPC-Allowlist,
+- Recovery-/Konflikt-/Auth-Origin-Produktpfade in der vollständigen Desktop- und
+  Mobile-Playwright-Matrix.
+
+Live-Google und reale WebAuthn-Hardware können durch diese lokalen Browser-/Unit-
+Tests nicht ersetzt werden und bleiben externe Release-Gates.
 
 ## Abschlussstatus
 
-`TODO_INTERNAL: Dedizierte Browser-E2E-Abdeckung der neuen Recovery-, Re-Export- und Auth-Origin-Flows ausstehend.`
+`TODO_INTERNAL: none`
 
 `SECURITY/SPEC DECISION REQUIRED: none`
 
 `BLOCKED_EXTERNAL`: Deployment auf getrennte Diary-/Auth-Origins; echte Google-Testcredentials und
-Testkonto; reale WebAuthn-PRF-Hardware-/Browsermatrix einschließlich
-End-to-End-Ceremonies; Produktionshosting, CSP und Header; externer
-Security-/Crypto-Audit.
+Testkonto einschließlich Account-Wechsel, Logout, Permission-, Netzwerk- und
+Hostile-Grid-Fällen; reale WebAuthn-PRF-Hardware-/Browsermatrix einschließlich
+End-to-End-Ceremonies; Produktionshosting, CSP und Header sowie Source-Map-/
+Logprüfung; externer Security-/Crypto-Audit.
 
 Kein Merge wurde durchgeführt.
