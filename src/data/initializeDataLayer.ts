@@ -4,6 +4,7 @@ import type { SingleWriterProviderSession } from '../sync/core/provider'
 import { activeEpochSyncContext } from './localDatabase'
 import { normalizeLegacyActivityEntriesForSecureMigration } from './legacyCompatibility'
 import { ProductiveRotationService, type CompletedRotation } from './productiveRotationService'
+import { ensurePersistentStorage } from './storageDurability'
 
 let initialized = false
 let secureSync:SingleWriterSyncService|null=null
@@ -88,4 +89,5 @@ export function initializeDataLayer(): void {
   // Legacy whole-table feature synchronizers are intentionally not registered.
   // The immutable envelope outbox is the only productive remote write source.
   initializeSyncManager()
+  void ensurePersistentStorage().catch(()=>undefined)
 }
