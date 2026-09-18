@@ -21,7 +21,7 @@ test.describe('security product flows',()=>{
     await page.getByLabel('Origin-Umzugspaket verwenden').check()
     await expect(page.getByLabel('Origin-Umzugspaket-Datei')).toBeVisible()
     await expect(page.getByLabel('Recovery-Artefakt')).toHaveCount(0)
-    await page.getByLabel('Authentifiziertes Google-Konto + Recovery-Schlüssel').check()
+    await page.getByLabel('Authentifiziertes Google-Konto (Artefakt automatisch finden)').check()
     await expect(page.getByLabel('Recovery-Artefakt')).toHaveCount(0)
     await expect(page.getByRole('button',{name:'Strikt prüfen und wiederherstellen'})).toBeDisabled()
   })
