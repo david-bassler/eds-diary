@@ -11,6 +11,7 @@ import { epochLocator } from '../sync/google/GoogleSheetsSingleWriterTransport'
 import { issueControlledTestGoogleClient } from '../sync/google/GoogleAuthProvider'
 import { googleProviderSessionFromAuthenticatedClient } from '../sync/google/GoogleSingleWriterProvider'
 import { createAnchor } from '../sync/core/prefix'
+import { RecoveryBootstrapVerifier } from '../sync/core/remoteVerifier'
 
 interface Remote {id:string;name:string;manifest:string[];rows:string[][];properties:Record<string,string>;trashed:boolean;artifact?:string}
 type AppendCrashTarget='source'|'successor'|null
@@ -162,6 +163,10 @@ describe('ProductiveRotationService',()=>{
     expect(candidate.payload.epoch_id).toBe(after.context.epochId)
     expect(candidate.payload.recovery_generation).toBe(after.state.recovery_generation)
     expect(after.revisions.some(revision=>(revision.record_data as {migration_kind?:string}|null)?.migration_kind==='recovery_rekey')).toBe(true)
+    const oldArtifact=await session.loadRecoveryArtifact(oldUrs),oldCandidate=await recoverRootKeyCandidate(oldArtifact,oldUrs),oldTransport=await session.transportForEpoch(oldCandidate.payload.diary_id,oldCandidate.payload.epoch_id),oldLocator=await session.recoveryLocator(oldCandidate.payload.diary_id,oldCandidate.payload.epoch_id),oldResources=await oldTransport.discover(oldLocator)
+    expect(oldResources).toHaveLength(1)
+    const oldAuthority=await session.recoveryAuthority(oldTransport,oldLocator,oldResources[0]!.remoteId),oldVerifier=new RecoveryBootstrapVerifier({authority:oldAuthority,schemas:DOMAIN_SCHEMA_REGISTRY})
+    await expect(oldVerifier.verifyCandidate(oldCandidate)).rejects.toThrow('retired epoch')
     await expect(session.loadRecoveryArtifact(randomBytes(32))).rejects.toThrow('No remote recovery artifact')
   },90_000)
 
