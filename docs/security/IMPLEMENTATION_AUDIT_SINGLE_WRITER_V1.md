@@ -1,6 +1,6 @@
 # Implementierungsaudit – Single Writer v1
 
-Stand: 17.09.2026 (Integrationsstand PR #22)
+Stand: 18.09.2026 (Recoverability-Hardening PR #30)
 
 ## Adversarialer Produktpfad-Review
 
@@ -20,6 +20,10 @@ Stand: 17.09.2026 (Integrationsstand PR #22)
 | Produktive Recovery-Aktivierung | Der dedizierte frische Recovery-Modus prüft URS und importierte JSON-Dokumente strikt, legt Google-Ressourcen ausschließlich durch authentifizierte Discovery fest oder bindet ein unabhängig ausgewähltes Backup und persistiert erst nach Full Verify mit vollständigem Readback. Frühere pretty-printed App-Exporte bleiben importierbar, Duplicate Keys und nicht-I-JSON-konforme Werte bleiben verboten. |
 | Backup-Restore -> Remote-Aktivierung | Ein unabhängig verifizierter Backup-Restore ohne Remote-Binding wird als `local_offline` persistiert und kann danach ausschließlich über den vorhandenen authentifizierten `remote_enablement`-Epoch-Wechsel an Google gebunden werden. |
 | Recovery-Artefakt nach Restore | Das verifizierte Recovery-Artefakt wird epochgebunden unabhängig von `rotation_state_ref` gespeichert und readback-verifiziert. Der Re-Export ist nach Reload und bereits vor erneuter Google-Aktivierung produktiv erreichbar. |
+| Recovery-Key-Verlust | Ein noch entsperrtes und authentifiziertes Profil kann ohne Kenntnis des alten URS auf einen neuen zufälligen Recovery-Key wechseln. Dies läuft als vollständige `recovery_rekey`-Epoch-Rotation mit erhöhter Recovery-Generation; alte authentifizierte Remote-Epochen werden als retired bei Recovery abgelehnt. |
+| Remote Recovery-Artefakt | Das verschlüsselte Recovery-Artefakt wird owner-only in Google unter einem aus dem 32-Byte-URS abgeleiteten opaken Locator gehalten, bei normaler Rotation monoton fortgeschrieben und vor Freigabe readback-verifiziert. Frische Google-Recovery kann dadurch das Artefakt allein aus Konto + URS finden. |
+| Lokale Verlustsicht | `navigator.storage.persist()` wird best-effort angefordert und der reale Persistenzstatus angezeigt. Die UI zählt ausschließlich lokal vorhandene Änderungen aus der persistenten Outbox; ein Reload verliert diese Warnung nicht. |
+| Origin-Wechsel | Ein `eds-origin-migration-v1`-Paket bündelt verifiziertes Backup und Recovery-Artefakt, niemals den URS. Restore auf einem frischen Origin läuft über denselben Backup-/Recovery-Verify-Pfad und vermeidet Abhängigkeit von alter IndexedDB- oder WebAuthn-RP-ID. |
 | Backup-Export | Remote-bound Backups lesen und full-verifizieren die aktuelle Remote-Sicht erneut, prüfen Account-Binding und nehmen lokale pending Envelopes auf; Restore-Test läuft vor Ausgabe. |
 | Fachkonflikte | Die Konfiguration zeigt alle Heads und Tombstones ohne automatische Gewinnerwahl. Das ausdrücklich bearbeitete Ergebnis läuft über `mergeRecord` und damit auch bei 9/17 Heads über gestufte, protokollbegrenzte Merge-Revisionen. |
 | Auth-Origin | `/google-auth/` ist ein eigener statischer Build-Entry. Return-Origin-Allowlist, Opener, Action-ID und MessagePort werden gebunden; Google Runtime und Tokens verlassen diesen Origin nicht. RPC wird zusätzlich auf die tatsächlich benötigten Drive-/Sheets-Pfade und Methoden begrenzt; fremde Google-Endpunkte werden abgelehnt. |

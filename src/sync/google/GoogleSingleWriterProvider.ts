@@ -3,6 +3,8 @@ import type { SingleWriterProvider, SingleWriterProviderSession } from '../core/
 import { IndependentBootstrapAuthority, type FullRemoteVerifier } from '../core/remoteVerifier'
 import { GoogleAuthProvider, isAuthenticatedGoogleApiClient } from './GoogleAuthProvider'
 import { GoogleSheetsSingleWriterProfileCodec } from './GoogleSheetsSingleWriterProfileCodec'
+import { GoogleRecoveryArtifactStore } from './GoogleRecoveryArtifactStore'
+import type { RecoveryArtifact } from '../../security/recovery'
 import {
   epochLocator,
   GoogleSheetsSingleWriterTransport,
@@ -46,6 +48,9 @@ class GoogleSingleWriterProviderSession implements SingleWriterProviderSession {
     if(!isAuthenticatedGoogleTransport(transport))throw new Error('Google recovery requires the authenticated Google transport.')
     return IndependentBootstrapAuthority.fromAuthenticatedRemoteDiscovery(transport,locator,remoteResourceId,await transport.authenticatedAccountBinding())
   }
+
+  publishRecoveryArtifact(secret:Uint8Array,artifact:RecoveryArtifact):Promise<void>{return new GoogleRecoveryArtifactStore(this.api).publish(secret,artifact)}
+  loadRecoveryArtifact(secret:Uint8Array):Promise<RecoveryArtifact>{return new GoogleRecoveryArtifactStore(this.api).load(secret)}
 
   disconnect():Promise<void>{return this.closeSession()}
 }

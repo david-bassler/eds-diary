@@ -1,6 +1,6 @@
 # Production Security Release Gates
 
-Stand: 17.09.2026
+Stand: 18.09.2026
 
 EDS Diary ist **nicht** als „production secure“ freigegeben.
 
@@ -32,6 +32,21 @@ EDS Diary ist **nicht** als „production secure“ freigegeben.
 - Recovery-Artefakte werden nach Restore unabhängig von einer lokalen
   `rotation_state_ref` dauerhaft gehalten und können bereits vor erneuter
   Google-Aktivierung wieder exportiert werden.
+- Der Recovery-Schlüssel kann bei noch entsperrtem, authentifiziertem Profil ohne
+  Kenntnis des alten Recovery-Schlüssels über eine vollständige
+  `recovery_rekey`-Epoch-Rotation ersetzt werden. Die Recovery-Generation wird
+  erhöht; Umschaltung erfolgt erst nach Full Verify, Recovery-Bootstrap und
+  Backup-Test-Restore.
+- Das verschlüsselte Recovery-Artefakt wird vor der Umschaltung zusätzlich in
+  einer privaten owner-only Google-Ressource unter einem aus dem Recovery-Key
+  abgeleiteten opaken Locator gespeichert und per Readback verifiziert. Google-
+  Recovery benötigt dadurch für neu gehärtete Epochen nur Konto + Recovery-Key.
+- Der Browser-Persistenzstatus wird über die Storage API angefordert und angezeigt;
+  die Zahl ausschließlich lokal vorhandener Änderungen wird aus der persistenten
+  Envelope-Outbox statt aus flüchtigem UI-Zustand ermittelt.
+- Für spätere Origin-/Hosting-Wechsel gibt es ein exportierbares
+  `eds-origin-migration-v1`-Paket aus verifiziertem Backup und Recovery-Artefakt;
+  der Recovery-Key bleibt separat und wird nicht in das Paket aufgenommen.
 - Import akzeptiert auch frühere von der App pretty-printed exportierte JSON-Dateien,
   bleibt aber strikt gegen Duplicate Keys und nicht-I-JSON-konforme Werte; alle
   kryptographischen Vergleiche verwenden weiterhin kanonische JCS-Bytes.
@@ -50,7 +65,8 @@ EDS Diary ist **nicht** als „production secure“ freigegeben.
 - Konflikt-Merges mit 2, 8, 9 und 17 Heads einschließlich vollständiger
   Vorfahrenabdeckung.
 - Recovery-/Backup-/Fresh-Profile-Bootstrap einschließlich RootWrap-, State-MAC-,
-  Journal- und Envelope-Readback.
+  Journal- und Envelope-Readback sowie Recovery-Key-Rekey und remote
+  Recovery-Artefakt-Readback.
 - Regressionen für Legacy-Pretty-JSON-Import bei weiterem Duplicate-Key-Reject,
   Backup-Restore als erneut remote-aktivierbares Profil und dauerhaften
   Recovery-Artefakt-Readback.
@@ -66,7 +82,8 @@ EDS Diary ist **nicht** als „production secure“ freigegeben.
 
 - Echte Google-Credentials und ein dediziertes Live-Testkonto einschließlich
   Account-Wechsel, Logout, Permission-, Netzwerk- und Hostile-Grid-Fällen.
-- Deployment der Diary- und Auth-Anwendung auf getrennten Origins.
+- Deployment der Diary- und Auth-Anwendung auf getrennten Origins; der eigentliche
+  Hostwechsel bleibt extern, der verschlüsselte Benutzer-Handoff ist implementiert.
 - Reale WebAuthn-Geräte-/Browsermatrix.
 - Produktions-CSP/-Header, Source-Map-/Logprüfung und externer Security-/Crypto-Audit.
 

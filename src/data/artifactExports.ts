@@ -6,6 +6,7 @@ import { activeEpochSyncContext, activeEpochVerifierMaterial, DOMAIN_SCHEMA_REGI
 import { storedRecoveredRecoveryArtifact } from './recoveryProfile'
 import { deriveEpochSalt } from '../security/crypto/core'
 import { fromBase64Url } from '../security/crypto/bytes'
+import { createOriginMigrationBundle, type OriginMigrationBundleV1 } from '../security/originMigration'
 
 export async function currentRecoveryArtifact():Promise<RecoveryArtifact>{const artifact=await storedRotationArtifact<RecoveryArtifact>('recovery')??await storedRecoveredRecoveryArtifact();if(!artifact)throw new Error('Für die aktive Epoche ist kein verifiziertes Recovery-Artefakt gespeichert.');return artifact}
 
@@ -20,4 +21,9 @@ export async function createCurrentVerifiedBackup(session:SingleWriterProviderSe
   const backup=await createBackup({rootKey:active.rootKey,epochSalt,diaryId:active.diaryId,epochId:active.epochId,keyId:active.state.key_id,manifestFingerprint:active.state.manifest_fingerprint,epochManifestPublic:snapshot.manifest as readonly[string,string,string,string],remoteRows:snapshot.rows as ReadonlyArray<readonly[string,string,string]>,localEnvelopes:material.localEnvelopes,remoteBound:true,createdAt:new Date().toISOString()})
   await testRestoreBackup({rootKey:active.rootKey,epochSalt,diaryId:active.diaryId,epochId:active.epochId,keyId:active.state.key_id,manifestFingerprint:active.state.manifest_fingerprint},backup,verifier)
   return backup
+}
+
+export async function createCurrentOriginMigrationBundle(session:SingleWriterProviderSession,sourceOrigin=window.location.origin):Promise<OriginMigrationBundleV1>{
+  const recovery=await currentRecoveryArtifact(),backup=await createCurrentVerifiedBackup(session)
+  return createOriginMigrationBundle(recovery,backup,sourceOrigin)
 }

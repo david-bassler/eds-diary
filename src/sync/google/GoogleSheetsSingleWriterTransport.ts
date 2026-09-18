@@ -83,17 +83,22 @@ export class GoogleSheetsSingleWriterTransport implements RemoteTransport {
 
   async discover(locator: string): Promise<readonly RemoteCandidate[]> {
     try {
-      const name = `sync-${locator}`
-      const escaped = name.replaceAll("'", "\\'")
-      const q = encodeURIComponent(`name = '${escaped}' and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`)
-      const files: DriveFile[] = []
-      let token: string | undefined
-      do {
-        const suffix = token ? `&pageToken=${encodeURIComponent(token)}` : ''
-        const result = await this.api.request<{files?: DriveFile[]; nextPageToken?: string}>(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,name,mimeType,trashed,appProperties),nextPageToken&pageSize=1000${suffix}`)
-        files.push(...(result.files ?? [])); token = result.nextPageToken
-      } while (token)
-      return files.flatMap((file) => file.id && file.name === name ? [{remoteId: file.id, locator}] : [])
+      const name=`sync-${locator}`,escapedName=name.replaceAll("'","\\'"),epoch=await expectedEpochLocator(this.binding)
+      const queries=[
+        `name = '${escapedName}' and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`,
+        `appProperties has { key='epoch_locator' and value='${epoch}' } and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`,
+      ]
+      const found=new Map<string,DriveFile>()
+      for(const query of queries){
+        let token:string|undefined
+        do{
+          const suffix=token?`&pageToken=${encodeURIComponent(token)}`:'',q=encodeURIComponent(query)
+          const result=await this.api.request<{files?:DriveFile[];nextPageToken?:string}>(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,name,mimeType,trashed,appProperties),nextPageToken&pageSize=1000${suffix}`)
+          for(const file of result.files??[])if(file.id&&(file.name===name||file.appProperties?.epoch_locator===epoch))found.set(file.id,file)
+          token=result.nextPageToken
+        }while(token)
+      }
+      return[...found.keys()].sort().map(remoteId=>({remoteId,locator}))
     } catch (error) { throw normalize(error) }
   }
 

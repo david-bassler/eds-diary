@@ -16,6 +16,16 @@ test.describe('security product flows',()=>{
     await expect(status).not.toContainText('JSON is not canonical')
   })
 
+  test('recovery UI supports Google-key-only and origin-migration paths',async({page})=>{
+    await page.goto('/?mode=recovery')
+    await page.getByLabel('Origin-Umzugspaket verwenden').check()
+    await expect(page.getByLabel('Origin-Umzugspaket-Datei')).toBeVisible()
+    await expect(page.getByLabel('Recovery-Artefakt')).toHaveCount(0)
+    await page.getByLabel('Authentifiziertes Google-Konto (Artefakt automatisch finden)').check()
+    await expect(page.getByLabel('Recovery-Artefakt')).toHaveCount(0)
+    await expect(page.getByRole('button',{name:'Strikt prüfen und wiederherstellen'})).toBeDisabled()
+  })
+
   test('pre-color active activity prepares successfully and exposes a guided Google setup',async({page})=>{
     await page.goto('/google-auth/')
     await page.evaluate(async()=>{

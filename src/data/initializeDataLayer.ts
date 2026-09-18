@@ -4,6 +4,7 @@ import type { SingleWriterProviderSession } from '../sync/core/provider'
 import { activeEpochSyncContext } from './localDatabase'
 import { normalizeLegacyActivityEntriesForSecureMigration } from './legacyCompatibility'
 import { ProductiveRotationService, type CompletedRotation } from './productiveRotationService'
+import { ensurePersistentStorage } from './storageDurability'
 
 let initialized = false
 let secureSync:SingleWriterSyncService|null=null
@@ -61,6 +62,18 @@ export async function enableAuthenticatedRemoteSession(session:SingleWriterProvi
 }
 
 /** Product entry point used by an already remote-bound authenticated session. */
+export async function replaceRecoverySecret(session:SingleWriterProviderSession,newUrs:Uint8Array):Promise<CompletedRotation>{
+  if(newUrs.byteLength!==32)throw new Error('Recovery secret must contain 32 bytes.')
+  await ensureLegacyCompatibility()
+  const active=await activeEpochSyncContext()
+  if(!active.state.remote_binding||active.state.epoch_status!=='active')throw new Error('Recovery key replacement requires an active authenticated remote epoch.')
+  const transport=await session.transportForEpoch(active.diaryId,active.epochId)
+  const result=await ProductiveRotationService.recoveryRekey(session,transport,newUrs).rotate()
+  await installAuthenticatedRemoteSession(session)
+  return result
+}
+
+/** Product entry point used by an already remote-bound authenticated session. */
 export async function rotateAuthenticatedRemoteSession(session:SingleWriterProviderSession,urs:Uint8Array):Promise<CompletedRotation>{
   await ensureLegacyCompatibility()
   const active=await activeEpochSyncContext(),transport=await session.transportForEpoch(active.diaryId,active.epochId)
@@ -76,4 +89,5 @@ export function initializeDataLayer(): void {
   // Legacy whole-table feature synchronizers are intentionally not registered.
   // The immutable envelope outbox is the only productive remote write source.
   initializeSyncManager()
+  void ensurePersistentStorage().catch(()=>undefined)
 }
