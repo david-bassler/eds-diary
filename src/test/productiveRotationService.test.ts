@@ -6,8 +6,9 @@ import { fromBase64Url } from '../security/crypto/bytes'
 import { randomBytes, recoveryCommitment } from '../security/crypto/core'
 import { createBestEffortRootWrap, stateTag } from '../security/localState'
 import { manifestFingerprint, prepareManifest, schemaRegistryHash, SCHEMA_ALLOWLIST } from '../security/manifest'
-import { epochLocator, GoogleSheetsSingleWriterTransport } from '../sync/google/GoogleSheetsSingleWriterTransport'
+import { epochLocator } from '../sync/google/GoogleSheetsSingleWriterTransport'
 import { issueControlledTestGoogleClient } from '../sync/google/GoogleAuthProvider'
+import { googleProviderSessionFromAuthenticatedClient } from '../sync/google/GoogleSingleWriterProvider'
 import { createAnchor } from '../sync/core/prefix'
 
 interface Remote {id:string;name:string;manifest:string[];rows:string[][];properties:Record<string,string>;trashed:boolean}
@@ -64,12 +65,12 @@ describe('ProductiveRotationService',()=>{
     await putRecord(LOCAL_STORES.painEntries,pain('rotation-active'))
     await putRecord(LOCAL_STORES.painEntries,pain('rotation-tombstone'))
     await putRecord(LOCAL_STORES.painEntries,{...pain('rotation-tombstone'),status:'deleted' as const})
-    const source=await repository.verifiedActiveEpoch(),sourceRows=source.envelopes.map(envelope=>[envelope.envelopeId,envelope.iv,envelope.ciphertext]),transport=await GoogleSheetsSingleWriterTransport.fromAuthenticatedSession(google.client,source.context.diaryId,source.context.epochId),account=await transport.authenticatedAccountBinding(),commitment=await recoveryCommitment(urs,fromBase64Url(source.context.diaryId),source.state.recovery_generation)
+    const source=await repository.verifiedActiveEpoch(),sourceRows=source.envelopes.map(envelope=>[envelope.envelopeId,envelope.iv,envelope.ciphertext]),session=googleProviderSessionFromAuthenticatedClient(google.client),transport=await session.transportForEpoch(source.context.diaryId,source.context.epochId),account=await session.remoteIdentityBinding(transport),commitment=await recoveryCommitment(urs,fromBase64Url(source.context.diaryId),source.state.recovery_generation)
     const manifest=await prepareManifest(source.rootKey,source.epochSalt,{diaryId:source.context.diaryId,epochId:source.context.epochId},{diary_id:source.context.diaryId,epoch_id:source.context.epochId,key_id:source.context.keyId,recovery_generation:source.state.recovery_generation,recovery_urs_commitment:commitment,diary_marker:'epoch-manifest-v5',crypto_suite:'A256GCM-HKDF-SHA256-v5',sync_profile:'google-sheets-single-writer-v1',created_at:createdAt,google_account_binding:account,predecessor_epochs:[],record_schema_allowlist:[...SCHEMA_ALLOWLIST],record_schema_registry_hash:await schemaRegistryHash(DOMAIN_SCHEMA_REGISTRY),protocol_limits:{max_payload_bytes:16380,padding_buckets:[1024,2048,4096,8192,16384],max_unique_envelopes:100000,max_unique_canonical_bytes:134217728,max_remote_physical_rows:100000,max_remote_physical_canonical_bytes:134217728,max_canonical_row_bytes:21936}})
     const fingerprint=await manifestFingerprint(manifest),sourceContext={...source.context,manifestFingerprint:fingerprint},sourceRemote:Remote={id:'source',name:'sync-source',manifest:[manifest.format,manifest.version,manifest.manifestIv,manifest.manifestCiphertext],rows:sourceRows,properties:{app_format:'sync-v5',epoch_locator:await epochLocator(source.context.diaryId,source.context.epochId)},trashed:false};google.remotes.set(sourceRemote.id,sourceRemote)
     const db=await __localDatabaseTesting.openDatabase(),keyTx=db.transaction(__localDatabaseTesting.STORES.wrappingKeys,'readonly'),key=await new Promise<CryptoKey>((resolve,reject)=>{const request=keyTx.objectStore(__localDatabaseTesting.STORES.wrappingKeys).get(source.context.wrapId);request.onsuccess=()=>resolve((request.result as {key:CryptoKey}).key);request.onerror=()=>reject(request.error)});await transactionComplete(keyTx);const wrap=await createBestEffortRootWrap(source.rootKey,key,{diary_id:source.context.diaryId,epoch_id:source.context.epochId,key_id:source.context.keyId,manifest_fingerprint:fingerprint},fromBase64Url(source.context.wrapId)),anchor=await createAnchor(source.context.diaryId,source.context.epochId,sourceRows),state={...source.state,manifest_fingerprint:fingerprint,recovery_urs_commitment:commitment,epoch_status:'active' as const,remote_binding:{provider_id:'google-sheets-single-writer-v1' as const,remote_resource_id:'source',remote_identity_binding:account},remote_anchor:anchor},tag=await stateTag(source.rootKey,source.epochSalt,state),tx=db.transaction([__localDatabaseTesting.STORES.state,__localDatabaseTesting.STORES.context,__localDatabaseTesting.STORES.wraps],'readwrite');tx.objectStore(__localDatabaseTesting.STORES.state).put({id:source.context.epochId,state,tag});tx.objectStore(__localDatabaseTesting.STORES.context).put(sourceContext);tx.objectStore(__localDatabaseTesting.STORES.wraps).put({id:source.context.epochId,wrap});await transactionComplete(tx)
 
-    const runFault=async(point:ProductiveRotationFaultPoint)=>{let fired=false;const service=new ProductiveRotationService(transport,urs,()=>createdAt,current=>{if(current===point&&!fired){fired=true;throw new Error(`fault:${point}`)}});await expect(service.rotate()).rejects.toThrow(`fault:${point}`);expect(fired).toBe(true)}
+    const runFault=async(point:ProductiveRotationFaultPoint)=>{let fired=false;const service=new ProductiveRotationService(session,transport,urs,()=>createdAt,current=>{if(current===point&&!fired){fired=true;throw new Error(`fault:${point}`)}});await expect(service.rotate()).rejects.toThrow(`fault:${point}`);expect(fired).toBe(true)}
     await runFault('after-root-wrap')
     await runFault('after-freeze')
     await expect(putRecord(LOCAL_STORES.painEntries,{...pain('rotation-active'),note:'mutation must stay frozen'})).rejects.toThrow('frozen')
@@ -79,7 +80,7 @@ describe('ProductiveRotationService',()=>{
     await runFault('after-migration-envelope')
 
     google.crashAfterAppend='successor'
-    await expect(new ProductiveRotationService(transport,urs,()=>createdAt).rotate()).rejects.toThrow('simulated crash after successor append')
+    await expect(new ProductiveRotationService(session,transport,urs,()=>createdAt).rotate()).rejects.toThrow('simulated crash after successor append')
     expect(google.crashAfterAppend).toBeNull()
     await runFault('after-successor-anchor-durable')
     expect([...google.appendCounts.values()].every(count=>count===1)).toBe(true)
@@ -89,7 +90,7 @@ describe('ProductiveRotationService',()=>{
     await runFault('after-announcement-envelope')
 
     google.crashAfterAppend='source'
-    await expect(new ProductiveRotationService(transport,urs,()=>createdAt).rotate()).rejects.toThrow('simulated crash after source append')
+    await expect(new ProductiveRotationService(session,transport,urs,()=>createdAt).rotate()).rejects.toThrow('simulated crash after source append')
     expect(google.crashAfterAppend).toBeNull()
     await runFault('after-announcement-durable')
     expect([...google.appendCounts.values()].every(count=>count===1)).toBe(true)
@@ -97,7 +98,7 @@ describe('ProductiveRotationService',()=>{
     await runFault('before-atomic-switch')
     await runFault('after-atomic-switch')
 
-    const result=await new ProductiveRotationService(transport,urs,()=>createdAt).rotate(),active=await repository.verifiedActiveEpoch(),successors=[...google.remotes.values()].filter(item=>item.id!=='source'&&!item.trashed)
+    const result=await new ProductiveRotationService(session,transport,urs,()=>createdAt).rotate(),active=await repository.verifiedActiveEpoch(),successors=[...google.remotes.values()].filter(item=>item.id!=='source'&&!item.trashed)
     expect(result.state.step).toBe('switched')
     expect(google.creates).toBe(1)
     expect(successors).toHaveLength(1)
@@ -127,7 +128,7 @@ describe('ProductiveRotationService',()=>{
     expect(result.recovery.recovery_artifact_id).toBeTruthy()
     expect(result.backup.backup_id).toBeTruthy()
 
-    const firstSuccessorRows=structuredClone(successor.rows),secondTransport=await transport.forEpoch(active.context.diaryId,active.context.epochId),second=await new ProductiveRotationService(secondTransport,urs,()=> '2026-09-16T13:00:00.000Z').rotate(),active2=await repository.verifiedActiveEpoch(),secondSuccessors=[...google.remotes.values()].filter(item=>item.id!=='source'&&item.id!==successor.id&&!item.trashed)
+    const firstSuccessorRows=structuredClone(successor.rows),secondTransport=await session.transportForEpoch(active.context.diaryId,active.context.epochId),second=await new ProductiveRotationService(session,secondTransport,urs,()=> '2026-09-16T13:00:00.000Z').rotate(),active2=await repository.verifiedActiveEpoch(),secondSuccessors=[...google.remotes.values()].filter(item=>item.id!=='source'&&item.id!==successor.id&&!item.trashed)
     expect(second.state.step).toBe('switched')
     expect(second.state.rotationId).not.toBe(result.state.rotationId)
     expect(google.creates).toBe(2)
@@ -153,8 +154,8 @@ describe('ProductiveRotationService',()=>{
     expect(source.state.epoch_status).toBe('local_offline')
     expect(source.state.remote_binding).toBeNull()
     expect(source.state.remote_anchor).toBeNull()
-    const transport=await GoogleSheetsSingleWriterTransport.fromAuthenticatedSession(google.client,source.context.diaryId,source.context.epochId)
-    const result=await ProductiveRotationService.remoteEnablement(transport,urs,()=>createdAt).rotate(),active=await repository.verifiedActiveEpoch(),retired=await repository.verifiedEpoch(source.context)
+    const session=googleProviderSessionFromAuthenticatedClient(google.client),transport=await session.transportForEpoch(source.context.diaryId,source.context.epochId)
+    const result=await ProductiveRotationService.remoteEnablement(session,transport,urs,()=>createdAt).rotate(),active=await repository.verifiedActiveEpoch(),retired=await repository.verifiedEpoch(source.context)
     expect(result.state.step).toBe('switched')
     expect(google.creates).toBe(1)
     expect([...google.remotes.values()].filter(item=>!item.trashed)).toHaveLength(1)

@@ -6,8 +6,8 @@ import type { SyncBackupV5 } from '../../security/backup'
 import { DOMAIN_SCHEMA_REGISTRY } from '../../data/localDatabase'
 import { persistRecoveredProfile } from '../../data/recoveryProfile'
 import { IndependentBootstrapAuthority, RecoveryBootstrapVerifier } from '../../sync/core/remoteVerifier'
-import { GoogleAuthProvider } from '../../sync/google/GoogleAuthProvider'
-import { GoogleSheetsSingleWriterTransport, epochLocator } from '../../sync/google/GoogleSheetsSingleWriterTransport'
+import type { SingleWriterProviderSession } from '../../sync/core/provider'
+import { GoogleSingleWriterProvider } from '../../sync/google/GoogleSingleWriterProvider'
 import './RecoverySettings.css'
 
 type Method = 'backup' | 'google'
@@ -18,7 +18,7 @@ async function readJson(file: File, maximum: number): Promise<unknown> {
 }
 
 export function RecoverySettings() {
-  const providerRef = useRef<GoogleAuthProvider | null>(null)
+  const sessionRef = useRef<SingleWriterProviderSession | null>(null)
   const [method, setMethod] = useState<Method>('backup')
   const [urs, setUrs] = useState('')
   const [artifact, setArtifact] = useState<File | null>(null)
@@ -41,14 +41,13 @@ export function RecoverySettings() {
       } else {
         const authOrigin = import.meta.env.VITE_GOOGLE_AUTH_ORIGIN as string | undefined
         if (!authOrigin) throw new Error('Der separate Google-Auth-Origin ist nicht konfiguriert.')
-        const provider = providerRef.current ?? new GoogleAuthProvider(authOrigin)
-        providerRef.current = provider
-        await provider.authenticate(base64Url(randomBytes(32)))
-        const transport = await GoogleSheetsSingleWriterTransport.fromAuthenticatedSession(provider.getApiClient(), candidate.payload.diary_id, candidate.payload.epoch_id)
-        const locator = await epochLocator(candidate.payload.diary_id, candidate.payload.epoch_id)
+        const session = sessionRef.current ?? await new GoogleSingleWriterProvider(authOrigin).authenticate(base64Url(randomBytes(32)))
+        sessionRef.current = session
+        const transport = await session.transportForEpoch(candidate.payload.diary_id, candidate.payload.epoch_id)
+        const locator = await session.recoveryLocator(candidate.payload.diary_id, candidate.payload.epoch_id)
         const discovered = await transport.discover(locator)
         if (discovered.length !== 1) throw new Error('Die authentifizierte Google-Suche ergab keine eindeutige Recovery-Ressource.')
-        authority = await IndependentBootstrapAuthority.fromAuthenticatedGoogleDiscovery(transport, locator, discovered[0]!.remoteId)
+        authority = await session.recoveryAuthority(transport, locator, discovered[0]!.remoteId)
       }
       const verifier = new RecoveryBootstrapVerifier({ authority, schemas: DOMAIN_SCHEMA_REGISTRY })
       await activateRecoveredRoot(candidate, verifier, (verifiedCandidate, bootstrap) => persistRecoveredProfile(verifiedCandidate, bootstrap, DOMAIN_SCHEMA_REGISTRY, { recoveryArtifact: artifactValue }))

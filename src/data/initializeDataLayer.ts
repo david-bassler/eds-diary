@@ -1,13 +1,13 @@
 import { clearSecureSynchronizer, initializeSyncManager, installSecureSynchronizer } from './syncManager'
 import { SingleWriterSyncService } from './singleWriterSyncService'
-import type { GoogleApiClient } from '../sync/google/GoogleSheetsSingleWriterTransport'
-import { GoogleSheetsSingleWriterTransport } from '../sync/google/GoogleSheetsSingleWriterTransport'
+import type { SingleWriterProviderSession } from '../sync/core/provider'
 import { activeEpochSyncContext } from './localDatabase'
 import { normalizeLegacyActivityEntriesForSecureMigration } from './legacyCompatibility'
 import { ProductiveRotationService, type CompletedRotation } from './productiveRotationService'
 
 let initialized = false
 let secureSync:SingleWriterSyncService|null=null
+let activeProviderSession:SingleWriterProviderSession|null=null
 let legacyCompatibilityPromise:Promise<void>|null=null
 
 function ensureLegacyCompatibility():Promise<void>{
@@ -15,52 +15,57 @@ function ensureLegacyCompatibility():Promise<void>{
   return legacyCompatibilityPromise
 }
 
-export interface GoogleRemoteSessionStatus {
+export interface RemoteSessionStatus {
   mode:'local_offline'|'remote_bound'
   epochId:string
   remoteResourceId:string|null
 }
 
-/** Called only after the provider identity and persisted remote binding have
- * been authenticated. This is the productive sync slot used by the app. */
+/** Productive sync slot used after an authenticated provider session has been
+ * established by a concrete UI/provider adapter. */
 export async function synchronizeDataLayer():Promise<void>{if(!secureSync)throw new Error('Secure single-writer sync is not authenticated.');await secureSync.synchronize()}
 
-/** Called by the authenticated provider hand-off. It reconstructs the product
- * service from the MAC-authenticated active remote binding. */
-export async function installAuthenticatedGoogleSession(api:GoogleApiClient):Promise<void>{
+export async function installAuthenticatedRemoteSession(session:SingleWriterProviderSession):Promise<void>{
   await ensureLegacyCompatibility()
-  const service=await SingleWriterSyncService.createGoogle(api)
+  const service=await SingleWriterSyncService.createAuthenticated(session)
+  activeProviderSession=session
   secureSync=service
   installSecureSynchronizer(()=>service.synchronize())
 }
-export function clearAuthenticatedRemoteSession():void{secureSync=null;clearSecureSynchronizer()}
 
-export async function googleRemoteSessionStatus():Promise<GoogleRemoteSessionStatus>{
+export async function clearAuthenticatedRemoteSession():Promise<void>{
+  const session=activeProviderSession
+  activeProviderSession=null
+  secureSync=null
+  clearSecureSynchronizer()
+  await session?.disconnect()
+}
+
+export async function remoteSessionStatus():Promise<RemoteSessionStatus>{
   await ensureLegacyCompatibility()
   const active=await activeEpochSyncContext(),binding=active.state.remote_binding
   return{mode:binding?'remote_bound':'local_offline',epochId:active.epochId,remoteResourceId:binding?.remote_resource_id??null}
 }
 
-/** First productive Google enablement. The caller must supply a separately saved
- * 32-byte recovery secret; the operation creates a new remote-bound epoch rather
- * than binding the local-offline pseudo-manifest in place. */
-export async function enableAuthenticatedGoogleSession(api:GoogleApiClient,urs:Uint8Array):Promise<CompletedRotation>{
+/** First productive remote enablement. The caller supplies an authenticated
+ * provider session and a separately saved 32-byte recovery secret. */
+export async function enableAuthenticatedRemoteSession(session:SingleWriterProviderSession,urs:Uint8Array):Promise<CompletedRotation>{
   if(urs.byteLength!==32)throw new Error('Recovery secret must contain 32 bytes.')
   await ensureLegacyCompatibility()
   const active=await activeEpochSyncContext()
   if(active.state.remote_binding||active.state.remote_anchor||active.state.epoch_status!=='local_offline')throw new Error('The active epoch is not eligible for first remote enablement.')
-  const transport=await GoogleSheetsSingleWriterTransport.fromAuthenticatedSession(api,active.diaryId,active.epochId)
-  const result=await ProductiveRotationService.remoteEnablement(transport,urs).rotate()
-  await installAuthenticatedGoogleSession(api)
+  const transport=await session.transportForEpoch(active.diaryId,active.epochId)
+  const result=await ProductiveRotationService.remoteEnablement(session,transport,urs).rotate()
+  await installAuthenticatedRemoteSession(session)
   return result
 }
 
-/** Product entry point used by an already remote-bound authenticated settings lifecycle. */
-export async function rotateAuthenticatedGoogleSession(api:GoogleApiClient,urs:Uint8Array):Promise<CompletedRotation>{
+/** Product entry point used by an already remote-bound authenticated session. */
+export async function rotateAuthenticatedRemoteSession(session:SingleWriterProviderSession,urs:Uint8Array):Promise<CompletedRotation>{
   await ensureLegacyCompatibility()
-  const active=await activeEpochSyncContext(),transport=await GoogleSheetsSingleWriterTransport.fromAuthenticatedSession(api,active.diaryId,active.epochId)
-  const result=await new ProductiveRotationService(transport,urs).rotate()
-  await installAuthenticatedGoogleSession(api)
+  const active=await activeEpochSyncContext(),transport=await session.transportForEpoch(active.diaryId,active.epochId)
+  const result=await new ProductiveRotationService(session,transport,urs).rotate()
+  await installAuthenticatedRemoteSession(session)
   return result
 }
 
