@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { base64Url, fromBase64Url, randomBytes } from '../../security/crypto/bytes'
 import { canonicalJson } from '../../security/crypto/canonical'
-import { GoogleAuthProvider } from '../../sync/google/GoogleAuthProvider'
+import type { SingleWriterProviderSession } from '../../sync/core/provider'
+import { GoogleSingleWriterProvider } from '../../sync/google/GoogleSingleWriterProvider'
 import {
   clearAuthenticatedRemoteSession,
-  enableAuthenticatedGoogleSession,
-  googleRemoteSessionStatus,
-  installAuthenticatedGoogleSession,
+  enableAuthenticatedRemoteSession,
+  remoteSessionStatus,
+  installAuthenticatedRemoteSession,
 } from '../../data/initializeDataLayer'
 import {
   getSyncSnapshot,
@@ -41,7 +42,7 @@ function downloadJson(filename: string, value: unknown): void {
 }
 
 async function readStorageSetupState(): Promise<StorageSetupState> {
-  const value = await googleRemoteSessionStatus()
+  const value = await remoteSessionStatus()
   const recoveryArtifactAvailable = await currentRecoveryArtifact().then(
     () => true,
     () => false,
@@ -53,7 +54,7 @@ async function readStorageSetupState(): Promise<StorageSetupState> {
 }
 
 export function GoogleSyncSettings() {
-  const providerRef = useRef<GoogleAuthProvider | null>(null)
+  const sessionRef = useRef<SingleWriterProviderSession | null>(null)
   const [syncSnapshot, setSyncSnapshot] = useState(getSyncSnapshot)
   const [status, setStatus] = useState<StatusMessage | null>(null)
   const [busy, setBusy] = useState(false)
@@ -131,24 +132,21 @@ export function GoogleSyncSettings() {
     try {
       const authOrigin = import.meta.env.VITE_GOOGLE_AUTH_ORIGIN as string | undefined
       if (!authOrigin) throw new Error('Google-Anmeldung ist für diese Installation noch nicht konfiguriert.')
-      const provider = providerRef.current ?? new GoogleAuthProvider(authOrigin)
-      providerRef.current = provider
-      const actionId = base64Url(randomBytes(32))
-      await provider.authenticate(actionId)
-      const api = provider.getApiClient()
-      const remote = await googleRemoteSessionStatus()
+      const session = sessionRef.current ?? await new GoogleSingleWriterProvider(authOrigin).authenticate(base64Url(randomBytes(32)))
+      sessionRef.current = session
+      const remote = await remoteSessionStatus()
       if (remote.mode === 'local_offline') {
         if (!recoverySecret || !recoverySaved) {
           throw new Error('Speichere zuerst den Recovery-Schlüssel und bestätige Schritt 1.')
         }
         const urs = fromBase64Url(recoverySecret)
         if (urs.byteLength !== 32) throw new Error('Recovery-Schlüssel ist ungültig.')
-        const result = await enableAuthenticatedGoogleSession(api, urs)
+        const result = await enableAuthenticatedRemoteSession(session, urs)
         setArtifacts({ recovery: result.recovery, backup: result.backup })
         setRecoveryArtifactAvailable(true)
         setRequiresEnablement(false)
       } else {
-        await installAuthenticatedGoogleSession(api)
+        await installAuthenticatedRemoteSession(session)
       }
       await syncAll()
       setStatus({ message: 'Google ist verbunden und die Daten sind synchronisiert.', kind: 'good' })
@@ -174,9 +172,8 @@ export function GoogleSyncSettings() {
   async function disconnect(): Promise<void> {
     setBusy(true)
     try {
-      await providerRef.current?.disconnect()
-      providerRef.current = null
-      clearAuthenticatedRemoteSession()
+      sessionRef.current = null
+      await clearAuthenticatedRemoteSession()
       setStatus({ message: 'Google-Verbindung getrennt. Deine lokalen Daten bleiben erhalten.', kind: 'neutral' })
     } finally {
       setBusy(false)
@@ -199,9 +196,9 @@ export function GoogleSyncSettings() {
   async function exportBackup(): Promise<void> {
     setBusy(true)
     try {
-      const provider = providerRef.current
-      if (!provider) throw new Error('Verbinde zuerst dein Google-Konto.')
-      downloadJson('eds-diary-backup.json', await createCurrentVerifiedBackup(provider.getApiClient()))
+      const session = sessionRef.current
+      if (!session) throw new Error('Verbinde zuerst dein Google-Konto.')
+      downloadJson('eds-diary-backup.json', await createCurrentVerifiedBackup(session))
       setStatus({ message: 'Aktuelles verschlüsseltes Backup exportiert.', kind: 'good' })
     } catch (cause) {
       setStatus({ message: cause instanceof Error ? cause.message : 'Backup-Export fehlgeschlagen.', kind: 'bad' })
