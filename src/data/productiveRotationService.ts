@@ -11,7 +11,7 @@ import { journalInitial, type EpochLocalSecurityState } from '../security/localS
 import { runCreationStateMachine, type CreationState } from '../sync/core/creation'
 import { SingleWriterCoordinator } from '../sync/core/coordinator'
 import { createAnchor, type RemoteAnchor } from '../sync/core/prefix'
-import { FullRemoteVerifier, IndependentBootstrapAuthority, RecoveryBootstrapVerifier } from '../sync/core/remoteVerifier'
+import { FullRemoteVerifier, RecoveryBootstrapVerifier } from '../sync/core/remoteVerifier'
 import type { RemoteTransport } from '../sync/core/contracts'
 import type { SingleWriterProviderSession } from '../sync/core/provider'
 import { DOMAIN_SCHEMA_REGISTRY, IndexedDbCoordinatorStore, IndexedDbRotationRepository, indexedDbCreationPersistence, indexedDbRotationPersistence, type EpochContext, type VerifiedEpochMaterial } from './localDatabase'
