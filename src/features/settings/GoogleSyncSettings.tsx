@@ -60,6 +60,7 @@ export function GoogleSyncSettings() {
   const [syncSnapshot, setSyncSnapshot] = useState(getSyncSnapshot)
   const [status, setStatus] = useState<StatusMessage | null>(null)
   const [busy, setBusy] = useState(false)
+  const [connectStage, setConnectStage] = useState<string | null>(null)
   const [preparing, setPreparing] = useState(true)
   const [preparationError, setPreparationError] = useState<string | null>(null)
   const [requiresEnablement, setRequiresEnablement] = useState<boolean | null>(null)
@@ -135,12 +136,14 @@ export function GoogleSyncSettings() {
 
   async function connectAndSync(): Promise<void> {
     setBusy(true)
+    setConnectStage('Google-Anmeldung wird abgeschlossen …')
     setStatus(null)
     try {
       const authOrigin = import.meta.env.VITE_GOOGLE_AUTH_ORIGIN as string | undefined
       if (!authOrigin) throw new Error('Google-Anmeldung ist für diese Installation noch nicht konfiguriert.')
       const session = sessionRef.current ?? await new GoogleSingleWriterProvider(authOrigin).authenticate(base64Url(randomBytes(32)))
       sessionRef.current = session
+      setConnectStage('Google-Konto bestätigt. Lokaler Zustand wird geprüft …')
       const remote = await remoteSessionStatus()
       if (remote.mode === 'local_offline') {
         if (!recoverySecret || !recoverySaved) {
@@ -148,18 +151,22 @@ export function GoogleSyncSettings() {
         }
         const urs = fromBase64Url(recoverySecret)
         if (urs.byteLength !== 32) throw new Error('Recovery-Schlüssel ist ungültig.')
+        setConnectStage('Verschlüsselter Google-Speicher wird eingerichtet und verifiziert …')
         const result = await enableAuthenticatedRemoteSession(session, urs)
         setArtifacts({ recovery: result.recovery, backup: result.backup })
         setRecoveryArtifactAvailable(true)
         setRequiresEnablement(false)
       } else {
+        setConnectStage('Bestehender verschlüsselter Google-Speicher wird verifiziert …')
         await installAuthenticatedRemoteSession(session)
       }
+      setConnectStage('Erste Synchronisierung läuft …')
       await syncAll()
       setStatus({ message: 'Google ist verbunden und die Daten sind synchronisiert.', kind: 'good' })
     } catch (cause) {
       setStatus({ message: cause instanceof Error ? cause.message : 'Google-Verbindung fehlgeschlagen.', kind: 'bad' })
     } finally {
+      setConnectStage(null)
       setBusy(false)
     }
   }
@@ -336,7 +343,7 @@ export function GoogleSyncSettings() {
                   <p>Du meldest dich bei Google an. Danach erstellt die App den verschlüsselten Speicher und startet die erste Synchronisierung.</p>
                   {recoverySaved ? (
                     <button type="button" className="google-sync-settings__primary" onClick={() => void connectAndSync()} disabled={busy}>
-                      {busy ? 'Verbindung wird hergestellt …' : 'Mit Google verbinden'}
+                      {busy ? (connectStage ?? 'Verbindung wird hergestellt …') : 'Mit Google verbinden'}
                     </button>
                   ) : (
                     <p className="google-sync-settings__hint">Zuerst Schritt 1 abschließen.</p>
@@ -354,7 +361,7 @@ export function GoogleSyncSettings() {
               <p>Dieses Tagebuch ist bereits für Google eingerichtet. Melde dich mit dem gebundenen Google-Konto an, um zu synchronisieren.</p>
             </div>
             <button type="button" className="google-sync-settings__primary" onClick={() => void connectAndSync()} disabled={busy}>
-              {busy ? 'Verbindung wird hergestellt …' : 'Mit Google verbinden'}
+              {busy ? (connectStage ?? 'Verbindung wird hergestellt …') : 'Mit Google verbinden'}
             </button>
           </div>
         ) : null}
