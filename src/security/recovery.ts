@@ -1,10 +1,11 @@
-import { aesGcmDecrypt,aesGcmEncrypt,deriveRecoveryKey,randomBytes,recoveryCommitment } from './crypto/core'
-import { base64Url,fixedBase64Url,fromBase64Url } from './crypto/bytes'
+import { aesGcmDecrypt,aesGcmEncrypt,deriveRecoveryKey,randomBytes,recoveryCommitment,sha256 } from './crypto/core'
+import { base64Url,concatBytes,fixedBase64Url,fromBase64Url,utf8 } from './crypto/bytes'
 import { canonicalBytes,parseCanonicalJson } from './crypto/canonical'
 import type { RemoteAnchor } from '../sync/core/prefix'
 import { RecoveryBootstrapVerifier, type VerifiedRecoveryBootstrap } from '../sync/core/remoteVerifier'
 
 export interface RecoveryArtifact {format:'sync-recovery-v5';version:5;recovery_artifact_id:string;kdf_profile_id:'recovery-hkdf-v5-1';salt:string;wrap_iv:string;wrapped_payload:string}
+export async function recoveryArtifactLocator(urs:Uint8Array):Promise<string>{if(urs.byteLength!==32)throw new Error('Recovery secret must contain 32 bytes.');return base64Url((await sha256(concatBytes(utf8('eds-diary/recovery-artifact-locator/v5'),new Uint8Array([0]),urs))).slice(0,16))}
 export interface RecoveryPayload {recovery_artifact_id:string;diary_id:string;epoch_id:string;key_id:string;RK_epoch:string;manifest_fingerprint:string;remote_anchor:RemoteAnchor|null;google_account_binding:string;recovery_generation:number;created_at:string}
 const RECOVERY_KEYS=['created_at','diary_id','epoch_id','google_account_binding','key_id','manifest_fingerprint','recovery_artifact_id','recovery_generation','remote_anchor','RK_epoch']
 function validateArtifact(value:RecoveryArtifact):void{if(!value||typeof value!=='object'||Object.keys(value).sort().join('\0')!==['format','version','recovery_artifact_id','kdf_profile_id','salt','wrap_iv','wrapped_payload'].sort().join('\0')||value.format!=='sync-recovery-v5'||value.version!==5||value.kdf_profile_id!=='recovery-hkdf-v5-1')throw new Error('Recovery artifact schema mismatch.');fixedBase64Url(value.recovery_artifact_id,16);fixedBase64Url(value.salt,32);fixedBase64Url(value.wrap_iv,12);if(fromBase64Url(value.wrapped_payload).byteLength<16||fromBase64Url(value.wrapped_payload).byteLength>65_536)throw new Error('Recovery ciphertext bound exceeded.')}
