@@ -18,8 +18,8 @@ test.describe('security product flows',()=>{
 
   test('recovery UI supports Google-key-only and origin-migration paths',async({page})=>{
     await page.goto('/?mode=recovery')
-    await page.getByLabel('Origin-Umzugspaket').check()
-    await expect(page.getByLabel('Origin-Umzugspaket',{exact:true})).toBeVisible()
+    await page.getByLabel('Origin-Umzugspaket verwenden').check()
+    await expect(page.getByLabel('Origin-Umzugspaket-Datei')).toBeVisible()
     await expect(page.getByLabel('Recovery-Artefakt')).toHaveCount(0)
     await page.getByLabel('Authentifiziertes Google-Konto + Recovery-Schlüssel').check()
     await expect(page.getByLabel('Recovery-Artefakt')).toHaveCount(0)
