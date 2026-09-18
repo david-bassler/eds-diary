@@ -1,6 +1,6 @@
 import { canonicalJson, parseStrictJson } from '../../security/crypto/canonical'
 import { utf8 } from '../../security/crypto/bytes'
-import { recoveryArtifactLocator, type RecoveryArtifact } from '../../security/recovery'
+import { recoverRootKeyCandidate, recoveryArtifactLocator, type RecoveryArtifact } from '../../security/recovery'
 import { isAuthenticatedGoogleApiClient } from './GoogleAuthProvider'
 import type { GoogleApiClient } from './GoogleSheetsSingleWriterTransport'
 
@@ -105,8 +105,13 @@ export class GoogleRecoveryArtifactStore {
     }
     await this.verifyFile(remoteId,locator)
     const prior=await this.readArtifactText(remoteId)
-    if(prior!==null&&prior!==encoded)throw new Error('Recovery artifact locator already contains different bytes.')
-    if(prior===null){
+    if(prior!==null&&prior!==encoded){
+      const priorArtifact=parseStrictJson(utf8(prior)) as unknown as RecoveryArtifact
+      const [previous,next]=await Promise.all([recoverRootKeyCandidate(priorArtifact,secret),recoverRootKeyCandidate(artifact,secret)])
+      if(previous.payload.diary_id!==next.payload.diary_id)throw new Error('Recovery artifact locator is already bound to a different diary.')
+      if(next.payload.recovery_generation<previous.payload.recovery_generation||(next.payload.recovery_generation===previous.payload.recovery_generation&&next.payload.created_at<=previous.payload.created_at))throw new Error('Recovery artifact rollback or ambiguous replacement was rejected.')
+    }
+    if(prior!==encoded){
       const sheetId=await this.artifactSheetId(remoteId)
       try{
         await this.api.request(`https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(remoteId)}:batchUpdate`,{method:'POST',body:JSON.stringify({requests:[{updateCells:{range:{sheetId,startRowIndex:0,endRowIndex:1,startColumnIndex:0,endColumnIndex:1},rows:[{values:[{userEnteredValue:{stringValue:encoded}}]}],fields:'userEnteredValue'}}]})})
