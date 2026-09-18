@@ -8,6 +8,7 @@ import {
   enableAuthenticatedRemoteSession,
   remoteSessionStatus,
   installAuthenticatedRemoteSession,
+  replaceRecoverySecret,
 } from '../../data/initializeDataLayer'
 import {
   getSyncSnapshot,
@@ -16,7 +17,8 @@ import {
   type SyncSnapshot,
 } from '../../data/syncManager'
 import './GoogleSyncSettings.css'
-import { createCurrentVerifiedBackup, currentRecoveryArtifact } from '../../data/artifactExports'
+import { createCurrentOriginMigrationBundle, createCurrentVerifiedBackup, currentRecoveryArtifact } from '../../data/artifactExports'
+import { activeRemoteDurabilityStatus, type ActiveRemoteDurabilityStatus } from '../../data/localDatabase'
 
 type StatusKind = 'neutral' | 'good' | 'bad'
 interface StatusMessage { message: string; kind: StatusKind }
@@ -65,10 +67,15 @@ export function GoogleSyncSettings() {
   const [recoverySecret, setRecoverySecret] = useState('')
   const [recoverySaved, setRecoverySaved] = useState(false)
   const [artifacts, setArtifacts] = useState<ExportArtifacts | null>(null)
+  const [remoteDurability, setRemoteDurability] = useState<ActiveRemoteDurabilityStatus | null>(null)
+  const [replacementSecret, setReplacementSecret] = useState('')
+  const [replacementSaved, setReplacementSaved] = useState(false)
 
   useEffect(() => {
-    const removeSyncListener = onSyncState(setSyncSnapshot)
+    const refreshDurability = () => { void activeRemoteDurabilityStatus().then((value) => { if (!cancelled) setRemoteDurability(value) }).catch(() => undefined) }
+    const removeSyncListener = onSyncState((snapshot) => { setSyncSnapshot(snapshot); refreshDurability() })
     let cancelled = false
+    refreshDurability()
 
     void readStorageSetupState().then(
       (value) => {
@@ -207,6 +214,48 @@ export function GoogleSyncSettings() {
     }
   }
 
+  function generateReplacementSecret(): void {
+    setReplacementSecret(base64Url(randomBytes(32)))
+    setReplacementSaved(false)
+    setStatus({ message: 'Neuer Recovery-Schlüssel erstellt. Speichere ihn außerhalb dieser App, bevor du den alten ersetzt.', kind: 'neutral' })
+  }
+
+  async function copyReplacementSecret(): Promise<void> {
+    if (!replacementSecret) return
+    await navigator.clipboard.writeText(replacementSecret)
+    setStatus({ message: 'Neuer Recovery-Schlüssel kopiert.', kind: 'good' })
+  }
+
+  async function replaceRecovery(): Promise<void> {
+    setBusy(true)
+    try {
+      const session=sessionRef.current
+      if(!session)throw new Error('Verbinde zuerst dein Google-Konto.')
+      if(!replacementSecret||!replacementSaved)throw new Error('Speichere den neuen Recovery-Schlüssel zuerst außerhalb dieser App.')
+      const secret=fromBase64Url(replacementSecret)
+      if(secret.byteLength!==32||base64Url(secret)!==replacementSecret)throw new Error('Der neue Recovery-Schlüssel ist ungültig.')
+      const result=await replaceRecoverySecret(session,secret)
+      setArtifacts({recovery:result.recovery,backup:result.backup})
+      setRecoveryArtifactAvailable(true)
+      setStatus({message:'Recovery-Schlüssel wurde ersetzt. Der neue Schlüssel und das neue Recovery-Artefakt sind verifiziert; das Artefakt ist zusätzlich im gebundenen Google-Konto gespeichert.',kind:'good'})
+      setRemoteDurability(await activeRemoteDurabilityStatus())
+    }catch(cause){
+      setStatus({message:cause instanceof Error?cause.message:'Recovery-Schlüssel konnte nicht ersetzt werden.',kind:'bad'})
+    }finally{setBusy(false)}
+  }
+
+  async function exportOriginMigration():Promise<void>{
+    setBusy(true)
+    try{
+      const session=sessionRef.current
+      if(!session)throw new Error('Verbinde zuerst dein Google-Konto.')
+      downloadJson('eds-diary-origin-migration.json',await createCurrentOriginMigrationBundle(session))
+      setStatus({message:'Verschlüsseltes Origin-Umzugspaket exportiert. Bewahre den Recovery-Schlüssel weiterhin getrennt davon auf.',kind:'good'})
+    }catch(cause){
+      setStatus({message:cause instanceof Error?cause.message:'Origin-Umzugspaket konnte nicht erstellt werden.',kind:'bad'})
+    }finally{setBusy(false)}
+  }
+
   return (
     <section className="google-sync-settings" aria-labelledby="google-sync-settings-heading">
       <header className="google-sync-settings__header">
@@ -215,6 +264,7 @@ export function GoogleSyncSettings() {
           <p className="google-sync-settings__state" data-state={syncSnapshot.state}>
             {syncDescription(syncSnapshot)}
           </p>
+          {remoteDurability?.pendingEnvelopeCount ? <p className="google-sync-settings__state" role="status">{remoteDurability.pendingEnvelopeCount} verschlüsselte Änderung{remoteDurability.pendingEnvelopeCount===1?' existiert':'en existieren'} derzeit nur auf diesem Gerät.</p> : remoteDurability?.remoteBound ? <p className="google-sync-settings__state">Alle lokalen Änderungen sind remote bestätigt.</p> : null}
         </div>
         {syncSnapshot.connected ? <span className="google-sync-settings__badge">Verbunden</span> : null}
       </header>
@@ -326,8 +376,8 @@ export function GoogleSyncSettings() {
 
         {artifacts ? (
           <div className="google-sync-settings__important">
-            <strong>Wiederherstellungsdateien jetzt speichern</strong>
-            <p>Bewahre diese Dateien getrennt vom Recovery-Schlüssel auf.</p>
+            <strong>Zusätzliche Wiederherstellungskopien speichern</strong>
+            <p>Das Recovery-Artefakt wurde bereits verschlüsselt im gebundenen Google-Konto abgelegt. Diese Downloads sind zusätzliche unabhängige Kopien und sollten getrennt vom Recovery-Schlüssel aufbewahrt werden.</p>
             <div className="google-sync-settings__actions">
               <button type="button" onClick={() => downloadJson('eds-diary-recovery.json', artifacts.recovery)}>Recovery-Datei herunterladen</button>
               <button type="button" onClick={() => downloadJson('eds-diary-backup.json', artifacts.backup)}>Backup herunterladen</button>
@@ -348,13 +398,27 @@ export function GoogleSyncSettings() {
                   <button type="button" disabled={busy} onClick={() => void exportRecovery()}>Recovery-Datei erneut exportieren</button>
                 ) : null}
                 {syncSnapshot.connected ? (
-                  <button type="button" disabled={busy} onClick={() => void exportBackup()}>Aktuelles Backup exportieren</button>
+                  <>
+                    <button type="button" disabled={busy} onClick={() => void exportBackup()}>Aktuelles Backup exportieren</button>
+                    <button type="button" disabled={busy} onClick={() => void exportOriginMigration()}>Origin-Umzugspaket exportieren</button>
+                  </>
                 ) : null}
               </div>
+              {syncSnapshot.connected ? <div className="google-sync-settings__recovery">
+                <strong>Recovery-Schlüssel ersetzen</strong>
+                <p>Falls der bisherige Recovery-Schlüssel verloren wurde, kannst du bei entsperrtem Tagebuch einen neuen setzen. Die App wechselt erst nach vollständiger Remote-, Recovery- und Backup-Verifikation auf die neue Epoche.</p>
+                {!replacementSecret ? <button type="button" disabled={busy} onClick={generateReplacementSecret}>Neuen Recovery-Schlüssel erstellen</button> : <>
+                  <label htmlFor="google-sync-replacement-key">Neuer Recovery-Schlüssel</label>
+                  <input id="google-sync-replacement-key" type="text" readOnly value={replacementSecret}/>
+                  <button type="button" disabled={busy} onClick={() => void copyReplacementSecret()}>Kopieren</button>
+                  <label className="google-sync-settings__confirmation"><input type="checkbox" checked={replacementSaved} disabled={busy} onChange={(event)=>setReplacementSaved(event.target.checked)}/> Ich habe den neuen Schlüssel außerhalb dieser App gespeichert.</label>
+                  <button type="button" className="google-sync-settings__primary" disabled={busy||!replacementSaved} onClick={() => void replaceRecovery()}>Recovery-Schlüssel sicher ersetzen</button>
+                </>}
+              </div> : null}
               <a href="?mode=recovery">Tagebuch wiederherstellen</a>
               <details className="google-sync-settings__technical-details">
                 <summary>Technische Details zur Speicherung</summary>
-                <p>Die Tagebuchdaten werden als verschlüsselte, unveränderliche Datensätze gespeichert. Google-Anmeldung und Tokens laufen auf einem getrennten Auth-Origin und werden nicht an den Tagebuch-Origin weitergegeben.</p>
+                <p>Die Tagebuchdaten werden als verschlüsselte, unveränderliche Datensätze gespeichert. Tokens bleiben im Auth-Handoff und werden nicht an die Datenlogik weitergegeben. Für die Produktionsfreigabe bleibt ein tatsächlich getrennter Auth-Origin erforderlich.</p>
               </details>
             </div>
           </details>
