@@ -29,7 +29,7 @@ class GoogleBoundary {
   private cells(values:readonly string[]){return values.map(value=>({userEnteredValue:{stringValue:value}}))}
   private async request<T>(url:string,init?:RequestInit):Promise<T>{
     if(url.includes('/about?'))return{user:{permissionId:this.permission}} as T
-    if(url.includes('/drive/v3/files?q=')){const query=decodeURIComponent(new URL(url).searchParams.get('q')??''),name=/name = '([^']+)'/.exec(query)?.[1],epoch=/key='epoch_locator' and value='([^']+)'/.exec(query)?.[1];return{files:[...this.remotes.values()].filter(item=>!item.trashed&&((name&&item.name===name)||(epoch&&item.properties.epoch_locator===epoch))).map(item=>({id:item.id,name:item.name,mimeType:'application/vnd.google-apps.spreadsheet',trashed:false,appProperties:item.properties}))} as T}
+    if(url.includes('/drive/v3/files?q=')){const query=decodeURIComponent(new URL(url).searchParams.get('q')??''),name=/name = '([^']+)'/.exec(query)?.[1],epoch=/key='epoch_locator' and value='([^']+)'/.exec(query)?.[1],recovery=/key='recovery_locator' and value='([^']+)'/.exec(query)?.[1];return{files:[...this.remotes.values()].filter(item=>!item.trashed&&((name&&item.name===name)||(epoch&&item.properties.epoch_locator===epoch)||(recovery&&item.properties.recovery_locator===recovery))).map(item=>({id:item.id,name:item.name,mimeType:'application/vnd.google-apps.spreadsheet',trashed:false,appProperties:item.properties}))} as T}
     if(url==='https://sheets.googleapis.com/v4/spreadsheets'&&init?.method==='POST'){const body=JSON.parse(String(init.body)) as {properties:{title:string};sheets?:Array<{properties?:{title?:string}}>},recovery=body.sheets?.[0]?.properties?.title==='_a',id=`${recovery?'recovery':'successor'}-${this.next++}`;this.remotes.set(id,{id,name:body.properties.title,manifest:[],rows:[],properties:{},trashed:false,...(recovery?{artifact:''}:{})});if(!recovery)this.creates++;return{spreadsheetId:id} as T}
     const id=/spreadsheets\/([^/:?]+)/.exec(url)?.[1]??/drive\/v3\/files\/([^/?]+)/.exec(url)?.[1]
     const remote=id?this.remotes.get(decodeURIComponent(id)):undefined
@@ -158,6 +158,10 @@ describe('ProductiveRotationService',()=>{
     const before=await repository.verifiedActiveEpoch(),rekeyTransport=await session.transportForEpoch(before.context.diaryId,before.context.epochId)
     const result=await ProductiveRotationService.recoveryRekey(session,rekeyTransport,newUrs,()=> '2026-09-16T16:00:00.000Z').rotate()
     const after=await repository.verifiedActiveEpoch(),remoteArtifact=await session.loadRecoveryArtifact(newUrs),candidate=await recoverRootKeyCandidate(remoteArtifact,newUrs)
+    const recoveryFile=[...google.remotes.values()].find(item=>!item.trashed&&item.properties.app_format==='sync-recovery-v5')
+    expect(recoveryFile).toBeTruthy()
+    recoveryFile!.name='user-renamed-recovery-artifact'
+    expect((await session.loadRecoveryArtifact(newUrs)).recovery_artifact_id).toBe(remoteArtifact.recovery_artifact_id)
     expect(result.state.step).toBe('switched')
     expect(after.state.recovery_generation).toBe(before.state.recovery_generation+1)
     expect(candidate.payload.epoch_id).toBe(after.context.epochId)
