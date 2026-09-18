@@ -44,7 +44,7 @@ class GoogleSingleWriterProviderSession implements SingleWriterProviderSession {
 
   async recoveryAuthority(transport:RemoteTransport,locator:string,remoteResourceId:string):Promise<IndependentBootstrapAuthority>{
     if(!isAuthenticatedGoogleTransport(transport))throw new Error('Google recovery requires the authenticated Google transport.')
-    return IndependentBootstrapAuthority.fromAuthenticatedGoogleDiscovery(transport,locator,remoteResourceId)
+    return IndependentBootstrapAuthority.fromAuthenticatedRemoteDiscovery(transport,locator,remoteResourceId,await transport.authenticatedAccountBinding())
   }
 
   disconnect():Promise<void>{return this.closeSession()}
