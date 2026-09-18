@@ -112,9 +112,9 @@ export function issueControlledTestGoogleClient(client: GoogleApiClient): Google
 }
 
 /** Main-page side of the Google auth handoff. The popup performs the
- * user-visible OAuth ceremony, then hands the bearer token directly to a
+ * user-visible OAuth ceremony, then hands the OAuth credential directly to a
  * long-lived auth-origin bridge frame. The diary origin retains only an RPC
- * MessagePort and never receives the bearer credential. */
+ * MessagePort and never receives that credential. */
 export class GoogleAuthProvider implements AuthProvider {
   private binding: IdentityBinding | null = null
   private client: AuthOriginGoogleApiClient | null = null
