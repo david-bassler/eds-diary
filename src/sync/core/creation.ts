@@ -83,7 +83,7 @@ export async function runCreationStateMachine(initial:CreationState,manifest:rea
   return state
 }
 
-export async function reconcileCreation(state:CreationState,transport:RemoteTransport,codec:TransportProfileCodec):Promise<CreationState>{const choice=select(await discovered(state,transport,codec));if(choice.ambiguous)return next(state,'ambiguous',{remoteId:null});return choice.kind==='expected-manifest'?next(state,'bound',{remoteId:choice.id}):state}
+export async function reconcileCreation(state:CreationState,transport:RemoteTransport,codec:TransportProfileCodec):Promise<CreationState>{const candidates=await discovered(state,transport,codec),canonical=candidates.filter(candidate=>candidate.kind==='expected-manifest');if(candidates.length!==1||canonical.length!==1)return next(state,'ambiguous',{remoteId:null,candidateIds:candidates.map(candidate=>candidate.remoteId)});return next(state,'bound',{remoteId:canonical[0]!.remoteId,candidateIds:[canonical[0]!.remoteId]})}
 
 /** Backwards-compatible entry point; production callers should supply durable persistence. */
 export async function createOrReconcile(state:CreationState,manifest:readonly string[],transport:RemoteTransport,codec:TransportProfileCodec,persistence?:CreationPersistence):Promise<CreationState>{const memory=persistence??new class implements CreationPersistence{value:CreationState|null=null;async read(){return this.value}async write(value:CreationState){this.value=structuredClone(value)}}();const fingerprint=state.manifestFingerprint||base64Url(await sha256(canonicalBytes([...manifest])));return runCreationStateMachine({...state,manifestFingerprint:fingerprint},manifest,transport,codec,memory)}
