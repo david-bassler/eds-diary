@@ -58,7 +58,7 @@ export class GoogleRecoveryArtifactStore {
 
   private async verifyFile(remoteId:string,locator:string,allowEmptyProperties=false):Promise<void>{
     const file=await this.api.request<DriveFile>(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(remoteId)}?fields=id,name,mimeType,trashed,ownedByMe,shared,driveId,isAppAuthorized,appProperties`)
-    if(file.id!==remoteId||file.name!==`${NAME_PREFIX}${locator}`||file.mimeType!=='application/vnd.google-apps.spreadsheet'||file.trashed!==false||file.ownedByMe!==true||file.shared!==false||file.driveId!==undefined||file.isAppAuthorized!==true)throw new Error('Recovery artifact Drive invariants failed.')
+    if(file.id!==remoteId||file.mimeType!=='application/vnd.google-apps.spreadsheet'||file.trashed!==false||file.ownedByMe!==true||file.shared!==false||file.driveId!==undefined||file.isAppAuthorized!==true)throw new Error('Recovery artifact Drive invariants failed.')
     const properties=file.appProperties??{}
     if(!(allowEmptyProperties&&Object.keys(properties).length===0)&&!sameProperties(properties,expectedProperties(locator)))throw new Error('Recovery artifact properties do not match the secret-derived locator.')
     const permissions:Array<{id?:string;type?:string;role?:string;deleted?:boolean}>=[]
