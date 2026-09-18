@@ -272,8 +272,7 @@ export interface ActiveRemoteDurabilityStatus {remoteBound:boolean;pendingEnvelo
 export async function activeRemoteDurabilityStatus():Promise<ActiveRemoteDurabilityStatus>{
   await ready()
   const db=await openDatabase(),loaded=await loadEpoch(db),tx=db.transaction([STORES.envelopes,STORES.outbox],'readonly'),envelopesRequest=tx.objectStore(STORES.envelopes).index('byEpoch').getAll(loaded.context.epochId),outboxRequest=tx.objectStore(STORES.outbox).index('byEpoch').getAll(loaded.context.epochId),[envelopes,outbox]=await Promise.all([result<StoredEnvelope[]>(envelopesRequest),result<StoredOutbox[]>(outboxRequest)]);await complete(tx)
-  const durable=new Set(outbox.filter(item=>item.status==='durable').map(item=>item.envelopeId))
-  return{remoteBound:loaded.state.remote_binding!==null,pendingEnvelopeCount:envelopes.filter(item=>!durable.has(item.envelopeId)).length,totalEnvelopeCount:envelopes.length}
+  return{remoteBound:loaded.state.remote_binding!==null,pendingEnvelopeCount:outbox.filter(item=>item.status!=='durable').length,totalEnvelopeCount:envelopes.length}
 }
 export async function storedRotationArtifact<T>(suffix:'recovery'|'backup'):Promise<T|null>{const db=await openDatabase(),loaded=await loadEpoch(db),operationId=loaded.state.rotation_state_ref?.operation_id;if(!operationId)return null;const tx=db.transaction(STORES.operations,'readonly'),item=await result<{value:T}|undefined>(tx.objectStore(STORES.operations).get(`rotation-artifact:${operationId}:${suffix}`));await complete(tx);return item?.value??null}
 async function resetDatabaseForTesting():Promise<void>{if(import.meta.env.MODE!=='test')throw new Error('Database reset is test-only.');if(databasePromise){const db=await databasePromise;db.close()}databasePromise=null;readyPromise=null;legacyMigrationTestingHook=null;unlockedRoots.clear();unlockFactors.clear()}
