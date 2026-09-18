@@ -22,7 +22,20 @@ function propertiesEqual(actual:Readonly<Record<string,string>>,expected:Readonl
 async function persist(store:CreationPersistence,state:CreationState):Promise<CreationState>{await store.write(state);const read=await store.read(state.locator);if(!read)throw new Error('Creation state readback failed.');const generation=read.operationGeneration;if(generation!==undefined&&(!Number.isSafeInteger(generation)||generation<(state.operationGeneration??0)))throw new Error('Creation state readback failed.');const expected=generation===undefined?state:{...state,operationGeneration:generation};if(decodeURIComponent(JSON.stringify(read))!==decodeURIComponent(JSON.stringify(expected)))throw new Error('Creation state readback failed.');return read}
 function next(state:CreationState,status:CreationStatus,extra:Partial<CreationState>={}):CreationState{return{...state,...extra,status}}
 async function discovered(state:CreationState,transport:RemoteTransport,codec:TransportProfileCodec){const candidates=[];for(const item of await transport.discover(state.locator))candidates.push(await classify(item.remoteId,state,transport,codec));return candidates}
-function select(candidates:Awaited<ReturnType<typeof discovered>>):{id:string|null;ambiguous:boolean;kind:CandidateClass|null}{const conflict=candidates.some(c=>c.kind==='conflicting'),manifest=candidates.filter(c=>c.kind==='expected-manifest'||c.kind==='partial');if(conflict||manifest.length>1)return{id:null,ambiguous:true,kind:null};if(manifest.length===1)return{id:manifest[0]!.remoteId,ambiguous:false,kind:manifest[0]!.kind};const empty=candidates.filter(c=>c.kind==='empty').sort((a,b)=>a.remoteId.localeCompare(b.remoteId));return{id:empty[0]?.remoteId??null,ambiguous:false,kind:empty[0]?.kind??null}}
+function candidateRank(kind:CandidateClass):number{return kind==='expected-manifest'?0:kind==='partial'?1:kind==='empty'?2:3}
+function select(candidates:Awaited<ReturnType<typeof discovered>>,preferredId:string|null=null):{id:string|null;ambiguous:boolean;kind:CandidateClass|null}{if(candidates.some(c=>c.kind==='conflicting'))return{id:null,ambiguous:true,kind:null};const ordered=[...candidates].sort((a,b)=>candidateRank(a.kind)-candidateRank(b.kind)||a.remoteId.localeCompare(b.remoteId)),best=ordered[0];if(!best)return{id:null,ambiguous:false,kind:null};const rank=candidateRank(best.kind),preferred=preferredId?ordered.find(candidate=>candidate.remoteId===preferredId&&candidateRank(candidate.kind)===rank):undefined,choice=preferred??best;return{id:choice.remoteId,ambiguous:false,kind:choice.kind}}
+async function convergeOwnedCandidates(state:CreationState,transport:RemoteTransport,codec:TransportProfileCodec):Promise<{candidates:Awaited<ReturnType<typeof discovered>>;choice:ReturnType<typeof select>}>{
+  let candidates=await discovered(state,transport,codec),choice=select(candidates,state.remoteId)
+  if(choice.ambiguous||!choice.id)return{candidates,choice}
+  const duplicates=candidates.filter(candidate=>candidate.remoteId!==choice.id).map(candidate=>candidate.remoteId)
+  if(!duplicates.length)return{candidates,choice}
+  if(!transport.orphanCandidates)return{candidates,choice:{id:null,ambiguous:true,kind:null}}
+  try{await transport.orphanCandidates(duplicates)}catch{/* outcome established by discovery */}
+  candidates=await discovered(state,transport,codec)
+  if(candidates.some(candidate=>duplicates.includes(candidate.remoteId)))return{candidates,choice:{id:null,ambiguous:true,kind:null}}
+  choice=select(candidates,choice.id)
+  return{candidates,choice}
+}
 
 /**
  * Persistent, replay-safe resource creation. Every remote mutation has a
@@ -31,26 +44,25 @@ function select(candidates:Awaited<ReturnType<typeof discovered>>):{id:string|nu
 export async function runCreationStateMachine(initial:CreationState,manifest:readonly string[],transport:RemoteTransport,codec:TransportProfileCodec,store:CreationPersistence):Promise<CreationState>{
   let state=(await store.read(initial.locator))??initial
   if(state.status==='creation_pending')state=next(state,'planned')
-  if(state.status==='bound'||state.status==='ambiguous')return state
+  if(state.status==='bound')return state
+  if(state.status==='ambiguous')state=next(state,'planned',{remoteId:null})
   if(!state.manifest){const bytes=new TextDecoder().decode(canonicalBytes([...manifest]));state=await persist(store,{...state,status:'planned',manifest:[...manifest],manifestBytes:bytes,operationGeneration:state.operationGeneration??0})}
-  if(state.status==='planned'){const candidates=await discovered(state,transport,codec),choice=select(candidates);if(choice.ambiguous)return persist(store,next(state,'ambiguous',{remoteId:null}));state=await persist(store,next(state,'discovery_verified',{remoteId:choice.id,candidateIds:candidates.map(c=>c.remoteId)}))}
+  if(state.status==='planned'){const {candidates,choice}=await convergeOwnedCandidates(state,transport,codec);if(choice.ambiguous)return persist(store,next(state,'ambiguous',{remoteId:null,candidateIds:candidates.map(c=>c.remoteId)}));state=await persist(store,next(state,'discovery_verified',{remoteId:choice.id,candidateIds:candidates.map(c=>c.remoteId)}))}
   if(state.status==='discovery_verified'&&!state.remoteId)state=await persist(store,next(state,'create_pending'))
   if(state.status==='create_pending'){
     // A persisted create intent may already have succeeded server-side. Neutral
     // discovery therefore precedes every (re)try, including crash resume.
-    let candidates=await discovered(state,transport,codec),choice=select(candidates);if(choice.ambiguous)return persist(store,next(state,'ambiguous',{remoteId:null}))
-    if(!choice.id){try{await transport.create(state.locator,[])}catch{/* unknown outcome is resolved by fresh discovery */}candidates=await discovered(state,transport,codec);choice=select(candidates)}
-    if(choice.ambiguous)return persist(store,next(state,'ambiguous',{remoteId:null}));if(!choice.id)return state
+    let {candidates,choice}=await convergeOwnedCandidates(state,transport,codec);if(choice.ambiguous)return persist(store,next(state,'ambiguous',{remoteId:null,candidateIds:candidates.map(c=>c.remoteId)}))
+    if(!choice.id){try{await transport.create(state.locator,[])}catch{/* unknown outcome is resolved by fresh discovery */}({candidates,choice}=await convergeOwnedCandidates(state,transport,codec))}
+    if(choice.ambiguous)return persist(store,next(state,'ambiguous',{remoteId:null,candidateIds:candidates.map(c=>c.remoteId)}));if(!choice.id)return state
     state=await persist(store,next(state,'candidate_known',{remoteId:choice.id,candidateIds:candidates.map(c=>c.remoteId)}))
   }
   if(state.status==='discovery_verified'&&state.remoteId)state=await persist(store,next(state,'candidate_known'))
   if(state.status==='candidate_known')state=await persist(store,next(state,'manifest_pending'))
   if(state.status==='manifest_pending'){
     if(!state.remoteId)throw new Error('Creation candidate missing.')
-    let candidates=await discovered(state,transport,codec);const choice=select(candidates)
+    const {candidates,choice}=await convergeOwnedCandidates(state,transport,codec)
     if(choice.ambiguous||!choice.id)return persist(store,next(state,'ambiguous',{remoteId:null,candidateIds:candidates.map(c=>c.remoteId)}))
-    const duplicates=candidates.filter(candidate=>candidate.remoteId!==choice.id&&candidate.kind==='empty').map(candidate=>candidate.remoteId)
-    if(duplicates.length){try{await transport.orphanCandidates?.(duplicates)}catch{/* outcome established below */}candidates=await discovered(state,transport,codec);if(candidates.some(candidate=>duplicates.includes(candidate.remoteId)))return state}
     const chosenId=choice.id;state={...state,remoteId:chosenId,candidateIds:candidates.map(c=>c.remoteId)}
     const current=await (transport.inspectCandidate?.(chosenId)??transport.read(chosenId))
     if(isEmpty(current)){try{if(transport.writeManifest)await transport.writeManifest(chosenId,state.manifest!);else await transport.replaceManifest?.(chosenId,state.manifest!)}catch{/* reconcile readback */}}
@@ -64,9 +76,9 @@ export async function runCreationStateMachine(initial:CreationState,manifest:rea
   }
   if(state.status==='properties_verified')state=await persist(store,next(state,'final_reconcile'))
   if(state.status==='final_reconcile'){
-    let candidates=await discovered(state,transport,codec),canonical=candidates.filter(c=>c.kind==='expected-manifest');const empty=candidates.filter(c=>c.kind==='empty');if(canonical.length===1&&empty.length){try{await transport.orphanCandidates?.(empty.map(c=>c.remoteId))}catch{/* verify by discovery */}candidates=await discovered(state,transport,codec);canonical=candidates.filter(c=>c.kind==='expected-manifest')}
-    if(candidates.length!==1||canonical.length!==1||candidates.some(c=>c.kind!=='expected-manifest'))return persist(store,next(state,'ambiguous',{remoteId:null,candidateIds:candidates.map(c=>c.remoteId)}))
-    state=await persist(store,next(state,'bound',{remoteId:canonical[0]!.remoteId}))
+    const {candidates,choice}=await convergeOwnedCandidates(state,transport,codec),canonical=candidates.filter(c=>c.kind==='expected-manifest')
+    if(choice.ambiguous||candidates.length!==1||canonical.length!==1||choice.kind!=='expected-manifest')return persist(store,next(state,'ambiguous',{remoteId:null,candidateIds:candidates.map(c=>c.remoteId)}))
+    state=await persist(store,next(state,'bound',{remoteId:choice.id}))
   }
   return state
 }
