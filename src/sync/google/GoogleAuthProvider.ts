@@ -144,8 +144,6 @@ export class GoogleAuthProvider implements AuthProvider {
     bridge.hidden = true
     bridge.setAttribute('aria-hidden', 'true')
     bridge.tabIndex = -1
-    bridge.src = bridgeUrl.toString()
-    document.body.append(bridge)
     this.bridgeFrame = bridge
 
     const client = await new Promise<AuthOriginGoogleApiClient>((resolve, reject) => {
@@ -227,8 +225,10 @@ export class GoogleAuthProvider implements AuthProvider {
       }
 
       window.addEventListener('message', onWindowMessage)
+      bridge.src = bridgeUrl.toString()
+      document.body.append(bridge)
       poll = window.setInterval(() => {
-        if (popup.closed && !settled) fail(new Error('Google authentication window was closed before the secure handoff completed.'))
+        if (popup.closed && !bindingStarted) fail(new Error('Google authentication window was closed before the secure handoff started.'))
       }, 500)
       timeout = window.setTimeout(() => fail(new Error('Google authentication handoff timed out.')), HANDOFF_TIMEOUT_MS)
     })
