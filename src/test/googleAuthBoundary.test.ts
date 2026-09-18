@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { issueControlledTestGoogleClient } from '../sync/google/GoogleAuthProvider'
 import { GoogleSheetsSingleWriterTransport, isAuthenticatedGoogleTransport, type GoogleApiClient } from '../sync/google/GoogleSheetsSingleWriterTransport'
-import { IndependentBootstrapAuthority } from '../sync/core/remoteVerifier'
+import { googleProviderSessionFromAuthenticatedClient } from '../sync/google/GoogleSingleWriterProvider'
 
 const diaryId='AAECAwQFBgcICQoLDA0ODw'
 const epochId='EBESExQVFhcYGRobHB0eHw'
@@ -25,6 +25,7 @@ describe('productive Google capability provenance',()=>{
     const Constructor=GoogleSheetsSingleWriterTransport as unknown as new (api:GoogleApiClient,binding:Record<string,string>)=>GoogleSheetsSingleWriterTransport
     const forged=new Constructor(api,{diaryId,epochId,ownerPermissionId:permissionId,googleAccountBinding:'forged'})
     expect(isAuthenticatedGoogleTransport(forged)).toBe(false)
-    await expect(IndependentBootstrapAuthority.fromAuthenticatedGoogleDiscovery(forged,'locator','remote')).rejects.toThrow('productive Google identity boundary')
+    const session=googleProviderSessionFromAuthenticatedClient(issueControlledTestGoogleClient(api))
+    await expect(session.recoveryAuthority(forged,'locator','remote')).rejects.toThrow('authenticated Google transport')
   })
 })
