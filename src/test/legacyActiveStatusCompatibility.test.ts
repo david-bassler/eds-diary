@@ -50,6 +50,10 @@ async function seedLegacyActiveRecords(): Promise<void> {
         createdAt: '2026-09-15T11:00:00.000Z',
         updatedAt: '2026-09-15T11:00:00.000Z',
       })
+      tx.objectStore('settings').put({
+        id: 'custom-pain-types',
+        values: ['Brennend', 'Elektrisch'],
+      })
     }
     request.onsuccess = () => {
       request.result.close()
@@ -88,6 +92,11 @@ describe('legacy active status compatibility', () => {
   it('prepares active legacy pain and medication records for secure migration', async () => {
     const { remoteSessionStatus } = await import('../data/initializeDataLayer')
     await expect(remoteSessionStatus()).resolves.toMatchObject({ mode: 'local_offline' })
+    const { getRecord, LOCAL_STORES } = await import('../data/localDatabase')
+    await expect(getRecord<{ id: string; values: string[] }>(LOCAL_STORES.settings, 'custom-pain-types')).resolves.toEqual({
+      id: 'custom-pain-types',
+      values: ['Brennend', 'Elektrisch'],
+    })
 
     const pain = await readLegacyRecord('painEntries', 'pain-active')
     const medication = await readLegacyRecord('medicationEntries', 'med-active')
