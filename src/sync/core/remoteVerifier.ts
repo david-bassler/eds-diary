@@ -53,7 +53,7 @@ function validateControl(revision: Revision, currentEpochId: string): void {
     if (revision.record_type !== 'epoch_migration') throw new Error('Migration control type mismatch.')
     exact(['migration_id','migration_kind','source','result_semantic_snapshot_hash','active_head_count','tombstone_head_count'])
     id(data.migration_id, 32, 'migration_id'); id(data.result_semantic_snapshot_hash, 32, 'result_semantic_snapshot_hash')
-    if (!['normal','local_rotation','remote_enablement','emergency'].includes(String(data.migration_kind))) throw new Error('Invalid migration kind.')
+    if (!['normal','local_rotation','remote_enablement','recovery_rekey','emergency'].includes(String(data.migration_kind))) throw new Error('Invalid migration kind.')
     if (!Number.isSafeInteger(data.active_head_count) || Number(data.active_head_count) < 0 || !Number.isSafeInteger(data.tombstone_head_count) || Number(data.tombstone_head_count) < 0) throw new Error('Invalid migration counts.')
     if (!data.source || typeof data.source !== 'object' || Array.isArray(data.source)) throw new Error('Invalid migration source.')
     const source = data.source as Record<string, unknown>
@@ -67,7 +67,7 @@ function validateControl(revision: Revision, currentEpochId: string): void {
       if (!anchor || typeof anchor !== 'object' || Array.isArray(anchor) || Object.keys(anchor).sort().join('\0') !== 'anchor_profile\0covered_row_count\0prefix_hash' || anchor.anchor_profile !== 'google-sheets-single-writer-v1' || !Number.isSafeInteger(anchor.covered_row_count) || Number(anchor.covered_row_count) < 0) throw new Error('Migration source anchor schema mismatch.')
       id(anchor.prefix_hash, 32, 'source_anchor.prefix_hash')
     }
-    if (data.migration_kind === 'normal' && data.result_semantic_snapshot_hash !== source.source_semantic_snapshot_hash) throw new Error('Normal migration changed the semantic snapshot.')
+    if (['normal','recovery_rekey'].includes(String(data.migration_kind)) && data.result_semantic_snapshot_hash !== source.source_semantic_snapshot_hash) throw new Error('Unchanged remote migration changed the semantic snapshot.')
   }
 }
 
