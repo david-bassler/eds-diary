@@ -40,14 +40,20 @@ export class GoogleRecoveryArtifactStore {
   }
 
   private async candidates(locator:string):Promise<DriveFile[]>{
-    const name=`${NAME_PREFIX}${locator}`,q=encodeURIComponent(`name = '${escapeDriveQuery(name)}' and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`),files:DriveFile[]=[]
-    let token:string|undefined
-    do{
-      const suffix=token?`&pageToken=${encodeURIComponent(token)}`:''
-      const result=await this.api.request<{files?:DriveFile[];nextPageToken?:string}>(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,name,mimeType,trashed,ownedByMe,shared,driveId,isAppAuthorized,appProperties),nextPageToken&pageSize=1000${suffix}`)
-      files.push(...(result.files??[]));token=result.nextPageToken
-    }while(token)
-    return files.filter(file=>file.id&&file.name===name)
+    const name=`${NAME_PREFIX}${locator}`,queries=[
+      `name = '${escapeDriveQuery(name)}' and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`,
+      `appProperties has { key='recovery_locator' and value='${locator}' } and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`,
+    ],found=new Map<string,DriveFile>()
+    for(const query of queries){
+      let token:string|undefined
+      do{
+        const q=encodeURIComponent(query),suffix=token?`&pageToken=${encodeURIComponent(token)}`:''
+        const result=await this.api.request<{files?:DriveFile[];nextPageToken?:string}>(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,name,mimeType,trashed,ownedByMe,shared,driveId,isAppAuthorized,appProperties),nextPageToken&pageSize=1000${suffix}`)
+        for(const file of result.files??[])if(file.id&&(file.name===name||file.appProperties?.recovery_locator===locator))found.set(file.id,file)
+        token=result.nextPageToken
+      }while(token)
+    }
+    return[...found.values()].sort((a,b)=>String(a.id).localeCompare(String(b.id)))
   }
 
   private async verifyFile(remoteId:string,locator:string,allowEmptyProperties=false):Promise<void>{
