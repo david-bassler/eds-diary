@@ -87,7 +87,7 @@ describe('legacy active status compatibility', () => {
 
   it('prepares active legacy pain and medication records for secure migration', async () => {
     const { remoteSessionStatus } = await import('../data/initializeDataLayer')
-    await expect(googleRemoteSessionStatus()).resolves.toMatchObject({ mode: 'local_offline' })
+    await expect(remoteSessionStatus()).resolves.toMatchObject({ mode: 'local_offline' })
 
     const pain = await readLegacyRecord('painEntries', 'pain-active')
     const medication = await readLegacyRecord('medicationEntries', 'med-active')
