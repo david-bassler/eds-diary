@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { ProductiveRotationService, type ProductiveRotationFaultPoint } from '../data/productiveRotationService'
 import { DOMAIN_SCHEMA_REGISTRY, IndexedDbRotationRepository, LOCAL_STORES, __localDatabaseTesting, putRecord } from '../data/localDatabase'
 import { fromBase64Url } from '../security/crypto/bytes'
+import { recoverRootKeyCandidate } from '../security/recovery'
 import { randomBytes, recoveryCommitment } from '../security/crypto/core'
 import { createBestEffortRootWrap, stateTag } from '../security/localState'
 import { manifestFingerprint, prepareManifest, schemaRegistryHash, SCHEMA_ALLOWLIST } from '../security/manifest'
@@ -11,7 +12,7 @@ import { issueControlledTestGoogleClient } from '../sync/google/GoogleAuthProvid
 import { googleProviderSessionFromAuthenticatedClient } from '../sync/google/GoogleSingleWriterProvider'
 import { createAnchor } from '../sync/core/prefix'
 
-interface Remote {id:string;name:string;manifest:string[];rows:string[][];properties:Record<string,string>;trashed:boolean}
+interface Remote {id:string;name:string;manifest:string[];rows:string[][];properties:Record<string,string>;trashed:boolean;artifact?:string}
 type AppendCrashTarget='source'|'successor'|null
 
 const pain=(id:string)=>({id,startedAt:'2026-09-16T10:00:00.000Z',endedAt:'',locations:[],intensity:4,qualities:[],cause:'',occursWhen:'',note:'synthetic rotation fixture',createdAt:'2026-09-16T10:00:00.000Z',updatedAt:'2026-09-16T10:00:00.000Z'})
@@ -28,15 +29,15 @@ class GoogleBoundary {
   private async request<T>(url:string,init?:RequestInit):Promise<T>{
     if(url.includes('/about?'))return{user:{permissionId:this.permission}} as T
     if(url.includes('/drive/v3/files?q=')){const query=decodeURIComponent(new URL(url).searchParams.get('q')??''),name=/name = '([^']+)'/.exec(query)?.[1];return{files:[...this.remotes.values()].filter(item=>!item.trashed&&item.name===name).map(item=>({id:item.id,name:item.name,mimeType:'application/vnd.google-apps.spreadsheet',trashed:false,appProperties:item.properties}))} as T}
-    if(url==='https://sheets.googleapis.com/v4/spreadsheets'&&init?.method==='POST'){const body=JSON.parse(String(init.body)) as {properties:{title:string}},id=`successor-${this.next++}`;this.remotes.set(id,{id,name:body.properties.title,manifest:[],rows:[],properties:{},trashed:false});this.creates++;return{spreadsheetId:id} as T}
+    if(url==='https://sheets.googleapis.com/v4/spreadsheets'&&init?.method==='POST'){const body=JSON.parse(String(init.body)) as {properties:{title:string};sheets?:Array<{properties?:{title?:string}}>},recovery=body.sheets?.[0]?.properties?.title==='_a',id=`${recovery?'recovery':'successor'}-${this.next++}`;this.remotes.set(id,{id,name:body.properties.title,manifest:[],rows:[],properties:{},trashed:false,...(recovery?{artifact:''}:{})});if(!recovery)this.creates++;return{spreadsheetId:id} as T}
     const id=/spreadsheets\/([^/:?]+)/.exec(url)?.[1]??/drive\/v3\/files\/([^/?]+)/.exec(url)?.[1]
     const remote=id?this.remotes.get(decodeURIComponent(id)):undefined
     if(remote&&url.includes('/permissions?'))return{permissions:[{id:this.permission,type:'user',role:'owner',deleted:false}]} as T
-    if(remote&&url.includes('/drive/v3/files/')){if(init?.method==='PATCH'){const body=JSON.parse(String(init.body)) as {appProperties?:Record<string,string>;trashed?:boolean};if(body.appProperties)remote.properties={...body.appProperties};if(body.trashed)remote.trashed=true}return{id:remote.id,mimeType:'application/vnd.google-apps.spreadsheet',trashed:remote.trashed,ownedByMe:true,shared:false,isAppAuthorized:true,appProperties:remote.properties} as T}
+    if(remote&&url.includes('/drive/v3/files/')){if(init?.method==='PATCH'){const body=JSON.parse(String(init.body)) as {appProperties?:Record<string,string>;trashed?:boolean};if(body.appProperties)remote.properties={...body.appProperties};if(body.trashed)remote.trashed=true}return{id:remote.id,name:remote.name,mimeType:'application/vnd.google-apps.spreadsheet',trashed:remote.trashed,ownedByMe:true,shared:false,isAppAuthorized:true,appProperties:remote.properties} as T}
     if(remote&&url.includes(':batchUpdate')){
       const body=JSON.parse(String(init?.body)) as {requests:Array<{updateCells?:{rows:Array<{values:Array<{userEnteredValue:{stringValue:string}}>}>};appendCells?:{rows:Array<{values:Array<{userEnteredValue:{stringValue:string}}>}>}}>}
       for(const request of body.requests){
-        if(request.updateCells)remote.manifest=request.updateCells.rows[0]!.values.map(value=>value.userEnteredValue.stringValue)
+        if(request.updateCells){const values=request.updateCells.rows[0]!.values.map(value=>value.userEnteredValue.stringValue);if(remote.artifact!==undefined)remote.artifact=values[0]??'';else remote.manifest=values}
         if(request.appendCells){
           const row=request.appendCells.rows[0]!.values.map(value=>value.userEnteredValue.stringValue)
           remote.rows.push(row)
@@ -47,7 +48,8 @@ class GoogleBoundary {
       }
       return{} as T
     }
-    if(remote&&url.includes('sheets(properties')&&!url.includes('ranges='))return{sheets:[{properties:{sheetId:1,title:'_m',sheetType:'GRID',gridProperties:{rowCount:1,columnCount:4}},merges:[]},{properties:{sheetId:2,title:'_r',sheetType:'GRID',gridProperties:{rowCount:Math.max(1,remote.rows.length),columnCount:3}},merges:[]}]} as T
+    if(remote&&url.includes('sheets(properties')&&!url.includes('ranges=')){if(remote.artifact!==undefined)return{sheets:[{properties:{sheetId:1,title:'_a',sheetType:'GRID',gridProperties:{rowCount:1,columnCount:1}},merges:[]}]} as T;return{sheets:[{properties:{sheetId:1,title:'_m',sheetType:'GRID',gridProperties:{rowCount:1,columnCount:4}},merges:[]},{properties:{sheetId:2,title:'_r',sheetType:'GRID',gridProperties:{rowCount:Math.max(1,remote.rows.length),columnCount:3}},merges:[]}]} as T}
+    if(remote&&url.includes('ranges=')&&decodeURIComponent(url).includes("'_a'"))return{sheets:[{properties:{sheetId:1,title:'_a'},data:remote.artifact?[{startRow:0,rowData:[{values:this.cells([remote.artifact])}]}]:[]}]} as T
     if(remote&&url.includes('ranges=')&&decodeURIComponent(url).includes("'_m'"))return{sheets:[{properties:{sheetId:1,title:'_m'},data:remote.manifest.length?[{startRow:0,rowData:[{values:this.cells(remote.manifest)}]}]:[]}]} as T
     if(remote&&url.includes('ranges=')&&decodeURIComponent(url).includes("'_r'"))return{sheets:[{properties:{sheetId:2,title:'_r'},data:remote.rows.length?[{startRow:0,rowData:remote.rows.map(row=>({values:this.cells(row)}))}]:[]}]} as T
     throw new Error(`Unexpected Google test request: ${init?.method??'GET'} ${url}`)
@@ -98,7 +100,7 @@ describe('ProductiveRotationService',()=>{
     await runFault('before-atomic-switch')
     await runFault('after-atomic-switch')
 
-    const result=await new ProductiveRotationService(session,transport,urs,()=>createdAt).rotate(),active=await repository.verifiedActiveEpoch(),successors=[...google.remotes.values()].filter(item=>item.id!=='source'&&!item.trashed)
+    const result=await new ProductiveRotationService(session,transport,urs,()=>createdAt).rotate(),active=await repository.verifiedActiveEpoch(),successors=[...google.remotes.values()].filter(item=>item.id!=='source'&&!item.trashed&&item.name.startsWith('sync-'))
     expect(result.state.step).toBe('switched')
     expect(google.creates).toBe(1)
     expect(successors).toHaveLength(1)
@@ -128,7 +130,7 @@ describe('ProductiveRotationService',()=>{
     expect(result.recovery.recovery_artifact_id).toBeTruthy()
     expect(result.backup.backup_id).toBeTruthy()
 
-    const firstSuccessorRows=structuredClone(successor.rows),secondTransport=await session.transportForEpoch(active.context.diaryId,active.context.epochId),second=await new ProductiveRotationService(session,secondTransport,urs,()=> '2026-09-16T13:00:00.000Z').rotate(),active2=await repository.verifiedActiveEpoch(),secondSuccessors=[...google.remotes.values()].filter(item=>item.id!=='source'&&item.id!==successor.id&&!item.trashed)
+    const firstSuccessorRows=structuredClone(successor.rows),secondTransport=await session.transportForEpoch(active.context.diaryId,active.context.epochId),second=await new ProductiveRotationService(session,secondTransport,urs,()=> '2026-09-16T13:00:00.000Z').rotate(),active2=await repository.verifiedActiveEpoch(),secondSuccessors=[...google.remotes.values()].filter(item=>item.id!=='source'&&item.id!==successor.id&&!item.trashed&&item.name.startsWith('sync-'))
     expect(second.state.step).toBe('switched')
     expect(second.state.rotationId).not.toBe(result.state.rotationId)
     expect(google.creates).toBe(2)
@@ -147,6 +149,22 @@ describe('ProductiveRotationService',()=>{
     await expect(putRecord(LOCAL_STORES.painEntries,{...pain('post-second-rotation-write'),note:'second successor remains writable after switched'})).resolves.toBeUndefined()
   },120_000)
 
+  it('replaces a lost recovery key without requiring the old secret',async()=>{
+    const createdAt='2026-09-16T15:00:00.000Z',oldUrs=randomBytes(32),newUrs=randomBytes(32),google=new GoogleBoundary(),repository=new IndexedDbRotationRepository()
+    await putRecord(LOCAL_STORES.painEntries,pain('rekey-data'))
+    const local=await repository.verifiedActiveEpoch(),session=googleProviderSessionFromAuthenticatedClient(google.client),initialTransport=await session.transportForEpoch(local.context.diaryId,local.context.epochId)
+    await ProductiveRotationService.remoteEnablement(session,initialTransport,oldUrs,()=>createdAt).rotate()
+    const before=await repository.verifiedActiveEpoch(),rekeyTransport=await session.transportForEpoch(before.context.diaryId,before.context.epochId)
+    const result=await ProductiveRotationService.recoveryRekey(session,rekeyTransport,newUrs,()=> '2026-09-16T16:00:00.000Z').rotate()
+    const after=await repository.verifiedActiveEpoch(),remoteArtifact=await session.loadRecoveryArtifact(newUrs),candidate=await recoverRootKeyCandidate(remoteArtifact,newUrs)
+    expect(result.state.step).toBe('switched')
+    expect(after.state.recovery_generation).toBe(before.state.recovery_generation+1)
+    expect(candidate.payload.epoch_id).toBe(after.context.epochId)
+    expect(candidate.payload.recovery_generation).toBe(after.state.recovery_generation)
+    expect(after.revisions.some(revision=>(revision.record_data as {migration_kind?:string}|null)?.migration_kind==='recovery_rekey')).toBe(true)
+    await expect(session.loadRecoveryArtifact(randomBytes(32))).rejects.toThrow('No remote recovery artifact')
+  },90_000)
+
   it('enables a remote epoch from a local-offline source without inventing a source remote',async()=>{
     const createdAt='2026-09-16T14:00:00.000Z',urs=randomBytes(32),google=new GoogleBoundary(),repository=new IndexedDbRotationRepository()
     await putRecord(LOCAL_STORES.painEntries,pain('local-enable'))
@@ -158,7 +176,7 @@ describe('ProductiveRotationService',()=>{
     const result=await ProductiveRotationService.remoteEnablement(session,transport,urs,()=>createdAt).rotate(),active=await repository.verifiedActiveEpoch(),retired=await repository.verifiedEpoch(source.context)
     expect(result.state.step).toBe('switched')
     expect(google.creates).toBe(1)
-    expect([...google.remotes.values()].filter(item=>!item.trashed)).toHaveLength(1)
+    expect([...google.remotes.values()].filter(item=>!item.trashed&&item.name.startsWith('sync-'))).toHaveLength(1)
     expect(retired.state.epoch_status).toBe('retired')
     expect(retired.state.remote_binding).toBeNull()
     expect(retired.state.remote_anchor).toBeNull()
