@@ -9,6 +9,7 @@ import {
   type LocalRootWrapStatus,
 } from '../../data/localDatabase'
 import { clearAuthenticatedRemoteSession } from '../../data/initializeDataLayer'
+import { ensurePersistentStorage, type StorageDurabilityStatus } from '../../data/storageDurability'
 import { fromBase64Url } from '../../security/crypto/bytes'
 import { assertWebAuthnPrf, enrollWebAuthnPrf } from '../../security/webauthnPrf'
 import './LocalSecuritySettings.css'
@@ -32,9 +33,10 @@ export function LocalSecuritySettings({unlockOnly=false}:LocalSecuritySettingsPr
   const [confirmation,setConfirmation]=useState('')
   const [message,setMessage]=useState('')
   const [busy,setBusy]=useState(false)
+  const [durability,setDurability]=useState<StorageDurabilityStatus|null>(null)
 
   async function refresh():Promise<void>{setStatus(await localRootWrapStatus())}
-  useEffect(()=>{void localRootWrapStatus().then(setStatus).catch(cause=>setMessage(publicError(cause)))},[])
+  useEffect(()=>{void localRootWrapStatus().then(setStatus).catch(cause=>setMessage(publicError(cause)));void ensurePersistentStorage().then(setDurability).catch(()=>setDurability({supported:false,persisted:false}))},[])
 
   async function run(operation:()=>Promise<void>,success:string):Promise<void>{
     setBusy(true);setMessage('')
@@ -60,6 +62,7 @@ export function LocalSecuritySettings({unlockOnly=false}:LocalSecuritySettingsPr
     <div className="local-security-settings__content">
       {status?<p><strong>Modus:</strong> {MODE_NAMES[status.mode]} · <strong>Status:</strong> {status.locked?'gesperrt':'entsperrt'}</p>:<p>Sicherheitsstatus wird geprüft …</p>}
       <p className="local-security-settings__boundary">Best Effort schützt verschlüsselte Datensätze nicht stark gegen Kopie oder Manipulation des gesamten Browserprofils. Passphrase und WebAuthn PRF verlangen nach einem Neustart eine erfolgreiche Entsperrung, bevor Tagebuchdaten oder Synchronisierung zugänglich sind.</p>
+      {durability?<p><strong>Browser-Speicher:</strong> {durability.supported?(durability.persisted?'dauerhafte Speicherung vom Browser bestätigt':'nur Best-Effort; der Browser kann lokale Daten unter Speicherdruck entfernen'):'Persistence-Status wird von diesem Browser nicht unterstützt'}</p>:null}
       {status?.locked?(<div className="local-security-settings__form">
         {status.mode==='passphrase'?<label>Passphrase<input type="password" autoComplete="current-password" value={passphrase} onChange={event=>setPassphrase(event.target.value)}/></label>:null}
         <button type="button" disabled={busy||(status.mode==='passphrase'&&!passphrase)} onClick={()=>void unlock()}>{status.mode==='prf'?'Mit WebAuthn entsperren':'Entsperren'}</button>
