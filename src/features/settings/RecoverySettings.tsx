@@ -76,7 +76,7 @@ export function RecoverySettings() {
     <fieldset disabled={busy}>
       <legend>Vertrauenswürdige Datenquelle</legend>
       <label><input type="radio" name="recovery-method" checked={method === 'backup'} onChange={() => setMethod('backup')} /> Verifiziertes Backup</label>
-      <label><input type="radio" name="recovery-method" checked={method === 'google'} onChange={() => setMethod('google')} /> Authentifiziertes Google-Konto + Recovery-Schlüssel</label>
+      <label><input type="radio" name="recovery-method" checked={method === 'google'} onChange={() => setMethod('google')} /> Authentifiziertes Google-Konto (Artefakt automatisch finden)</label>
       <label><input type="radio" name="recovery-method" checked={method === 'migration'} onChange={() => setMethod('migration')} /> Origin-Umzugspaket verwenden</label>
     </fieldset>
     <label>Recovery-Schlüssel<input value={urs} onChange={(event) => setUrs(event.target.value)} autoComplete="off" spellCheck={false} /></label>
