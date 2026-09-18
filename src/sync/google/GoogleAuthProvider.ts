@@ -111,33 +111,53 @@ export function issueControlledTestGoogleClient(client: GoogleApiClient): Google
   return client
 }
 
-/** Main-page side of the Google auth handoff. The auth page can temporarily be
- * hosted on the same origin for testing; the MessagePort boundary remains in place. */
+/** Main-page side of the Google auth handoff. The popup performs the
+ * user-visible OAuth ceremony, then hands the bearer token directly to a
+ * long-lived auth-origin bridge frame. The diary origin retains only an RPC
+ * MessagePort and never receives the bearer credential. */
 export class GoogleAuthProvider implements AuthProvider {
   private binding: IdentityBinding | null = null
   private client: AuthOriginGoogleApiClient | null = null
+  private bridgeFrame: HTMLIFrameElement | null = null
 
   constructor(private readonly authUrl: string) {}
 
   async authenticate(actionId: string): Promise<IdentityBinding> {
     if (!this.authUrl) throw new Error('Google auth URL is not configured.')
-    const url = new URL(this.authUrl, window.location.href)
-    if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+    const popupUrl = new URL(this.authUrl, window.location.href)
+    if (popupUrl.protocol !== 'https:' && popupUrl.protocol !== 'http:') {
       throw new Error('Google auth URL must use HTTP or HTTPS.')
     }
-    const authOrigin = url.origin
+    const authOrigin = popupUrl.origin
     if (!/^[A-Za-z0-9_-]{32,128}$/.test(actionId)) throw new Error('Invalid auth action binding.')
     await this.disconnect()
 
-    url.searchParams.set('action_id', actionId)
-    url.searchParams.set('return_origin', window.location.origin)
-    const popup = window.open(url, 'eds-diary-google-auth', 'popup,width=520,height=720')
+    popupUrl.searchParams.set('action_id', actionId)
+    popupUrl.searchParams.set('return_origin', window.location.origin)
+    popupUrl.searchParams.delete('mode')
+    const popup = window.open(popupUrl, 'eds-diary-google-auth', 'popup,width=520,height=720')
     if (!popup) throw new Error('Google authentication popup was blocked.')
+
+    const bridgeUrl = new URL(popupUrl)
+    bridgeUrl.searchParams.set('mode', 'bridge')
+    const bridge = document.createElement('iframe')
+    bridge.hidden = true
+    bridge.setAttribute('aria-hidden', 'true')
+    bridge.tabIndex = -1
+    bridge.src = bridgeUrl.toString()
+    document.body.append(bridge)
+    this.bridgeFrame = bridge
 
     const client = await new Promise<AuthOriginGoogleApiClient>((resolve, reject) => {
       let settled = false
       let poll = 0
       let timeout = 0
+      let popupReady = false
+      let bridgeReady = false
+      let bindingStarted = false
+      let rpcPort: MessagePort | null = null
+      let onRpcMessage: ((event: MessageEvent<unknown>) => void) | null = null
+
       const cleanup = () => {
         window.removeEventListener('message', onWindowMessage)
         if (poll) window.clearInterval(poll)
@@ -148,40 +168,67 @@ export class GoogleAuthProvider implements AuthProvider {
         settled = true
         cleanup()
         try { popup.close() } catch { /* no-op */ }
+        bridge.remove()
+        if (this.bridgeFrame === bridge) this.bridgeFrame = null
+        rpcPort?.close()
         reject(error)
       }
-      const onWindowMessage = (event: MessageEvent<unknown>) => {
-        if (event.origin !== authOrigin || event.source !== popup || !event.data || typeof event.data !== 'object') return
-        const message = event.data as Record<string, unknown>
-        if (message.type !== 'eds-diary/google-auth-ready/v1' || message.action_id !== actionId) return
-        const channel = new MessageChannel()
-        const onPortMessage = (portEvent: MessageEvent<unknown>) => {
+      const complete = (permissionId: string) => {
+        if (!permissionId || permissionId.length > 256) {
+          fail(new Error('Google auth origin returned an invalid provider identity.'))
+          return
+        }
+        if (settled || !rpcPort) return
+        settled = true
+        cleanup()
+        if (onRpcMessage) rpcPort.removeEventListener('message', onRpcMessage)
+        resolve(new AuthOriginGoogleApiClient(rpcPort, permissionId))
+      }
+      const maybeBind = () => {
+        if (bindingStarted || !popupReady || !bridgeReady || !bridge.contentWindow) return
+        bindingStarted = true
+        const tokenChannel = new MessageChannel()
+        const rpcChannel = new MessageChannel()
+        rpcPort = rpcChannel.port1
+        onRpcMessage = (portEvent: MessageEvent<unknown>) => {
           if (!portEvent.data || typeof portEvent.data !== 'object') return
           const bound = portEvent.data as Record<string, unknown>
-          if (bound.type !== 'eds-diary/google-auth-bound/v1' || bound.action_id !== actionId) return
-          const permissionId = typeof bound.permission_id === 'string' ? bound.permission_id : ''
-          if (!permissionId || permissionId.length > 256) {
-            channel.port1.close()
-            fail(new Error('Google auth origin returned an invalid provider identity.'))
-            return
-          }
-          if (settled) return
-          settled = true
-          cleanup()
-          channel.port1.removeEventListener('message', onPortMessage)
-          resolve(new AuthOriginGoogleApiClient(channel.port1, permissionId))
+          if (bound.type !== 'eds-diary/google-auth-bound/v2' || bound.action_id !== actionId) return
+          complete(typeof bound.permission_id === 'string' ? bound.permission_id : '')
         }
-        channel.port1.addEventListener('message', onPortMessage)
-        channel.port1.start()
+        rpcPort.addEventListener('message', onRpcMessage)
+        rpcPort.start()
+
         popup.postMessage({
-          type: 'eds-diary/google-auth-bind/v1',
+          type: 'eds-diary/google-auth-popup-bind/v2',
           action_id: actionId,
           return_origin: window.location.origin,
-        }, authOrigin, [channel.port2])
+        }, authOrigin, [tokenChannel.port1])
+
+        bridge.contentWindow.postMessage({
+          type: 'eds-diary/google-auth-bridge-bind/v2',
+          action_id: actionId,
+          return_origin: window.location.origin,
+        }, authOrigin, [tokenChannel.port2, rpcChannel.port2])
       }
+      const onWindowMessage = (event: MessageEvent<unknown>) => {
+        if (event.origin !== authOrigin || !event.data || typeof event.data !== 'object') return
+        const message = event.data as Record<string, unknown>
+        if (message.action_id !== actionId) return
+        if (event.source === popup && message.type === 'eds-diary/google-auth-ready/v2') {
+          popupReady = true
+          maybeBind()
+          return
+        }
+        if (event.source === bridge.contentWindow && message.type === 'eds-diary/google-auth-bridge-ready/v2') {
+          bridgeReady = true
+          maybeBind()
+        }
+      }
+
       window.addEventListener('message', onWindowMessage)
       poll = window.setInterval(() => {
-        if (popup.closed) fail(new Error('Google authentication window was closed.'))
+        if (popup.closed && !settled) fail(new Error('Google authentication window was closed before the secure handoff completed.'))
       }, 500)
       timeout = window.setTimeout(() => fail(new Error('Google authentication handoff timed out.')), HANDOFF_TIMEOUT_MS)
     })
@@ -205,5 +252,7 @@ export class GoogleAuthProvider implements AuthProvider {
     this.client?.close()
     this.client = null
     this.binding = null
+    this.bridgeFrame?.remove()
+    this.bridgeFrame = null
   }
 }
