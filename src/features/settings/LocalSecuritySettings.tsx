@@ -54,7 +54,7 @@ export function LocalSecuritySettings({unlockOnly=false}:LocalSecuritySettingsPr
   }
 
   async function activatePrf():Promise<void>{await run(async()=>enrollActivePrfRootWrap(await enrollWebAuthnPrf()),'WebAuthn-PRF-Schutz wurde aktiviert und verifiziert.')}
-  async function lock():Promise<void>{await run(async()=>{clearAuthenticatedRemoteSession();await lockActiveRoot()},'Lokales Tagebuch wurde gesperrt; die Google-Sitzung ist getrennt.')}
+  async function lock():Promise<void>{await run(async()=>{await clearAuthenticatedRemoteSession();await lockActiveRoot()},'Lokales Tagebuch wurde gesperrt; die Google-Sitzung ist getrennt.')}
 
   const content=(
     <div className="local-security-settings__content">
