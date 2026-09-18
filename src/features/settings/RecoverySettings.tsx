@@ -77,14 +77,14 @@ export function RecoverySettings() {
       <legend>Vertrauenswürdige Datenquelle</legend>
       <label><input type="radio" name="recovery-method" checked={method === 'backup'} onChange={() => setMethod('backup')} /> Verifiziertes Backup</label>
       <label><input type="radio" name="recovery-method" checked={method === 'google'} onChange={() => setMethod('google')} /> Authentifiziertes Google-Konto + Recovery-Schlüssel</label>
-      <label><input type="radio" name="recovery-method" checked={method === 'migration'} onChange={() => setMethod('migration')} /> Origin-Umzugspaket</label>
+      <label><input type="radio" name="recovery-method" checked={method === 'migration'} onChange={() => setMethod('migration')} /> Origin-Umzugspaket verwenden</label>
     </fieldset>
     <label>Recovery-Schlüssel<input value={urs} onChange={(event) => setUrs(event.target.value)} autoComplete="off" spellCheck={false} /></label>
     {method === 'backup' ? <>
       <label>Recovery-Artefakt<input type="file" accept="application/json,.json" onChange={(event) => setArtifact(event.target.files?.[0] ?? null)} /></label>
       <label>Backup-Datei<input type="file" accept="application/json,.json,.syncbackup" onChange={(event) => setBackup(event.target.files?.[0] ?? null)} /></label>
     </> : null}
-    {method === 'migration' ? <label>Origin-Umzugspaket<input type="file" accept="application/json,.json" onChange={(event) => setMigrationBundle(event.target.files?.[0] ?? null)} /></label> : null}
+    {method === 'migration' ? <label>Origin-Umzugspaket-Datei<input type="file" accept="application/json,.json" onChange={(event) => setMigrationBundle(event.target.files?.[0] ?? null)} /></label> : null}
     <button type="button" disabled={busy || !urs || (method === 'backup' && (!artifact || !backup)) || (method === 'migration' && !migrationBundle)} onClick={() => void restore()}>Strikt prüfen und wiederherstellen</button>
     <p role="status" aria-live="polite">{status}</p>
   </main>
