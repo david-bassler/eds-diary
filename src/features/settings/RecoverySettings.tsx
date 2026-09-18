@@ -49,7 +49,7 @@ export function RecoverySettings() {
         authority = await session.recoveryAuthority(transport, locator, discovered[0]!.remoteId)
       }else if(method==='migration'){
         if(!migrationBundle)throw new Error('Wähle das Origin-Umzugspaket aus.')
-        const value=await readJson(migrationBundle,256*1024*1024) as unknown
+        const value=await readJson(migrationBundle,257*1024*1024) as unknown
         assertOriginMigrationBundle(value)
         const bundle=value as OriginMigrationBundleV1
         artifactValue=bundle.recovery
