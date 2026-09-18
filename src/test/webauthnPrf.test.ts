@@ -73,12 +73,29 @@ describe('WebAuthn PRF browser ceremony', () => {
     )
   })
 
-  it('fails closed when the registered authenticator does not support PRF', async () => {
+  it('accepts a credential when registration does not advertise PRF but the post-enrollment assertion proves it', async () => {
     const credentialId = new Uint8Array(32).fill(7)
+    const prfOutput = new Uint8Array(32).fill(8)
     create.mockResolvedValue(fakeCredential(credentialId, { prf: { enabled: false } }))
+    get.mockResolvedValue(
+      fakeCredential(credentialId, { prf: { results: { first: buffer(prfOutput) } } }),
+    )
+
+    await expect(enrollWebAuthnPrf()).resolves.toMatchObject({
+      credentialId,
+      prfOutput,
+      rpId: 'diary.example.test',
+    })
+    expect(get).toHaveBeenCalledTimes(1)
+  })
+
+  it('fails closed when registration is inconclusive and the post-enrollment assertion has no PRF result', async () => {
+    const credentialId = new Uint8Array(32).fill(13)
+    create.mockResolvedValue(fakeCredential(credentialId, { prf: { enabled: false } }))
+    get.mockResolvedValue(fakeCredential(credentialId, { prf: {} }))
 
     await expect(enrollWebAuthnPrf()).rejects.toBeInstanceOf(WebAuthnPrfUnavailableError)
-    expect(get).not.toHaveBeenCalled()
+    expect(get).toHaveBeenCalledTimes(1)
   })
 
   it('fails closed when the post-enrollment assertion returns another credential', async () => {

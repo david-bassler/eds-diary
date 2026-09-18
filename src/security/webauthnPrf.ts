@@ -155,9 +155,11 @@ export async function enrollWebAuthnPrf(rpId?: string): Promise<PrfWrapEnrollmen
     },
   } as unknown as PublicKeyCredentialCreationOptions
   const created = asPublicKeyCredential(await credentials.create({ publicKey }), 'registration')
-  if (extensionResults(created).prf?.enabled !== true) {
-    throw new WebAuthnPrfUnavailableError('The created credential does not support WebAuthn PRF.')
-  }
+  // Some Android/passkey-provider combinations do not report prf.enabled during
+  // registration even though the freshly created credential can produce a PRF
+  // result during an assertion. The post-enrollment assertion below is the
+  // authoritative capability proof and still fails closed if no exact 32-byte
+  // result is returned.
   const credentialId = copiedBytes(created.rawId)
   if (credentialId.byteLength === 0) throw new Error('WebAuthn registration returned an empty credential ID.')
   const assertion = await assertWebAuthnPrf(credentialId, prfEvalInput, checkedRpId)
