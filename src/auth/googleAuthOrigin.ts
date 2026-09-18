@@ -2,7 +2,7 @@ import { assertAllowedGoogleApiRequest } from './googleAuthRpcPolicy'
 
 interface TokenResponse { access_token?: string; error?: string; expires_in?: number }
 interface TokenClient { requestAccessToken(options?: { prompt?: string }): void }
-interface GoogleAccounts { oauth2: { initTokenClient(options: { client_id: string; scope: string; callback: (response: TokenResponse) => void; error_callback: () => void }): TokenClient; revoke(token: string, callback: () => void): void } }
+interface GoogleAccounts { oauth2: { initTokenClient(options: { client_id: string; scope: string; callback: (response: TokenResponse) => void; error_callback: () => void }): TokenClient } }
 
 declare global { interface Window { google?: { accounts: GoogleAccounts } } }
 
@@ -10,6 +10,7 @@ const ACTION = /^[A-Za-z0-9_-]{32,128}$/
 const params = new URLSearchParams(location.search)
 const actionId = params.get('action_id') ?? ''
 const returnOriginText = params.get('return_origin') ?? ''
+const mode = params.get('mode') === 'bridge' ? 'bridge' : 'popup'
 const configuredOrigins = (import.meta.env.VITE_DIARY_ORIGINS as string | undefined)?.split(',').map((value) => value.trim()).filter(Boolean) ?? []
 const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined
 const status = document.querySelector<HTMLParagraphElement>('#status')!
@@ -65,47 +66,124 @@ async function rpc(port: MessagePort, data: Record<string, unknown>): Promise<vo
     port.postMessage({ type: 'eds-diary/google-api-response/v1', request_id: requestId, ok: false, error: { message: error.message, ...(error.status ? { status: error.status } : {}) } })
   }
 }
-async function bind(event: MessageEvent<unknown>): Promise<void> {
+
+async function bindPopup(event: MessageEvent<unknown>): Promise<void> {
   if (bound || event.origin !== returnOrigin || event.source !== window.opener || !event.data || typeof event.data !== 'object') return
   const message = event.data as Record<string, unknown>
-  if (message.type !== 'eds-diary/google-auth-bind/v1' || message.action_id !== actionId || message.return_origin !== returnOrigin || event.ports.length !== 1) return
+  if (message.type !== 'eds-diary/google-auth-popup-bind/v2' || message.action_id !== actionId || message.return_origin !== returnOrigin || event.ports.length !== 1) return
   bound = true
-  const port = event.ports[0]!
+  const tokenPort = event.ports[0]!
   try {
     const permissionId = await providerIdentity()
-    port.addEventListener('message', (portEvent: MessageEvent<unknown>) => {
-      if (!portEvent.data || typeof portEvent.data !== 'object') return
-      const data = portEvent.data as Record<string, unknown>
-      if (data.type === 'eds-diary/google-auth-disconnect/v1') {
-        const token = accessToken; accessToken = ''; port.close()
-        if (token) window.google?.accounts.oauth2.revoke(token, () => undefined)
-        status.textContent = 'Google-Sitzung wurde getrennt.'
+    tokenPort.postMessage({
+      type: 'eds-diary/google-auth-token-transfer/v2',
+      action_id: actionId,
+      access_token: accessToken,
+      permission_id: permissionId,
+    })
+    accessToken = ''
+    tokenPort.close()
+    status.textContent = 'Google-Verbindung bestätigt. Du kannst jetzt zum Tagebuch zurückkehren.'
+  } catch (cause) {
+    tokenPort.close()
+    bound = false
+    fail(cause instanceof Error ? cause.message : 'Bindung fehlgeschlagen.')
+  }
+}
+
+async function bindBridge(event: MessageEvent<unknown>): Promise<void> {
+  if (bound || event.origin !== returnOrigin || event.source !== window.parent || !event.data || typeof event.data !== 'object') return
+  const message = event.data as Record<string, unknown>
+  if (message.type !== 'eds-diary/google-auth-bridge-bind/v2' || message.action_id !== actionId || message.return_origin !== returnOrigin || event.ports.length !== 2) return
+  bound = true
+  const tokenPort = event.ports[0]!
+  const rpcPort = event.ports[1]!
+  const failBridge = (messageText: string) => {
+    accessToken = ''
+    tokenPort.close()
+    rpcPort.close()
+    bound = false
+    fail(messageText)
+  }
+  tokenPort.addEventListener('message', (tokenEvent: MessageEvent<unknown>) => {
+    void (async () => {
+      if (!tokenEvent.data || typeof tokenEvent.data !== 'object') { failBridge('Ungültige Token-Übergabe.'); return }
+      const transfer = tokenEvent.data as Record<string, unknown>
+      const token = typeof transfer.access_token === 'string' ? transfer.access_token : ''
+      const permissionId = typeof transfer.permission_id === 'string' ? transfer.permission_id : ''
+      if (transfer.type !== 'eds-diary/google-auth-token-transfer/v2' || transfer.action_id !== actionId || !token || !permissionId) {
+        failBridge('Ungültige Token-Übergabe.')
         return
       }
-      void rpc(port, data)
-    })
-    port.start()
-    port.postMessage({ type: 'eds-diary/google-auth-bound/v1', action_id: actionId, permission_id: permissionId })
-    status.textContent = 'Verbunden. Dieses Fenster kann offen bleiben.'
-  } catch (cause) { bound = false; fail(cause instanceof Error ? cause.message : 'Bindung fehlgeschlagen.') }
+      accessToken = token
+      try {
+        const confirmedPermissionId = await providerIdentity()
+        if (confirmedPermissionId !== permissionId) throw new Error('Google-Identität änderte sich während der sicheren Übergabe.')
+        tokenPort.close()
+        rpcPort.addEventListener('message', (portEvent: MessageEvent<unknown>) => {
+          if (!portEvent.data || typeof portEvent.data !== 'object') return
+          const data = portEvent.data as Record<string, unknown>
+          if (data.type === 'eds-diary/google-auth-disconnect/v1') {
+            accessToken = ''
+            rpcPort.close()
+            status.textContent = 'Google-Sitzung wurde getrennt.'
+            return
+          }
+          void rpc(rpcPort, data)
+        })
+        rpcPort.start()
+        rpcPort.postMessage({ type: 'eds-diary/google-auth-bound/v2', action_id: actionId, permission_id: permissionId })
+        status.textContent = 'Google-API-Bridge ist aktiv.'
+      } catch (cause) {
+        failBridge(cause instanceof Error ? cause.message : 'Google-API-Bridge konnte nicht gebunden werden.')
+      }
+    })()
+  }, { once: true })
+  tokenPort.start()
 }
-async function start(): Promise<void> {
-  returnOrigin = validOrigin(returnOriginText)
-  if (!window.opener || !ACTION.test(actionId) || !returnOrigin || !clientId) { fail('Ungültige oder nicht erlaubte Anmeldeanforderung.'); return }
+
+async function startPopup(): Promise<void> {
+  if (!window.opener) { fail('Ungültige oder nicht erlaubte Anmeldeanforderung.'); return }
   try {
     await loadGoogleRuntime()
-    tokenClient = window.google!.accounts.oauth2.initTokenClient({ client_id: clientId, scope: 'https://www.googleapis.com/auth/drive.file', callback: (response) => {
-      if (!response.access_token || response.error) { fail('Google-Anmeldung wurde nicht abgeschlossen.'); return }
-      accessToken = response.access_token
-      login.hidden = true
-      status.textContent = 'Identität wird gebunden …'
-      window.opener.postMessage({ type: 'eds-diary/google-auth-ready/v1', action_id: actionId }, returnOrigin!)
-    }, error_callback: () => fail('Google-Anmeldung wurde abgebrochen.') })
+    tokenClient = window.google!.accounts.oauth2.initTokenClient({
+      client_id: clientId!,
+      scope: 'https://www.googleapis.com/auth/drive.file',
+      callback: (response) => {
+        if (!response.access_token || response.error) { fail('Google-Anmeldung wurde nicht abgeschlossen.'); return }
+        accessToken = response.access_token
+        login.hidden = true
+        status.textContent = 'Identität wird gebunden …'
+        window.opener.postMessage({ type: 'eds-diary/google-auth-ready/v2', action_id: actionId }, returnOrigin!)
+      },
+      error_callback: () => fail('Google-Anmeldung wurde abgebrochen.'),
+    })
     login.hidden = false
     status.textContent = 'Melde dich mit dem Google-Konto an, das das verschlüsselte Tagebuch besitzt.'
-  } catch (cause) { fail(cause instanceof Error ? cause.message : 'Google-Anmeldung ist nicht verfügbar.') }
+  } catch (cause) {
+    fail(cause instanceof Error ? cause.message : 'Google-Anmeldung ist nicht verfügbar.')
+  }
 }
-window.addEventListener('message', (event) => { void bind(event) })
+
+function startBridge(): void {
+  login.hidden = true
+  cancel.hidden = true
+  if (window.parent === window) { fail('Ungültige Bridge-Anforderung.'); return }
+  status.textContent = 'Sichere Google-API-Bridge wird vorbereitet …'
+  window.parent.postMessage({ type: 'eds-diary/google-auth-bridge-ready/v2', action_id: actionId }, returnOrigin!)
+}
+
+function start(): void {
+  returnOrigin = validOrigin(returnOriginText)
+  if (!ACTION.test(actionId) || !returnOrigin || !clientId) { fail('Ungültige oder nicht erlaubte Anmeldeanforderung.'); return }
+  if (mode === 'bridge') startBridge()
+  else void startPopup()
+}
+
+window.addEventListener('message', (event) => {
+  if (mode === 'bridge') void bindBridge(event)
+  else void bindPopup(event)
+})
 login.addEventListener('click', () => tokenClient?.requestAccessToken({ prompt: 'select_account' }))
 cancel.addEventListener('click', () => window.close())
-void start()
+start()
