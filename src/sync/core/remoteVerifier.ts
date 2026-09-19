@@ -5,7 +5,7 @@ import { deriveEpochSalt, sha256 } from '../../security/crypto/core'
 import { base64Url, fixedBase64Url } from '../../security/crypto/bytes'
 import { canonicalBytes } from '../../security/crypto/canonical'
 import type { SyncBackupV5 } from '../../security/backup'
-import { assertExtendsAnchor, type RemoteAnchor } from './prefix'
+import { assertExtendsAnchor, type RemoteAnchorV1 } from './prefix'
 import { SINGLE_WRITER_V1_PROFILE, type RemoteProfileVerifier, type RemoteSnapshot, type RemoteTransport, type VerifiedRemoteState } from './contracts'
 import { validateDomainData } from '../../security/domainSchemaValidator'
 import type { RecoveredRootCandidate } from '../../security/recovery'
@@ -86,7 +86,7 @@ function validateManifestBindings(manifest: ProtectedManifestV1, trusted: Truste
 export class SingleWriterV1RemoteVerifier implements RemoteProfileVerifier {
   readonly profileId = SINGLE_WRITER_V1_PROFILE
   constructor(private readonly trusted: TrustedRemoteContext) {}
-  assertRecoveryBinding(binding: {diaryId:string;epochId:string;keyId:string;manifestFingerprint:string;recoveryGeneration:number;recoveryCommitment:string;accountBinding:string;anchor:RemoteAnchor|null}): void {
+  assertRecoveryBinding(binding: {diaryId:string;epochId:string;keyId:string;manifestFingerprint:string;recoveryGeneration:number;recoveryCommitment:string;accountBinding:string;anchor:RemoteAnchorV1|null}): void {
     if (binding.diaryId !== this.trusted.diaryId || binding.epochId !== this.trusted.epochId || binding.keyId !== this.trusted.expectedKeyId || binding.manifestFingerprint !== this.trusted.expectedManifestFingerprint || binding.recoveryGeneration !== this.trusted.expectedRecoveryGeneration || binding.recoveryCommitment !== this.trusted.expectedRecoveryCommitment || binding.accountBinding !== this.trusted.expectedGoogleAccountBinding || JSON.stringify(binding.anchor) !== JSON.stringify(this.trusted.oldAnchor)) throw new Error('Recovery candidate does not match the authenticated verifier context.')
   }
   async verify(snapshot: RemoteSnapshot): Promise<VerifiedRemoteState> {
