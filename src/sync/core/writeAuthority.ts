@@ -1,4 +1,4 @@
-import { SINGLE_WRITER_V1_PROFILE, type VerifiedRemoteState, type WriteAuthority } from './contracts'
+import { SINGLE_WRITER_V1_PROFILE, type WriteAuthority } from './contracts'
 
 /** Existing single-writer-v1 authorization semantics, extracted behind a
  * profile policy without changing behavior. Retirement remains an epoch-level
@@ -6,9 +6,9 @@ import { SINGLE_WRITER_V1_PROFILE, type VerifiedRemoteState, type WriteAuthority
  * remote verification. */
 export class SingleWriterV1WriteAuthority implements WriteAuthority {
   readonly profileId = SINGLE_WRITER_V1_PROFILE
-  authorizeAfterPull(_verified: VerifiedRemoteState): void {}
+  authorizeAfterPull(): void {}
   assertBeforePush(): void {}
-  assertAfterReadback(_verified: VerifiedRemoteState): void {}
+  assertAfterReadback(): void {}
 }
 
 export function singleWriterV1WriteAuthority(): WriteAuthority {
