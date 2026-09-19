@@ -135,7 +135,7 @@ export class SingleWriterV1RemoteVerifier implements RemoteProfileVerifier {
     // collapsed into a remote head (and it is never selected by row time).
     // Same-ID byte conflicts were rejected above; byte-identical rows are
     // represented by verifiedEnvelopeIds and can be marked remote_seen.
-    return { snapshot, manifestFingerprint: fingerprint, retired: announcements.length === 1, verifiedEnvelopeIds: new Set(envelopes.map((envelope) => envelope.envelopeId)) }
+    return { profileId:SINGLE_WRITER_V1_PROFILE, profileState:null, snapshot, manifestFingerprint: fingerprint, retired: announcements.length === 1, verifiedEnvelopeIds: new Set(envelopes.map((envelope) => envelope.envelopeId)) }
   }
 }
 
