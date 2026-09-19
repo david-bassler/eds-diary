@@ -1,4 +1,4 @@
-import type { RemoteProfileVerifier, RemoteTransport, TransportProfileCodec, WriteAuthority } from './contracts'
+import type { RemoteProfileVerifier, RemoteTransport, TransportProfileCodec } from './contracts'
 import type { IndependentBootstrapAuthority } from './remoteVerifier'
 import type { RecoveryArtifact } from '../../security/recovery'
 
@@ -11,7 +11,6 @@ export interface SingleWriterProviderSession {
   transportForEpoch(diaryId:string,epochId:string):Promise<RemoteTransport>
   remoteIdentityBinding(transport:RemoteTransport):Promise<string>
   codec(verifier:RemoteProfileVerifier):TransportProfileCodec
-  writeAuthority():WriteAuthority
   creationProperties(diaryId:string,epochId:string):Promise<Readonly<Record<string,string>>>
   recoveryLocator(diaryId:string,epochId:string):Promise<string>
   recoveryAuthority(transport:RemoteTransport,locator:string,remoteResourceId:string):Promise<IndependentBootstrapAuthority>
