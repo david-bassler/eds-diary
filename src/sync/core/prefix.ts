@@ -1,8 +1,9 @@
+import type { RemoteAnchorState } from './contracts'
 import { base64Url, concatBytes, fixedBase64Url, uint32be, uint64be, utf8 } from '../../security/crypto/bytes'
 import { canonicalBytes } from '../../security/crypto/canonical'
 import { sha256 } from '../../security/crypto/core'
 
-export interface RemoteAnchorV1 { anchor_profile: 'google-sheets-single-writer-v1'; covered_row_count: number; prefix_hash: string }
+export interface RemoteAnchorV1 extends RemoteAnchorState { anchor_profile: 'google-sheets-single-writer-v1'; covered_row_count: number; prefix_hash: string }
 /** Backwards-compatible alias for the current v1 anchor format. */
 export type RemoteAnchor = RemoteAnchorV1
 
