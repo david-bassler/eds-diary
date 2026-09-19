@@ -246,7 +246,7 @@ Insbesondere nicht neu persistieren in:
 - Analytics,
 - Error Reporting.
 
-Der derzeitige Legacy-/Prototype-Code enthält noch Klartextpersistenz. Diese ist Migrationsquelle, **nicht Zielarchitektur**.
+Historische Legacy-/Prototype-Stände enthielten Klartextpersistenz. Diese bleibt ausschließlich Migrationsquelle und Regressionstest-Gegenstand, **nicht Zielarchitektur**; der aktuelle Produktpfad darf keine fachlichen Gesundheitsdaten neu im Klartext persistieren.
 
 Neue sichere Stores müssen verschlüsselte immutable Envelopes, technische Indizes/Referenzen und authentifizierten lokalen Security-State verwenden.
 

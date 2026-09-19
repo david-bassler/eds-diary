@@ -190,7 +190,7 @@ Passphrase:
 
 ### L. Legacy-Migration
 
-Aktueller Code enthält Klartext-IndexedDB und whole-table Google Sync. Tests müssen beweisen:
+Die historische Vor-v1-Ausgangsbasis enthielt Klartext-IndexedDB und Whole-Table-Google-Sync. Der heutige Zielpfad ist bereits auf verschlüsselte Envelopes migriert; diese Tests bleiben als Regression-/Fresh-Profile-Gate verbindlich und müssen beweisen:
 
 1. alle bestehenden fachlichen Stores werden inventarisiert,
 2. Migration verliert keine Records,
@@ -228,9 +228,18 @@ Die alte v5-Multi-Writer-TLA+-Suite bleibt historische Assurance-Referenz, ist a
 
 Für Single-Writer v1 soll mindestens ein kleines neues Modell oder äquivalenter exhaustive state-machine test die folgenden Invarianten abdecken:
 
-### INV-SW-001 – One Remote Writer
+### ASSUMPTION-SW-001 – One Remote Writer
 
-Im Normalmodell existiert höchstens ein `writer_active`.
+v1 **erzwingt** über mehrere Geräte keinen exklusiven Writer-Lease. Das formale
+v1-Normalmodell nimmt deshalb für Remote-Mutationen höchstens einen konformen
+aktiven Remote-Writer gleichzeitig an. Stale/offline Geräte dürfen lokale Forks
+besitzen; nach erneutem Pull können fachliche Forks explizit gemergt werden.
+
+Wird die Single-Remote-Writer-Annahme bei Control-/Epoch-Operationen verletzt,
+muss v1 fail-closed gehen. Kryptographisch gefencete geräteübergreifende
+Writer-Exklusivität ist ausdrücklich Ziel von
+`google-sheets-transferable-single-writer-v2`, nicht eine bereits erfüllte
+v1-Invariante.
 
 ### INV-SW-002 – Pull-before-Push
 

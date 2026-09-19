@@ -1,12 +1,12 @@
 # Implementierungsaudit – Single Writer v1
 
-Stand: 18.09.2026 (Recoverability-Hardening PR #30)
+Stand: 19.09.2026 (v1/v2-Grenzreview; Recoverability-Basis PR #30)
 
 ## Adversarialer Produktpfad-Review
 
 | Prüfpunkt | Ergebnis |
 |---|---|
-| Helper vorhanden, aber nicht produktiv benutzt | Die Feature-Repositories laufen über `localDatabase` auf dem entschlüsselten Head des Envelope-/Revision-Graphen. Nach dem authentifizierten Provider-Handoff baut `installAuthenticatedGoogleSession` den Service aus dem MAC-gebundenen aktiven Epoch-State neu auf; Dirty- und Full-Trigger besitzen nur noch diesen Coordinator-Slot. Legacy-Whole-Table-Synchronizer werden beim App-Start nicht registriert und ihre Registrierung schlägt geschlossen fehl. |
+| Helper vorhanden, aber nicht produktiv benutzt | Die Feature-Repositories laufen über `localDatabase` auf dem entschlüsselten Head des Envelope-/Revision-Graphen. Nach dem authentifizierten Provider-Handoff baut `installAuthenticatedRemoteSession` den Service aus dem MAC-gebundenen aktiven Epoch-State neu auf; Dirty- und Full-Trigger besitzen nur noch diesen Coordinator-Slot. Legacy-Whole-Table-Synchronizer werden beim App-Start nicht registriert und ihre Registrierung schlägt geschlossen fehl. |
 | Alter Source-of-Truth-Pfad | `secureRecords` existiert nicht mehr. Die alten Klartext-Stores und der historische Activity-Type-LocalStorage-Key werden ausschließlich nichtdestruktiv inventarisiert und migriert. |
 | Lokale Manipulation | Root-Wrap und `epoch_local_security_state`/State-MAC werden beim Laden geprüft. `EpochContext`, MAC-State und RootWrap müssen in Diary-, Epoch-, Key-, Manifest- und Wrap-Identität übereinstimmen. Jeder normale Fach-Read prüft zusätzlich vollständige Journalfolge, exakte Rowbytes, Count und Hashkette; State-, Context- und Journal-Manipulation sind fatal. |
 | Lokaler Root-Wrap | `best-effort`, Argon2id-Passphrase und WebAuthn-PRF besitzen getrennte Wrap-Pfade. Der WebAuthn-Browserpfad verlangt UV, exakte Credential-ID und eine 32-Byte-Post-Enrollment-PRF-Assertion; Unsupported-/Mismatch-Fälle schlagen geschlossen fehl. Passphrase-/PRF-Modi bleiben über Rotation erhalten. Reale Authenticator-/Browservalidierung bleibt externes Release-Gate. |
@@ -26,8 +26,9 @@ Stand: 18.09.2026 (Recoverability-Hardening PR #30)
 | Origin-Wechsel | Ein `eds-origin-migration-v1`-Paket bündelt verifiziertes Backup und Recovery-Artefakt, niemals den URS. Restore auf einem frischen Origin läuft über denselben Backup-/Recovery-Verify-Pfad und vermeidet Abhängigkeit von alter IndexedDB- oder WebAuthn-RP-ID. |
 | Backup-Export | Remote-bound Backups lesen und full-verifizieren die aktuelle Remote-Sicht erneut, prüfen Account-Binding und nehmen lokale pending Envelopes auf; Restore-Test läuft vor Ausgabe. |
 | Fachkonflikte | Die Konfiguration zeigt alle Heads und Tombstones ohne automatische Gewinnerwahl. Das ausdrücklich bearbeitete Ergebnis läuft über `mergeRecord` und damit auch bei 9/17 Heads über gestufte, protokollbegrenzte Merge-Revisionen. |
-| Auth-Origin | `/google-auth/` ist ein eigener statischer Build-Entry. Return-Origin-Allowlist, Opener, Action-ID und MessagePort werden gebunden; Google Runtime und Tokens verlassen diesen Origin nicht. RPC wird zusätzlich auf die tatsächlich benötigten Drive-/Sheets-Pfade und Methoden begrenzt; fremde Google-Endpunkte werden abgelehnt. |
+| Auth-Origin | `/google-auth/` ist ein eigener statischer Build-Entry. Return-Origin-Allowlist, Opener/Parent, Action-ID und MessageChannels werden gebunden; das OAuth-Credential wird nach dem Popup-Handoff in einem langlebigen Auth-Bridge-Frame gehalten und nicht an den Diary-Code übergeben. RPC wird auf die tatsächlich benötigten Drive-/Sheets-Pfade und Methoden begrenzt. Die derzeitige GitHub-Pages-Testbereitstellung ist **noch same-origin**; echte Origin-Isolation bleibt deshalb ein externes Deployment-Gate. |
 | Produktpfad-Testabdeckung | Dedizierte Browser-Szenarien laufen in Desktop- und Mobile-Projekten für Recovery-Import, Restore-Artefakt-Re-Export, Recovery-Navigation, Konfliktbereich und fail-closed Auth-Origin. Ergänzende Unit-Regressionen prüfen Legacy-JSON-Kompatibilität, Duplicate-Key-Reject, Restore-Status/Artefakt-Readback und RPC-Allowlist. Live-Google und reale WebAuthn-Hardware bleiben bewusst extern. |
+| Mehrgeräte-Writer-Wechsel | **Nicht Bestandteil von v1.** Die bestehende v1-Spezifikation erlaubt stale/offline lokale Forks, besitzt aber keinen produktiven Same-Diary-Join/Handoff für ein zweites Gerät. Ein zweites Gerät darf daher nicht durch erneutes `remote_enablement` eines eigenen lokalen Zustands als vermeintlicher Join verwendet werden. Die strengere Zielarchitektur mit read-only Zweitgeräten, Writer-Generation, Gerätesignaturen und Fencing ist in `EDS_TRANSFERABLE_SINGLE_WRITER_V2_ARCHITECTURE.md` gerahmt; exaktes v2-Protokoll und Implementierung stehen noch aus. |
 
 ## Lokale Architektur
 
@@ -44,9 +45,9 @@ unverändert.
 
 ## Ergebnis
 
-`TODO_INTERNAL: none`
+`TODO_INTERNAL: transferable-single-writer-v2 not implemented`
 
-`SECURITY/SPEC DECISION REQUIRED: none`
+`SECURITY/SPEC DECISION REQUIRED: v2 exact wire/schema/signature profile and recovery-takeover authority before implementation`
 
 Externe Freigabegrenzen stehen ausschließlich in
 `PRODUCTION_SECURITY_RELEASE_GATES.md`; dieses Audit ist keine Aussage über
