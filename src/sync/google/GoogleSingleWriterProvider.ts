@@ -1,6 +1,7 @@
-import { SINGLE_WRITER_PROFILE, type RemoteTransport, type TransportProfileCodec } from '../core/contracts'
+import { SINGLE_WRITER_V1_PROFILE, type RemoteProfileVerifier, type RemoteTransport, type TransportProfileCodec, type WriteAuthority } from '../core/contracts'
 import type { SingleWriterProvider, SingleWriterProviderSession } from '../core/provider'
-import { IndependentBootstrapAuthority, type FullRemoteVerifier } from '../core/remoteVerifier'
+import { IndependentBootstrapAuthority } from '../core/remoteVerifier'
+import { singleWriterV1WriteAuthority } from '../core/writeAuthority'
 import { GoogleAuthProvider, isAuthenticatedGoogleApiClient } from './GoogleAuthProvider'
 import { GoogleSheetsSingleWriterProfileCodec } from './GoogleSheetsSingleWriterProfileCodec'
 import { GoogleRecoveryArtifactStore } from './GoogleRecoveryArtifactStore'
@@ -13,8 +14,8 @@ import {
 } from './GoogleSheetsSingleWriterTransport'
 
 class GoogleSingleWriterProviderSession implements SingleWriterProviderSession {
-  readonly providerId = SINGLE_WRITER_PROFILE
-  readonly profileId = SINGLE_WRITER_PROFILE
+  readonly providerId = SINGLE_WRITER_V1_PROFILE
+  readonly profileId = SINGLE_WRITER_V1_PROFILE
 
   constructor(
     private readonly api:GoogleApiClient,
@@ -32,9 +33,11 @@ class GoogleSingleWriterProviderSession implements SingleWriterProviderSession {
     return transport.authenticatedAccountBinding()
   }
 
-  codec(verifier:FullRemoteVerifier):TransportProfileCodec{
+  codec(verifier:RemoteProfileVerifier):TransportProfileCodec{
     return new GoogleSheetsSingleWriterProfileCodec(verifier)
   }
+
+  writeAuthority():WriteAuthority{return singleWriterV1WriteAuthority()}
 
   async creationProperties(diaryId:string,epochId:string):Promise<Readonly<Record<string,string>>>{
     return{app_format:'sync-v5',epoch_locator:await epochLocator(diaryId,epochId)}
@@ -63,7 +66,7 @@ export function googleProviderSessionFromAuthenticatedClient(
 }
 
 export class GoogleSingleWriterProvider implements SingleWriterProvider {
-  readonly providerId = SINGLE_WRITER_PROFILE
+  readonly providerId = SINGLE_WRITER_V1_PROFILE
   constructor(private readonly authUrl:string){}
 
   async authenticate(actionId:string):Promise<SingleWriterProviderSession>{
