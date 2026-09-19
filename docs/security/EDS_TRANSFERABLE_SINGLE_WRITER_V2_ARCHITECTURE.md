@@ -1,8 +1,10 @@
 # EDS Diary – Transferable Single Writer v2
 
-Status: **ARCHITEKTURRAHMEN DEFINIERT / EXAKTES v2-PROTOKOLL NOCH NICHT EINGEFROREN / NOCH NICHT IMPLEMENTIERT**
+Status: **ARCHITEKTURRAHMEN DEFINIERT / EXAKTES v2-PROTOKOLL IN EDS_TRANSFERABLE_SINGLE_WRITER_V2_EXACT_PROTOCOL.md EINGEFROREN / NOCH NICHT IMPLEMENTIERT**
 
 Stand: 19.09.2026
+
+Normative Konkretisierung: Byte-, Wire-, Signatur-, Recovery-Takeover- und State-Details sind in `EDS_TRANSFERABLE_SINGLE_WRITER_V2_EXACT_PROTOCOL.md` festgeschrieben. Wo dieses Architekturpapier noch alternative Konstruktionen oder eine spätere Festlegung erwähnt, gilt die Exact-Protocol-Datei.
 
 Stack-Hinweis: Die vorbereitende v1/v2-Entkopplung liegt in PR #36. Dieser Architektur-PR ist im Review-Stack darauf aufgebaut; Merge-Reihenfolge ist daher **PR #36 vor PR #35**. Vor einem späteren Merge von PR #35 nach `main` muss die Base nach dem Merge von #36 erneut auf `main` gesetzt und der kombinierte CI-Stand grün bestätigt werden.
 
@@ -173,8 +175,7 @@ writer_signing_public_key
 writer_signing_private_key
 ```
 
-Die genaue Signaturalgorithmus-/Encoding-Wahl wird im exakten v2-Wire-Profil
-festgeschrieben. Anforderungen:
+Der exakte v2-Wire-Stand legt Ed25519 mit 32-Byte-Raw-Public-Key und 64-Byte-Signatur fest. Anforderungen:
 
 - neue zufällige Geräteidentität pro Installation;
 - kein Ableiten aus Hardwaremerkmalen;
@@ -362,10 +363,7 @@ Normative Architekturgrenze dafür:
 - Recovery-Rekey erzeugt/aktiviert neue Takeover-Authority und macht die alte
   Generation für neue Epochen ungültig.
 
-Ob dies im exakten Profil über einen asymmetrischen Recovery-Schlüssel, eine
-URS-gebundene Signier-Capability oder eine andere sauber analysierte Konstruktion
-erfolgt, wird **vor Implementierung** festgeschrieben; eine bloße UI-Abfrage des
-Recovery-Keys genügt nicht.
+Das exakte Profil legt hierfür pro Recovery-Generation ein separates Ed25519-Takeover-Schlüsselpaar fest: Public Key im geschützten Manifest, exportierter Private Key ausschließlich im URS-verschlüsselten RecoveryArtifactV6; Forced Takeover importiert ihn nur transient als nicht extrahierbaren Signing-Key. Eine bloße UI-Abfrage des Recovery-Keys genügt nicht.
 
 ## 8. Writer-Provenienz jeder Revision
 
