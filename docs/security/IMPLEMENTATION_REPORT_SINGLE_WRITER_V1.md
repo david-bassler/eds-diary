@@ -1,6 +1,8 @@
 # Implementierungsbericht – Google Sheets Single Writer v1
 
-Stand: 17.09.2026 (Integrationsstand PR #22)
+Stand: 17.09.2026 (historischer Integrationsstand PR #22)
+
+> **Historischer Snapshot:** Dieses Dokument beschreibt den v1-Integrationsstand von PR #22 und ist kein aktueller Repo-/Release-Status. Aktuelle interne Restarbeiten und externe Gates stehen in `IMPLEMENTATION_AUDIT_SINGLE_WRITER_V1.md` und `PRODUCTION_SECURITY_RELEASE_GATES.md`.
 
 ## Produktiver Stand
 
@@ -143,9 +145,9 @@ Tests nicht ersetzt werden und bleiben externe Release-Gates.
 
 ## Abschlussstatus
 
-`TODO_INTERNAL: none`
+`TODO_INTERNAL_V1_AT_PR22: none`
 
-`SECURITY/SPEC DECISION REQUIRED: none`
+`SECURITY/SPEC_DECISION_V1_AT_PR22: none`
 
 `BLOCKED_EXTERNAL`: Deployment auf getrennte Diary-/Auth-Origins; echte Google-Testcredentials und
 Testkonto einschließlich Account-Wechsel, Logout, Permission-, Netzwerk- und
