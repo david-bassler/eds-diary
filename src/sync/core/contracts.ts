@@ -8,6 +8,8 @@ export class TransportError extends Error { constructor(readonly code: Transport
 export interface IdentityBinding { providerId: string; subject: string }
 export interface RemoteCandidate { remoteId: string; locator: string }
 export interface RemoteSnapshot { manifest: readonly string[]; rows: ReadonlyArray<readonly string[]> }
+/** Profile-neutral in-memory anchor shape. Persisted profiles must use an exact versioned subtype. */
+export interface RemoteAnchorState { anchor_profile: string; covered_row_count: number; prefix_hash: string }
 /** Branded result that can only be produced after manifest, every envelope, graph,
  * controls, binding, anchor and local reconciliation have been verified. */
 export interface VerifiedRemoteState { snapshot: RemoteSnapshot; manifestFingerprint: string; retired: boolean; verifiedEnvelopeIds: ReadonlySet<string> }
@@ -44,4 +46,6 @@ export interface TransportProfileCodec {
   validate(snapshot: RemoteSnapshot): void
   verifyRemote(snapshot: RemoteSnapshot): Promise<VerifiedRemoteState>
   row(envelope: PreparedEnvelope): readonly [string, string, string]
+  createAnchor(diaryId:string,epochId:string,rows:ReadonlyArray<readonly string[]>):Promise<RemoteAnchorState>
+  assertExtendsAnchor(anchor:RemoteAnchorState|null,diaryId:string,epochId:string,rows:ReadonlyArray<readonly string[]>):Promise<void>
 }
