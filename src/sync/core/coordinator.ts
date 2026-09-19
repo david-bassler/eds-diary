@@ -1,18 +1,17 @@
 import type { PreparedEnvelope } from '../../security/envelopes'
 import { envelopeRow } from '../../security/envelopes'
-import { createAnchor, assertExtendsAnchor, type RemoteAnchor } from './prefix'
-import { TransportError, type RemoteTransport, type TransportProfileCodec, type WriteAuthority } from './contracts'
+import { TransportError, type RemoteAnchorState, type RemoteTransport, type TransportProfileCodec, type WriteAuthority } from './contracts'
 import { singleWriterV1WriteAuthority } from './writeAuthority'
 
 export type CoordinatorState = 'local_locked' | 'local_only' | 'authenticated' | 'remote_verifying' | 'remote_verified' | 'writer_active' | 'syncing' | 'synced' | 'conflict' | 'security_blocked' | 'error'
 export interface CoordinatorStore {
-  readAnchor(): Promise<RemoteAnchor | null>
+  readAnchor(): Promise<RemoteAnchorState | null>
   pending(remoteRows: ReadonlyArray<readonly string[]>): Promise<readonly PreparedEnvelope[]>
   generation(): Promise<number>
   markPending?(envelopeId: string, expectedGeneration: number): Promise<number>
   markRemoteSeen?(envelopeId: string, expectedGeneration: number): Promise<number>
-  commitVerifiedPull?(rows: ReadonlyArray<readonly string[]>, anchor: RemoteAnchor, expectedGeneration: number): Promise<number>
-  commitDurable(envelopeId: string, anchor: RemoteAnchor, expectedGeneration: number): Promise<void>
+  commitVerifiedPull?(rows: ReadonlyArray<readonly string[]>, anchor: RemoteAnchorState, expectedGeneration: number): Promise<number>
+  commitDurable(envelopeId: string, anchor: RemoteAnchorState, expectedGeneration: number): Promise<void>
 }
 
 export class SingleWriterCoordinator {
@@ -33,9 +32,9 @@ export class SingleWriterCoordinator {
       this.codec.validate(snapshot)
       const verified = await this.codec.verifyRemote(snapshot)
       if (verified.retired&&!this.allowRetirement) throw new Error('A rotation announcement retired this epoch.')
-      await assertExtendsAnchor(await this.store.readAnchor(), this.diaryId, this.epochId, snapshot.rows)
+      await this.codec.assertExtendsAnchor(await this.store.readAnchor(), this.diaryId, this.epochId, snapshot.rows)
       const generation = await this.store.generation()
-      const anchor = await createAnchor(this.diaryId, this.epochId, snapshot.rows)
+      const anchor = await this.codec.createAnchor(this.diaryId, this.epochId, snapshot.rows)
       this.verifiedGeneration = this.store.commitVerifiedPull
         ? await this.store.commitVerifiedPull(snapshot.rows, anchor, generation)
         : generation
@@ -78,7 +77,7 @@ export class SingleWriterCoordinator {
       }
       if (!snapshot.rows.some((remoteRow) => remoteRow.length === 3 && remoteRow.every((cell, index) => cell === row[index]))) { this.state = 'error'; throw new Error('Append could not be reconciled.') }
       if(this.store.markRemoteSeen) expectedGeneration=await this.store.markRemoteSeen(envelope.envelopeId,expectedGeneration)
-      await assertExtendsAnchor(await this.store.readAnchor(), this.diaryId, this.epochId, snapshot.rows)
+      await this.codec.assertExtendsAnchor(await this.store.readAnchor(), this.diaryId, this.epochId, snapshot.rows)
       const finalVerified = await this.codec.verifyRemote(snapshot)
       if ((finalVerified.retired&&!this.allowRetirement) || await this.store.generation() !== expectedGeneration) { this.state = 'security_blocked'; throw new Error('Final verification or generation check failed.') }
       let access
@@ -89,7 +88,7 @@ export class SingleWriterCoordinator {
         this.state='remote_verified'
         return
       }
-      await this.store.commitDurable(envelope.envelopeId, await createAnchor(this.diaryId, this.epochId, snapshot.rows), expectedGeneration)
+      await this.store.commitDurable(envelope.envelopeId, await this.codec.createAnchor(this.diaryId, this.epochId, snapshot.rows), expectedGeneration)
       this.verifiedGeneration=await this.store.generation()
       this.verifiedRows=snapshot.rows
     }
