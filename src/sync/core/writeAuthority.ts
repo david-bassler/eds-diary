@@ -6,9 +6,9 @@ import { SINGLE_WRITER_V1_PROFILE, type WriteAuthority } from './contracts'
  * remote verification. */
 export class SingleWriterV1WriteAuthority implements WriteAuthority {
   readonly profileId = SINGLE_WRITER_V1_PROFILE
-  authorizeAfterPull(): void {}
+  accessAfterPull(): 'writer' { return 'writer' }
   assertBeforePush(): void {}
-  assertAfterReadback(): void {}
+  accessAfterReadback(): 'writer' { return 'writer' }
 }
 
 export function singleWriterV1WriteAuthority(): WriteAuthority {
