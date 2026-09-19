@@ -1,5 +1,5 @@
 import { openEnvelope, type EnvelopeContext, type PreparedEnvelope } from '../../security/envelopes'
-import { openManifest, manifestFingerprint, parseManifestCells, schemaRegistryHash, SINGLE_WRITER_V1_SINGLE_WRITER_V1_SCHEMA_ALLOWLIST, type ProtectedManifestV1 } from '../../security/manifest'
+import { openManifest, manifestFingerprint, parseManifestCells, schemaRegistryHash, SINGLE_WRITER_V1_SCHEMA_ALLOWLIST, type ProtectedManifestV1 } from '../../security/manifest'
 import { validateRevisionGraphV1, type RevisionV1 } from '../../security/revisions'
 import { deriveEpochSalt, sha256 } from '../../security/crypto/core'
 import { base64Url, fixedBase64Url } from '../../security/crypto/bytes'
@@ -123,7 +123,7 @@ export class SingleWriterV1RemoteVerifier implements RemoteProfileVerifier {
       if (TYPE_SCHEMA.get(revision.record_type) !== revision.record_schema || !SINGLE_WRITER_V1_SCHEMA_ALLOWLIST.includes(revision.record_schema as typeof SINGLE_WRITER_V1_SCHEMA_ALLOWLIST[number])) throw new Error('Record type/schema binding mismatch.')
       validateControl(revision, this.trusted.epochId); validateDataSchema(revision,this.trusted.schemas[revision.record_schema]); revisions.push(revision)
     }
-    validateRevisionGraph(revisions)
+    validateRevisionGraphV1(revisions)
     const announcements = revisions.filter((revision) => revision.record_schema === 'rotation-announcement-sw-v1')
     if (new Set(announcements.map((revision) => JSON.stringify(revision.record_data))).size > 1) throw new Error('Competing rotation announcements.')
     for (const local of this.trusted.localEnvelopes) {
