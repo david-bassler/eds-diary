@@ -31,6 +31,7 @@ export class SingleWriterCoordinator {
       const snapshot = await this.transport.read(this.remoteId)
       this.codec.validate(snapshot)
       const verified = await this.codec.verifyRemote(snapshot)
+      if (verified.profileId!==this.codec.profileId) throw new Error('Verified remote profile mismatch.')
       if (verified.retired&&!this.allowRetirement) throw new Error('A rotation announcement retired this epoch.')
       await this.codec.assertExtendsAnchor(await this.store.readAnchor(), this.diaryId, this.epochId, snapshot.rows)
       const generation = await this.store.generation()
@@ -79,6 +80,7 @@ export class SingleWriterCoordinator {
       if(this.store.markRemoteSeen) expectedGeneration=await this.store.markRemoteSeen(envelope.envelopeId,expectedGeneration)
       await this.codec.assertExtendsAnchor(await this.store.readAnchor(), this.diaryId, this.epochId, snapshot.rows)
       const finalVerified = await this.codec.verifyRemote(snapshot)
+      if (finalVerified.profileId!==this.codec.profileId) { this.state='security_blocked'; throw new Error('Verified remote profile mismatch.') }
       if ((finalVerified.retired&&!this.allowRetirement) || await this.store.generation() !== expectedGeneration) { this.state = 'security_blocked'; throw new Error('Final verification or generation check failed.') }
       let access
       try { access = await this.writeAuthority.accessAfterReadback(finalVerified) } catch (error) { this.state = 'security_blocked'; throw error }
