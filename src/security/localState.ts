@@ -3,7 +3,7 @@ import { arrayBuffer, base64Url, concatBytes, equalBytes, fixedBase64Url, fromBa
 import { canonicalBytes } from './crypto/canonical'
 import { passphraseKek, prfKek } from './securityModes'
 import type { PreparedEnvelope } from './envelopes'
-import type { RemoteAnchor } from '../sync/core/prefix'
+import type { RemoteAnchorV1 } from '../sync/core/prefix'
 import { SINGLE_WRITER_V1_PROFILE } from '../sync/core/contracts'
 
 export type EpochStatus='local_offline'|'remote_bound'|'active'|'offline_restored'|'retired'|'orphaned'
