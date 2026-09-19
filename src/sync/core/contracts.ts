@@ -12,7 +12,7 @@ export interface RemoteSnapshot { manifest: readonly string[]; rows: ReadonlyArr
 export interface RemoteAnchorState { anchor_profile: string; covered_row_count: number; prefix_hash: string }
 /** Branded result that can only be produced after manifest, every envelope, graph,
  * controls, binding, anchor and local reconciliation have been verified. */
-export interface VerifiedRemoteState { snapshot: RemoteSnapshot; manifestFingerprint: string; retired: boolean; verifiedEnvelopeIds: ReadonlySet<string> }
+export interface VerifiedRemoteState { profileId:string; profileState:unknown; snapshot: RemoteSnapshot; manifestFingerprint: string; retired: boolean; verifiedEnvelopeIds: ReadonlySet<string> }
 export interface AuthProvider { authenticate(actionId: string): Promise<IdentityBinding>; getIdentityBinding(): IdentityBinding | null; disconnect(): Promise<void> }
 export interface RemoteTransport {
   readonly profileId: string
