@@ -1,6 +1,8 @@
 import type { PreparedEnvelope } from '../../security/envelopes'
 
-export const SINGLE_WRITER_PROFILE = 'google-sheets-single-writer-v1'
+export const SINGLE_WRITER_V1_PROFILE = 'google-sheets-single-writer-v1' as const
+/** Backwards-compatible alias for existing v1 callers. New code should use SINGLE_WRITER_V1_PROFILE. */
+export const SINGLE_WRITER_PROFILE = SINGLE_WRITER_V1_PROFILE
 export type TransportErrorCode = 'auth_required' | 'permission_denied' | 'not_found' | 'conflict_or_unexpected_remote_change' | 'temporary_failure' | 'rate_limited' | 'unknown_outcome' | 'integrity_failure' | 'provider_incompatible'
 export class TransportError extends Error { constructor(readonly code: TransportErrorCode, message: string) { super(message) } }
 export interface IdentityBinding { providerId: string; subject: string }
@@ -24,6 +26,17 @@ export interface RemoteTransport {
   read(remoteId: string): Promise<RemoteSnapshot>
   append(remoteId: string, row: readonly [string, string, string]): Promise<void>
 }
+export interface RemoteProfileVerifier {
+  verify(snapshot: RemoteSnapshot): Promise<VerifiedRemoteState>
+}
+
+export interface WriteAuthority {
+  readonly profileId: string
+  authorizeAfterPull(verified: VerifiedRemoteState): Promise<void> | void
+  assertBeforePush(): Promise<void> | void
+  assertAfterReadback(verified: VerifiedRemoteState): Promise<void> | void
+}
+
 export interface TransportProfileCodec {
   readonly profileId: string
   validate(snapshot: RemoteSnapshot): void
