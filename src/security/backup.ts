@@ -2,7 +2,7 @@ import { aesGcmDecrypt, aesGcmEncrypt, hkdfSha256, randomBytes, sha256 } from '.
 import { base64Url, concatBytes, fixedBase64Url, fromBase64Url, utf8 } from './crypto/bytes'
 import { canonicalBytes, parseCanonicalJson } from './crypto/canonical'
 import type { PreparedEnvelope } from './envelopes'
-import { createAnchor, prefixHash, type RemoteAnchorV1 } from '../sync/core/prefix'
+import { createAnchorV1, prefixHash, type RemoteAnchorV1 } from '../sync/core/prefix'
 import { SingleWriterV1RemoteVerifier } from '../sync/core/remoteVerifier'
 
 export const MAX_BACKUP_BYTES=256*1024*1024,MAX_UNION_COUNT=100_000,MAX_CANONICAL_ROWS=128*1024*1024
@@ -19,7 +19,7 @@ export async function createBackup(context:BackupContext,id=randomBytes(32),iv=r
   const recordBytes=bytes(remote),pendingBytes=bytes(pending),unionBytes=[...union].reduce((sum,row)=>sum+utf8(row).byteLength,0)
   if(union.size>MAX_UNION_COUNT||recordBytes+pendingBytes>MAX_CANONICAL_ROWS||unionBytes>MAX_CANONICAL_ROWS)throw new Error('Backup envelope bounds exceeded.')
   if(!context.remoteBound&&remote.length)throw new Error('Offline backup cannot contain remote rows.')
-  const anchor=context.remoteBound?await createAnchor(context.diaryId,context.epochId,remote):null
+  const anchor=context.remoteBound?await createAnchorV1(context.diaryId,context.epochId,remote):null
   const manifest:BackupManifest={backup_id,diary_id:context.diaryId,epoch_id:context.epochId,key_id:context.keyId,manifest_fingerprint:context.manifestFingerprint,remote_anchor_at_export:anchor,record_row_count:remote.length,record_rows_canonical_bytes:recordBytes,record_prefix_hash:await prefixHash(context.diaryId,context.epochId,remote),epoch_manifest_public_sha256:await digest(context.epochManifestPublic),record_rows_jcs_sha256:await digest(remote),pending_outbox_count:pending.length,pending_outbox_rows_canonical_bytes:pendingBytes,pending_outbox_rows_jcs_sha256:await digest(pending),unique_union_count:union.size,unique_union_canonical_bytes:unionBytes,created_at:context.createdAt}
   const encrypted=await aesGcmEncrypt(await key(context,id),canonicalBytes(manifest as never),aad(backup_id),iv)
   const backup:SyncBackupV5={format:'sync-backup-v5',backup_format_version:5,backup_id,backup_manifest_iv:base64Url(encrypted.iv),backup_manifest_ciphertext:base64Url(encrypted.ciphertext),epoch_manifest_public:context.epochManifestPublic,record_rows:remote,pending_outbox_rows:pending}
@@ -63,7 +63,7 @@ export async function testRestoreBackup(context:Pick<BackupContext,'rootKey'|'ep
   // A bound but empty epoch has a real H0 anchor.  Null is reserved for a
   // local/offline export, whose authenticated remote row set must be empty.
   if (manifest.remote_anchor_at_export === null && backup.record_rows.length !== 0) throw new Error('Offline backup contains remote rows.')
-  const expectedAnchor=manifest.remote_anchor_at_export===null?null:await createAnchor(context.diaryId,context.epochId,backup.record_rows)
+  const expectedAnchor=manifest.remote_anchor_at_export===null?null:await createAnchorV1(context.diaryId,context.epochId,backup.record_rows)
   if(JSON.stringify(manifest.remote_anchor_at_export)!==JSON.stringify(expectedAnchor))throw new Error('Backup anchor mismatch.')
   const byId=new Map<string,string>(),union=[...backup.record_rows,...backup.pending_outbox_rows]
   for(const row of union){const encoded=JSON.stringify(row),prior=byId.get(row[0]);if(prior!==undefined&&prior!==encoded)throw new Error('Duplicate envelope_id has different bytes.');byId.set(row[0],encoded)}
