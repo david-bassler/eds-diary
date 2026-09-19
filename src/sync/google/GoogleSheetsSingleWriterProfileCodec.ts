@@ -9,7 +9,9 @@ export class GoogleSheetsSingleWriterProfileCodec implements TransportProfileCod
   readonly profileId = SINGLE_WRITER_V1_PROFILE
   constructor(
     private readonly verifier: RemoteProfileVerifier,
-  ) {}
+  ) {
+    if (verifier.profileId !== SINGLE_WRITER_V1_PROFILE) throw new Error('Verifier profile mismatch.')
+  }
   validate(snapshot: RemoteSnapshot): void {
     parseManifestCells(snapshot.manifest)
     if (snapshot.rows.length > MAX_ROWS) throw new Error('Remote row bound exceeded.')
