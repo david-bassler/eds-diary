@@ -2,12 +2,12 @@ import { aesGcmDecrypt, aesGcmEncrypt, hkdfSha256, randomBytes, sha256 } from '.
 import { base64Url, concatBytes, fixedBase64Url, fromBase64Url, utf8 } from './crypto/bytes'
 import { canonicalBytes, parseCanonicalJson } from './crypto/canonical'
 import type { PreparedEnvelope } from './envelopes'
-import { createAnchor, prefixHash, type RemoteAnchor } from '../sync/core/prefix'
+import { createAnchor, prefixHash, type RemoteAnchorV1 } from '../sync/core/prefix'
 import { SingleWriterV1RemoteVerifier } from '../sync/core/remoteVerifier'
 
 export const MAX_BACKUP_BYTES=256*1024*1024,MAX_UNION_COUNT=100_000,MAX_CANONICAL_ROWS=128*1024*1024
 type Row=readonly[string,string,string]
-export interface BackupManifest {backup_id:string;diary_id:string;epoch_id:string;key_id:string;manifest_fingerprint:string;remote_anchor_at_export:RemoteAnchor|null;record_row_count:number;record_rows_canonical_bytes:number;record_prefix_hash:string;epoch_manifest_public_sha256:string;record_rows_jcs_sha256:string;pending_outbox_count:number;pending_outbox_rows_canonical_bytes:number;pending_outbox_rows_jcs_sha256:string;unique_union_count:number;unique_union_canonical_bytes:number;created_at:string}
+export interface BackupManifest {backup_id:string;diary_id:string;epoch_id:string;key_id:string;manifest_fingerprint:string;remote_anchor_at_export:RemoteAnchorV1|null;record_row_count:number;record_rows_canonical_bytes:number;record_prefix_hash:string;epoch_manifest_public_sha256:string;record_rows_jcs_sha256:string;pending_outbox_count:number;pending_outbox_rows_canonical_bytes:number;pending_outbox_rows_jcs_sha256:string;unique_union_count:number;unique_union_canonical_bytes:number;created_at:string}
 export interface SyncBackupV5 {format:'sync-backup-v5';backup_format_version:5;backup_id:string;backup_manifest_iv:string;backup_manifest_ciphertext:string;epoch_manifest_public:readonly[string,string,string,string];record_rows:readonly Row[];pending_outbox_rows:readonly Row[]}
 export interface BackupContext {rootKey:Uint8Array;epochSalt:Uint8Array;diaryId:string;epochId:string;keyId:string;manifestFingerprint:string;epochManifestPublic:readonly[string,string,string,string];remoteRows:readonly Row[];localEnvelopes:readonly PreparedEnvelope[];remoteBound:boolean;createdAt:string}
 const aad=(id:string)=>canonicalBytes({format:'sync-backup-v5',backup_format_version:5,backup_id:id})
