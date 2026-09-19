@@ -27,6 +27,7 @@ export interface RemoteTransport {
   append(remoteId: string, row: readonly [string, string, string]): Promise<void>
 }
 export interface RemoteProfileVerifier {
+  readonly profileId: string
   verify(snapshot: RemoteSnapshot): Promise<VerifiedRemoteState>
 }
 
