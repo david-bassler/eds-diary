@@ -22,7 +22,7 @@ import {
 import { createMergeRevisionV1, legacyRecordId, singletonRecordId, validateRevisionGraphV1, type RevisionV1 } from '../security/revisions'
 import type { CreationPersistence, CreationState } from '../sync/core/creation'
 import type { CoordinatorStore } from '../sync/core/coordinator'
-import type { RemoteAnchor } from '../sync/core/prefix'
+import type { RemoteAnchorV1 } from '../sync/core/prefix'
 import { rotationStateHash, type RotationPersistence, type RotationState } from '../security/rotation'
 import { validateDomainData } from '../security/domainSchemaValidator'
 import painEntrySchema from '../security/schemas/pain-entry.v1.schema.json'
