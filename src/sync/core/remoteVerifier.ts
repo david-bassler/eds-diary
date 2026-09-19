@@ -64,7 +64,7 @@ function validateControl(revision: RevisionV1, currentEpochId: string): void {
     if (localOnly ? source.source_anchor !== null : source.source_anchor === null) throw new Error('Migration anchor/kind mismatch.')
     if (source.source_anchor !== null) {
       const anchor = source.source_anchor as Record<string, unknown>
-      if (!anchor || typeof anchor !== 'object' || Array.isArray(anchor) || Object.keys(anchor).sort().join('\0') !== 'anchor_profile\0covered_row_count\0prefix_hash' || anchor.anchor_profile !== 'google-sheets-single-writer-v1' || !Number.isSafeInteger(anchor.covered_row_count) || Number(anchor.covered_row_count) < 0) throw new Error('Migration source anchor schema mismatch.')
+      if (!anchor || typeof anchor !== 'object' || Array.isArray(anchor) || Object.keys(anchor).sort().join('\0') !== 'anchor_profile\0covered_row_count\0prefix_hash' || anchor.anchor_profile !== SINGLE_WRITER_V1_PROFILE || !Number.isSafeInteger(anchor.covered_row_count) || Number(anchor.covered_row_count) < 0) throw new Error('Migration source anchor schema mismatch.')
       id(anchor.prefix_hash, 32, 'source_anchor.prefix_hash')
     }
     if (['normal','recovery_rekey'].includes(String(data.migration_kind)) && data.result_semantic_snapshot_hash !== source.source_semantic_snapshot_hash) throw new Error('Unchanged remote migration changed the semantic snapshot.')
