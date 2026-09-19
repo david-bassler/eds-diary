@@ -2,7 +2,9 @@ import { base64Url, concatBytes, fixedBase64Url, uint32be, uint64be, utf8 } from
 import { canonicalBytes } from '../../security/crypto/canonical'
 import { sha256 } from '../../security/crypto/core'
 
-export interface RemoteAnchor { anchor_profile: 'google-sheets-single-writer-v1'; covered_row_count: number; prefix_hash: string }
+export interface RemoteAnchorV1 { anchor_profile: 'google-sheets-single-writer-v1'; covered_row_count: number; prefix_hash: string }
+/** Backwards-compatible alias for the current v1 anchor format. */
+export type RemoteAnchor = RemoteAnchorV1
 
 export async function prefixHash(diaryId: string, epochId: string, rows: ReadonlyArray<readonly string[]>): Promise<string> {
   let state = await sha256(concatBytes(utf8('eds-diary/remote-prefix/v5'), new Uint8Array([0]), fixedBase64Url(diaryId, 16, 'diary_id'), fixedBase64Url(epochId, 16, 'epoch_id')))
