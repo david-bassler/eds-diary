@@ -3,7 +3,7 @@ import { base64Url, concatBytes, fixedBase64Url, fromBase64Url, utf8 } from './c
 import { canonicalBytes, parseCanonicalJson } from './crypto/canonical'
 import type { PreparedEnvelope } from './envelopes'
 import { createAnchor, prefixHash, type RemoteAnchor } from '../sync/core/prefix'
-import { FullRemoteVerifier } from '../sync/core/remoteVerifier'
+import { SingleWriterV1RemoteVerifier } from '../sync/core/remoteVerifier'
 
 export const MAX_BACKUP_BYTES=256*1024*1024,MAX_UNION_COUNT=100_000,MAX_CANONICAL_ROWS=128*1024*1024
 type Row=readonly[string,string,string]
@@ -41,8 +41,8 @@ const BACKUP_KEYS=['format','backup_format_version','backup_id','backup_manifest
 const MANIFEST_KEYS=['backup_id','diary_id','epoch_id','key_id','manifest_fingerprint','remote_anchor_at_export','record_row_count','record_rows_canonical_bytes','record_prefix_hash','epoch_manifest_public_sha256','record_rows_jcs_sha256','pending_outbox_count','pending_outbox_rows_canonical_bytes','pending_outbox_rows_jcs_sha256','unique_union_count','unique_union_canonical_bytes','created_at'] as const
 /** A test restore accepts only the concrete production full verifier. Callers cannot
  * replace the trust boundary with an always-successful callback. */
-export async function testRestoreBackup(context:Pick<BackupContext,'rootKey'|'epochSalt'|'diaryId'|'epochId'|'keyId'|'manifestFingerprint'>,backup:SyncBackupV5,verifier:FullRemoteVerifier):Promise<readonly Row[]>{
-  if (!(verifier instanceof FullRemoteVerifier)) throw new Error('A production full verifier is required.')
+export async function testRestoreBackup(context:Pick<BackupContext,'rootKey'|'epochSalt'|'diaryId'|'epochId'|'keyId'|'manifestFingerprint'>,backup:SyncBackupV5,verifier:SingleWriterV1RemoteVerifier):Promise<readonly Row[]>{
+  if (!(verifier instanceof SingleWriterV1RemoteVerifier)) throw new Error('A production full verifier is required.')
   if (!backup || typeof backup !== 'object') throw new Error('Invalid backup document.')
   exactKeys(backup, BACKUP_KEYS, 'Backup')
   if(backup.format!=='sync-backup-v5'||backup.backup_format_version!==5)throw new Error('Invalid backup format.')
