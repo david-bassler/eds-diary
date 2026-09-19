@@ -9,7 +9,7 @@ import { SINGLE_WRITER_V1_PROFILE } from '../sync/core/contracts'
 export type EpochStatus='local_offline'|'remote_bound'|'active'|'offline_restored'|'retired'|'orphaned'
 export interface SecurityStateRef {operation_id:string;state:string;state_record_hash:string}
 export interface RemoteBindingV1 {provider_id:typeof SINGLE_WRITER_V1_PROFILE;remote_resource_id:string;remote_identity_binding:string}
-export interface EpochLocalSecurityStateV5 {local_state_version:5;diary_id:string;epoch_id:string;key_id:string;manifest_fingerprint:string;recovery_generation:number;recovery_urs_commitment:string;remote_binding:null|RemoteBindingV1;remote_anchor:RemoteAnchor|null;epoch_status:EpochStatus;operation_generation:number;rotation_state_ref:SecurityStateRef|null;migration_state_ref:SecurityStateRef|null;local_journal_count:number;local_journal_hash:string}
+export interface EpochLocalSecurityStateV5 {local_state_version:5;diary_id:string;epoch_id:string;key_id:string;manifest_fingerprint:string;recovery_generation:number;recovery_urs_commitment:string;remote_binding:null|RemoteBindingV1;remote_anchor:RemoteAnchorV1|null;epoch_status:EpochStatus;operation_generation:number;rotation_state_ref:SecurityStateRef|null;migration_state_ref:SecurityStateRef|null;local_journal_count:number;local_journal_hash:string}
 /** Backwards-compatible alias for the only currently persisted state version. */
 export type EpochLocalSecurityState = EpochLocalSecurityStateV5
 
