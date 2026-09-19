@@ -10,7 +10,7 @@ import { singleWriterV1WriteAuthority } from '../sync/core/writeAuthority'
 export class SingleWriterSyncService {
   private constructor(private readonly coordinator:SingleWriterCoordinator){}
 
-  static async create(transport:RemoteTransport,codec:TransportProfileCodec,remoteId:string,writeAuthority?:WriteAuthority):Promise<SingleWriterSyncService>{
+  static async create(transport:RemoteTransport,codec:TransportProfileCodec,remoteId:string,writeAuthority:WriteAuthority):Promise<SingleWriterSyncService>{
     const active=await activeEpochSyncContext()
     if(active.state.remote_binding?.remote_resource_id!==remoteId)throw new Error('Remote resource is not bound to the active authenticated epoch.')
     return new SingleWriterSyncService(new SingleWriterCoordinator(active.diaryId,active.epochId,remoteId,transport,codec,new IndexedDbCoordinatorStore(active.epochId),false,writeAuthority))
