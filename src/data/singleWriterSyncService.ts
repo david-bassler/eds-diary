@@ -3,6 +3,7 @@ import { SingleWriterCoordinator } from '../sync/core/coordinator'
 import type { RemoteTransport, TransportProfileCodec, WriteAuthority } from '../sync/core/contracts'
 import type { SingleWriterProviderSession } from '../sync/core/provider'
 import { SingleWriterV1RemoteVerifier } from '../sync/core/remoteVerifier'
+import { singleWriterV1WriteAuthority } from '../sync/core/writeAuthority'
 
 /** Product entry point for immutable-envelope synchronization. Construction is
  * intentionally impossible until a persisted remote binding is authenticated. */
@@ -23,7 +24,7 @@ export class SingleWriterSyncService {
     if(remote.remote_identity_binding!==identityBinding)throw new Error('Authenticated provider identity does not match local state.')
     const material=await activeEpochVerifierMaterial()
     const verifier=new SingleWriterV1RemoteVerifier({rootKey:active.rootKey,diaryId:active.diaryId,epochId:active.epochId,expectedManifestFingerprint:active.state.manifest_fingerprint,expectedKeyId:active.state.key_id,expectedRecoveryGeneration:active.state.recovery_generation,expectedRecoveryCommitment:active.state.recovery_urs_commitment,expectedGoogleAccountBinding:identityBinding,schemas:DOMAIN_SCHEMA_REGISTRY,oldAnchor:active.state.remote_anchor,...material})
-    return SingleWriterSyncService.create(transport,session.codec(verifier),remote.remote_resource_id,session.writeAuthority())
+    return SingleWriterSyncService.create(transport,session.codec(verifier),remote.remote_resource_id,singleWriterV1WriteAuthority())
   }
 
   async synchronize():Promise<void>{this.coordinator.connected();await this.coordinator.pullVerify();await this.coordinator.pushPending()}
