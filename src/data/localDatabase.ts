@@ -258,7 +258,7 @@ export class IndexedDbRotationRepository {
       const source=await loadEpoch(db),successorMaterial=await loadEpochFor(db,successor.epochId,successor.wrapId),sourceMaterial=await loadEpochFor(db,source.context.epochId,source.context.wrapId)
       if(rotation.step!=='announcement_durable'||sourceMaterial.state.rotation_state_ref?.state!=='announcement_durable')throw new Error('Epoch migration is not durably ready to switch.')
       if(mode==='normal'){
-        const frozenAnchor=rotation.sourceAnchor as RemoteAnchor|undefined
+        const frozenAnchor=rotation.sourceAnchor as RemoteAnchorV1|undefined
         if(!sourceMaterial.state.remote_anchor||!frozenAnchor||sourceMaterial.state.remote_anchor.covered_row_count<=frozenAnchor.covered_row_count)throw new Error('Source announcement is not durable.')
       }else if(sourceMaterial.state.remote_binding!==null||sourceMaterial.state.remote_anchor!==null||sourceMaterial.state.epoch_status!=='local_offline')throw new Error('Remote enablement source is no longer local-only.')
       if(!successorMaterial.state.remote_binding||!successorMaterial.state.remote_anchor)throw new Error('Successor binding or verified anchor is missing.')
