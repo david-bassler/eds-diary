@@ -12,6 +12,7 @@ import { runCreationStateMachine, type CreationState } from '../sync/core/creati
 import { SingleWriterCoordinator } from '../sync/core/coordinator'
 import { createAnchor, type RemoteAnchorV1 } from '../sync/core/prefix'
 import { SingleWriterV1RemoteVerifier, RecoveryBootstrapVerifier } from '../sync/core/remoteVerifier'
+import { singleWriterV1WriteAuthority } from '../sync/core/writeAuthority'
 import { SINGLE_WRITER_V1_PROFILE, type RemoteTransport } from '../sync/core/contracts'
 import type { SingleWriterProviderSession } from '../sync/core/provider'
 import { DOMAIN_SCHEMA_REGISTRY, IndexedDbCoordinatorStore, IndexedDbRotationRepository, indexedDbCreationPersistence, indexedDbRotationPersistence, type EpochContext, type VerifiedEpochMaterial } from './localDatabase'
@@ -117,7 +118,7 @@ export class ProductiveRotationService {
     const material=await this.repository.verifiedEpoch(context),remote=material.state.remote_binding
     if(!remote)throw new Error('Remote binding missing before synchronization.')
     const verifier=context.epochId===state.newEpochId?await this.successorVerifier(state,material.envelopes,material.state.remote_anchor):new SingleWriterV1RemoteVerifier({rootKey:material.rootKey,diaryId:context.diaryId,epochId:context.epochId,expectedManifestFingerprint:context.manifestFingerprint,expectedKeyId:context.keyId,expectedRecoveryGeneration:material.state.recovery_generation,expectedRecoveryCommitment:material.state.recovery_urs_commitment,expectedGoogleAccountBinding:remote.remote_identity_binding,schemas:DOMAIN_SCHEMA_REGISTRY,oldAnchor:material.state.remote_anchor,localEnvelopes:material.envelopes,localHeadRevisionIds:new Set(heads(material.revisions).map(revision=>revision.revision_id))})
-    const coordinator=new SingleWriterCoordinator(context.diaryId,context.epochId,remote.remote_resource_id,transport,this.session.codec(verifier),new IndexedDbCoordinatorStore(context.epochId,context.wrapId),context.epochId===state.oldEpochId,this.session.writeAuthority());coordinator.connected();await coordinator.pullVerify();await coordinator.pushPending()
+    const coordinator=new SingleWriterCoordinator(context.diaryId,context.epochId,remote.remote_resource_id,transport,this.session.codec(verifier),new IndexedDbCoordinatorStore(context.epochId,context.wrapId),context.epochId===state.oldEpochId,singleWriterV1WriteAuthority());coordinator.connected();await coordinator.pullVerify();await coordinator.pushPending()
   }
   private async copyHeadsAndMigration(state:ConcreteRotationState):Promise<void>{
     const source=this.source??await this.repository.verifiedActiveEpoch(),context=await this.context(state),sourceHashes=await snapshots(source.revisions);let active=0,tombstone=0,copied=0
