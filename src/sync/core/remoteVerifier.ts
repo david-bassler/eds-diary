@@ -5,7 +5,7 @@ import { deriveEpochSalt, sha256 } from '../../security/crypto/core'
 import { base64Url, fixedBase64Url } from '../../security/crypto/bytes'
 import { canonicalBytes } from '../../security/crypto/canonical'
 import type { SyncBackupV5 } from '../../security/backup'
-import { assertExtendsAnchor, type RemoteAnchorV1 } from './prefix'
+import { assertExtendsAnchorV1, type RemoteAnchorV1 } from './prefix'
 import { SINGLE_WRITER_V1_PROFILE, type RemoteProfileVerifier, type RemoteSnapshot, type RemoteTransport, type VerifiedRemoteState } from './contracts'
 import { validateDomainData } from '../../security/domainSchemaValidator'
 import type { RecoveredRootCandidate } from '../../security/recovery'
@@ -99,7 +99,7 @@ export class SingleWriterV1RemoteVerifier implements RemoteProfileVerifier {
     const manifest = await openManifest(this.trusted.rootKey, salt, this.trusted, cells)
     validateManifestBindings(manifest, this.trusted)
     if (manifest.record_schema_registry_hash !== await schemaRegistryHash(this.trusted.schemas)) throw new Error('Schema registry hash mismatch.')
-    await assertExtendsAnchor(this.trusted.oldAnchor, this.trusted.diaryId, this.trusted.epochId, snapshot.rows)
+    await assertExtendsAnchorV1(this.trusted.oldAnchor, this.trusted.diaryId, this.trusted.epochId, snapshot.rows)
 
     const envelopes: PreparedEnvelope[] = snapshot.rows.map((row) => {
       if (row.length !== 3) throw new Error('Invalid physical row.')
