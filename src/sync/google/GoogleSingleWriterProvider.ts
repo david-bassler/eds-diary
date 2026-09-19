@@ -1,7 +1,6 @@
-import { SINGLE_WRITER_V1_PROFILE, type RemoteProfileVerifier, type RemoteTransport, type TransportProfileCodec, type WriteAuthority } from '../core/contracts'
+import { SINGLE_WRITER_V1_PROFILE, type RemoteProfileVerifier, type RemoteTransport, type TransportProfileCodec } from '../core/contracts'
 import type { SingleWriterProvider, SingleWriterProviderSession } from '../core/provider'
 import { IndependentBootstrapAuthority } from '../core/remoteVerifier'
-import { singleWriterV1WriteAuthority } from '../core/writeAuthority'
 import { GoogleAuthProvider, isAuthenticatedGoogleApiClient } from './GoogleAuthProvider'
 import { GoogleSheetsSingleWriterProfileCodec } from './GoogleSheetsSingleWriterProfileCodec'
 import { GoogleRecoveryArtifactStore } from './GoogleRecoveryArtifactStore'
@@ -36,8 +35,6 @@ class GoogleSingleWriterProviderSession implements SingleWriterProviderSession {
   codec(verifier:RemoteProfileVerifier):TransportProfileCodec{
     return new GoogleSheetsSingleWriterProfileCodec(verifier)
   }
-
-  writeAuthority():WriteAuthority{return singleWriterV1WriteAuthority()}
 
   async creationProperties(diaryId:string,epochId:string):Promise<Readonly<Record<string,string>>>{
     return{app_format:'sync-v5',epoch_locator:await epochLocator(diaryId,epochId)}
