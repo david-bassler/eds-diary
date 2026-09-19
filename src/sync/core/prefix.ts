@@ -15,13 +15,17 @@ export async function prefixHash(diaryId: string, epochId: string, rows: Readonl
   return base64Url(state)
 }
 
-export async function createAnchor(diaryId: string, epochId: string, rows: ReadonlyArray<readonly string[]>): Promise<RemoteAnchor> {
+export async function createAnchorV1(diaryId: string, epochId: string, rows: ReadonlyArray<readonly string[]>): Promise<RemoteAnchorV1> {
   return { anchor_profile: 'google-sheets-single-writer-v1', covered_row_count: rows.length, prefix_hash: await prefixHash(diaryId, epochId, rows) }
 }
 
-export async function assertExtendsAnchor(anchor: RemoteAnchor | null, diaryId: string, epochId: string, rows: ReadonlyArray<readonly string[]>): Promise<void> {
+export async function assertExtendsAnchorV1(anchor: RemoteAnchorV1 | null, diaryId: string, epochId: string, rows: ReadonlyArray<readonly string[]>): Promise<void> {
   if (!anchor) return
   if (rows.length < anchor.covered_row_count) throw new Error('Remote rollback: anchored rows are missing.')
   const hash = await prefixHash(diaryId, epochId, rows.slice(0, anchor.covered_row_count))
   if (hash !== anchor.prefix_hash) throw new Error('Remote rollback: anchored prefix changed.')
 }
+
+/** Backwards-compatible aliases for existing v1 callers. */
+export const createAnchor = createAnchorV1
+export const assertExtendsAnchor = assertExtendsAnchorV1
