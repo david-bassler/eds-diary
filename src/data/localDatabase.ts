@@ -22,6 +22,7 @@ import {
 import { createMergeRevisionV1, legacyRecordId, singletonRecordId, validateRevisionGraphV1, type RevisionV1 } from '../security/revisions'
 import type { CreationPersistence, CreationState } from '../sync/core/creation'
 import type { CoordinatorStore } from '../sync/core/coordinator'
+import { SINGLE_WRITER_V1_PROFILE, type RemoteAnchorState } from '../sync/core/contracts'
 import type { RemoteAnchorV1 } from '../sync/core/prefix'
 import { rotationStateHash, type RotationPersistence, type RotationState } from '../security/rotation'
 import { validateDomainData } from '../security/domainSchemaValidator'
@@ -211,15 +212,19 @@ export async function transitionOutbox(envelopeId:string,status:'pending'|'remot
  * whether an already-present remote row still needs local durable reconciliation. */
 export async function pendingEnvelopes(remoteRows:ReadonlyArray<readonly string[]>,epochId?:string,wrapId?:string):Promise<PreparedEnvelope[]>{const db=await openDatabase(),active=await loadEpoch(db),target=epochId??active.context.epochId,loaded=await loadEpochFor(db,target,wrapId),tx=db.transaction(STORES.envelopes,'readonly'),items=await result<StoredEnvelope[]>(tx.objectStore(STORES.envelopes).index('byEpoch').getAll(target));await complete(tx);const canonicalRemote=remoteRows.map(row=>({id:row[0]??'',bytes:decodeUtf8(canonicalBytes([...row]))})),remoteById=new Map<string,string>();for(const row of canonicalRemote){const prior=remoteById.get(row.id);if(prior!==undefined&&prior!==row.bytes)throw new Error('Envelope ID exists with different bytes.');remoteById.set(row.id,row.bytes)}const covered=loaded.state.remote_anchor?.covered_row_count??0;return items.filter(item=>{const remote=remoteById.get(item.envelopeId);if(remote!==undefined&&remote!==item.rowBytes)throw new Error('Envelope ID exists with different bytes.');if(remote===undefined)return true;const durablyCovered=canonicalRemote.slice(0,covered).some(row=>row.id===item.envelopeId&&row.bytes===item.rowBytes);return!durablyCovered}).map(({envelopeId,iv,ciphertext,bytesHash})=>({envelopeId,iv,ciphertext,bytesHash}))}
 
+function requireRemoteAnchorV1(anchor:RemoteAnchorState):RemoteAnchorV1{
+  if(anchor.anchor_profile!==SINGLE_WRITER_V1_PROFILE)throw new Error('Coordinator anchor profile does not match single-writer-v1.')
+  return anchor as RemoteAnchorV1
+}
 export class IndexedDbCoordinatorStore implements CoordinatorStore {
   constructor(private readonly epochId:string,private readonly wrapId?:string){}
-  async readAnchor():Promise<RemoteAnchorV1|null>{return(await loadEpochFor(await openDatabase(),this.epochId,this.wrapId)).state.remote_anchor}
+  async readAnchor():Promise<RemoteAnchorState|null>{return(await loadEpochFor(await openDatabase(),this.epochId,this.wrapId)).state.remote_anchor}
   pending(remoteRows:ReadonlyArray<readonly string[]>):Promise<readonly PreparedEnvelope[]>{return pendingEnvelopes(remoteRows,this.epochId,this.wrapId)}
   async generation():Promise<number>{return(await loadEpochFor(await openDatabase(),this.epochId,this.wrapId)).state.operation_generation}
-  commitVerifiedPull(rows:ReadonlyArray<readonly string[]>,anchor:RemoteAnchorV1,expectedGeneration:number):Promise<number>{return commitVerifiedPull(this.epochId,rows,anchor,expectedGeneration,this.wrapId)}
+  commitVerifiedPull(rows:ReadonlyArray<readonly string[]>,anchor:RemoteAnchorState,expectedGeneration:number):Promise<number>{return commitVerifiedPull(this.epochId,rows,requireRemoteAnchorV1(anchor),expectedGeneration,this.wrapId)}
   markPending(envelopeId:string,expectedGeneration:number):Promise<number>{return transitionOutbox(envelopeId,'pending',expectedGeneration,this.epochId,this.wrapId)}
   markRemoteSeen(envelopeId:string,expectedGeneration:number):Promise<number>{return transitionOutbox(envelopeId,'remote_seen',expectedGeneration,this.epochId,this.wrapId)}
-  commitDurable(envelopeId:string,anchor:RemoteAnchorV1,expectedGeneration:number):Promise<void>{return commitDurableAck(this.epochId,envelopeId,expectedGeneration,anchor,this.wrapId)}
+  commitDurable(envelopeId:string,anchor:RemoteAnchorState,expectedGeneration:number):Promise<void>{return commitDurableAck(this.epochId,envelopeId,expectedGeneration,requireRemoteAnchorV1(anchor),this.wrapId)}
 }
 
 export async function activeEpochSyncContext():Promise<{diaryId:string;epochId:string;rootKey:Uint8Array;state:EpochLocalSecurityStateV5}>{await ready();const loaded=await loadEpoch(await openDatabase());return{diaryId:loaded.context.diaryId,epochId:loaded.context.epochId,rootKey:loaded.rootKey,state:loaded.state}}
