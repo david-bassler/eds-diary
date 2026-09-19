@@ -47,7 +47,7 @@ unverändert.
 
 `TODO_INTERNAL: transferable-single-writer-v2 not implemented`
 
-`SECURITY/SPEC DECISION REQUIRED: v2 exact wire/schema/signature profile and recovery-takeover authority before implementation`
+`SECURITY/SPEC DECISION: v2 exact wire/schema/signature profile and recovery-takeover authority frozen in EDS_TRANSFERABLE_SINGLE_WRITER_V2_EXACT_PROTOCOL.md`
 
 Externe Freigabegrenzen stehen ausschließlich in
 `PRODUCTION_SECURITY_RELEASE_GATES.md`; dieses Audit ist keine Aussage über
