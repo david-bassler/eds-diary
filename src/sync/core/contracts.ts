@@ -31,11 +31,12 @@ export interface RemoteProfileVerifier {
   verify(snapshot: RemoteSnapshot): Promise<VerifiedRemoteState>
 }
 
+export type WriteAccess = 'writer' | 'read_only'
 export interface WriteAuthority {
   readonly profileId: string
-  authorizeAfterPull(verified: VerifiedRemoteState): Promise<void> | void
+  accessAfterPull(verified: VerifiedRemoteState): Promise<WriteAccess> | WriteAccess
   assertBeforePush(): Promise<void> | void
-  assertAfterReadback(verified: VerifiedRemoteState): Promise<void> | void
+  accessAfterReadback(verified: VerifiedRemoteState): Promise<WriteAccess> | WriteAccess
 }
 
 export interface TransportProfileCodec {
