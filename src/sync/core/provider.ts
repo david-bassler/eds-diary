@@ -1,5 +1,5 @@
-import { SINGLE_WRITER_PROFILE, type RemoteTransport, type TransportProfileCodec } from './contracts'
-import type { FullRemoteVerifier, IndependentBootstrapAuthority } from './remoteVerifier'
+import type { RemoteProfileVerifier, RemoteTransport, TransportProfileCodec, WriteAuthority } from './contracts'
+import type { IndependentBootstrapAuthority } from './remoteVerifier'
 import type { RecoveryArtifact } from '../../security/recovery'
 
 /** Provider-neutral authenticated session used by sync, rotation, backup and recovery.
@@ -7,10 +7,11 @@ import type { RecoveryArtifact } from '../../security/recovery'
  * receive the protocol capabilities required by the single-writer product path. */
 export interface SingleWriterProviderSession {
   readonly providerId: string
-  readonly profileId: typeof SINGLE_WRITER_PROFILE
+  readonly profileId: string
   transportForEpoch(diaryId:string,epochId:string):Promise<RemoteTransport>
   remoteIdentityBinding(transport:RemoteTransport):Promise<string>
-  codec(verifier:FullRemoteVerifier):TransportProfileCodec
+  codec(verifier:RemoteProfileVerifier):TransportProfileCodec
+  writeAuthority():WriteAuthority
   creationProperties(diaryId:string,epochId:string):Promise<Readonly<Record<string,string>>>
   recoveryLocator(diaryId:string,epochId:string):Promise<string>
   recoveryAuthority(transport:RemoteTransport,locator:string,remoteResourceId:string):Promise<IndependentBootstrapAuthority>
