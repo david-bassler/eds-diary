@@ -1,7 +1,8 @@
 import type { PreparedEnvelope } from '../../security/envelopes'
 import { envelopeRow } from '../../security/envelopes'
 import { createAnchor, assertExtendsAnchor, type RemoteAnchor } from './prefix'
-import { TransportError, type RemoteTransport, type TransportProfileCodec } from './contracts'
+import { TransportError, type RemoteTransport, type TransportProfileCodec, type WriteAuthority } from './contracts'
+import { singleWriterV1WriteAuthority } from './writeAuthority'
 
 export type CoordinatorState = 'local_locked' | 'local_only' | 'authenticated' | 'remote_verifying' | 'remote_verified' | 'writer_active' | 'syncing' | 'synced' | 'conflict' | 'security_blocked' | 'error'
 export interface CoordinatorStore {
@@ -18,8 +19,8 @@ export class SingleWriterCoordinator {
   state: CoordinatorState = 'local_only'
   private verifiedGeneration: number | null = null
   private verifiedRows: ReadonlyArray<readonly string[]> | null = null
-  constructor(private readonly diaryId: string, private readonly epochId: string, private readonly remoteId: string, private readonly transport: RemoteTransport, private readonly codec: TransportProfileCodec, private readonly store: CoordinatorStore,private readonly allowRetirement=false) {
-    if (transport.profileId !== codec.profileId) throw new Error('Transport profile mismatch.')
+  constructor(private readonly diaryId: string, private readonly epochId: string, private readonly remoteId: string, private readonly transport: RemoteTransport, private readonly codec: TransportProfileCodec, private readonly store: CoordinatorStore,private readonly allowRetirement=false,private readonly writeAuthority:WriteAuthority=singleWriterV1WriteAuthority()) {
+    if (transport.profileId !== codec.profileId || transport.profileId !== writeAuthority.profileId) throw new Error('Transport profile mismatch.')
   }
 
   connected(): void { this.state = 'authenticated'; this.verifiedGeneration = null; this.verifiedRows = null }
@@ -32,6 +33,7 @@ export class SingleWriterCoordinator {
       this.codec.validate(snapshot)
       const verified = await this.codec.verifyRemote(snapshot)
       if (verified.retired&&!this.allowRetirement) throw new Error('A rotation announcement retired this epoch.')
+      await this.writeAuthority.authorizeAfterPull(verified)
       await assertExtendsAnchor(await this.store.readAnchor(), this.diaryId, this.epochId, snapshot.rows)
       const generation = await this.store.generation()
       const anchor = await createAnchor(this.diaryId, this.epochId, snapshot.rows)
@@ -49,6 +51,7 @@ export class SingleWriterCoordinator {
 
   async pushPending(): Promise<void> {
     if (this.state !== 'writer_active' || this.verifiedGeneration === null || this.verifiedRows === null) throw new Error('Pull and verify is required before push.')
+    await this.writeAuthority.assertBeforePush()
     this.state = 'syncing'
     for (const envelope of await this.store.pending(this.verifiedRows)) {
       let expectedGeneration = await this.store.generation()
@@ -76,6 +79,7 @@ export class SingleWriterCoordinator {
       if(this.store.markRemoteSeen) expectedGeneration=await this.store.markRemoteSeen(envelope.envelopeId,expectedGeneration)
       await assertExtendsAnchor(await this.store.readAnchor(), this.diaryId, this.epochId, snapshot.rows)
       const finalVerified = await this.codec.verifyRemote(snapshot)
+      await this.writeAuthority.assertAfterReadback(finalVerified)
       if ((finalVerified.retired&&!this.allowRetirement) || await this.store.generation() !== expectedGeneration) { this.state = 'security_blocked'; throw new Error('Final verification or generation check failed.') }
       await this.store.commitDurable(envelope.envelopeId, await createAnchor(this.diaryId, this.epochId, snapshot.rows), expectedGeneration)
       this.verifiedGeneration=await this.store.generation()
