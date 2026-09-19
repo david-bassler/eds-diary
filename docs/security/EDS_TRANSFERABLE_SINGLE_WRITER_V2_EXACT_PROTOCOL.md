@@ -166,6 +166,27 @@ AAD exakt:
 
 ## 5. RevisionV2 – exakter Wrapper
 
+
+### 5.1 Exakte v2 Schema-Allowlist
+
+Jedes v2-Manifest erlaubt für den ersten Implementierungsstand exakt:
+
+~~~text
+activity-entry/v1
+activity-type-settings/v1
+epoch-migration-sw-v2
+medication-entry/v1
+medication-prescription/v1
+pain-entry/v1
+pain-type-settings/v1
+rotation-announcement-sw-v2
+writer-grant-sw-v2
+~~~
+
+Die sechs fachlichen record_schema-Versionen bleiben inhaltlich dieselben
+maschinenlesbaren Domänenschemas; nur der umgebende RevisionV2-Wrapper ändert
+sich. Andere Control-Schemas sind in dieser Profilversion verboten.
+
 Exakt diese Properties, keine weiteren:
 
 ~~~text
@@ -428,20 +449,17 @@ record_schema_allowlist
 record_schema_registry_hash
 protocol_limits
 
-initial_writer_generation
-initial_writer_grant_id
-initial_writer_device_id
-initial_writer_key_id
-initial_writer_public_key
+epoch_start_writer_generation
+epoch_start_writer_grant_id
+epoch_start_writer_device_id
+epoch_start_writer_key_id
+epoch_start_writer_public_key
 
 recovery_takeover_key_id
 recovery_takeover_public_key
 ~~~
 
-initial_writer_generation ist exakt 1.
-
-Der initiale Grant wird vor Manifest-Verschlüsselung vollständig geplant; deshalb
-ist initial_writer_grant_id bereits im immutable Manifest gebunden.
+Für eine neu migrierte v1→v2-Epoche ist epoch_start_writer_generation exakt 1 und ein Gen-1-Grant wird vor Manifest-Verschlüsselung vollständig geplant; deshalb ist epoch_start_writer_grant_id bereits im immutable Manifest gebunden. Bei einer späteren v2→v2-Rotation übernimmt der Successor dagegen die bereits kanonische Generation und Grant-ID unverändert als Epoch-Start-Trust-Root; dafür wird kein künstlicher neuer Writer-Grant erzeugt.
 
 Recovery-Commitment v6:
 
@@ -631,17 +649,74 @@ Ein read-only Gerät muss URS erneut erhalten. Danach:
 
 ---
 
+## 16a. Weitere v2 Control-Schemas
+
+"rotation-announcement-sw-v2" ist eine normale writer-autorisierte Control-
+RevisionV2 und wird mit der zum Row-Zeitpunkt aktuellen Writer-Authority signiert.
+record_data exakt:
+
+~~~text
+rotation_id
+from_epoch_id
+successor_epoch_id
+successor_creation_locator
+successor_manifest_fingerprint
+rotation_kind = "normal"
+source_writer_generation
+source_writer_grant_id
+recovery_generation
+~~~
+
+source_writer_generation und source_writer_grant_id müssen dem writer_context
+der Control-Revision entsprechen.
+
+"epoch-migration-sw-v2" ist ebenfalls eine normale writer-autorisierte
+Control-RevisionV2. record_data exakt:
+
+~~~text
+migration_id
+migration_kind
+source
+result_semantic_snapshot_hash
+active_head_count
+tombstone_head_count
+source_writer_authority
+~~~
+
+source enthält exakt:
+
+~~~text
+source_epoch_id
+source_manifest_fingerprint
+source_anchor
+source_lineage_snapshot_hash
+source_semantic_snapshot_hash
+~~~
+
+source_writer_authority enthält exakt:
+
+~~~text
+writer_generation
+writer_grant_id
+writer_device_id
+writer_key_id
+~~~
+
+migration_kind ist exakt "normal" | "local_rotation" | "remote_enablement" |
+"emergency". Bei unveränderter Ein-Source-Migration muss
+result_semantic_snapshot_hash == source_semantic_snapshot_hash gelten.
+
 ## 17. Rotation und Recovery-Rekey
 
 Normale Epoch-Rotation übernimmt die aktuelle Writer-Authority in den
 Successor-Manifest-Trust-Root:
 
 ~~~text
-initial_writer_generation = aktuelle Generation
-initial_writer_grant_id = aktueller Grant
-initial_writer_device_id
-initial_writer_key_id
-initial_writer_public_key
+epoch_start_writer_generation = aktuelle Generation
+epoch_start_writer_grant_id = aktueller Grant
+epoch_start_writer_device_id
+epoch_start_writer_key_id
+epoch_start_writer_public_key
 ~~~
 
 Für einen Successor, der eine bestehende Authority fortsetzt, ist der erste
@@ -672,10 +747,24 @@ Altes Recovery-Takeover-Material darf in der neuen Epoche keinen Grant signieren
 
 Exakt versioniertes neues State-Schema; V5 bleibt unverändert.
 
-Zusätzlich zu den v2-versionierten gemeinsamen Feldern mindestens exakt:
+EpochLocalSecurityStateV6 besitzt exakt folgende Top-Level-Properties:
 
 ~~~text
 local_state_version = 6
+diary_id
+epoch_id
+key_id
+manifest_fingerprint
+recovery_generation
+recovery_urs_commitment
+remote_binding
+remote_anchor
+epoch_status
+operation_generation
+rotation_state_ref
+migration_state_ref
+local_journal_count
+local_journal_hash
 
 remote_binding.storage_provider_id
 remote_binding.sync_profile
@@ -745,10 +834,7 @@ recovery_takeover_private_key_pkcs8
 created_at
 ~~~
 
-recovery_takeover_private_key_pkcs8 ist Base64URL des exakt exportierten
-Ed25519-PKCS#8-Schlüssels; beim Restore muss daraus ein Private Key importiert
-werden, dessen abgeleiteter/exportierter Public Key exakt dem Manifest-Key
-entspricht.
+recovery_takeover_private_key_pkcs8 ist Base64URL des exakt exportierten Ed25519-PKCS#8-Schlüssels. Beim Restore wird daraus ein non-extractable Private Key importiert und ein fester domainspezifischer Challenge-String signiert; diese Signatur muss mit recovery_takeover_public_key aus dem Manifest verifizierbar sein. So wird das Keypair ohne erneuten Private-Key-Export gebunden.
 
 Artifact-AAD ist JCS des Headers ohne wrapped_payload.
 
@@ -785,7 +871,7 @@ Reihenfolge:
 2. Source lokal einfrieren.
 3. neues Writer-Ed25519-Keypair erzeugen.
 4. neues Recovery-Takeover-Keypair erzeugen.
-5. initial_writer_grant_id und Writer-Authority planen.
+5. epoch_start_writer_grant_id und Writer-Authority planen.
 6. immutable ManifestV6 erzeugen.
 7. Gen-1-Grant schreiben.
 8. fachliche Heads als RevisionV2 unter Gen-1-Authority schreiben/signieren.
