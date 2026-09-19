@@ -26,7 +26,7 @@ Die folgenden Regeln werden aus der ausführlichen v5-Final-Spezifikation **unve
 5. lokale `remote_binding` ist providerneutral; der Google-Codec mappt sie auf die Google-Wire-Bindung;
 6. normale Rotation friert lokale fachliche Mutationen persistent ein, statt einen Remote-Fence zu erzeugen.
 
-Das Profil ist **nicht** als byte-kompatible In-place-Abwandlung einer bereits existierenden Multi-Writer-Epoche zu behandeln. Späterer Multi-Writer-Support erfordert eine neue Epoche und ein neues Profil.
+Das Profil ist **nicht** als byte-kompatible In-place-Abwandlung einer anderen Writer-Semantik zu behandeln. Eine spätere geräteübergreifend gefencete Writer-Authority – aktuell als `google-sheets-transferable-single-writer-v2` geplant – erfordert eine neue Epoche und ein neues Profil.
 
 ---
 
