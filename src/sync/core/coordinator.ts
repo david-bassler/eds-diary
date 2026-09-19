@@ -24,7 +24,7 @@ export class SingleWriterCoordinator {
   }
 
   connected(): void { this.state = 'authenticated'; this.verifiedGeneration = null; this.verifiedRows = null }
-  online(): void { if (this.state === 'synced' || this.state === 'writer_active') { this.state = 'authenticated'; this.verifiedGeneration = null; this.verifiedRows = null } }
+  online(): void { if (this.state === 'synced' || this.state === 'writer_active' || this.state === 'remote_verified') { this.state = 'authenticated'; this.verifiedGeneration = null; this.verifiedRows = null } }
 
   async pullVerify(): Promise<void> {
     this.state = 'remote_verifying'
@@ -39,9 +39,9 @@ export class SingleWriterCoordinator {
       this.verifiedGeneration = this.store.commitVerifiedPull
         ? await this.store.commitVerifiedPull(snapshot.rows, anchor, generation)
         : generation
-      await this.writeAuthority.authorizeAfterPull(verified)
+      const access = await this.writeAuthority.accessAfterPull(verified)
       this.verifiedRows = snapshot.rows
-      this.state = 'writer_active'
+      this.state = access === 'writer' ? 'writer_active' : 'remote_verified'
     } catch (error) {
       this.verifiedGeneration = null
       this.state = 'security_blocked'
@@ -50,6 +50,7 @@ export class SingleWriterCoordinator {
   }
 
   async pushPending(): Promise<void> {
+    if (this.state === 'remote_verified') return
     if (this.state !== 'writer_active' || this.verifiedGeneration === null || this.verifiedRows === null) throw new Error('Pull and verify is required before push.')
     this.state = 'syncing'
     for (const envelope of await this.store.pending(this.verifiedRows)) {
@@ -80,7 +81,14 @@ export class SingleWriterCoordinator {
       await assertExtendsAnchor(await this.store.readAnchor(), this.diaryId, this.epochId, snapshot.rows)
       const finalVerified = await this.codec.verifyRemote(snapshot)
       if ((finalVerified.retired&&!this.allowRetirement) || await this.store.generation() !== expectedGeneration) { this.state = 'security_blocked'; throw new Error('Final verification or generation check failed.') }
-      try { await this.writeAuthority.assertAfterReadback(finalVerified) } catch (error) { this.state = 'security_blocked'; throw error }
+      let access
+      try { access = await this.writeAuthority.accessAfterReadback(finalVerified) } catch (error) { this.state = 'security_blocked'; throw error }
+      if (access !== 'writer') {
+        this.verifiedGeneration=await this.store.generation()
+        this.verifiedRows=snapshot.rows
+        this.state='remote_verified'
+        return
+      }
       await this.store.commitDurable(envelope.envelopeId, await createAnchor(this.diaryId, this.epochId, snapshot.rows), expectedGeneration)
       this.verifiedGeneration=await this.store.generation()
       this.verifiedRows=snapshot.rows
