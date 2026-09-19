@@ -2,13 +2,13 @@ import { fixedBase64Url, fromBase64Url } from '../../security/crypto/bytes'
 import { parseManifestCells } from '../../security/manifest'
 import { envelopeRow } from '../../security/envelopes'
 import type { PreparedEnvelope } from '../../security/envelopes'
-import { SINGLE_WRITER_PROFILE, type RemoteSnapshot, type TransportProfileCodec, type VerifiedRemoteState } from '../core/contracts'
+import { SINGLE_WRITER_V1_PROFILE, type RemoteProfileVerifier, type RemoteSnapshot, type TransportProfileCodec, type VerifiedRemoteState } from '../core/contracts'
 
 const MAX_ROWS = 100_000
 export class GoogleSheetsSingleWriterProfileCodec implements TransportProfileCodec {
-  readonly profileId = SINGLE_WRITER_PROFILE
+  readonly profileId = SINGLE_WRITER_V1_PROFILE
   constructor(
-    private readonly verifier: { verify(snapshot: RemoteSnapshot): Promise<VerifiedRemoteState> },
+    private readonly verifier: RemoteProfileVerifier,
   ) {}
   validate(snapshot: RemoteSnapshot): void {
     parseManifestCells(snapshot.manifest)
