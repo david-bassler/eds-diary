@@ -168,7 +168,7 @@ Bevor ein Client Remote-Schreibautorität erhält:
 
 Ein Client darf beim Start, Online-Event oder nach Login **niemals blind seine lokale Outbox pushen**.
 
-Der derzeitige Legacy-`syncManager`, der nach Connect automatisch `syncAll()` ausführt, ist deshalb nicht als Sicherheitskern wiederzuverwenden.
+Der historische Legacy-`syncManager` mit Whole-Table-Synchronizern ist kein Sicherheitskern und wird produktiv nicht mehr registriert. Der heutige `syncAll()`-Trigger darf ausschließlich den verifizierenden Envelope-Coordinator aufrufen; Authentifizierung allein verleiht keine Schreibberechtigung.
 
 ## 9. Normaler Append
 
@@ -262,6 +262,8 @@ Daher entfallen:
 Der unabhängige Anchor selbst bleibt zwingend.
 
 ## 14. Stale/offline Geräte
+
+> **v1-Hinweis:** Dieser Abschnitt beschreibt bewusst die bestehende v1-Semantik, in der stale/offline Geräte lokale Forks erzeugen dürfen. Das strengere Zielmodell mit read-only Zweitgeräten und übertragbarer Writer-Authority ist ein neues Profil und wird in `EDS_TRANSFERABLE_SINGLE_WRITER_V2_ARCHITECTURE.md` beschrieben; v1 wird nicht in-place umgedeutet.
 
 Single Writer bedeutet nicht Single Device.
 
@@ -373,9 +375,13 @@ local/offline epoch
 
 ## 20. Legacy-Datenmigration
 
-Der aktuelle Repository-Stand persistiert fachliche Records noch im Klartext in mehreren IndexedDB-Stores und synchronisiert Tabellen teilweise durch Replace-Operationen.
+Historische Vor-v1-Stände persistierten fachliche Records im Klartext in
+IndexedDB-/LocalStorage-Quellen und verwendeten teilweise Whole-Table-
+Synchronisierung. Der aktuelle Produktpfad persistiert Fachzustand dagegen nur
+über verschlüsselte immutable Envelopes/Protokollzustand; die alten Quellen
+werden ausschließlich als Legacy-Migrationsquelle inventarisiert.
 
-Diese Daten sind **Migrationsquelle**, nicht v1-Zielarchitektur.
+Diese Legacy-Daten sind **Migrationsquelle**, nicht v1-Zielarchitektur.
 
 Codex muss vor Migration alle tatsächlich persistierten Quellen inventarisieren, inklusive bestehender IndexedDB-Stores und jeglicher `localStorage`-fachlicher Settings.
 
@@ -433,7 +439,13 @@ Keine rohe Providerantwort quer durch Core/UI.
 
 Google Access Token bleibt RAM-only.
 
-Der aktuelle Prototyp lädt Google Identity direkt in der App. Für die produktionsfähige Sicherheitsarchitektur gilt die bestehende Entscheidung: Auth-Flow/Google-JavaScript auf separaten statischen Auth-Origin isolieren; Hauptorigin enthält entsperrten Crypto-/Klartextzustand.
+Der aktuelle Code besitzt einen separaten statischen Auth-Entry und hält
+Google-Runtime/OAuth-Credential im Auth-Kontext; der Diary-Kontext erhält nur die
+begrenzte RPC-Capability. In der derzeitigen GitHub-Pages-Testbereitstellung
+liegen Diary und Auth-Pfad noch unter demselben Browser-Origin. Für Produktion
+bleibt deshalb die bestehende Entscheidung verbindlich: Auth-Entry auf einen
+**separaten Origin** deployen; der Hauptorigin enthält entsperrten
+Crypto-/Klartextzustand.
 
 Auth-Handoff ist request-/action-gebunden, replay-resistent und darf keine medizinischen Daten, Root Keys oder URS transportieren.
 
@@ -452,7 +464,11 @@ authenticated
 -> optional pending push
 ```
 
-Bestehendes `syncAll()`-on-connect Verhalten muss entsprechend ersetzt werden.
+Ein unmittelbar nach erfolgreichem Connect ausgelöster sicherer Sync-Pass ist
+zulässig, **wenn** er genau diese Reihenfolge durchläuft. `syncAll()` darf
+also nicht „blind pushen“, sondern nur den Coordinator auslösen, der zuerst
+vollständig pullt/verifiziert/reconciliert und erst danach vorhandene Pending-
+Envelopes schreiben darf.
 
 ## 25. Provider-/User-Manipulation
 
@@ -512,4 +528,4 @@ Nicht implementieren, solange kein expliziter Folgeauftrag vorliegt:
 
 ## 30. Upgradefähigkeit
 
-Code muss so strukturiert sein, dass ein späteres `google-sheets-multi-writer-v2`-Profil neue Durability-/Checkpoint-/Rotation-Komponenten ergänzen kann, ohne Crypto Core, UI-Fachlogik oder bestehende Single-Writer-Epochen umzudeuten.
+Code muss so strukturiert sein, dass ein späteres `google-sheets-transferable-single-writer-v2`-Profil neue Durability-/Checkpoint-/Rotation-Komponenten ergänzen kann, ohne Crypto Core, UI-Fachlogik oder bestehende Single-Writer-Epochen umzudeuten.
