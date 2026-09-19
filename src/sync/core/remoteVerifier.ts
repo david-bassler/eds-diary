@@ -18,7 +18,7 @@ export interface TrustedRemoteContext extends EnvelopeContext {
   expectedRecoveryCommitment: string
   expectedGoogleAccountBinding: string
   schemas: Readonly<Record<string, unknown>>
-  oldAnchor: RemoteAnchor | null
+  oldAnchor: RemoteAnchorV1 | null
   localEnvelopes: readonly PreparedEnvelope[]
   localHeadRevisionIds: ReadonlySet<string>
 }
