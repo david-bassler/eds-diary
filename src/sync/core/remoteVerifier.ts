@@ -1,12 +1,12 @@
 import { openEnvelope, type EnvelopeContext, type PreparedEnvelope } from '../../security/envelopes'
-import { openManifest, manifestFingerprint, parseManifestCells, schemaRegistryHash, SCHEMA_ALLOWLIST, type ProtectedManifest } from '../../security/manifest'
-import { validateRevisionGraph, type Revision } from '../../security/revisions'
+import { openManifest, manifestFingerprint, parseManifestCells, schemaRegistryHash, SINGLE_WRITER_V1_SINGLE_WRITER_V1_SCHEMA_ALLOWLIST, type ProtectedManifestV1 } from '../../security/manifest'
+import { validateRevisionGraphV1, type RevisionV1 } from '../../security/revisions'
 import { deriveEpochSalt, sha256 } from '../../security/crypto/core'
 import { base64Url, fixedBase64Url } from '../../security/crypto/bytes'
 import { canonicalBytes } from '../../security/crypto/canonical'
 import type { SyncBackupV5 } from '../../security/backup'
 import { assertExtendsAnchor, type RemoteAnchor } from './prefix'
-import { SINGLE_WRITER_PROFILE, type RemoteSnapshot, type RemoteTransport, type VerifiedRemoteState } from './contracts'
+import { SINGLE_WRITER_V1_PROFILE, type RemoteProfileVerifier, type RemoteSnapshot, type RemoteTransport, type VerifiedRemoteState } from './contracts'
 import { validateDomainData } from '../../security/domainSchemaValidator'
 import type { RecoveredRootCandidate } from '../../security/recovery'
 
@@ -34,7 +34,7 @@ function sameRow(left: readonly string[], right: PreparedEnvelope): boolean {
   return left.length === 3 && left[0] === right.envelopeId && left[1] === right.iv && left[2] === right.ciphertext
 }
 
-function validateControl(revision: Revision, currentEpochId: string): void {
+function validateControl(revision: RevisionV1, currentEpochId: string): void {
   if (revision.record_status !== 'control') return
   if (!['rotation-announcement-sw-v1', 'epoch-migration-sw-v1'].includes(revision.record_schema)) throw new Error('Unknown control schema.')
   if (!revision.record_data || typeof revision.record_data !== 'object' || Array.isArray(revision.record_data)) throw new Error('Invalid control data.')
@@ -71,19 +71,19 @@ function validateControl(revision: Revision, currentEpochId: string): void {
   }
 }
 
-function validateDataSchema(revision: Revision, schema: unknown): void {
+function validateDataSchema(revision: RevisionV1, schema: unknown): void {
   if (revision.record_status === 'deleted' || revision.record_status === 'control') return
   validateDomainData(schema, revision.record_data)
 }
 
-function validateManifestBindings(manifest: ProtectedManifest, trusted: TrustedRemoteContext): void {
+function validateManifestBindings(manifest: ProtectedManifestV1, trusted: TrustedRemoteContext): void {
   if (manifest.key_id !== trusted.expectedKeyId || manifest.recovery_generation !== trusted.expectedRecoveryGeneration || manifest.recovery_urs_commitment !== trusted.expectedRecoveryCommitment || manifest.google_account_binding !== trusted.expectedGoogleAccountBinding) throw new Error('Protected manifest binding mismatch.')
 }
 
 /** The only production constructor of VerifiedRemoteState.  It authenticates the
  * manifest and every physical row before graph, control, anchor and local-state
  * reconciliation. */
-export class FullRemoteVerifier {
+export class SingleWriterV1RemoteVerifier implements RemoteProfileVerifier {
   constructor(private readonly trusted: TrustedRemoteContext) {}
   assertRecoveryBinding(binding: {diaryId:string;epochId:string;keyId:string;manifestFingerprint:string;recoveryGeneration:number;recoveryCommitment:string;accountBinding:string;anchor:RemoteAnchor|null}): void {
     if (binding.diaryId !== this.trusted.diaryId || binding.epochId !== this.trusted.epochId || binding.keyId !== this.trusted.expectedKeyId || binding.manifestFingerprint !== this.trusted.expectedManifestFingerprint || binding.recoveryGeneration !== this.trusted.expectedRecoveryGeneration || binding.recoveryCommitment !== this.trusted.expectedRecoveryCommitment || binding.accountBinding !== this.trusted.expectedGoogleAccountBinding || JSON.stringify(binding.anchor) !== JSON.stringify(this.trusted.oldAnchor)) throw new Error('Recovery candidate does not match the authenticated verifier context.')
@@ -104,7 +104,7 @@ export class FullRemoteVerifier {
       if (row.length !== 3) throw new Error('Invalid physical row.')
       return { envelopeId: row[0], iv: row[1], ciphertext: row[2], bytesHash: '' }
     })
-    const revisions: Revision[] = []
+    const revisions: RevisionV1[] = []
     const envelopeRows = new Map<string, string>()
     const ivOwners = new Map<string, string>()
     for (const envelope of envelopes) {
@@ -120,7 +120,7 @@ export class FullRemoteVerifier {
       if (ivOwner !== undefined && ivOwner !== envelope.envelopeId) throw new Error('IV reuse across envelope IDs is a security anomaly.')
       ivOwners.set(envelope.iv, envelope.envelopeId)
       const revision = await openEnvelope(this.trusted.rootKey, salt, this.trusted, envelope)
-      if (TYPE_SCHEMA.get(revision.record_type) !== revision.record_schema || !SCHEMA_ALLOWLIST.includes(revision.record_schema as typeof SCHEMA_ALLOWLIST[number])) throw new Error('Record type/schema binding mismatch.')
+      if (TYPE_SCHEMA.get(revision.record_type) !== revision.record_schema || !SINGLE_WRITER_V1_SCHEMA_ALLOWLIST.includes(revision.record_schema as typeof SINGLE_WRITER_V1_SCHEMA_ALLOWLIST[number])) throw new Error('Record type/schema binding mismatch.')
       validateControl(revision, this.trusted.epochId); validateDataSchema(revision,this.trusted.schemas[revision.record_schema]); revisions.push(revision)
     }
     validateRevisionGraph(revisions)
@@ -142,12 +142,12 @@ export class FullRemoteVerifier {
  * Remote authority is fixed by authenticated discovery. Backup authority is
  * fixed by an independently selected backup document whose exact bytes are
  * hashed at capability creation and rechecked before candidate verification. */
-export type RecoveryRemoteBinding={provider_id:typeof SINGLE_WRITER_PROFILE;remote_resource_id:string;remote_identity_binding:string}
+export type RecoveryRemoteBinding={provider_id:typeof SINGLE_WRITER_V1_PROFILE;remote_resource_id:string;remote_identity_binding:string}
 export interface VerifiedRecoveryBootstrap {source:'authenticated-remote'|'verified-backup';verified:VerifiedRemoteState;remoteBinding:RecoveryRemoteBinding|null}
 const TRUSTED_AUTHORITIES=new WeakSet<IndependentBootstrapAuthority>()
 export class IndependentBootstrapAuthority {
   private constructor(readonly source:'authenticated-remote'|'verified-backup',readonly remoteResourceId:string|null,readonly authenticatedAccountBinding:string|null,private readonly transport:RemoteTransport|null,private readonly backup:SyncBackupV5|null,private readonly backupDigest:string|null){TRUSTED_AUTHORITIES.add(this)}
-  static async fromAuthenticatedRemoteDiscovery(transport:RemoteTransport,locator:string,remoteResourceId:string,authenticatedIdentityBinding:string):Promise<IndependentBootstrapAuthority>{if(transport.profileId!==SINGLE_WRITER_PROFILE||!authenticatedIdentityBinding)throw new Error('Recovery authority requires an authenticated single-writer provider session.');const candidates=await transport.discover(locator);if(!candidates.some(candidate=>candidate.remoteId===remoteResourceId))throw new Error('Recovery resource was not established by authenticated discovery.');return new IndependentBootstrapAuthority('authenticated-remote',remoteResourceId,authenticatedIdentityBinding,transport,null,null)}
+  static async fromAuthenticatedRemoteDiscovery(transport:RemoteTransport,locator:string,remoteResourceId:string,authenticatedIdentityBinding:string):Promise<IndependentBootstrapAuthority>{if(transport.profileId!==SINGLE_WRITER_V1_PROFILE||!authenticatedIdentityBinding)throw new Error('Recovery authority requires an authenticated single-writer provider session.');const candidates=await transport.discover(locator);if(!candidates.some(candidate=>candidate.remoteId===remoteResourceId))throw new Error('Recovery resource was not established by authenticated discovery.');return new IndependentBootstrapAuthority('authenticated-remote',remoteResourceId,authenticatedIdentityBinding,transport,null,null)}
   static async fromIndependentBackup(backup:SyncBackupV5):Promise<IndependentBootstrapAuthority>{if(!backup||typeof backup!=='object'||backup.format!=='sync-backup-v5'||backup.backup_format_version!==5)throw new Error('Recovery backup authority requires a sync-backup-v5 document.');const bytes=canonicalBytes(backup as never);if(bytes.byteLength>256*1024*1024)throw new Error('Recovery backup exceeds the supported bound.');return new IndependentBootstrapAuthority('verified-backup',null,null,null,backup,base64Url(await sha256(bytes)))}
   async loadRemote():Promise<RemoteSnapshot>{if(this.source!=='authenticated-remote'||!this.transport||!this.remoteResourceId)throw new Error('Bootstrap authority is not a remote authority.');return this.transport.read(this.remoteResourceId)}
   async loadBackup():Promise<SyncBackupV5>{if(this.source!=='verified-backup'||!this.backup||!this.backupDigest)throw new Error('Bootstrap authority is not a backup authority.');const digest=base64Url(await sha256(canonicalBytes(this.backup as never)));if(digest!==this.backupDigest)throw new Error('Independently selected recovery backup changed after authority creation.');return this.backup}
@@ -158,7 +158,7 @@ export interface RecoveryBootstrapOptions {
   schemas:Readonly<Record<string,unknown>>
 }
 
-/** A recovery-specific verifier. Unlike FullRemoteVerifier, it has no caller
+/** A recovery-specific verifier. Unlike SingleWriterV1RemoteVerifier, it has no caller
  * supplied trusted manifest fields. Candidate fields become usable only after
  * they have been checked against an independently fixed remote or backup. */
 export class RecoveryBootstrapVerifier {
@@ -168,11 +168,14 @@ export class RecoveryBootstrapVerifier {
     if(authority.source==='authenticated-remote'){
       if(p.google_account_binding!==authority.authenticatedAccountBinding)throw new Error('Recovery account binding was not independently authenticated.')
       if(p.remote_anchor===null)throw new Error('Remote recovery requires a non-null independently checked anchor.')
-      const verifier=new FullRemoteVerifier({rootKey:candidate.rootKey,diaryId:p.diary_id,epochId:p.epoch_id,expectedManifestFingerprint:p.manifest_fingerprint,expectedKeyId:p.key_id,expectedRecoveryGeneration:p.recovery_generation,expectedRecoveryCommitment:candidate.recoveryCommitment,expectedGoogleAccountBinding:authority.authenticatedAccountBinding!,schemas:this.options.schemas,oldAnchor:p.remote_anchor,localEnvelopes:[],localHeadRevisionIds:new Set()}),verified=await verifier.verify(await authority.loadRemote())
+      const verifier=new SingleWriterV1RemoteVerifier({rootKey:candidate.rootKey,diaryId:p.diary_id,epochId:p.epoch_id,expectedManifestFingerprint:p.manifest_fingerprint,expectedKeyId:p.key_id,expectedRecoveryGeneration:p.recovery_generation,expectedRecoveryCommitment:candidate.recoveryCommitment,expectedGoogleAccountBinding:authority.authenticatedAccountBinding!,schemas:this.options.schemas,oldAnchor:p.remote_anchor,localEnvelopes:[],localHeadRevisionIds:new Set()}),verified=await verifier.verify(await authority.loadRemote())
       if(verified.retired)throw new Error('Authenticated recovery candidate refers to a retired epoch.')
-      return{source:'authenticated-remote',verified,remoteBinding:{provider_id:SINGLE_WRITER_PROFILE,remote_resource_id:authority.remoteResourceId!,remote_identity_binding:authority.authenticatedAccountBinding!}}
+      return{source:'authenticated-remote',verified,remoteBinding:{provider_id:SINGLE_WRITER_V1_PROFILE,remote_resource_id:authority.remoteResourceId!,remote_identity_binding:authority.authenticatedAccountBinding!}}
     }
-    const backup=await authority.loadBackup(),epochSalt=await deriveEpochSalt(fixedBase64Url(p.diary_id,16),fixedBase64Url(p.epoch_id,16)),verifier=new FullRemoteVerifier({rootKey:candidate.rootKey,diaryId:p.diary_id,epochId:p.epoch_id,expectedManifestFingerprint:p.manifest_fingerprint,expectedKeyId:p.key_id,expectedRecoveryGeneration:p.recovery_generation,expectedRecoveryCommitment:candidate.recoveryCommitment,expectedGoogleAccountBinding:p.google_account_binding,schemas:this.options.schemas,oldAnchor:p.remote_anchor,localEnvelopes:[],localHeadRevisionIds:new Set()}),backupModule=await import('../../security/backup'),rows=await backupModule.testRestoreBackup({rootKey:candidate.rootKey,epochSalt,diaryId:p.diary_id,epochId:p.epoch_id,keyId:p.key_id,manifestFingerprint:p.manifest_fingerprint},backup,verifier),verified=await verifier.verify({manifest:backup.epoch_manifest_public,rows})
+    const backup=await authority.loadBackup(),epochSalt=await deriveEpochSalt(fixedBase64Url(p.diary_id,16),fixedBase64Url(p.epoch_id,16)),verifier=new SingleWriterV1RemoteVerifier({rootKey:candidate.rootKey,diaryId:p.diary_id,epochId:p.epoch_id,expectedManifestFingerprint:p.manifest_fingerprint,expectedKeyId:p.key_id,expectedRecoveryGeneration:p.recovery_generation,expectedRecoveryCommitment:candidate.recoveryCommitment,expectedGoogleAccountBinding:p.google_account_binding,schemas:this.options.schemas,oldAnchor:p.remote_anchor,localEnvelopes:[],localHeadRevisionIds:new Set()}),backupModule=await import('../../security/backup'),rows=await backupModule.testRestoreBackup({rootKey:candidate.rootKey,epochSalt,diaryId:p.diary_id,epochId:p.epoch_id,keyId:p.key_id,manifestFingerprint:p.manifest_fingerprint},backup,verifier),verified=await verifier.verify({manifest:backup.epoch_manifest_public,rows})
     return{source:'verified-backup',verified,remoteBinding:null}
   }
 }
+
+/** Backwards-compatible alias for the existing v1 verifier. */
+export { SingleWriterV1RemoteVerifier as FullRemoteVerifier }
