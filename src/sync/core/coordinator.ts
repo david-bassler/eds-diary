@@ -1,7 +1,6 @@
 import type { PreparedEnvelope } from '../../security/envelopes'
 import { envelopeRow } from '../../security/envelopes'
 import { TransportError, type RemoteAnchorState, type RemoteTransport, type TransportProfileCodec, type WriteAuthority } from './contracts'
-import { singleWriterV1WriteAuthority } from './writeAuthority'
 
 export type CoordinatorState = 'local_locked' | 'local_only' | 'authenticated' | 'remote_verifying' | 'remote_verified' | 'writer_active' | 'syncing' | 'synced' | 'conflict' | 'security_blocked' | 'error'
 export interface CoordinatorStore {
@@ -18,7 +17,7 @@ export class SingleWriterCoordinator {
   state: CoordinatorState = 'local_only'
   private verifiedGeneration: number | null = null
   private verifiedRows: ReadonlyArray<readonly string[]> | null = null
-  constructor(private readonly diaryId: string, private readonly epochId: string, private readonly remoteId: string, private readonly transport: RemoteTransport, private readonly codec: TransportProfileCodec, private readonly store: CoordinatorStore,private readonly allowRetirement=false,private readonly writeAuthority:WriteAuthority=singleWriterV1WriteAuthority()) {
+  constructor(private readonly diaryId: string, private readonly epochId: string, private readonly remoteId: string, private readonly transport: RemoteTransport, private readonly codec: TransportProfileCodec, private readonly store: CoordinatorStore,private readonly allowRetirement=false,private readonly writeAuthority:WriteAuthority {
     if (transport.profileId !== codec.profileId || transport.profileId !== writeAuthority.profileId) throw new Error('Transport profile mismatch.')
   }
 
