@@ -1,14 +1,18 @@
 import type { PreparedEnvelope } from '../../security/envelopes'
 
-export const SINGLE_WRITER_PROFILE = 'google-sheets-single-writer-v1'
+export const SINGLE_WRITER_V1_PROFILE = 'google-sheets-single-writer-v1' as const
+/** Backwards-compatible alias for existing v1 callers. New code should use SINGLE_WRITER_V1_PROFILE. */
+export const SINGLE_WRITER_PROFILE = SINGLE_WRITER_V1_PROFILE
 export type TransportErrorCode = 'auth_required' | 'permission_denied' | 'not_found' | 'conflict_or_unexpected_remote_change' | 'temporary_failure' | 'rate_limited' | 'unknown_outcome' | 'integrity_failure' | 'provider_incompatible'
 export class TransportError extends Error { constructor(readonly code: TransportErrorCode, message: string) { super(message) } }
 export interface IdentityBinding { providerId: string; subject: string }
 export interface RemoteCandidate { remoteId: string; locator: string }
 export interface RemoteSnapshot { manifest: readonly string[]; rows: ReadonlyArray<readonly string[]> }
+/** Profile-neutral in-memory anchor shape. Persisted profiles must use an exact versioned subtype. */
+export interface RemoteAnchorState { anchor_profile: string; covered_row_count: number; prefix_hash: string }
 /** Branded result that can only be produced after manifest, every envelope, graph,
  * controls, binding, anchor and local reconciliation have been verified. */
-export interface VerifiedRemoteState { snapshot: RemoteSnapshot; manifestFingerprint: string; retired: boolean; verifiedEnvelopeIds: ReadonlySet<string> }
+export interface VerifiedRemoteState { profileId:string; profileState:unknown; snapshot: RemoteSnapshot; manifestFingerprint: string; retired: boolean; verifiedEnvelopeIds: ReadonlySet<string> }
 export interface AuthProvider { authenticate(actionId: string): Promise<IdentityBinding>; getIdentityBinding(): IdentityBinding | null; disconnect(): Promise<void> }
 export interface RemoteTransport {
   readonly profileId: string
@@ -24,9 +28,24 @@ export interface RemoteTransport {
   read(remoteId: string): Promise<RemoteSnapshot>
   append(remoteId: string, row: readonly [string, string, string]): Promise<void>
 }
+export interface RemoteProfileVerifier {
+  readonly profileId: string
+  verify(snapshot: RemoteSnapshot): Promise<VerifiedRemoteState>
+}
+
+export type WriteAccess = 'writer' | 'read_only'
+export interface WriteAuthority {
+  readonly profileId: string
+  accessAfterPull(verified: VerifiedRemoteState): Promise<WriteAccess> | WriteAccess
+  assertBeforePush(): Promise<void> | void
+  accessAfterReadback(verified: VerifiedRemoteState): Promise<WriteAccess> | WriteAccess
+}
+
 export interface TransportProfileCodec {
   readonly profileId: string
   validate(snapshot: RemoteSnapshot): void
   verifyRemote(snapshot: RemoteSnapshot): Promise<VerifiedRemoteState>
   row(envelope: PreparedEnvelope): readonly [string, string, string]
+  createAnchor(diaryId:string,epochId:string,rows:ReadonlyArray<readonly string[]>):Promise<RemoteAnchorState>
+  assertExtendsAnchor(anchor:RemoteAnchorState|null,diaryId:string,epochId:string,rows:ReadonlyArray<readonly string[]>):Promise<void>
 }

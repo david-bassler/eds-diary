@@ -1,15 +1,18 @@
 import { fixedBase64Url, fromBase64Url } from '../../security/crypto/bytes'
 import { parseManifestCells } from '../../security/manifest'
 import { envelopeRow } from '../../security/envelopes'
+import { createAnchorV1, assertExtendsAnchorV1, type RemoteAnchorV1 } from '../core/prefix'
 import type { PreparedEnvelope } from '../../security/envelopes'
-import { SINGLE_WRITER_PROFILE, type RemoteSnapshot, type TransportProfileCodec, type VerifiedRemoteState } from '../core/contracts'
+import { SINGLE_WRITER_V1_PROFILE, type RemoteAnchorState, type RemoteProfileVerifier, type RemoteSnapshot, type TransportProfileCodec, type VerifiedRemoteState } from '../core/contracts'
 
 const MAX_ROWS = 100_000
 export class GoogleSheetsSingleWriterProfileCodec implements TransportProfileCodec {
-  readonly profileId = SINGLE_WRITER_PROFILE
+  readonly profileId = SINGLE_WRITER_V1_PROFILE
   constructor(
-    private readonly verifier: { verify(snapshot: RemoteSnapshot): Promise<VerifiedRemoteState> },
-  ) {}
+    private readonly verifier: RemoteProfileVerifier,
+  ) {
+    if (verifier.profileId !== SINGLE_WRITER_V1_PROFILE) throw new Error('Verifier profile mismatch.')
+  }
   validate(snapshot: RemoteSnapshot): void {
     parseManifestCells(snapshot.manifest)
     if (snapshot.rows.length > MAX_ROWS) throw new Error('Remote row bound exceeded.')
@@ -27,4 +30,9 @@ export class GoogleSheetsSingleWriterProfileCodec implements TransportProfileCod
     return this.verifier.verify(snapshot)
   }
   row(envelope: PreparedEnvelope): readonly [string, string, string] { return envelopeRow(envelope) }
+  createAnchor(diaryId:string,epochId:string,rows:ReadonlyArray<readonly string[]>):Promise<RemoteAnchorV1>{return createAnchorV1(diaryId,epochId,rows)}
+  assertExtendsAnchor(anchor:RemoteAnchorState|null,diaryId:string,epochId:string,rows:ReadonlyArray<readonly string[]>):Promise<void>{
+    if(anchor!==null&&anchor.anchor_profile!==SINGLE_WRITER_V1_PROFILE)throw new Error('Anchor profile mismatch.')
+    return assertExtendsAnchorV1(anchor as RemoteAnchorV1|null,diaryId,epochId,rows)
+  }
 }

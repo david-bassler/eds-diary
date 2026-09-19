@@ -3,11 +3,15 @@ import { arrayBuffer, base64Url, concatBytes, equalBytes, fixedBase64Url, fromBa
 import { canonicalBytes } from './crypto/canonical'
 import { passphraseKek, prfKek } from './securityModes'
 import type { PreparedEnvelope } from './envelopes'
-import type { RemoteAnchor } from '../sync/core/prefix'
+import type { RemoteAnchorV1 } from '../sync/core/prefix'
+import { SINGLE_WRITER_V1_PROFILE } from '../sync/core/contracts'
 
 export type EpochStatus='local_offline'|'remote_bound'|'active'|'offline_restored'|'retired'|'orphaned'
 export interface SecurityStateRef {operation_id:string;state:string;state_record_hash:string}
-export interface EpochLocalSecurityState {local_state_version:5;diary_id:string;epoch_id:string;key_id:string;manifest_fingerprint:string;recovery_generation:number;recovery_urs_commitment:string;remote_binding:null|{provider_id:'google-sheets-single-writer-v1';remote_resource_id:string;remote_identity_binding:string};remote_anchor:RemoteAnchor|null;epoch_status:EpochStatus;operation_generation:number;rotation_state_ref:SecurityStateRef|null;migration_state_ref:SecurityStateRef|null;local_journal_count:number;local_journal_hash:string}
+export interface RemoteBindingV1 {provider_id:typeof SINGLE_WRITER_V1_PROFILE;remote_resource_id:string;remote_identity_binding:string}
+export interface EpochLocalSecurityStateV5 {local_state_version:5;diary_id:string;epoch_id:string;key_id:string;manifest_fingerprint:string;recovery_generation:number;recovery_urs_commitment:string;remote_binding:null|RemoteBindingV1;remote_anchor:RemoteAnchorV1|null;epoch_status:EpochStatus;operation_generation:number;rotation_state_ref:SecurityStateRef|null;migration_state_ref:SecurityStateRef|null;local_journal_count:number;local_journal_hash:string}
+/** Backwards-compatible alias for the only currently persisted state version. */
+export type EpochLocalSecurityState = EpochLocalSecurityStateV5
 
 interface RootWrapBase {local_wrap_version:5;diary_id:string;epoch_id:string;key_id:string;manifest_fingerprint:string;wrap_id:string;wrap_iv:string;wrapped_root_key:string}
 export interface BestEffortRootWrap extends RootWrapBase {mode:'best-effort';mode_metadata:Record<string,never>}
@@ -19,8 +23,8 @@ export type RootWrapIdentity=Pick<RootWrapBase,'diary_id'|'epoch_id'|'key_id'|'m
 const zero=new Uint8Array([0])
 export async function journalInitial(diaryId:string,epochId:string):Promise<string>{return base64Url(await sha256(concatBytes(utf8('eds-diary/local-journal/v5'),zero,fixedBase64Url(diaryId,16),fixedBase64Url(epochId,16))))}
 export async function journalNext(previous:string,sequence:number,envelope:Pick<PreparedEnvelope,'envelopeId'|'iv'|'ciphertext'>):Promise<string>{const entry=await sha256(canonicalBytes([envelope.envelopeId,envelope.iv,envelope.ciphertext]));return base64Url(await sha256(concatBytes(fixedBase64Url(previous,32),uint64be(sequence),entry)))}
-export async function stateTag(rootKey:Uint8Array,epochSalt:Uint8Array,state:EpochLocalSecurityState):Promise<string>{return base64Url(await hmacSha256(await deriveStateMacKey(rootKey,epochSalt),canonicalBytes(state as never)))}
-export async function verifyStateTag(rootKey:Uint8Array,epochSalt:Uint8Array,state:EpochLocalSecurityState,tag:string):Promise<void>{if(!equalBytes(fixedBase64Url(tag,32),fromBase64Url(await stateTag(rootKey,epochSalt,state))))throw new Error('Local security state MAC failed.')}
+export async function stateTag(rootKey:Uint8Array,epochSalt:Uint8Array,state:EpochLocalSecurityStateV5):Promise<string>{return base64Url(await hmacSha256(await deriveStateMacKey(rootKey,epochSalt),canonicalBytes(state as never)))}
+export async function verifyStateTag(rootKey:Uint8Array,epochSalt:Uint8Array,state:EpochLocalSecurityStateV5,tag:string):Promise<void>{if(!equalBytes(fixedBase64Url(tag,32),fromBase64Url(await stateTag(rootKey,epochSalt,state))))throw new Error('Local security state MAC failed.')}
 
 function rootWrapHeader(wrap:RootWrap):Omit<RootWrap,'wrapped_root_key'|'wrap_iv'>{return{local_wrap_version:wrap.local_wrap_version,mode:wrap.mode,diary_id:wrap.diary_id,epoch_id:wrap.epoch_id,key_id:wrap.key_id,manifest_fingerprint:wrap.manifest_fingerprint,wrap_id:wrap.wrap_id,mode_metadata:wrap.mode_metadata} as Omit<RootWrap,'wrapped_root_key'|'wrap_iv'>}
 const wrapAad=(wrap:Omit<RootWrap,'wrapped_root_key'|'wrap_iv'>)=>canonicalBytes(wrap as never)
