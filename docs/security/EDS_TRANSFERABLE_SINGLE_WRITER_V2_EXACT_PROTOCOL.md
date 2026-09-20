@@ -1718,6 +1718,7 @@ source_writer_generation
 source_writer_grant_id
 successor_recovery_generation
 source_anchor_before_announcement
+successor_staging_anchor
 recovery_transition_id
 ~~~
 
@@ -1728,16 +1729,22 @@ source_anchor_before_announcement ist RemoteAnchorV2 und muss **exakt** dem
 physischen Prefix unmittelbar vor dieser Announcement-Row entsprechen. Nur dann
 darf das Announcement die Source versiegeln.
 
+successor_staging_anchor ist RemoteAnchorV2 des exakt eingefrorenen
+Successor-Cutover-Prefix gemäß §10b/§16a.1. Der Source-local Verifier prüft nur
+dessen Form/Kanonizität; die tatsächliche Successor-Prefix-Bindung wird bei der
+Cross-Epoch-Aktivierungsprüfung nachgerechnet.
+
 Zusätzlich gilt zwingend:
 
 - from_epoch_id == aktuelle Source-epoch_id;
 - successor_epoch_id != from_epoch_id;
 - successor_recovery_generation == aktuell verifizierte
   Source-Recovery-Generation am source_anchor_before_announcement;
-- bei der **Cross-Epoch-Aktivierungsprüfung** muss
-  source_anchor_before_announcement zusätzlich exakt dem gleichnamigen Feld des
-  zugehörigen RecoveryActivationProofV2 entsprechen. Der Source-local Verifier
-  muss dafür keine Successor-/Recovery-Ressource laden.
+- bei der **Cross-Epoch-Aktivierungsprüfung** müssen
+  source_anchor_before_announcement und successor_staging_anchor zusätzlich
+  exakt den gleichnamigen Feldern des zugehörigen RecoveryActivationProofV2
+  entsprechen. Der Source-local Verifier muss dafür keine
+  Successor-/Recovery-Ressource laden.
 
 rotation_kind="normal":
 - recovery_transition_id = null;
@@ -1763,8 +1770,8 @@ Ein falscher/future Anchor, falsche Transition-Bindung oder inkonsistenter
 Successor ist security_blocked.
 
 Diese Felder werden durch die normale RevisionV2-Writer-Signatur geschützt und
-müssen mit RecoveryActivationProofV2, EpochMigrationV2 und dem
-Successor-Manifest übereinstimmen.
+müssen mit RecoveryActivationProofV2, EpochMigrationV2,
+successor_staging_anchor und dem Successor-Manifest übereinstimmen.
 
 "epoch-migration-sw-v2" ist ebenfalls eine normale writer-autorisierte
 Control-RevisionV2.
@@ -1960,6 +1967,12 @@ gegen die realen Graphen:
    sein. Für ihren Ergebnisvergleich wird der akzeptierte Fachgraph des
    Successors am physischen Prefix **unmittelbar vor der Migration-Control-Row**
    verwendet. Control-Rows ändern diesen Graph nicht.
+5a. Der zum Aktivierungsbeweis gehörende successor_staging_anchor muss diesen
+    Successor exakt durch die akzeptierte Migration-Control hindurch abdecken.
+    Zwischen der ersten akzeptierten Migration-Control-Row und dem Anchor sind
+    ausschließlich byte-identische Retry-Duplikate genau dieses
+    Migration-Envelopes zulässig; jede andere physische/semantische Row =>
+    successor_staging_mismatch / security_blocked.
 6. Aus diesem Successor-Prefix werden result_semantic_snapshot_hash,
    active_head_count und tombstone_head_count neu berechnet und exakt gegen
    record_data geprüft.
