@@ -51,13 +51,17 @@ epoch_id                 16 CSPRNG bytes
 key_id                   16 CSPRNG bytes
 record_id                16 bytes
 writer_device_id         16 CSPRNG bytes
-activation_lineage_cache_id 16 CSPRNG bytes
+cache_id                 16 CSPRNG bytes
 recovery_artifact_id     16 CSPRNG bytes
 creation_locator         16 CSPRNG bytes
 
 envelope_id              32 CSPRNG bytes
 revision_id              32 CSPRNG bytes
 writer_grant_id          32 CSPRNG bytes
+rotation_id              32 CSPRNG bytes
+migration_id             32 CSPRNG bytes
+transition_id            32 CSPRNG bytes
+operation_id             32 CSPRNG bytes
 transfer_nonce           32 CSPRNG bytes
 backup_id                32 CSPRNG bytes
 
@@ -75,6 +79,14 @@ Base64URL(SHA-256(
   UTF8("eds-diary/writer-key-id/v2") || 0x00 || raw_ed25519_public_key
 ))
 ~~~
+
+Alle oben als CSPRNG markierten IDs werden unabhängig mit einem
+kryptographisch sicheren Zufallszahlengenerator erzeugt und als kanonisches
+Base64URL ohne "=" serialisiert. `operation_id` ist ausschließlich lokale
+Crash-/Resume-Identität, besitzt aber dieselbe 32-Byte-CSPRNG-Regel. Der Name
+`cache_id` ist der einzige normative Feldname für den
+ActivationLineageCacheV2-Identifier; `activation_lineage_cache_id` ist kein
+separates Protokollfeld.
 
 recovery_takeover_key_id analog:
 
@@ -1805,6 +1817,63 @@ result_semantic_snapshot_hash wird mit exakt derselben semantic_entry-Projektion
 active_head_count/tombstone_head_count zählen genau diese Heads nach
 record_status.
 
+### 16a.0 Exakte Cross-Epoch-Provenienz der Fach-Heads
+
+Eine v2-Migration kopiert **ausschließlich die am gebundenen Source-Prefix
+aktuellen nicht-Control-Heads**. Die interne Parent-Historie wird dabei bewusst
+nicht in die neue Epoche kopiert: Jeder kopierte Head wird eine neue
+Successor-Genesis-Revision.
+
+Für jeden Source-Head `S` muss am Successor-Prefix unmittelbar vor der
+Migration-Control-Row exakt ein Head `T` existieren, für den gilt:
+
+~~~text
+T.record_type   == S.record_type
+T.record_schema == S.record_schema
+T.record_id     == S.record_id
+T.record_status == S.record_status
+T.record_data   == S.record_data
+
+T.revision_id != S.revision_id
+T.parent_revision_ids == []
+
+T.migration_origin == {
+  sources: [
+    {
+      source_epoch_id: <exakt Source-epoch_id>,
+      source_record_id: S.record_id,
+      source_revision_ids: [S.revision_id]
+    }
+  ]
+}
+~~~
+
+Die Gleichheit von `record_data` ist JCS-semantische Gleichheit nach bereits
+erfolgreicher Schema-/I-JSON-Prüfung. `source_revision_ids` enthält für diesen
+unveränderten Single-Source-Copy **exakt eine** ID; mehrere Source-Heads
+desselben `record_id` werden als mehrere unabhängige Successor-Heads erhalten.
+
+Es gilt eine strikte Bijection:
+
+- jeder Source-Head besitzt genau einen solchen Successor-Head;
+- jeder Successor-Fach-Head vor der Migration-Control besitzt genau einen
+  Source-Head als Gegenstück;
+- zwei Successor-Heads dürfen nicht denselben Source-Head beanspruchen;
+- kein Successor-Head darf eine andere Source-Epoche, Record-ID oder
+  Source-Revision referenzieren;
+- ein `migration_origin=null`, eine leere/mehrdeutige Source-Liste oder
+  zusätzliche Source-Revisionen sind für diese Migration ungültig.
+
+Die neue Successor-`revision_id` wird unabhängig als 32 CSPRNG-Bytes erzeugt.
+`protocol_created_at` darf neu sein und ist weiterhin rein informativ.
+Writer-Context/-Signatur müssen die für die jeweilige Successor-Row aktuelle
+Writer-Authority verwenden.
+
+Diese Provenienzprüfung ist bewusst **zusätzlich** zu Semantic-Snapshot und
+Head-Counts. Der Source-Lineage-Snapshot beweist die tatsächlich kopierbaren
+Source-Heads; die Bijection beweist, dass genau diese Heads mit korrekter
+Cross-Epoch-Abstammung im Successor materialisiert wurden.
+
 ### 16a.1 Verbindliche Migration-Integritätsprüfung
 
 Jede nicht-native v2-Epoche enthält **exakt eine** akzeptierte
@@ -1833,18 +1902,22 @@ gegen die realen Graphen:
 6. Aus diesem Successor-Prefix werden result_semantic_snapshot_hash,
    active_head_count und tombstone_head_count neu berechnet und exakt gegen
    record_data geprüft.
-7. Für den unveränderten Ein-Source-Copy gilt zusätzlich zwingend:
+7. Source- und Successor-Fach-Heads müssen zusätzlich die vollständige
+   Cross-Epoch-Provenienz-Bijection aus §16a.0 erfüllen. Fehlende, zusätzliche,
+   doppelt beanspruchte oder falsch referenzierte `migration_origin`-Quellen
+   sind `migration_provenance_mismatch` / security_blocked.
+8. Für den unveränderten Ein-Source-Copy gilt zusätzlich zwingend:
    result_semantic_snapshot_hash == source_semantic_snapshot_hash.
-8. Bei migration_kind="recovery_rekey" müssen
+9. Bei migration_kind="recovery_rekey" müssen
    source_recovery_transition_id, Announcement recovery_transition_id und die
    zuletzt akzeptierte RecoveryAuthorityTransitionV2, welche die aktuelle
    Source-Recovery-Generation erzeugt hat, exakt dieselbe transition_id tragen.
-9. Erst wenn diese Migration-Integritätsprüfung **und** der jeweilige
+10. Erst wenn diese Migration-Integritätsprüfung **und** der jeweilige
    Aktivierungsbeweis erfolgreich sind, ist der Source→Successor-Link gültig.
 
 Damit kann ein kryptographisch korrekt aktivierter Successor mit fehlenden,
-zusätzlichen oder semantisch veränderten Fach-Heads nicht als gültige Migration
-akzeptiert werden.
+zusätzlichen, semantisch veränderten **oder provenance-seitig falsch
+zugeordneten** Fach-Heads nicht als gültige Migration akzeptiert werden.
 
 ## 16b. RecoveryAuthorityTransitionV2
 
@@ -2030,7 +2103,10 @@ Für **jede** v2→v2-Rotation ist die Reihenfolge verbindlich:
 
 1. activation_lineage der aktiven Source vollständig validieren und finalen
    Source-Anchor/Writer-/Recovery-State einfrieren.
-2. Successor erzeugen, Fach-Heads kopieren/signieren.
+2. Successor erzeugen. Jeden am eingefrorenen Source-Prefix aktuellen
+   nicht-Control-Head exakt nach §16a.0 als neue Successor-Genesis-Revision
+   kopieren/signieren: gleiche Fachsemantik, leere Parents und
+   `migration_origin` exakt auf die eine kopierte Source-Revision.
 3. Exakt eine EpochMigrationV2 schreiben. source.source_anchor ist der finale
    Source-Anchor; source_writer_authority ist die dortige Authority;
    source_recovery_transition_id ist bei normal null und bei recovery_rekey die
@@ -3194,7 +3270,10 @@ Reihenfolge:
    persistieren/readback-verifizieren; erst danach extrahierbaren temporären
    Recovery-Private-Key verwerfen und mutierendes Remote-I/O beginnen.
 9. Gen-1-Grant als erste _r-Row mit authority_anchor=H0 schreiben.
-10. fachliche Heads als RevisionV2 unter Gen-1-Authority schreiben/signieren.
+10. jeden am eingefrorenen v1-Source-Prefix aktuellen fachlichen Head exakt nach
+    §16a.0 als RevisionV2 unter Gen-1-Authority schreiben/signieren: gleiche
+    Fachsemantik, neue revision_id, leere Parents und `migration_origin` mit
+    exakt dieser v1-Source-Epoche/record_id/revision_id.
 11. Migration-Control mit migration_kind="profile_upgrade",
     source_writer_authority=null und source_recovery_transition_id=null
     schreiben. Source-Snapshot-Hashes werden aus dem final verifizierten
@@ -3258,6 +3337,7 @@ manifest_genesis_missing
 migration_control_missing
 migration_snapshot_mismatch
 migration_head_count_mismatch
+migration_provenance_mismatch
 migration_transition_mismatch
 profile_upgrade_source_race
 recovery_generation_mismatch
@@ -3306,38 +3386,47 @@ für mindestens:
 19. EpochMigrationV2: Source-Semantic-/Lineage-Snapshot, Successor-Result-Hash
     und Head-Counts gegen echte Prefix-Graphen für profile_upgrade, normal und
     recovery_rekey.
-20. ActivationLineageV2 für native Genesis, profile_upgrade und mindestens zwei
+20. Cross-Epoch-Provenienz-Bijection: jeder Source-Head wird genau eine
+    Successor-Genesis-Revision mit leerem Parent-Array und exakt singleton
+    `migration_origin` auf seine Source-Epoche/Record-/Revision-ID; mehrere
+    Konflikt-Heads desselben Records bleiben getrennte Heads.
+21. ActivationLineageV2 für native Genesis, profile_upgrade und mindestens zwei
     aufeinanderfolgende v2→v2-Rotationen einschließlich Migration-Integrität.
-21. RecoveryAuthorityTransitionV2 + RecoveryAuthorityTransitionProofV2:
+22. RecoveryAuthorityTransitionV2 + RecoveryAuthorityTransitionProofV2:
     staged, exact completion, durable und überholter Anchor.
-22. ActivationLineageCacheV2 AEAD/Readback einschließlich cache_id und
+23. ActivationLineageCacheV2 AEAD/Readback einschließlich cache_id und
     Cache-Ref-Hash.
-23. RotationOperationStateV2 für profile_upgrade/normal/recovery_rekey mit allen
+24. RotationOperationStateV2 für profile_upgrade/normal/recovery_rekey mit allen
     erlaubten Stage-Transitions und Null/non-null-Invarianten.
-24. Verifier-purpose canonical_full vs operation-gebundenes rotation_resume:
+25. Verifier-purpose canonical_full vs operation-gebundenes rotation_resume:
     fehlende Migration-Control nur in successor_bound|copying als
     staged_incomplete; niemals aktive Authority.
-25. Remote Pending-Rekey-Fence: Transition setzt
+26. Remote Pending-Rekey-Fence: Transition setzt
     recovery_rekey_rotation_required/current_recovery_rekey_transition_id;
     zweite Transition supersedet die ID; Forced Takeover bleibt möglich;
     Fachwrite/Handoff/Normalrotation werden abgewiesen; passendes
     recovery_rekey-Announcement versiegelt.
-26. RecoveryRekeyOperationStateV2 remote_pending_rekey_adoption nach
+27. RecoveryRekeyOperationStateV2 remote_pending_rekey_adoption nach
     Geräteverlust: canonical_full + aktuelles RecoveryArtifact + Forced Takeover
     -> Einstieg bei transition_durable -> verpflichtende Successor-Rotation.
-27. RecoveryRekeyOperationStateV2 atomare Supersession:
+28. RecoveryRekeyOperationStateV2 atomare Supersession:
     alter durable State suspendiert, neuer State referenziert; neuer Versuch
     pre-durable stale -> alter State wieder gebunden; neue Transition durable ->
     alter State terminal superseded + superseded_by_transition_id.
-28. v1→v2 Profile-Upgrade-Race: finaler Pre-Append-Anchor gleich vs.
+29. v1→v2 Profile-Upgrade-Race: finaler Pre-Append-Anchor gleich vs.
     zusätzliche Row zwischen finalem Read und v1-Announcement =>
     profile_upgrade_source_race.
-29. SyncBackupV6 staged/activated Manifest/hash binding einschließlich
+30. SyncBackupV6 staged/activated Manifest/hash binding einschließlich
     activation_lineage und Recovery-Transition-Proof.
+31. Identifier-Format/Decode-Längen für cache_id, rotation_id, migration_id,
+    transition_id und operation_id einschließlich Base64URL-Re-Encode; falsche
+    Byte-Länge und nicht-kanonische Base64URL-Form werden abgelehnt.
 
 Negative Vectors:
 
 - falsche Diary/Epoch;
+- cache_id/rotation_id/migration_id/transition_id/operation_id mit falscher
+  Decode-Länge oder nicht-kanonischem Base64URL;
 - falscher writer_key_id;
 - manipuliertes Public Key Byte;
 - manipulierte Ed25519-Signatur;
@@ -3375,6 +3464,9 @@ Negative Vectors:
   recovery_transition_id;
 - EpochMigrationV2 mit fehlendem Fach-Head, zusätzlichem Head, falschem
   source_lineage_snapshot_hash oder falschen Head-Counts;
+- Successor-Head mit korrektem Fachwert, aber migration_origin=null, falscher
+  source_epoch_id/source_record_id/source_revision_id, mehreren Source-Revisionen
+  oder doppelt beanspruchter Source-Revision => migration_provenance_mismatch;
 - direkte Aktivierungsproofs gültig, aber EpochMigrationV2 inkonsistent =>
   Successor nicht aktiv;
 - canonical_full auf nicht-native Epoche ohne Migration-Control =>

@@ -776,9 +776,18 @@ Jeder nicht-native Link verlangt zusätzlich **exakt ein**
 `epoch-migration-sw-v2` im Successor. Dessen Source-Semantic-/Lineage-Hashes
 werden gegen den verifizierten Source-Graph am gebundenen Source-Anchor
 nachgerechnet; Result-Semantic-Hash und Head-Counts gegen den Successor-Graph
-unmittelbar vor der Migration-Control-Row. Aktivierungsproof ohne korrekte
-Migration-Integrität genügt nicht. Dadurch kann ein kryptographisch korrekt
-aktivierter, aber unvollständig kopierter Successor nicht kanonisch werden.
+unmittelbar vor der Migration-Control-Row.
+
+Zusätzlich wird die Cross-Epoch-Provenienz als **strikte Bijection** geprüft:
+Jeder aktuelle Source-Fach-Head muss genau eine neue Successor-Genesis-Revision
+mit gleicher Fachsemantik, leerem Parent-Array und einem singleton
+`migration_origin` auf exakt Source-Epoche, `record_id` und Source-
+`revision_id` besitzen; jeder Successor-Fach-Head muss genau einem solchen
+Source-Head entsprechen. Damit schützt die Migration nicht nur den aktuellen
+Wert, sondern auch die Herkunft konkurrierender Heads über Epoch-Grenzen.
+Aktivierungsproof ohne korrekte Migration-Integrität und Provenienz genügt
+nicht. Dadurch kann ein kryptographisch korrekt aktivierter, aber unvollständig
+oder provenance-seitig falsch kopierter Successor nicht kanonisch werden.
 
 Ein unter RK_epoch verschlüsselter `ActivationLineageCacheV2` hält diese
 Lineage lokal für Rotation/Rekey verfügbar, auch wenn der alte URS verloren ist.
@@ -838,10 +847,12 @@ Ablauf:
 1. v1 Source full-verifizieren, finalen Source-Anchor und
    Semantic-/Lineage-Snapshots berechnen und Writes einfrieren;
 2. neue v2-Successor-Epoche + initialen Writer Grant Generation 1 planen;
-3. Fach-Heads kopieren und exakt eine v2 Migration-Control schreiben. Deren
-   Source-Snapshot-Hashes müssen gegen den v1-Prefix und deren Result-Hash/Counts
-   gegen den Successor-Graph unmittelbar vor der Control-Row nachgerechnet
-   werden;
+3. Fach-Heads als neue Successor-Genesis-Revisionen mit leerem Parent-Array und
+   exakt singleton `migration_origin` auf den jeweils kopierten v1-Source-Head
+   übertragen und exakt eine v2 Migration-Control schreiben. Deren Source-
+   Snapshot-Hashes müssen gegen den v1-Prefix, deren Result-Hash/Counts gegen
+   den Successor-Graph und die Head-Provenienz als vollständige Source↔Successor-
+   Bijection unmittelbar vor der Control-Row nachgerechnet werden;
 4. Successor full-verifizieren und die Migration-Integritätsprüfung vollständig
    bestehen;
 5. v1 Rotation Announcement exakt one-shot vorbereiten und daraus den
@@ -1008,53 +1019,60 @@ Mindestens:
     falscher recovery_transition_id -> fail-closed.
 42. Successor mit fehlendem/zusätzlichem Fach-Head trotz gültigem
     ActivationProof -> Migration-Integrität schlägt fehl, keine Aktivierung.
-43. manipulierte source_semantic/source_lineage_snapshot_hash oder
+43. Successor mit semantisch korrektem Head, aber migration_origin=null,
+    falscher Source-Epoche/Record-/Revision-ID, mehreren Source-Revisionen oder
+    doppelter Zuordnung desselben Source-Heads ->
+    migration_provenance_mismatch; keine Aktivierung.
+44. manipulierte source_semantic/source_lineage_snapshot_hash oder
     Result-Head-Counts -> fail-closed.
-44. gültiger direkter ActivationProof, aber fehlende/zweite EpochMigrationV2 ->
+45. gültiger direkter ActivationProof, aber fehlende/zweite EpochMigrationV2 ->
     keine Aktivierung.
-45. ActivationLineageCacheV2 cache_id/ref/hash mismatch -> fail-closed; kein
+46. ActivationLineageCacheV2 cache_id/ref/hash mismatch -> fail-closed; kein
     Rotation/Rekey-Start.
-46. profile_upgrade/normal/recovery_rekey durch alle erlaubten
+47. profile_upgrade/normal/recovery_rekey durch alle erlaubten
     RotationOperationStateV2-Stages; übersprungene oder unmögliche
     Null/non-null-Kombination -> security_blocked.
-47. Recovery-Rekey-Rotation bindet exakt die durable
+48. Recovery-Rekey-Rotation bindet exakt die durable
     RecoveryAuthorityTransitionV2.transition_id in Announcement, Proof und
     Migration-Control.
-48. Crash in successor_bound/copying vor EpochMigrationV2 -> operation-gebundener
+49. Crash in successor_bound/copying vor EpochMigrationV2 -> operation-gebundener
     rotation_resume-Verify akzeptiert den erwarteten unvollständigen Prefix nur
     als staged; canonical_full bleibt migration_control_missing.
-49. RecoveryAuthorityTransitionV2 durable, aber Successor-Rotation noch nicht
+50. RecoveryAuthorityTransitionV2 durable, aber Successor-Rotation noch nicht
     abgeschlossen -> neuer URS kann Source recovern/takeovern; Rekey bleibt
     ausdrücklich unvollständig.
-50. alter URS nach durable Transition, aber vor Successor-Switch -> darf keine
+51. alter URS nach durable Transition, aber vor Successor-Switch -> darf keine
     Recovery-Takeover-Authority mehr erhalten, kann historischen Source-RK über
     altes Artifact aber noch lesen.
-51. Rekey `completed` ohne geswitchte recovery_rekey-Successor-Epoche mit
+52. Rekey `completed` ohne geswitchte recovery_rekey-Successor-Epoche mit
     **neuem RK_epoch** -> security_blocked.
-52. nach abgeschlossenem Rekey kann altes URS den neuen aktiven Successor-RK
+53. nach abgeschlossenem Rekey kann altes URS den neuen aktiven Successor-RK
     nicht aus altem RecoveryArtifact ableiten.
-53. durable RecoveryAuthorityTransitionV2 + weiterhin derselbe Writer-Key +
+54. durable RecoveryAuthorityTransitionV2 + weiterhin derselbe Writer-Key +
     Fachwrite -> remote rekey_rotation_required_rejected; Fachgraph unverändert.
-54. Pending-Rekey-Fence + Handoff -> abgewiesen; Forced Takeover bleibt
+55. Pending-Rekey-Fence + Handoff -> abgewiesen; Forced Takeover bleibt
     zulässig und erzeugt nur maintenance-only Writer.
-55. Geräteverlust nach durable Transition -> neues Gerät mit neuem URS erkennt
+56. Geräteverlust nach durable Transition -> neues Gerät mit neuem URS erkennt
     recovery_rekey_rotation_required aus Remote-Historie, übernimmt per Forced
     Takeover und adoptiert Phase B ohne alten lokalen Operation-State.
-56. zweite RecoveryAuthorityTransitionV2 während Pending-Rekey -> jüngste
+57. zweite RecoveryAuthorityTransitionV2 während Pending-Rekey -> jüngste
     transition_id supersedet die ältere; nur sie darf die Rekey-Rotation binden.
     Lokaler recovery_operation_state_ref wird vor Remote-I/O auf den neuen
     readback-verifizierten State umgebunden; der alte durable State bleibt
     suspendiert. Erst nach durable neuer Transition wird er atomar terminal
     `superseded`; stale neuer Versuch fällt auf die weiterhin remote-current
     ältere Transition zurück.
-57. Pending-Rekey + normal-Rotation -> kein Seal; ausschließlich
+58. Pending-Rekey + normal-Rotation -> kein Seal; ausschließlich
     recovery_rekey-Rotation mit aktueller transition_id zulässig.
-58. v1→v2: zusätzliche v1-Row zwischen finalem Pre-Append-Read und Announcement
+59. v1→v2: zusätzliche v1-Row zwischen finalem Pre-Append-Read und Announcement
     -> profile_upgrade_source_race; Successor bleibt staged/read-only, kein
     zweites Announcement/kein stiller Datenverlust.
-59. RecoveryArtifactV6 mit to-State vor durabler Transition -> nur mit gültigem
+60. RecoveryArtifactV6 mit to-State vor durabler Transition -> nur mit gültigem
     RecoveryAuthorityTransitionProofV2 staged/read-only; niemals current Forced
     Takeover-Authority.
+61. cache_id/rotation_id/migration_id/transition_id/operation_id: exakte
+    Decode-Länge und kanonisches Base64URL; falsche Länge oder nicht-kanonische
+    Repräsentation -> fail-closed.
 
 ## 22. Nicht-Ziele
 
