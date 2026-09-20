@@ -776,9 +776,18 @@ Jeder nicht-native Link verlangt zusätzlich **exakt ein**
 `epoch-migration-sw-v2` im Successor. Dessen Source-Semantic-/Lineage-Hashes
 werden gegen den verifizierten Source-Graph am gebundenen Source-Anchor
 nachgerechnet; Result-Semantic-Hash und Head-Counts gegen den Successor-Graph
-unmittelbar vor der Migration-Control-Row. Aktivierungsproof ohne korrekte
-Migration-Integrität genügt nicht. Dadurch kann ein kryptographisch korrekt
-aktivierter, aber unvollständig kopierter Successor nicht kanonisch werden.
+unmittelbar vor der Migration-Control-Row.
+
+Zusätzlich wird die Cross-Epoch-Provenienz als **strikte Bijection** geprüft:
+Jeder aktuelle Source-Fach-Head muss genau eine neue Successor-Genesis-Revision
+mit gleicher Fachsemantik, leerem Parent-Array und einem singleton
+`migration_origin` auf exakt Source-Epoche, `record_id` und Source-
+`revision_id` besitzen; jeder Successor-Fach-Head muss genau einem solchen
+Source-Head entsprechen. Damit schützt die Migration nicht nur den aktuellen
+Wert, sondern auch die Herkunft konkurrierender Heads über Epoch-Grenzen.
+Aktivierungsproof ohne korrekte Migration-Integrität und Provenienz genügt
+nicht. Dadurch kann ein kryptographisch korrekt aktivierter, aber unvollständig
+oder provenance-seitig falsch kopierter Successor nicht kanonisch werden.
 
 Ein unter RK_epoch verschlüsselter `ActivationLineageCacheV2` hält diese
 Lineage lokal für Rotation/Rekey verfügbar, auch wenn der alte URS verloren ist.
@@ -838,10 +847,12 @@ Ablauf:
 1. v1 Source full-verifizieren, finalen Source-Anchor und
    Semantic-/Lineage-Snapshots berechnen und Writes einfrieren;
 2. neue v2-Successor-Epoche + initialen Writer Grant Generation 1 planen;
-3. Fach-Heads kopieren und exakt eine v2 Migration-Control schreiben. Deren
-   Source-Snapshot-Hashes müssen gegen den v1-Prefix und deren Result-Hash/Counts
-   gegen den Successor-Graph unmittelbar vor der Control-Row nachgerechnet
-   werden;
+3. Fach-Heads als neue Successor-Genesis-Revisionen mit leerem Parent-Array und
+   exakt singleton `migration_origin` auf den jeweils kopierten v1-Source-Head
+   übertragen und exakt eine v2 Migration-Control schreiben. Deren Source-
+   Snapshot-Hashes müssen gegen den v1-Prefix, deren Result-Hash/Counts gegen
+   den Successor-Graph und die Head-Provenienz als vollständige Source↔Successor-
+   Bijection unmittelbar vor der Control-Row nachgerechnet werden;
 4. Successor full-verifizieren und die Migration-Integritätsprüfung vollständig
    bestehen;
 5. v1 Rotation Announcement exakt one-shot vorbereiten und daraus den
@@ -1008,7 +1019,11 @@ Mindestens:
     falscher recovery_transition_id -> fail-closed.
 42. Successor mit fehlendem/zusätzlichem Fach-Head trotz gültigem
     ActivationProof -> Migration-Integrität schlägt fehl, keine Aktivierung.
-43. manipulierte source_semantic/source_lineage_snapshot_hash oder
+43. Successor mit semantisch korrektem Head, aber migration_origin=null,
+    falscher Source-Epoche/Record-/Revision-ID, mehreren Source-Revisionen oder
+    doppelter Zuordnung desselben Source-Heads ->
+    migration_provenance_mismatch; keine Aktivierung.
+60. manipulierte source_semantic/source_lineage_snapshot_hash oder
     Result-Head-Counts -> fail-closed.
 44. gültiger direkter ActivationProof, aber fehlende/zweite EpochMigrationV2 ->
     keine Aktivierung.
