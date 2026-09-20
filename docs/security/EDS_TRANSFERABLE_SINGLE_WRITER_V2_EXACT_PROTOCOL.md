@@ -2746,8 +2746,16 @@ created_at
 ~~~
 
 recovery_urs_commitment muss exakt aus dem eingegebenen URS, diary_id und
-recovery_generation gemäß §10 reproduzierbar sein und dem **aktuell
-verifizierten Recovery-State** der Epoche entsprechen.
+recovery_generation gemäß §10 reproduzierbar sein.
+
+Im Normalfall müssen recovery_generation, recovery_urs_commitment,
+recovery_takeover_key_id und recovery_takeover_public_key exakt dem **aktuell
+verifizierten Recovery-State** der Epoche entsprechen. Einzige Ausnahme ist der
+explizite §16c-Staging-Fall **vor** durabler RecoveryAuthorityTransitionV2:
+Dann darf ein Artifact mit gültigem recovery_authority_transition_proof bereits
+den exakt gebundenen to-State repräsentieren, während Remote noch am
+Proof-from-State/Anchor steht. Dieses Artifact ist ausschließlich staged/read-
+only und darf nur die exakt vorbereitete Transition fertigstellen.
 
 activation_lineage ist exakt ActivationLineageV2 (§10c). Sie enthält sämtliche
 für transitive Aktivierungsprüfung erforderlichen historischen Source-RKs nur
@@ -2979,6 +2987,65 @@ Restore darf stale_writer_pending_rows nur als Quarantäne wiederherstellen.
 
 ## 21. v1 -> v2 Migration
 
+### 21.1 Unvermeidbare v1-TOCTOU-Sicherheitsgrenze
+
+Das eingefrorene `rotation-announcement-sw-v1` besitzt **keinen**
+Source-Anchor und v1 besitzt keine geräteübergreifend kryptographisch gefencete
+Writer-Authority. Google Sheets API v4 bietet für den hier verwendeten
+`spreadsheets.batchUpdate`-/Append-Pfad keinen protokollseitig gebundenen
+Compare-and-Swap gegen den zuvor gelesenen _r-Prefix.
+
+Daher kann v2 beim einmaligen profile_upgrade folgende Race nicht
+kryptographisch ausschließen:
+
+~~~text
+v1 Source bei Hn eingefroren/verifiziert
+-> anderer v1-Client appendet Row n+1
+-> vorbereitetes v1 Rotation Announcement landet als Row n+2
+~~~
+
+Der v1-Verifier kann das Announcement dann als Retirement sehen, während der
+ProfileUpgradeActivationEntryV2 es wegen fehlender unmittelbarer
+Anchor-Nachbarschaft korrekt **nicht** als Aktivierung des Successors akzeptiert.
+Das ist fail-closed, kann aber die Migration in einen Availability-/Support-
+Zustand bringen.
+
+Deshalb ist profile_upgrade nur unter folgender expliziter Sicherheitsprämisse
+zulässig:
+
+1. aktuelles Gerät ist der einzige tatsächlich schreibende v1-Client für dieses
+   Tagebuch;
+2. alle anderen Geräte, Browserprofile/PWA-Instanzen mit dieser v1-Epoche sind
+   geschlossen bzw. dürfen bis Abschluss des Upgrades nicht schreiben;
+3. alle eigenen v1-Pending-/Unknown-Outcome-Envelopes sind vor Freeze vollständig
+   reconciliiert;
+4. unmittelbar vor dem Announcement-Append wird die v1-Source erneut vollständig
+   gelesen und ihr RemoteAnchor muss **exakt** dem eingefrorenen
+   source_anchor_before_announcement entsprechen;
+5. zwischen diesem finalen Read und dem Append existiert dennoch keine
+   kryptographische Cross-Device-CAS-Garantie. Das UI muss diese Restgrenze vor
+   profile_upgrade ausdrücklich anzeigen.
+
+Wird nach dem Announcement beim finalen v1-Readback festgestellt, dass zwischen
+dem eingefrorenen Anchor und dem Announcement eine fremde/zusätzliche physische
+Row liegt, gilt:
+
+~~~text
+profile_upgrade_source_race
+~~~
+
+- Successor bleibt staged/read_only und darf niemals aktiviert werden;
+- kein zweites v1-Rotation-Announcement und kein automatisches „Reparieren“ der
+  Migration;
+- kein stilles Verwerfen der zusätzlichen v1-Row;
+- lokaler Zustand geht in einen expliziten Support-/Recovery-Status; Daten aus
+  v1 und staged Successor bleiben exportierbar;
+- produktiver Mehrgeräte-Cutover ist blockiert.
+
+Eine vollständig kryptographische Beseitigung dieser einmaligen Grenze würde
+das eingefrorene v1-Wireformat oder einen zusätzlichen Koordinationsdienst
+ändern und ist daher nicht Teil dieses v2-Profils.
+
 Migration ist Epoch-Rotation, keine In-place-Mutation.
 
 Reihenfolge:
@@ -3018,13 +3085,20 @@ Reihenfolge:
 15. staged SyncBackupV6 erzeugen und Test-Restore als local_offline/read_only
     durchführen.
 16. RecoveryTakeoverStagingV2 darf jetzt gelöscht werden.
-17. exakt vorbereitetes v1 Rotation Announcement durable machen.
-18. vollständige activation_lineage-Prüfung bestätigt jetzt den Successor als
+17. v1-Source **erneut vollständig lesen**; ihr aktueller RemoteAnchor muss exakt
+    dem in ProfileUpgradeActivationEntryV2 gebundenen
+    source_anchor_before_announcement entsprechen. Andernfalls Upgrade vor
+    Announcement abbrechen und v1 weiter als Source behandeln.
+18. exakt vorbereitetes v1 Rotation Announcement durable machen und v1-Source
+    unmittelbar danach erneut vollständig lesen. Liegt das Announcement nicht
+    unmittelbar nach dem gebundenen Source-Prefix, =>
+    profile_upgrade_source_race gemäß §21.1; Successor bleibt staged.
+19. vollständige activation_lineage-Prüfung bestätigt jetzt den Successor als
     aktiviert.
-19. **obligatorisch** ein neues activation_state="activated" SyncBackupV6 des
+20. **obligatorisch** ein neues activation_state="activated" SyncBackupV6 des
     Successors erzeugen und Test-Restore-verifizieren.
-20. ActivationLineageCacheV2 persistieren/readback-verifizieren.
-21. erst danach atomar auf v2 umschalten; v1 retire.
+21. ActivationLineageCacheV2 persistieren/readback-verifizieren.
+22. erst danach atomar auf v2 umschalten; v1 retire.
 
 Kein v1-Client darf eine v2-Epoche als v1 interpretieren.
 
