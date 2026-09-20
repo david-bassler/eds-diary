@@ -51,6 +51,7 @@ epoch_id                 16 CSPRNG bytes
 key_id                   16 CSPRNG bytes
 record_id                16 bytes
 writer_device_id         16 CSPRNG bytes
+activation_lineage_cache_id 16 CSPRNG bytes
 recovery_artifact_id     16 CSPRNG bytes
 creation_locator         16 CSPRNG bytes
 
@@ -571,6 +572,7 @@ AAD:
 UTF8(JCS({
   format,
   version,
+  cache_id,
   diary_id,
   epoch_id,
   recovery_generation,
@@ -1165,6 +1167,7 @@ Exakt:
 {
   format: "activation-lineage-cache-v2",
   version: 2,
+  cache_id,
   diary_id,
   epoch_id,
   manifest_fingerprint,
@@ -1173,6 +1176,7 @@ Exakt:
 }
 ~~~
 
+cache_id = 16 CSPRNG-Bytes Base64URL.
 iv = 12 CSPRNG-Bytes.
 
 AAD exakt:
@@ -1981,9 +1985,15 @@ local_offline | remote_bound | active | offline_restored | retired | orphaned
 Für v2 gilt zusätzlich:
 - ein vorbereiteter Successor bleibt `remote_bound` (oder nach Backup-Restore
   `local_offline`/`offline_restored`) und `writer_status="read_only"`, solange
-  seine kanonische Aktivierung nicht gemäß §10b bzw. beim profile_upgrade durch
-  die verifizierte v1-Source bewiesen ist;
-- `active` darf erst nach diesem Aktivierungsnachweis persistiert werden;
+  seine kanonische Aktivierung nicht vollständig bewiesen ist;
+- native v2-Genesis darf erst nach vollständigem Manifest-/Gen-1-/Remote-Verify
+  `active` werden;
+- jede nicht-native v2-Epoche darf erst `active` werden, wenn die komplette
+  ActivationLineageV2 gemäß §10c **und** die Migration-Integritätsprüfung gemäß
+  §16a.1 erfolgreich sind; ein direkter §10b-Proof allein reicht ausdrücklich
+  nicht;
+- `active` darf erst nach diesem vollständigen Aktivierungsnachweis persistiert
+  werden;
 - die Rotation-/Migrationsservices dürfen während ihrer expliziten
   Maintenance-Operation die vorbereiteten Successor-Rows erzeugen; das ist kein
   normales Writer-Gate und verleiht dem staged Successor keine interaktive
@@ -2008,10 +2018,38 @@ exakt zum **aktuellen** Recovery-State des Verifiers passen.
 stale_writer_pending_count und operation_generation sind nichtnegative
 Safe-Integer.
 
-rotation_state_ref, migration_state_ref, writer_operation_state_ref,
-recovery_operation_state_ref und activation_lineage_cache_ref sind null oder
-verwenden exakt die geschlossene
-{operation_id,state,state_record_hash}-Referenzform.
+rotation_state_ref, migration_state_ref, writer_operation_state_ref und
+recovery_operation_state_ref sind null oder verwenden exakt die geschlossene
+Operation-Referenzform:
+
+~~~text
+{
+  operation_id,
+  state,
+  state_record_hash
+}
+~~~
+
+activation_lineage_cache_ref ist **kein Operation-State** und ist null oder
+exakt:
+
+~~~text
+{
+  cache_id,
+  cache_record_hash
+}
+~~~
+
+cache_id muss exakt dem cache_id des referenzierten ActivationLineageCacheV2
+entsprechen.
+
+~~~text
+cache_record_hash =
+  Base64URL(SHA-256(UTF8(JCS(activation_lineage_cache_v2))))
+~~~
+
+Operation- und Cache-Refs werden zusätzlich durch K_local_state_mac des
+EpochLocalSecurityStateV6 authentifiziert.
 
 recovery_generation, recovery_urs_commitment und recovery_takeover_key_id
 beschreiben nach gebundenem Full Verify den **aktuellen** Recovery-State nach
