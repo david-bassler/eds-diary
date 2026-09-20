@@ -830,11 +830,27 @@ Mindestens:
 26. Transferdescriptor ohne gültigen Proof-of-Possession des Ziel-Private-Keys -> Handoff wird abgelehnt.
 27. Provider-Rollback vor einen dem Gerät bereits bekannten Writer-Grant -> fail-closed gegen den neueren Anchor.
 28. Vollständiger Verlust aller neueren Freshness-Belege -> als explizite nicht lösbare globale Freshness-Grenze dokumentiert; kein erfundener "latest"-Zustand.
-29. recovery_rekey: Recovery nur mit **neuem** URS + Google, alter URS nicht verfügbar -> aktivierter Successor wird über RecoveryActivationProofV2 erkannt.
-30. recovery_rekey: Takeover-/andere Row landet vor geplantem Announcement -> neuer Successor bleibt staged; kein falscher Recovery-Switch.
-31. staged Successor -> Fachwrite, Handoff und Forced Takeover blockiert.
-32. Gen-1-Grant fehlt oder erste semantische Row ist kein manifestgebundener Gen-1-Grant -> fail-closed.
-33. Unknown Outcome nach Source-Seal -> kein Retry auf versiegelter Source.
+29. vorbereiteter Handoff-/Takeover-Grant, danach beliebige andere Row bei
+    unverändertem Writer -> alter Grant bleibt stale und darf später keine
+    Authority übertragen.
+30. recovery_rekey mit verlorenem altem URS: neues same-epoch RecoveryArtifact
+    publiziert, Crash vor Transition -> Recovery mit neuem URS darf exakt die
+    vorbereitete Transition nur bei unverändertem Anchor fertig appendieren.
+31. recovery_rekey: fremde Row überholt Transition-Anchor -> neue
+    Recovery-Authority bleibt staged/read-only.
+32. durable RecoveryAuthorityTransitionV2 -> alte Recovery-Generation kann
+    keinen neuen Forced Takeover autorisieren.
+33. zweifache v2→v2-Rotation: nur direkter ActivationProof gültig, älterer
+    Lineage-Link manipuliert -> Recovery fail-closed.
+34. staged Successor -> Fachwrite, Handoff und Forced Takeover blockiert.
+35. Gen-1-Grant fehlt oder erste semantische Row ist kein manifestgebundener
+    Gen-1-Grant -> fail-closed.
+36. Unknown Outcome nach Source-Seal -> kein Retry auf versiegelter Source.
+37. Crash/Neustart in jeder WriterGrant-, RecoveryRekey- und
+    RotationOperationStateV2-Stage.
+38. Rotation-Switch ohne activated Successor-Backup -> blockiert.
+39. activated Backup bei fehlender historischer Source -> nur offline/read-only,
+    niemals erfundene Writer-Authority.
 
 ## 22. Nicht-Ziele
 
@@ -1058,7 +1074,14 @@ RemoteAnchorV2
 WriterDeviceKeyV2
 WriterSignatureV2
 RecoveryTakeoverAuthorityV2
+RecoveryAuthorityTransitionV2
+RecoveryAuthorityTransitionProofV2
 RecoveryActivationProofV2
+ActivationLineageV2
+ActivationLineageCacheV2
+WriterGrantOperationStateV2
+RecoveryRekeyOperationStateV2
+RotationOperationStateV2
 SyncBackupV6
 RecoveryArtifactV6
 WriterGrantV2
