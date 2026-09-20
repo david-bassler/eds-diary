@@ -417,6 +417,14 @@ Recovery-Autorisierung.
 Der Full Verifier verarbeitet `_r` weiterhin in physischer Reihenfolge und
 führt zusätzlich einen Writer-Authority-Automaten.
 
+Für Crash-Resume eines staged Successors gibt es zusätzlich einen eng
+operation-gebundenen Verify-Zweck: Nur bei MAC-authentifiziertem
+RotationOperationStateV2 in `successor_bound|copying` darf ein noch fehlendes
+EpochMigrationV2-Control als erwarteter Zwischenzustand gemeldet werden. Dieser
+Modus verleiht **niemals** aktive Epoche, Writer-Authority, Recovery-Aktivierung
+oder activated Backup-Status. Ab `successor_verified` ist wieder der
+kanonische Full Verify mit verpflichtender Migration-Control erforderlich.
+
 Für jede Row:
 
 1. Envelope strukturell und kryptographisch öffnen.
@@ -672,17 +680,25 @@ zuständig.
 Über **mehrere Geräte** reicht lokales `operation_generation` nicht. Die
 Remote-Reihenfolge muss deterministisch sein:
 
-- landet ein gültiger Takeover-Grant vor dem Rotation-Announcement, ist ein
-  danach vom alten Writer signiertes Announcement stale/ungültig und der
-  vorbereitete Successor darf nicht aktiviert werden;
-- landet das gültige Rotation-Announcement zuerst, ist die Source-Epoche ab
-  dieser kanonischen Row **versiegelt**; spätere Fachwrites, Writer-Grants und
-  andere authority-mutierende Controls auf der Source sind semantisch ungültig.
-  Recovery/Takeover muss dann gegen den kanonischen Successor erfolgen.
+- jedes v2-Rotation-Announcement trägt deshalb einen
+  `source_anchor_before_announcement`, der **exakt** dem physischen Prefix
+  unmittelbar vor seiner eigenen Row entsprechen muss;
+- landet irgendeine physische Row vor dem vorbereiteten Announcement, wird
+  dessen Anchor historisch. Das Announcement ist dann stale und darf die Source
+  **nicht** versiegeln – auch dann nicht, wenn die Writer-Authority durch diese
+  Row unverändert blieb;
+- landet ein gültiger Takeover-Grant vor dem Rotation-Announcement, ist das
+  vorbereitete Announcement dadurch ebenfalls stale und der Successor darf nicht
+  aktiviert werden;
+- landet das anchor-exakte gültige Rotation-Announcement zuerst, ist die
+  Source-Epoche ab dieser kanonischen Row **versiegelt**; spätere Fachwrites,
+  Writer-Grants und andere authority-mutierende Controls auf der Source sind
+  semantisch ungültig. Recovery/Takeover muss dann gegen den kanonischen
+  Successor erfolgen.
 
-Rotation-Announcement und andere autoritätsverändernde Control-Records müssen
-deshalb im v2-Verifier ebenfalls an die zum jeweiligen Row-Zeitpunkt gültige
-Writer-/Recovery-Authority gebunden sein.
+Rotation-Announcement und andere autoritätsverändernde Control-Records sind
+damit sowohl an die Writer-/Recovery-Authority als auch an den exakten
+Entscheidungs-Prefix gebunden.
 
 Recovery-Rekey ändert den Writer nicht automatisch. Die neue
 Recovery-Authority wird zuerst auf der **noch aktiven, unsealed Source** durch
@@ -693,10 +709,25 @@ Bytes nur fertig appendieren, wenn die Source noch exakt am gebundenen Anchor
 steht; jede intervenierende Row macht den vorbereiteten Rekey stale.
 
 Nach durable Transition ist die alte Recovery-Generation auch innerhalb
-derselben Source für neue Forced Takeovers ungültig. Ein obligatorisches
-activated Source-Backup muss erfolgreich getestet sein, bevor eine
-recovery_rekey-Epoch-Rotation beginnt. Der Successor übernimmt anschließend die
-bereits aktuelle Recovery-Generation; die Rotation erhöht sie nicht noch einmal.
+derselben Source für neue Forced Takeovers ungültig. Das ist aber **noch nicht**
+der vollständige Recovery-Key-Wechsel: das alte immutable RecoveryArtifact kann
+den bisherigen Source-RK weiterhin unter dem alten URS offenlegen.
+
+Deshalb ist anschließend zwingend:
+
+1. activated Source-Backup unter der neuen Recovery-Authority testen;
+2. eine `recovery_rekey`-Epoch-Rotation starten, die exakt die durable
+   RecoveryAuthorityTransitionV2.transition_id bindet;
+3. einen **neuen Successor-RK** erzeugen;
+4. Migration-/Announcement-/Activation-Lineage- und activated-Backup-Gates
+   vollständig durchlaufen;
+5. erst nach dem atomaren Switch gilt der Recovery-Key-Wechsel als abgeschlossen.
+
+Der Successor übernimmt die bereits aktuelle Recovery-Generation; die Rotation
+erhöht sie nicht noch einmal. Der alte Recovery-Key kann danach den neuen
+aktiven Successor-RK nicht ableiten. Historische Vertraulichkeit kann ein Rekey
+nicht rückwirkend herstellen, wenn das alte Artifact bereits kopiert oder
+kompromittiert wurde.
 
 Aktivierung über mehrere Epochen wird durch `ActivationLineageV2` transitiv
 bewiesen. Das aktuelle RecoveryArtifact trägt unter dem aktuellen URS die
@@ -705,10 +736,21 @@ v1→v2-/v2→v2-Aktivierungsbeweise. Jeder Link wird vom Root nach vorn gegen d
 jeweilige echte Source-Historie geprüft; ein gültiger direkter Link heilt keinen
 älteren ungültigen oder fehlenden Link.
 
+Jeder nicht-native Link verlangt zusätzlich **exakt ein**
+`epoch-migration-sw-v2` im Successor. Dessen Source-Semantic-/Lineage-Hashes
+werden gegen den verifizierten Source-Graph am gebundenen Source-Anchor
+nachgerechnet; Result-Semantic-Hash und Head-Counts gegen den Successor-Graph
+unmittelbar vor der Migration-Control-Row. Aktivierungsproof ohne korrekte
+Migration-Integrität genügt nicht. Dadurch kann ein kryptographisch korrekt
+aktivierter, aber unvollständig kopierter Successor nicht kanonisch werden.
+
 Ein unter RK_epoch verschlüsselter `ActivationLineageCacheV2` hält diese
 Lineage lokal für Rotation/Rekey verfügbar, auch wenn der alte URS verloren ist.
-Kompromittierung des aktuellen URS offenbart dadurch bewusst auch die in der
-Lineage enthaltenen historischen Root-Keys.
+Er besitzt einen eigenen Cache-Identifier/Cache-Hash und ist **kein**
+Operation-State. Kompromittierung des aktuellen URS offenbart bewusst die im
+RecoveryArtifact enthaltenen historischen Root-Keys; kompromittiertes RK_epoch
+**plus Zugriff auf den lokalen Lineage-Cache** offenbart dieselben historischen
+Keys ebenfalls.
 
 **Bewusste Recovery-Rekey-Grenze:** Weil der alte Recovery-Key gerade verloren
 sein darf, reicht zur Recovery-Authority-Transition die aktuell kanonische
@@ -718,7 +760,12 @@ auf eigenes Material umstellen. Ein stärkeres Modell benötigt einen zusätzlic
 unabhängigen Recovery-Zweitfaktor und eine neue Protokollversion.
 
 Jede Rotation besitzt einen persistenten Crash-Resume-State mit den exakten
-one-shot Announcement-/Grant-Bytes. Vor dem finalen lokalen Switch ist neben dem
+one-shot Announcement-/Grant-Bytes. Die Stage-Reihenfolge ist geschlossen:
+Successor verifizieren -> Announcement one-shot vorbereiten ->
+Activation-Evidence/Lineage bilden -> RecoveryArtifact -> staged Backup ->
+Announcement append/readback -> activated Backup -> Switch. Das Announcement
+muss **vor** RecoveryArtifact/Backup vorbereitet sein, weil diese seine exakten
+Bytes kryptographisch binden. Vor dem finalen lokalen Switch ist neben dem
 staged Backup zwingend ein **activated SyncBackupV6** zu erzeugen und per
 Test-Restore zu prüfen. Ein Backup kann Daten/Schlüssel offline wiederherstellen;
 remote-active Writer-Recovery benötigt weiterhin die historische
@@ -727,18 +774,25 @@ Activation-Lineage-Source-Kette.
 
 Migration wird auf dem aktuell vertrauenswürdigen v1-Gerät gestartet:
 
-1. v1 Source full-verifizieren und Writes einfrieren;
+1. v1 Source full-verifizieren, finalen Source-Anchor und
+   Semantic-/Lineage-Snapshots berechnen und Writes einfrieren;
 2. neue v2-Successor-Epoche + initialen Writer Grant Generation 1 planen;
-3. fachliche Heads + v2 Migration-Control schreiben und Successor full-verifizieren;
-4. ProfileUpgrade-ActivationLineage-Eintrag mit v1-Source-RK und exakt
-   vorbereitetem v1-Rotation-Announcement erzeugen;
-5. RecoveryArtifactV6 publizieren und staged Recovery testen;
-6. staged SyncBackupV6 read-only Test-Restore;
-7. v1 Rotation Announcement durable machen;
-8. ActivationLineage vollständig prüfen;
-9. **obligatorisch** activated SyncBackupV6 erzeugen und Test-Restore;
-10. ActivationLineageCacheV2 persistieren/readback-verifizieren;
-11. erst danach atomar auf v2 umschalten und v1 retire.
+3. Fach-Heads kopieren und exakt eine v2 Migration-Control schreiben. Deren
+   Source-Snapshot-Hashes müssen gegen den v1-Prefix und deren Result-Hash/Counts
+   gegen den Successor-Graph unmittelbar vor der Control-Row nachgerechnet
+   werden;
+4. Successor full-verifizieren und die Migration-Integritätsprüfung vollständig
+   bestehen;
+5. v1 Rotation Announcement exakt one-shot vorbereiten und daraus den
+   ProfileUpgrade-ActivationLineage-Eintrag erzeugen;
+6. RecoveryArtifactV6 publizieren und staged Recovery testen;
+7. staged SyncBackupV6 read-only Test-Restore;
+8. exakt das vorbereitete v1 Rotation Announcement durable machen;
+9. ActivationLineage **einschließlich Migration-Integrität** vollständig prüfen;
+10. **obligatorisch** activated SyncBackupV6 erzeugen und Test-Restore;
+11. ActivationLineageCacheV2 mit eigenem Cache-ID/Hash
+    persistieren/readback-verifizieren;
+12. erst danach atomar auf v2 umschalten und v1 retire.
 
 Alte v1-Geräte sehen das Announcement und dürfen die alte Epoche nicht weiter
 als aktiv behandeln.
@@ -866,6 +920,38 @@ Mindestens:
 38. Rotation-Switch ohne activated Successor-Backup -> blockiert.
 39. activated Backup bei fehlender historischer Source -> nur offline/read-only,
     niemals erfundene Writer-Authority.
+40. vorbereitete v2-Rotation, danach beliebige stale physische Source-Row,
+    danach altes Announcement -> stale_rotation_announcement_rejected und Source
+    bleibt unsealed.
+41. Rotation-Announcement mit falschem from_epoch_id, self-successor oder
+    falscher recovery_transition_id -> fail-closed.
+42. Successor mit fehlendem/zusätzlichem Fach-Head trotz gültigem
+    ActivationProof -> Migration-Integrität schlägt fehl, keine Aktivierung.
+43. manipulierte source_semantic/source_lineage_snapshot_hash oder
+    Result-Head-Counts -> fail-closed.
+44. gültiger direkter ActivationProof, aber fehlende/zweite EpochMigrationV2 ->
+    keine Aktivierung.
+45. ActivationLineageCacheV2 cache_id/ref/hash mismatch -> fail-closed; kein
+    Rotation/Rekey-Start.
+46. profile_upgrade/normal/recovery_rekey durch alle erlaubten
+    RotationOperationStateV2-Stages; übersprungene oder unmögliche
+    Null/non-null-Kombination -> security_blocked.
+47. Recovery-Rekey-Rotation bindet exakt die durable
+    RecoveryAuthorityTransitionV2.transition_id in Announcement, Proof und
+    Migration-Control.
+48. Crash in successor_bound/copying vor EpochMigrationV2 -> operation-gebundener
+    rotation_resume-Verify akzeptiert den erwarteten unvollständigen Prefix nur
+    als staged; canonical_full bleibt migration_control_missing.
+49. RecoveryAuthorityTransitionV2 durable, aber Successor-Rotation noch nicht
+    abgeschlossen -> neuer URS kann Source recovern/takeovern; Rekey bleibt
+    ausdrücklich unvollständig.
+50. alter URS nach durable Transition, aber vor Successor-Switch -> darf keine
+    Recovery-Takeover-Authority mehr erhalten, kann historischen Source-RK über
+    altes Artifact aber noch lesen.
+51. Rekey `completed` ohne geswitchte recovery_rekey-Successor-Epoche mit
+    **neuem RK_epoch** -> security_blocked.
+52. nach abgeschlossenem Rekey kann altes URS den neuen aktiven Successor-RK
+    nicht aus altem RecoveryArtifact ableiten.
 
 ## 22. Nicht-Ziele
 
@@ -1092,6 +1178,9 @@ RecoveryTakeoverAuthorityV2
 RecoveryAuthorityTransitionV2
 RecoveryAuthorityTransitionProofV2
 RecoveryActivationProofV2
+RotationAnnouncementV2
+EpochMigrationV2
+MigrationIntegrityV2
 ActivationLineageV2
 ActivationLineageCacheV2
 WriterGrantOperationStateV2
