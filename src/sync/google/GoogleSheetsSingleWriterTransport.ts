@@ -1,7 +1,7 @@
 import { base64Url, concatBytes, fixedBase64Url, utf8 } from '../../security/crypto/bytes'
 import { sha256 } from '../../security/crypto/core'
 import { canonicalBytes } from '../../security/crypto/canonical'
-import { SINGLE_WRITER_V1_PROFILE, TransportError, type RemoteCandidate, type RemoteSnapshot, type RemoteTransport } from '../core/contracts'
+import { GOOGLE_DRIVE_SHEETS_PROVIDER, SINGLE_WRITER_V1_PROFILE, TransportError, type RemoteCandidate, type RemoteSnapshot, type RemoteTransport } from '../core/contracts'
 import { isAuthenticatedGoogleApiClient } from './GoogleAuthProvider'
 
 /** An API client issued by the isolated authentication hand-off. `identity()` is
@@ -60,6 +60,7 @@ export function isAuthenticatedGoogleTransport(value:unknown):value is GoogleShe
 /** Strict Google wire adapter. Large grids are never requested before dimensions
  * are checked, and record data is subsequently fetched in bounded ranges. */
 export class GoogleSheetsSingleWriterTransport implements RemoteTransport {
+  readonly providerId = GOOGLE_DRIVE_SHEETS_PROVIDER
   readonly profileId = SINGLE_WRITER_V1_PROFILE
   private readonly sheetIds = new Map<string, number>()
   private constructor(private readonly api: GoogleApiClient, private readonly binding: GoogleTransportBinding) {}
