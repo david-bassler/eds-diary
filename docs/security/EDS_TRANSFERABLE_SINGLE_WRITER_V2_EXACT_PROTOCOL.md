@@ -1750,9 +1750,7 @@ Top-Level exakt:
   recovery_artifact,
   record_rows,
   pending_outbox_rows,
-  stale_writer_pending_rows,
-  recovery_activation_proof,
-  activation_state
+  stale_writer_pending_rows
 }
 ~~~
 
@@ -1766,10 +1764,13 @@ byteidentisch remote vorhanden sind. stale_writer_pending_rows enthält
 ausschließlich quarantinierte ältere Writer-Envelopes und wird bei Restore
 niemals automatisch gepusht.
 
-recovery_activation_proof ist exakt dasselbe null/Proof-Objekt wie im
-RecoveryArtifactV6. activation_state ist exakt "staged" | "activated".
-"activated" ist **keine selbstbeglaubigende Aussage**. Restore muss die
-Aktivierung passend zum Epoch-Ursprung erneut beweisen:
+RecoveryActivationProofV2 liegt **nicht** zusätzlich im öffentlichen
+Backup-Top-Level. Er wird erst aus dem verschlüsselten RecoveryArtifactV6
+gewonnen. Das verschlüsselte Backup-Manifest bindet dessen Hash.
+
+activation_state im verschlüsselten Backup-Manifest ist exakt
+"staged" | "activated". "activated" ist **keine selbstbeglaubigende Aussage**.
+Restore muss die Aktivierung passend zum Epoch-Ursprung erneut beweisen:
 - native v2-Genesis: predecessor_epochs=[] + genesis-Grants vollständig prüfen;
 - v1→v2 profile_upgrade: mit derselben URS die v1-Source vollständig verifizieren
   und ihr exaktes Rotation-Announcement auf diesen Successor bestätigen;
@@ -1838,8 +1839,11 @@ writer_authority_at_export ist exakt:
 }
 ~~~
 
-recovery_activation_proof_sha256 ist null, wenn kein Proof zulässig ist,
-ansonsten Base64URL(SHA-256(UTF8(JCS(recovery_activation_proof)))).
+recovery_activation_proof_sha256 ist null, wenn das entschlüsselte
+RecoveryArtifactV6 recovery_activation_proof=null enthält; ansonsten exakt
+Base64URL(SHA-256(UTF8(JCS(recovery_artifact.recovery_activation_proof)))).
+Der Hash muss beim Restore nach Artifact-Entschlüsselung reproduziert werden.
+
 recovery_artifact_sha256 ist Base64URL(SHA-256(UTF8(JCS(recovery_artifact)))).
 remote_anchor_at_export ist für ein exportierbares gebundenes v2-Profil
 nicht-null und muss exakt aus record_rows reproduzierbar sein.
@@ -1858,11 +1862,17 @@ Union.
 
 Test-Restore muss Manifest, RecoveryArtifactV6-Bindung, sämtliche Hashes/Counts,
 RemoteAnchorV2, Writer-Authority und jede Row vollständig prüfen und anschließend
-den produktiven TransferableSingleWriterV2Verifier verwenden. Bei
-activation_state="activated" muss zusätzlich der oben definierte, zum
-Epoch-Ursprung passende Aktivierungsnachweis erfolgreich sein; bei "staged"
-oder nicht prüfbarer Aktivierung wird ausschließlich local_offline/read_only
-restored. Restore darf stale_writer_pending_rows nur als Quarantäne
+den produktiven TransferableSingleWriterV2Verifier verwenden.
+
+- activation_state="staged" => ausschließlich local_offline/read_only Restore.
+- activation_state="activated" + strukturell/kryptographisch ungültiger,
+  widersprüchlicher oder gegen vorhandene Source-Historie fehlschlagender
+  Aktivierungsnachweis => security_blocked/fatal; niemals still auf staged
+  herabstufen.
+- activation_state="activated", Aktivierungsbeweis intern gültig, aber die für
+  die externe Aktivierungsprüfung benötigte Google-Source ist momentan nicht
+  erreichbar => optional local_offline/read_only Restore; niemals remote-active,
+  bis die externe Prüfung erfolgreich nachgeholt wurde. Restore darf stale_writer_pending_rows nur als Quarantäne
 wiederherstellen.
 
 ---
