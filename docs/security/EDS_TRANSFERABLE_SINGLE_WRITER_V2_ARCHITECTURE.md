@@ -1070,6 +1070,9 @@ Mindestens:
 60. RecoveryArtifactV6 mit to-State vor durabler Transition -> nur mit gültigem
     RecoveryAuthorityTransitionProofV2 staged/read-only; niemals current Forced
     Takeover-Authority.
+61. cache_id/rotation_id/migration_id/transition_id/operation_id: exakte
+    Decode-Länge und kanonisches Base64URL; falsche Länge oder nicht-kanonische
+    Repräsentation -> fail-closed.
 
 ## 22. Nicht-Ziele
 
