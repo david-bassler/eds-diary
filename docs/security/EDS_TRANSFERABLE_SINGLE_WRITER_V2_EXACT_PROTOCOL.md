@@ -1003,6 +1003,146 @@ Source-Prefix tatsächlich aktiviert.“ Er behauptet keine globale Freshness ü
 spätere Provider-Rollbacks hinaus.
 
 ---
+## 10c. ActivationLineageV2 – transitiver Aktivierungsbeweis
+
+Jedes RecoveryArtifactV6 enthält eine geordnete `activation_lineage`. Sie
+beweist nicht nur den direkten Vorgänger, sondern die **gesamte** kanonische
+Aktivierungskette bis zur aktuellen v2-Epoche.
+
+Maximal `protocol_limits.max_activation_lineage_entries = 128` Einträge. Eine
+129. Rotation ist in diesem Profil nicht zulässig; Lineage-Compaction benötigt
+eine neue Protokollversion.
+
+Eintrag Union exakt:
+
+~~~text
+ProfileUpgradeActivationEntryV2 = {
+  kind: "profile_upgrade",
+  source_profile: "google-sheets-single-writer-v1",
+  source_epoch_id,
+  source_manifest_fingerprint,
+  source_root_key,
+  source_anchor_before_announcement,
+  successor_epoch_id,
+  successor_manifest_fingerprint,
+  announcement_envelope: {
+    envelope_id,
+    iv,
+    ciphertext
+  }
+}
+
+V2RotationActivationEntryV2 = {
+  kind: "v2_rotation",
+  source_profile: "google-sheets-transferable-single-writer-v2",
+  source_root_key,
+  proof: RecoveryActivationProofV2
+}
+~~~
+
+`source_root_key` ist jeweils Base64URL von exakt 32 Byte und steht nur
+innerhalb des URS-verschlüsselten RecoveryArtifactV6 bzw. des unter RK_epoch
+verschlüsselten lokalen ActivationLineageCacheV2.
+
+Konstruktionsregeln:
+
+- native v2-Genesis: activation_lineage=[].
+- v1→v2 profile_upgrade: activation_lineage enthält exakt einen
+  ProfileUpgradeActivationEntryV2.
+- v2→v2: der Successor kopiert die **bereits vollständig verifizierte** Lineage
+  der aktiven Source byte-/semantikgleich und hängt genau einen
+  V2RotationActivationEntryV2 für Source→Successor an.
+- Ein staged/nicht aktivierter Epoch darf niemals als Source einer neuen
+  Lineage-Erweiterung dienen.
+- Jeder Eintrag muss auf den unmittelbar vorherigen/folgenden Epoch-Fingerprint
+  passen; Lücken, Wiederholungen, alternative Branches oder Zyklus => fatal.
+
+ProfileUpgrade-Prüfung:
+
+1. v1-Source über source_root_key und source_manifest_fingerprint vollständig
+   mit dem eingefrorenen v1-Verifier prüfen.
+2. source_anchor_before_announcement muss exakt ein verifizierter finaler
+   Source-Prefix sein.
+3. Die unmittelbar nächste physische v1-Row muss byte-identisch
+   announcement_envelope sein.
+4. Diese Row mit source_root_key öffnen und als gültiges
+   rotation-announcement-sw-v1 auf successor_epoch_id +
+   successor_manifest_fingerprint prüfen.
+5. Erst dann ist die erste v2-Epoche aktiviert.
+
+V2-Link-Prüfung:
+
+- source_root_key + proof werden exakt nach §10b geprüft.
+- source_epoch_id/fingerprint des Proofs müssen dem vorherigen kanonisch
+  aktivierten Lineage-Leaf entsprechen.
+- successor_epoch_id/fingerprint des Proofs müssen dem nächsten Leaf bzw. beim
+  letzten Eintrag der RecoveryArtifactV6-Epoche entsprechen.
+
+Recovery validiert Einträge **vom Root nach vorn**. Ein späterer gültiger Link
+kann einen früheren fehlenden/ungültigen Link niemals heilen.
+
+### 10d. ActivationLineageCacheV2 – lokaler verschlüsselter Cache
+
+Damit normale Rotation und recovery_rekey auch dann möglich bleiben, wenn der
+alte URS nicht mehr bekannt ist, wird die zuletzt vollständig verifizierte
+activation_lineage lokal unter RK_epoch verschlüsselt gehalten.
+
+Exakt:
+
+~~~text
+{
+  format: "activation-lineage-cache-v2",
+  version: 2,
+  diary_id,
+  epoch_id,
+  manifest_fingerprint,
+  iv,
+  ciphertext
+}
+~~~
+
+iv = 12 CSPRNG-Bytes.
+
+AAD exakt:
+
+~~~text
+UTF8(JCS({
+  format,
+  version,
+  diary_id,
+  epoch_id,
+  manifest_fingerprint,
+  iv
+}))
+~~~
+
+Plaintext exakt:
+
+~~~text
+{
+  activation_lineage
+}
+~~~
+
+~~~text
+AES-256-GCM(
+  K_activation_lineage_cache,
+  iv,
+  UTF8(JCS(plaintext)),
+  AAD
+)
+~~~
+
+Nach erfolgreicher Aktivierung/Recovery muss der Cache persistent geschrieben,
+AEAD-readback-verifiziert und gegen die aktuelle Epoche gebunden sein. Rotation
+oder recovery_rekey ist blockiert, wenn dieser Cache fehlt, nicht entschlüsselbar
+ist oder die Lineage nicht vollständig erneut validiert werden kann. Normale
+Fachwrites benötigen den Cache nicht.
+
+Der Cache enthält historische Root-Keys und ist deshalb vertrauliches Material;
+er darf weder in Logs noch in unverschlüsseltem Local State erscheinen.
+
+---
 
 ## 11. RemoteAnchorV2
 
