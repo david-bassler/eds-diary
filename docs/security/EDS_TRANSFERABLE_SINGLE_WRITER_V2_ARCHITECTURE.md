@@ -679,13 +679,26 @@ einer älteren Recovery-Generation darf in der neuen Epoche keinen Forced
 Takeover autorisieren.
 
 Damit Recovery nach einem Rekey ohne alten Recovery-Key möglich bleibt, bindet
-das neue RecoveryArtifactV6 zusätzlich einen `RecoveryActivationProofV2`:
-historisch verifizierter Source-Prefix, exakt vorbereitete
-Rotation-Announcement-Envelope-Bytes, Successor-Identität und eine Signatur der
-damaligen Source-Writer-Authority. Recovery kann damit die rohe Source-Rowfolge
-prüfen, ohne den alten Source-RK zu besitzen. Landet vor dem geplanten
-Announcement ein Takeover-/anderer Row-Claim, schlägt der Aktivierungsbeweis
-fail-closed fehl.
+das neue RecoveryArtifactV6 zusätzlich:
+
+- den direkten Predecessor-RK ausschließlich als verschlüsseltes
+  Aktivierungs-Verifikationsmaterial; und
+- einen `RecoveryActivationProofV2` aus historisch verifiziertem Source-Prefix,
+  exakt vorbereiteten Rotation-Announcement-Envelope-Bytes,
+  Successor-Identität und Signatur der damaligen Source-Writer-Authority.
+
+Recovery entschlüsselt mit dem **aktuellen** URS den direkten Source-RK, verifiziert
+damit die Source selbst vollständig und stellt die dort am gebundenen Prefix
+kanonische Writer-Authority fest. Erst gegen **diesen aus der Source verifizierten
+Public Key** wird der Activation-Proof geprüft. Eine bloße Authority-Behauptung
+des Successor-Manifests reicht nicht. Landet vor dem geplanten Announcement ein
+Takeover-/anderer Row-Claim oder stammt der Proof von einem stale Writer-Key,
+schlägt die Aktivierung fail-closed fehl.
+
+Der Tradeoff ist explizit: Kompromittierung des aktuellen URS offenbart dadurch
+auch den direkten Vorgänger-RK. Das ist die gewählte Grenze, um Recovery-Rekey
+ohne alten URS dennoch unabhängig gegen die Source-Historie verifizieren zu
+können.
 
 ## 18. Migration v1 -> v2
 
