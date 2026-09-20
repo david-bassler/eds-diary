@@ -1,6 +1,6 @@
 # Production Security Release Gates
 
-Stand: 19.09.2026
+Stand: 20.09.2026
 
 EDS Diary ist **nicht** als „production secure“ freigegeben.
 
@@ -33,11 +33,14 @@ EDS Diary ist **nicht** als „production secure“ freigegeben.
 - Recovery-Artefakte werden nach Restore unabhängig von einer lokalen
   `rotation_state_ref` dauerhaft gehalten und können bereits vor erneuter
   Google-Aktivierung wieder exportiert werden.
-- Der Recovery-Schlüssel kann bei noch entsperrtem, authentifiziertem Profil ohne
-  Kenntnis des alten Recovery-Schlüssels über eine vollständige
-  `recovery_rekey`-Epoch-Rotation ersetzt werden. Die Recovery-Generation wird
-  erhöht; Umschaltung erfolgt erst nach Full Verify, Recovery-Bootstrap und
-  Backup-Test-Restore.
+- **Im implementierten Single-Writer-v1-Pfad** kann der Recovery-Schlüssel bei
+  noch entsperrtem, authentifiziertem Profil ohne Kenntnis des alten
+  Recovery-Schlüssels über eine vollständige `recovery_rekey`-Epoch-Rotation
+  ersetzt werden. Die Recovery-Generation wird erhöht; Umschaltung erfolgt erst
+  nach Full Verify, Recovery-Bootstrap und Backup-Test-Restore. Die hiervon
+  getrennte zweiphasige v2-RecoveryAuthorityTransition/Pending-Rekey-Fence-
+  Konstruktion ist Bestandteil des oben als **NICHT IMPLEMENTIERT**
+  ausgewiesenen Transferable-Single-Writer-v2-Gates.
 - Das verschlüsselte Recovery-Artefakt wird vor der Umschaltung zusätzlich in
   einer privaten owner-only Google-Ressource unter einem aus dem Recovery-Key
   abgeleiteten opaken Locator gespeichert und per Readback verifiziert. Google-
