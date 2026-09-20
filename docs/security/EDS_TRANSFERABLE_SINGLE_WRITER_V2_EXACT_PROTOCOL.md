@@ -1047,18 +1047,35 @@ source_lineage_snapshot_hash
 source_semantic_snapshot_hash
 ~~~
 
-source_writer_authority enthält exakt:
+source_writer_authority ist exakt null oder:
 
 ~~~text
-writer_generation
-writer_grant_id
-writer_device_id
-writer_key_id
+{
+  writer_generation,
+  writer_grant_id,
+  writer_device_id,
+  writer_key_id
+}
 ~~~
 
-migration_kind ist exakt "normal" | "local_rotation" | "remote_enablement" |
-"recovery_rekey" | "emergency". Bei unveränderter Ein-Source-Migration muss
-result_semantic_snapshot_hash == source_semantic_snapshot_hash gelten.
+migration_kind ist exakt:
+
+~~~text
+"profile_upgrade" | "normal" | "recovery_rekey" | "emergency"
+~~~
+
+Regeln:
+
+- profile_upgrade ist ausschließlich v1→v2:
+  source_writer_authority=null und source_anchor ist ein nicht-null
+  RemoteAnchorV1 der final verifizierten v1-Source.
+- normal/recovery_rekey sind v2→v2:
+  source_writer_authority ist nicht-null, entspricht exakt der final
+  verifizierten Source-Authority und source_anchor ist RemoteAnchorV2.
+- emergency darf nur ein separat dokumentiertes Recoveryverfahren verwenden;
+  solange dafür kein eigener Ablauf implementiert ist, fail-closed.
+- Bei unveränderter Ein-Source-Migration muss
+  result_semantic_snapshot_hash == source_semantic_snapshot_hash gelten.
 
 ## 17. Rotation und Recovery-Rekey
 
@@ -1529,7 +1546,8 @@ Reihenfolge:
    Recovery-Private-Key verwerfen und mutierendes Remote-I/O beginnen.
 8. Gen-1-Grant als erste _r-Row mit authority_anchor=H0 schreiben.
 9. fachliche Heads als RevisionV2 unter Gen-1-Authority schreiben/signieren.
-10. Migration-Control schreiben.
+10. Migration-Control mit migration_kind="profile_upgrade" und
+    source_writer_authority=null schreiben.
 11. Successor vollständig mit V2-Verifier verifizieren.
 12. aus RecoveryTakeoverStagingV2 das finale RecoveryArtifactV6 mit dem finalen
     Successor-Anchor erzeugen, lokal/remote readback-verifizieren und
