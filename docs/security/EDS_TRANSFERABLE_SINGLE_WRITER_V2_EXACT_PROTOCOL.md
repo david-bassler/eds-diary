@@ -1694,21 +1694,39 @@ Remote-Reihenfolge auf der Source entscheidet:
   verworfen; weitere Takeover-Aktionen müssen gegen den kanonischen Successor
   erfolgen.
 
-Normale v2→v2-Rotation erhält recovery_generation und das aktuelle
-Recovery-Takeover-Keypair unverändert, erzeugt aber für die neue Epoche ein neues
-RecoveryArtifactV6 mit neuem RK_epoch, Manifest-Fingerprint und finalem
-Successor-Anchor.
+Normale v2→v2-Rotation übernimmt recovery_generation,
+recovery_urs_commitment, recovery_takeover_key_id und
+recovery_takeover_public_key aus dem **final verifizierten aktuellen
+Source-Recovery-State** unverändert in das Successor-Manifest und erzeugt für
+die neue Epoche ein neues RecoveryArtifactV6 mit neuem RK_epoch,
+Manifest-Fingerprint, erweiterter activation_lineage und finalem Successor-Anchor.
 
-Recovery-Rekey erzeugt zwingend:
+Recovery-Rekey ist eine zweiphasige Maintenance-Operation:
 
-- recovery_generation + 1;
-- neue URS-Bindung;
-- neues Recovery-Takeover-Ed25519-Keypair;
-- neues RecoveryArtifactV6;
-- Manifestbindung im Successor.
+1. aktive Source vollständig verifizieren und lokal einfrieren;
+2. neuen URS + neues Recovery-Takeover-Keypair erzeugen;
+3. RecoveryAuthorityTransitionV2 one-shot gegen den finalen Source-Anchor
+   vorbereiten;
+4. neues **same-epoch** RecoveryArtifactV6 unter dem neuen URS publizieren. Es
+   enthält denselben RK_epoch, dieselbe vollständig verifizierte
+   activation_lineage, den neuen Recovery-Key-State und
+   RecoveryAuthorityTransitionProofV2;
+5. Recovery des staged Artifacts testen;
+6. exakte Transition-Envelope-Bytes appendieren + Full Readback;
+7. neues Artifact jetzt gegen den aktuellen Source-Recovery-State prüfen und
+   Forced-Takeover-Keypair-Check durchführen;
+8. obligatorischen **activated Source-SyncBackupV6** erzeugen und
+   Test-Restore-verifizieren;
+9. erst jetzt gilt der Recovery-Key-Wechsel als durable abgeschlossen;
+10. falls der Rekey zugleich Epoch-Rotation verlangt, danach einen normalen
+    Successor-Aufbau starten; rotation_kind/migration_kind dürfen
+    "recovery_rekey" zur Audit-Semantik tragen, aber
+    successor_recovery_generation == bereits aktuelle Source-Generation.
 
-Altes Recovery-Takeover-Material darf in der neuen Recovery-Generation keinen
-Grant signieren.
+Altes Recovery-Takeover-Material darf ab der durable Transition keinen Grant
+mehr autorisieren. Alte RecoveryArtifacts bleiben immutable vorhanden, werden
+aber beim Full Verify als ältere Recovery-Generation erkannt und können keine
+Writer-Authority mehr herstellen.
 
 ---
 
@@ -2209,14 +2227,22 @@ key_check_input =
   raw_recovery_takeover_public_key
 
 signature = Ed25519.sign(imported_private_key, key_check_input)
-Ed25519.verify(current_verified_recovery_takeover_public_key,
+Ed25519.verify(recovery_takeover_public_key_from_artifact,
                signature, key_check_input) == true
 ~~~
 
-Zusätzlich müssen recovery_generation, recovery_urs_commitment,
-recovery_takeover_key_id und Public Key aus dem Artifact exakt dem durch
-Manifest + RecoveryAuthorityTransitionV2 vollständig verifizierten aktuellen
-Recovery-State entsprechen.
+recovery_takeover_key_id muss aus recovery_takeover_public_key des Artifacts
+gemäß §2 reproduzierbar sein.
+
+- Ohne recovery_authority_transition_proof müssen recovery_generation,
+  recovery_urs_commitment, Key-ID und Public Key exakt dem vollständig
+  verifizierten aktuellen Recovery-State entsprechen.
+- Mit recovery_authority_transition_proof darf das Artifact vor durable
+  Transition zunächst den **to-State** repräsentieren, während Remote noch exakt
+  am Proof-from-State/Anchor steht. In diesem Zustand ist es staged/read-only und
+  ausschließlich §16c darf die vorbereitete Transition fertigstellen.
+- Nach durable Transition müssen Artifact-Felder und aktueller Recovery-State
+  exakt übereinstimmen; erst dann ist Forced Takeover zulässig.
 
 salt ist exakt 32 Byte, wrap_iv exakt 12 Byte. wrapped_payload muss nach
 Base64URL-Decoding mindestens 16 und höchstens 1048576 Byte enthalten.
@@ -2432,9 +2458,10 @@ Reihenfolge:
     durchführen.
 15. RecoveryTakeoverStagingV2 darf jetzt gelöscht werden.
 16. v1 Rotation Announcement durable machen.
-17. Successor-Aktivierung über vollständig verifizierte v1-Source bestätigen;
-    optional ein neues activation_state="activated"-Backup erzeugen und testen.
-18. atomar auf v2 umschalten; v1 retire.
+17. Successor-Aktivierung über vollständig verifizierte v1-Source bestätigen.
+18. **obligatorisch** ein neues activation_state="activated" SyncBackupV6 des
+    Successors erzeugen und Test-Restore-verifizieren.
+19. erst danach atomar auf v2 umschalten; v1 retire.
 
 Kein v1-Client darf eine v2-Epoche als v1 interpretieren.
 
