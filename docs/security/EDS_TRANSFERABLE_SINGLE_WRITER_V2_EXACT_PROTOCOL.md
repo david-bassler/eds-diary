@@ -18,6 +18,13 @@ allgemeineren Architekturtext.
 v1 bleibt vollständig eingefroren. Kein v1-Byteformat, v1-State oder v1-Verifier
 wird durch dieses Dokument erweitert oder umgedeutet.
 
+Die Begründung sicherheitsrelevanter Designentscheidungen, verworfener Alternativen
+und der Bedingungen für eine spätere Neubewertung steht im begleitenden
+`EDS_TRANSFERABLE_SINGLE_WRITER_V2_DECISIONS.md`. Eine spätere Änderung einer
+dort protokollierten Entscheidung muss diesen Ledger ausdrücklich aktualisieren;
+dadurch soll erkennbar bleiben, ob ein Review eine neue Annahme findet oder nur
+eine bereits verworfene Alternative erneut einführt.
+
 ---
 
 ## 1. Normative Grundentscheidungen
@@ -4149,6 +4156,13 @@ Negative Vectors:
 - RecoveryAuthorityTransitionV2 verwendet seit erster v2-Aktivierung bereits
   bekannten recovery_urs_id oder recovery_takeover_key_id erneut — auch aus
   einer Vorgänger-Epoche => recovery_credential_reuse;
+- Recovery-Rekey wird nach erfolgreichem staged Artifact-Publish lokal abgebrochen,
+  obwohl authority_anchor remote unverändert ist => Operation-State ungültig;
+  Transition bleibt completion-pflichtig und darf nicht als stale verworfen werden;
+- Unknown-Outcome-Retry ohne erneutes canonical_full des aktuellen Prefixes =>
+  Implementierungs-/Assurance-Fehler; kein zweiter Append;
+- physisch vorhandene stale_writer_rejected-Revision wird lokal als durable statt
+  stale_writer_pending klassifiziert => Implementierungs-/Assurance-Fehler;
 - neuer Envelope verwendet einen bereits belegten Control-ID-Bytewert erneut,
   auch cross-type zwischen grant_id/rotation_id/migration_id/transition_id/
   confirmation_id => protocol_id_collision;
