@@ -1023,51 +1023,51 @@ Mindestens:
     falscher Source-Epoche/Record-/Revision-ID, mehreren Source-Revisionen oder
     doppelter Zuordnung desselben Source-Heads ->
     migration_provenance_mismatch; keine Aktivierung.
-60. manipulierte source_semantic/source_lineage_snapshot_hash oder
+44. manipulierte source_semantic/source_lineage_snapshot_hash oder
     Result-Head-Counts -> fail-closed.
-44. gültiger direkter ActivationProof, aber fehlende/zweite EpochMigrationV2 ->
+45. gültiger direkter ActivationProof, aber fehlende/zweite EpochMigrationV2 ->
     keine Aktivierung.
-45. ActivationLineageCacheV2 cache_id/ref/hash mismatch -> fail-closed; kein
+46. ActivationLineageCacheV2 cache_id/ref/hash mismatch -> fail-closed; kein
     Rotation/Rekey-Start.
-46. profile_upgrade/normal/recovery_rekey durch alle erlaubten
+47. profile_upgrade/normal/recovery_rekey durch alle erlaubten
     RotationOperationStateV2-Stages; übersprungene oder unmögliche
     Null/non-null-Kombination -> security_blocked.
-47. Recovery-Rekey-Rotation bindet exakt die durable
+48. Recovery-Rekey-Rotation bindet exakt die durable
     RecoveryAuthorityTransitionV2.transition_id in Announcement, Proof und
     Migration-Control.
-48. Crash in successor_bound/copying vor EpochMigrationV2 -> operation-gebundener
+49. Crash in successor_bound/copying vor EpochMigrationV2 -> operation-gebundener
     rotation_resume-Verify akzeptiert den erwarteten unvollständigen Prefix nur
     als staged; canonical_full bleibt migration_control_missing.
-49. RecoveryAuthorityTransitionV2 durable, aber Successor-Rotation noch nicht
+50. RecoveryAuthorityTransitionV2 durable, aber Successor-Rotation noch nicht
     abgeschlossen -> neuer URS kann Source recovern/takeovern; Rekey bleibt
     ausdrücklich unvollständig.
-50. alter URS nach durable Transition, aber vor Successor-Switch -> darf keine
+51. alter URS nach durable Transition, aber vor Successor-Switch -> darf keine
     Recovery-Takeover-Authority mehr erhalten, kann historischen Source-RK über
     altes Artifact aber noch lesen.
-51. Rekey `completed` ohne geswitchte recovery_rekey-Successor-Epoche mit
+52. Rekey `completed` ohne geswitchte recovery_rekey-Successor-Epoche mit
     **neuem RK_epoch** -> security_blocked.
-52. nach abgeschlossenem Rekey kann altes URS den neuen aktiven Successor-RK
+53. nach abgeschlossenem Rekey kann altes URS den neuen aktiven Successor-RK
     nicht aus altem RecoveryArtifact ableiten.
-53. durable RecoveryAuthorityTransitionV2 + weiterhin derselbe Writer-Key +
+54. durable RecoveryAuthorityTransitionV2 + weiterhin derselbe Writer-Key +
     Fachwrite -> remote rekey_rotation_required_rejected; Fachgraph unverändert.
-54. Pending-Rekey-Fence + Handoff -> abgewiesen; Forced Takeover bleibt
+55. Pending-Rekey-Fence + Handoff -> abgewiesen; Forced Takeover bleibt
     zulässig und erzeugt nur maintenance-only Writer.
-55. Geräteverlust nach durable Transition -> neues Gerät mit neuem URS erkennt
+56. Geräteverlust nach durable Transition -> neues Gerät mit neuem URS erkennt
     recovery_rekey_rotation_required aus Remote-Historie, übernimmt per Forced
     Takeover und adoptiert Phase B ohne alten lokalen Operation-State.
-56. zweite RecoveryAuthorityTransitionV2 während Pending-Rekey -> jüngste
+57. zweite RecoveryAuthorityTransitionV2 während Pending-Rekey -> jüngste
     transition_id supersedet die ältere; nur sie darf die Rekey-Rotation binden.
     Lokaler recovery_operation_state_ref wird vor Remote-I/O auf den neuen
     readback-verifizierten State umgebunden; der alte durable State bleibt
     suspendiert. Erst nach durable neuer Transition wird er atomar terminal
     `superseded`; stale neuer Versuch fällt auf die weiterhin remote-current
     ältere Transition zurück.
-57. Pending-Rekey + normal-Rotation -> kein Seal; ausschließlich
+58. Pending-Rekey + normal-Rotation -> kein Seal; ausschließlich
     recovery_rekey-Rotation mit aktueller transition_id zulässig.
-58. v1→v2: zusätzliche v1-Row zwischen finalem Pre-Append-Read und Announcement
+59. v1→v2: zusätzliche v1-Row zwischen finalem Pre-Append-Read und Announcement
     -> profile_upgrade_source_race; Successor bleibt staged/read-only, kein
     zweites Announcement/kein stiller Datenverlust.
-59. RecoveryArtifactV6 mit to-State vor durabler Transition -> nur mit gültigem
+60. RecoveryArtifactV6 mit to-State vor durabler Transition -> nur mit gültigem
     RecoveryAuthorityTransitionProofV2 staged/read-only; niemals current Forced
     Takeover-Authority.
 
