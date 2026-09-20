@@ -1713,7 +1713,7 @@ gegen die realen Graphen:
    source_lineage_snapshot_hash neu berechnet; beide müssen exakt matchen.
 4. Bei v2→v2 muss source_writer_authority exakt der an diesem Source-Prefix
    kanonischen Writer-Authority entsprechen.
-5. Die Migration-Control-Row selbst muss im Successor writer-autorisert gültig
+5. Die Migration-Control-Row selbst muss im Successor writer-autorisiert gültig
    sein. Für ihren Ergebnisvergleich wird der akzeptierte Fachgraph des
    Successors am physischen Prefix **unmittelbar vor der Migration-Control-Row**
    verwendet. Control-Rows ändern diesen Graph nicht.
@@ -2768,9 +2768,13 @@ Reihenfolge:
    Recovery-Private-Key verwerfen und mutierendes Remote-I/O beginnen.
 9. Gen-1-Grant als erste _r-Row mit authority_anchor=H0 schreiben.
 10. fachliche Heads als RevisionV2 unter Gen-1-Authority schreiben/signieren.
-11. Migration-Control mit migration_kind="profile_upgrade" und
-    source_writer_authority=null schreiben.
-12. Successor vollständig mit V2-Verifier verifizieren.
+11. Migration-Control mit migration_kind="profile_upgrade",
+    source_writer_authority=null und source_recovery_transition_id=null
+    schreiben. Source-Snapshot-Hashes werden aus dem final verifizierten
+    v1-Source-Prefix berechnet; Result-Hash/Counts aus dem Successor-Fachgraphen
+    unmittelbar vor dieser Control-Row.
+12. Successor vollständig mit V2-Verifier verifizieren und §16a.1 gegen v1-Source
+    und Successor erfolgreich ausführen.
 13. ProfileUpgradeActivationEntryV2 aus RK_v1, finalem v1-Source-Anchor
     und den exakt one-shot vorbereiteten v1-Rotation-Announcement-Bytes erzeugen;
     activation_lineage=[dieser Eintrag].
@@ -2801,6 +2805,7 @@ Nicht-fatal semantisch verworfen:
 stale_writer_rejected
 stale_grant_rejected
 stale_recovery_transition_rejected
+stale_rotation_announcement_rejected
 stale_after_seal_rejected
 ~~~
 
@@ -2814,6 +2819,10 @@ wrong_predecessor_on_candidate_current_transition
 wrong_authority_anchor
 manifest_genesis_mismatch
 manifest_genesis_missing
+migration_control_missing
+migration_snapshot_mismatch
+migration_head_count_mismatch
+migration_transition_mismatch
 recovery_generation_mismatch
 recovery_key_mismatch
 recovery_transition_state_mismatch
@@ -2852,13 +2861,23 @@ für mindestens:
     44 Chunks, falsche Länge/Hash, nichtleere Tail-Zelle.
 15. RecoveryTakeoverStagingV2 KDF/AAD/Crash-Resume + falsche URS.
 16. RecoveryArtifactV6 AAD/Payload/Keypair-Check roundtrip.
-17. RecoveryActivationProofV2 Signatur + Source-Prefix-/Next-Row-Prüfung.
-18. ActivationLineageV2 für native Genesis, profile_upgrade und mindestens zwei
-    aufeinanderfolgende v2→v2-Rotationen.
-19. RecoveryAuthorityTransitionV2 + RecoveryAuthorityTransitionProofV2:
+17. RecoveryActivationProofV2 Signatur +
+    source_anchor_before_announcement/Next-Row-Prüfung einschließlich
+    recovery_transition_id.
+18. RotationAnnouncementV2: exakter Immediate-Prefix-Anchor; intervenierende
+    stale Row => stale_rotation_announcement_rejected ohne Source-Seal.
+19. EpochMigrationV2: Source-Semantic-/Lineage-Snapshot, Successor-Result-Hash
+    und Head-Counts gegen echte Prefix-Graphen für profile_upgrade, normal und
+    recovery_rekey.
+20. ActivationLineageV2 für native Genesis, profile_upgrade und mindestens zwei
+    aufeinanderfolgende v2→v2-Rotationen einschließlich Migration-Integrität.
+21. RecoveryAuthorityTransitionV2 + RecoveryAuthorityTransitionProofV2:
     staged, exact completion, durable und überholter Anchor.
-20. ActivationLineageCacheV2 AEAD/Readback.
-21. SyncBackupV6 staged/activated Manifest/hash binding einschließlich
+22. ActivationLineageCacheV2 AEAD/Readback einschließlich cache_id und
+    Cache-Ref-Hash.
+23. RotationOperationStateV2 für profile_upgrade/normal/recovery_rekey mit allen
+    erlaubten Stage-Transitions und Null/non-null-Invarianten.
+24. SyncBackupV6 staged/activated Manifest/hash binding einschließlich
     activation_lineage und Recovery-Transition-Proof.
 
 Negative Vectors:
@@ -2885,6 +2904,14 @@ Negative Vectors:
 - Recovery-Rekey-Successor mit gültigem Announcement, aber nicht durable
   Source-RecoveryAuthorityTransitionV2 => nicht aktiv;
 - manipulierte announcement_envelope-Bytes oder activation_signature;
+- Rotation-Announcement mit historisch gewordenem source_anchor: kein Seal,
+  stale_rotation_announcement_rejected;
+- Rotation-Announcement mit falschem from_epoch_id, self-successor oder falscher
+  recovery_transition_id;
+- EpochMigrationV2 mit fehlendem Fach-Head, zusätzlichem Head, falschem
+  source_lineage_snapshot_hash oder falschen Head-Counts;
+- direkte Aktivierungsproofs gültig, aber EpochMigrationV2 inkonsistent =>
+  Successor nicht aktiv;
 - Proof mit stale Writer-Key, der nicht der kanonischen Source-Authority am
   gebundenen Prefix entspricht;
 - falscher source_root_key in einem ActivationLineageV2-Eintrag oder
