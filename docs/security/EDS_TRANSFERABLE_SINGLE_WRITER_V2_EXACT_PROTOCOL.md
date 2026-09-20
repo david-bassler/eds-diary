@@ -1560,6 +1560,7 @@ result_semantic_snapshot_hash
 active_head_count
 tombstone_head_count
 source_writer_authority
+source_recovery_transition_id
 ~~~
 
 source enthält exakt:
@@ -1592,11 +1593,17 @@ migration_kind ist exakt:
 Regeln:
 
 - profile_upgrade ist ausschließlich v1→v2:
-  source_writer_authority=null und source_anchor ist ein nicht-null
-  RemoteAnchorV1 der final verifizierten v1-Source.
-- normal/recovery_rekey sind v2→v2:
+  source_writer_authority=null, source_recovery_transition_id=null und
+  source_anchor ist ein nicht-null RemoteAnchorV1 der final verifizierten
+  v1-Source.
+- normal ist v2→v2:
   source_writer_authority ist nicht-null, entspricht exakt der final
-  verifizierten Source-Authority und source_anchor ist RemoteAnchorV2.
+  verifizierten Source-Authority, source_anchor ist RemoteAnchorV2 und
+  source_recovery_transition_id=null.
+- recovery_rekey ist v2→v2:
+  source_writer_authority ist nicht-null, source_anchor ist RemoteAnchorV2 und
+  source_recovery_transition_id ist exakt die transition_id, die auch im
+  zugehörigen rotation-announcement-sw-v2 gebunden ist.
 - Ein späteres Emergency-Verfahren benötigt eine neue explizite
   Schema-/Protokollentscheidung; es wird in diesem eingefrorenen v2-Profil nicht
   vorweggenommen.
@@ -1641,6 +1648,47 @@ result_semantic_snapshot_hash wird mit exakt derselben semantic_entry-Projektion
 über die aktuellen nicht-Control-Heads des Successors berechnet.
 active_head_count/tombstone_head_count zählen genau diese Heads nach
 record_status.
+
+### 16a.1 Verbindliche Migration-Integritätsprüfung
+
+Jede nicht-native v2-Epoche enthält **exakt eine** akzeptierte
+`epoch-migration-sw-v2`-Revision, bevor sie kanonisch aktiviert werden darf.
+Mehrere akzeptierte Migration-Controls in derselben Epoche sind fatal.
+
+Die Snapshot-Werte sind keine bloßen Audit-Metadaten. Aktivierung prüft sie
+gegen die realen Graphen:
+
+1. Die Source-Epoche und ihr Manifest-Fingerprint müssen exakt dem direkten
+   Predecessor des Successors und dem passenden ActivationLineageV2-Eintrag
+   entsprechen.
+2. `source.source_anchor` muss exakt dem Aktivierungsanchor entsprechen:
+   - profile_upgrade: source_anchor_before_announcement des
+     ProfileUpgradeActivationEntryV2;
+   - v2→v2: source_anchor_before_announcement des RecoveryActivationProofV2.
+3. Die Source wird bis exakt source.source_anchor vollständig replay-verifiziert.
+   Aus **diesem Prefix** werden source_semantic_snapshot_hash und
+   source_lineage_snapshot_hash neu berechnet; beide müssen exakt matchen.
+4. Bei v2→v2 muss source_writer_authority exakt der an diesem Source-Prefix
+   kanonischen Writer-Authority entsprechen.
+5. Die Migration-Control-Row selbst muss im Successor writer-autorisert gültig
+   sein. Für ihren Ergebnisvergleich wird der akzeptierte Fachgraph des
+   Successors am physischen Prefix **unmittelbar vor der Migration-Control-Row**
+   verwendet. Control-Rows ändern diesen Graph nicht.
+6. Aus diesem Successor-Prefix werden result_semantic_snapshot_hash,
+   active_head_count und tombstone_head_count neu berechnet und exakt gegen
+   record_data geprüft.
+7. Für den unveränderten Ein-Source-Copy gilt zusätzlich zwingend:
+   result_semantic_snapshot_hash == source_semantic_snapshot_hash.
+8. Bei migration_kind="recovery_rekey" müssen
+   source_recovery_transition_id, Announcement recovery_transition_id und die
+   zuletzt akzeptierte RecoveryAuthorityTransitionV2, welche die aktuelle
+   Source-Recovery-Generation erzeugt hat, exakt dieselbe transition_id tragen.
+9. Erst wenn diese Migration-Integritätsprüfung **und** der jeweilige
+   Aktivierungsbeweis erfolgreich sind, ist der Source→Successor-Link gültig.
+
+Damit kann ein kryptographisch korrekt aktivierter Successor mit fehlenden,
+zusätzlichen oder semantisch veränderten Fach-Heads nicht als gültige Migration
+akzeptiert werden.
 
 ## 16b. RecoveryAuthorityTransitionV2
 
