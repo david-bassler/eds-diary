@@ -1002,9 +1002,13 @@ Write-Vorgangs:
 Es gibt im strikten v2 **kein zeitbasiertes Offline-Lease und kein
 Freshness-Intervall**.
 
-Nach Erstellung und Append folgt vollständiger Readback. Ändert sich die Authority
-zwischen Prepare und Readback, wird die lokale Revision als stale_writer_pending
-quarantiniert und nicht automatisch neu signiert oder erneut unter der neuen
+Nach Signatur/Verschlüsselung wird das exakte Envelope persistent vorbereitet.
+Unmittelbar vor Append erfolgt ein zweiter Full Verify. Nur wenn Authority
+unverändert und Source weiterhin unsealed ist, dürfen exakt diese vorbereiteten
+Bytes gesendet werden. Andernfalls werden sie ohne Append als
+stale_writer_pending quarantiniert. Nach Append folgt vollständiger Readback;
+eine zwischen Prepare und Readback verlorene Authority macht die Row semantisch
+stale und sie wird niemals automatisch neu signiert oder unter der neuen
 Generation erzeugt.
 
 ---
@@ -1038,10 +1042,13 @@ Voraussetzungen:
 - A hat keine nicht-durablen eigenen Pending-Envelopes.
 - A verifiziert TransferdescriptorV2 von B.
 
-A plant exakt einen Grant g+1 und persistiert dessen exakte Bytes. Unmittelbar
-vor Append erfolgt erneut ein Full Verify; nur wenn dieselbe Authority weiterhin
-current und source_epoch_sealed=false ist, signiert/appendet A den exakt
-geplanten Grant und liest vollständig zurück.
+A full-verifiziert, erzeugt und signiert danach exakt einen Grant g+1,
+verschlüsselt ihn one-shot und persistiert die exakten Envelope-Bytes.
+Unmittelbar vor Append erfolgt erneut ein Full Verify; nur wenn dieselbe
+predecessor-Authority weiterhin current und source_epoch_sealed=false ist,
+appendet A exakt diese bereits persistierten Bytes und liest vollständig zurück.
+Andernfalls wird der vorbereitete Grant nicht appended und als
+stale_grant_attempt quarantiniert.
 
 A persistiert read_only erst, wenn derselbe Grant kanonisch akzeptiert wurde.
 
@@ -1066,10 +1073,14 @@ Ein read-only Gerät muss URS erneut erhalten. Danach:
    Zusätzlich muss source_epoch_sealed=false sein.
 6. Grant g+1 reason="forced_takeover" gegen genau diesen frisch verifizierten
    Entscheidungs-Prefix erzeugen.
-7. Grant-Signing-Input mit Recovery-Takeover-Key signieren.
-8. Append + Full Readback.
-9. writer_active nur bei kanonisch akzeptiertem eigenen Grant.
-10. Recovery signing capability aus normalem Sitzungszustand verwerfen.
+7. Grant-Signing-Input mit Recovery-Takeover-Key signieren, one-shot
+   verschlüsseln und exakte Envelope-Bytes persistent vorbereiten.
+8. Unmittelbar vor Append erneut Full Verify: predecessor-Authority muss
+   unverändert current und Source unsealed sein. Sonst kein Append und
+   stale_grant_attempt.
+9. Exakt die vorbereiteten Bytes appendieren + Full Readback.
+10. writer_active nur bei kanonisch akzeptiertem eigenen Grant.
+11. Recovery signing capability aus normalem Sitzungszustand verwerfen.
 
 ---
 
