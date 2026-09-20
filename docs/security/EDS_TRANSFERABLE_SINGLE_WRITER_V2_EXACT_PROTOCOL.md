@@ -685,7 +685,10 @@ protocol_limits ist exakt:
   max_remote_physical_rows: 100000,
   max_remote_physical_canonical_bytes: 134217728,
   max_canonical_row_bytes: 21936,
-  max_activation_lineage_entries: 128
+  max_activation_lineage_entries: 128,
+  max_recovery_artifact_ciphertext_bytes: 1048576,
+  recovery_grid_chunk_chars: 32000,
+  max_recovery_grid_chunks: 44
 }
 ~~~
 
@@ -2608,15 +2611,17 @@ für mindestens:
     epoch_start_authority_mode und protocol_limits.
 13. v6 Google Account Binding + epoch_locator + recovery_family_locator +
     epoch-spezifischer recovery_artifact_locator.
-14. RecoveryTakeoverStagingV2 KDF/AAD/Crash-Resume + falsche URS.
-15. RecoveryArtifactV6 AAD/Payload/Keypair-Check roundtrip.
-16. RecoveryActivationProofV2 Signatur + Source-Prefix-/Next-Row-Prüfung.
-17. ActivationLineageV2 für native Genesis, profile_upgrade und mindestens zwei
+14. RecoveryArtifactV6 Google-Grid-Chunking: 1 Chunk, exakte 32000er-Grenze,
+    44 Chunks, falsche Länge/Hash, nichtleere Tail-Zelle.
+15. RecoveryTakeoverStagingV2 KDF/AAD/Crash-Resume + falsche URS.
+16. RecoveryArtifactV6 AAD/Payload/Keypair-Check roundtrip.
+17. RecoveryActivationProofV2 Signatur + Source-Prefix-/Next-Row-Prüfung.
+18. ActivationLineageV2 für native Genesis, profile_upgrade und mindestens zwei
     aufeinanderfolgende v2→v2-Rotationen.
-18. RecoveryAuthorityTransitionV2 + RecoveryAuthorityTransitionProofV2:
+19. RecoveryAuthorityTransitionV2 + RecoveryAuthorityTransitionProofV2:
     staged, exact completion, durable und überholter Anchor.
-19. ActivationLineageCacheV2 AEAD/Readback.
-20. SyncBackupV6 staged/activated Manifest/hash binding einschließlich
+20. ActivationLineageCacheV2 AEAD/Readback.
+21. SyncBackupV6 staged/activated Manifest/hash binding einschließlich
     activation_lineage und Recovery-Transition-Proof.
 
 Negative Vectors:
