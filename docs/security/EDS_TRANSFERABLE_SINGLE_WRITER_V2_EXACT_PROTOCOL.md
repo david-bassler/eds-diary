@@ -1875,6 +1875,9 @@ Zusätzlich gilt zwingend:
 
 - from_epoch_id == aktuelle Source-epoch_id;
 - successor_epoch_id != from_epoch_id;
+- successor_creation_locator dekodiert zu exakt 16 Byte und muss bei der
+  Cross-Epoch-Aktivierungsprüfung exakt dem geschützten `creation_locator` des
+  Successor-Manifests entsprechen;
 - successor_recovery_generation == aktuell verifizierte
   Source-Recovery-Generation am source_anchor_before_announcement;
 - bei der **Cross-Epoch-Aktivierungsprüfung** müssen
@@ -1981,11 +1984,16 @@ Normen:
   Remote-Aktivierungsgrenze des Successors. Normale Successor-Rows dürfen
   protokollseitig erst **nach** dieser Row als post-activation Suffix gelten.
 
-Fehlt die Confirmation, obwohl der Source-Announcement bereits durable ist, darf
-Recovery die im Activation-Evidence one-shot gebundenen Confirmation-Bytes
-**nur** dann exakt einmal appendieren, wenn der aktuelle Successor-Prefix noch
-exakt successor_staging_anchor ist. Steht irgendeine andere physische Row zuerst,
-=> successor_cutover_race; keine alternative Confirmation erzeugen.
+Fehlt die Confirmation, obwohl der Source-Announcement bereits durable ist, ist
+das `activation_confirmation_missing`: ein **recoverbarer staged Zustand**,
+kein fataler Verifierfehler. Recovery darf die im Activation-Evidence one-shot
+gebundenen Confirmation-Bytes nur dann exakt einmal appendieren, wenn der
+aktuelle Successor-Prefix noch exakt successor_staging_anchor ist. Existiert
+bereits ein Suffix, muss dessen **erste** Row exakt diese vorbereitete
+Confirmation sein; dann wird sie reconciliiert und ein danach vorhandener,
+vollständig gültiger Suffix als post-activation verarbeitet. Steht eine andere
+erste Row nach dem staging anchor, => successor_cutover_race; keine alternative
+Confirmation erzeugen.
 
 ---
 
@@ -2359,6 +2367,18 @@ current_recovery_rekey_transition_id gestartet werden. Diese Pflicht stammt aus
 der Remote-Historie und gilt unabhängig davon, ob auf dem ausführenden Gerät ein
 älterer RecoveryRekeyOperationStateV2 existiert.
 
+**Recovery-Key-Material für jede Rotation:** Vor Erzeugung des finalen
+Successor-RecoveryArtifactV6 muss der **aktuelle URS** erneut eingegeben werden.
+Das aktuelle Source-RecoveryArtifactV6 wird eindeutig discovered, entschlüsselt,
+gegen den vollständig verifizierten aktuellen Recovery-State geprüft und der
+§19-Keypair-Check ausgeführt. Nur daraus darf das aktuelle
+recovery_takeover_private_key_pkcs8 transient für das neue Successor-Artifact
+übernommen werden. Historische URSs werden dank ActivationLineageCacheV2 nicht
+benötigt. Ist bei einer normalen Rotation der aktuelle URS verloren, ist die
+Rotation blockiert; der aktuelle Writer muss stattdessen zuerst recovery_rekey
+mit einem neuen URS durchführen. Es gibt kein zusätzliches lokales
+Takeover-Private-Key-Escrow.
+
 Die zulässige Rotation setzt im Successor
 epoch_start_authority_mode="carried_from_predecessor" und übernimmt die aktuelle
 Writer-Authority in den Successor-Manifest-Trust-Root:
@@ -2395,10 +2415,14 @@ Remote-Reihenfolge auf der Source entscheidet:
 
 Für **jede** v2→v2-Rotation ist die Reihenfolge verbindlich:
 
-1. activation_lineage der aktiven Source vollständig validieren und finalen
+1. activation_lineage der aktiven Source vollständig validieren, aktuellen URS
+   und aktuelles Source-RecoveryArtifactV6 gemäß obiger Regel prüfen und finalen
    Source-Anchor/Writer-/Recovery-State einfrieren.
-2. Successor erzeugen. Jeden am eingefrorenen Source-Prefix aktuellen
-   nicht-Control-Head exakt nach §16a.0 als neue Successor-Genesis-Revision
+2. Successor mit **neuem unabhängig erzeugtem 32-Byte-CSPRNG-RK_epoch** erzeugen.
+   Dieser RK darf keinem source_root_key der resultierenden ActivationLineage
+   entsprechen; Gleichheit => successor_root_key_reuse / security_blocked.
+   Jeden am eingefrorenen Source-Prefix aktuellen nicht-Control-Head exakt nach
+   §16a.0 als neue Successor-Genesis-Revision
    kopieren/signieren: gleiche Fachsemantik, leere Parents und
    `migration_origin` exakt auf die eine kopierte Source-Revision.
 3. Exakt eine EpochMigrationV2 schreiben. source.source_anchor ist der finale
@@ -2435,26 +2459,39 @@ Für **jede** v2→v2-Rotation ist die Reihenfolge verbindlich:
    intervenierende physische Source-Row macht den vorbereiteten Source-Anchor
    historisch; das Announcement darf dann nicht versiegeln.
 10. **Sofort nach durable Source-Announcement** den Successor erneut vollständig
-    lesen. Sein RemoteAnchor muss weiterhin exakt successor_staging_anchor sein.
-    Jede zusätzliche Successor-Row => successor_cutover_race; Source-Seal bleibt
-    irreversibel, aber der Successor wird lokal **nicht** aktiviert.
-11. Exakt die bereits im RecoveryActivationProofV2 gebundenen
-    successor_confirmation_envelope-Bytes appendieren + Full Readback. Unknown
-    Outcome darf nur bei unverändertem successor_staging_anchor durch Retry der
-    identischen Bytes aufgelöst werden. Die Confirmation muss die unmittelbar
-    nächste physische Successor-Row sein und vollständig validieren.
-12. Den daraus resultierenden RemoteAnchorV2 als successor_activation_anchor
-    persistieren; er umfasst staging anchor + genau die erste gültige
-    Confirmation-Row (ggf. plus byte-identische Retry-Duplikate dieser
-    Confirmation).
+    lesen und den Suffix ab successor_staging_anchor klassifizieren:
+    - exakt staging anchor => Schritt 11 darf die vorbereitete Confirmation
+      appendieren;
+    - erste neue Row ist byte-identisch die vorbereitete Confirmation und
+      validiert vollständig => bereits durable Confirmation reconciliieren;
+    - jede andere erste neue Row => successor_cutover_race; Source-Seal bleibt
+      irreversibel und es gibt keinen Switch.
+11. Falls die Confirmation noch fehlt, exakt die bereits im
+    RecoveryActivationProofV2 gebundenen successor_confirmation_envelope-Bytes
+    appendieren + Full Readback. Unknown Outcome wird ausschließlich durch
+    Readback derselben Bytes entschieden; niemals alternative Confirmation
+    erzeugen.
+12. successor_activation_anchor als **Aktivierungsgrenze** persistieren: exakter
+    Prefix durch die erste gültige Confirmation-Row einschließlich unmittelbar
+    anschließender byte-identischer Retry-Duplikate dieser Confirmation. Ein
+    danach bereits vorhandener Suffix ist post-activation und muss vollständig
+    durch canonical_full unter der jeweils gültigen Writer-Authority
+    verifizieren; der aktuelle RemoteAnchor muss successor_activation_anchor
+    monoton erweitern.
 13. erweiterte activation_lineage einschließlich §16a.1 und Confirmation
-    vollständig bis zum Successor prüfen.
+    vollständig bis zum Successor prüfen. Hat ein gültiger post-activation
+    Suffix die Writer-Authority geändert, wird der lokale writer_status beim
+    späteren Switch aus dieser **final verifizierten** Authority abgeleitet und
+    ggf. read_only.
 14. **obligatorisch** neues activation_state="activated" SyncBackupV6 erzeugen
-    und Test-Restore-verifizieren. Dieses Cutover-Backup muss exakt
-    successor_activation_anchor als record_rows/remote_anchor_at_export tragen.
+    und Test-Restore-verifizieren. Dessen remote_anchor_at_export muss dem
+    vollständig verifizierten aktuellen Successor-Prefix entsprechen und
+    successor_activation_anchor monoton erweitern; ohne Suffix sind beide
+    identisch.
 15. ActivationLineageCacheV2 des Successors persistent/readback-verifizieren.
-16. erst danach lokaler atomarer Switch/Retire; erst ab diesem Switch dürfen
-    normale Successor-Writes beginnen.
+16. erst danach lokaler atomarer Switch/Retire; erst ab diesem Switch darf
+    dieses Gerät normale Successor-Writes erzeugen, sofern es nach finalem
+    Verify weiterhin current Writer ist.
 
 Ein staged Backup ersetzt das obligatorische activated Cutover-Backup niemals.
 
@@ -2462,8 +2499,10 @@ Ein staged Backup ersetzt das obligatorische activated Cutover-Backup niemals.
 Ressourcen ohne gemeinsame atomare Transaktion/Uhr. successor_staging_anchor
 beweist deshalb exakt den autorisierten Migrations-Basisprefix; der
 Rotation-Service friert ihn ein und prüft ihn unmittelbar vor und nach dem
-Source-Seal. Ein bei diesem Ablauf beobachteter Suffix ist ein Cutover-Race und
-blockiert Aktivierung/Switch.
+Source-Seal. Ein **vor** der gebundenen Confirmation beobachteter anderer Suffix ist ein
+Cutover-Race und blockiert Aktivierung/Switch. Ein Suffix **nach** exakt der
+gebundenen Confirmation ist dagegen post-activation und wird normal durch die
+Writer-Authority verifiziert.
 
 Aus einer späteren Recovery-Sicht kann das Protokoll jedoch nicht
 kryptographisch beweisen, ob eine **ansonsten gültig writer-signierte**
@@ -2477,9 +2516,13 @@ Koordinationsdienst/eine neue Protokollversion.
 Normale v2→v2-Rotation übernimmt recovery_generation,
 recovery_urs_commitment, recovery_takeover_key_id und
 recovery_takeover_public_key aus dem **final verifizierten aktuellen
-Source-Recovery-State** unverändert in das Successor-Manifest und erzeugt für
-die neue Epoche ein neues RecoveryArtifactV6 mit neuem RK_epoch,
-Manifest-Fingerprint, erweiterter activation_lineage und finalem Successor-Anchor.
+Source-Recovery-State** unverändert in das Successor-Manifest. Das zugehörige
+Private-Key-Material wird ausschließlich aus dem mit dem erneut eingegebenen
+aktuellen URS verifizierten Source-RecoveryArtifact transient übernommen. Die
+neue Epoche erhält einen unabhängig erzeugten RK_epoch, der keinem historischen
+source_root_key der erweiterten activation_lineage entsprechen darf, sowie ein
+neues RecoveryArtifactV6 mit Manifest-Fingerprint, erweiterter
+activation_lineage und finalem Successor-Anchor.
 
 Recovery-Rekey ist eine **zwingend zweiphasige** Maintenance-Operation.
 Die same-epoch RecoveryAuthorityTransitionV2 ist nur der crash-sichere
@@ -2514,8 +2557,12 @@ Phase B – verpflichtende recovery_rekey-Epoch-Rotation:
    RecoveryRekeyOperationStateV2 mit
    operation_origin="remote_pending_rekey_adoption" erzeugen. Die
    verpflichtende Phase B bleibt dadurch vollständig fortsetzbar.
-10. Successor erhält einen **neuen 32-Byte RK_epoch**, übernimmt aber die in
-    Phase A bereits aktuelle Recovery-Generation/URS-/Takeover-Authority.
+10. Successor erhält einen **neuen unabhängig erzeugten 32-Byte RK_epoch**,
+    übernimmt aber die in Phase A bereits aktuelle
+    Recovery-Generation/URS-/Takeover-Authority. Der neue RK muss byteweise von
+    jedem source_root_key der resultierenden ActivationLineage verschieden sein;
+    dies wird bei Cross-Epoch-Aktivierung als successor_root_key_reuse
+    fail-closed geprüft.
 11. EpochMigrationV2, RotationAnnouncementV2 und RecoveryActivationProofV2
     binden dieselbe recovery_transition_id; alle normalen §17
     Migration-/Anchor-/Lineage-Gates gelten.
