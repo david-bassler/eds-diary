@@ -1618,7 +1618,7 @@ L0 = SHA-256(
   diary_id_bytes || epoch_id_bytes
 )
 
-entry_hash = SHA-256(UTF8(JCS([envelope_id,iv,ciphertext])))
+entry_hash = SHA-256(UTF8(JCS([envelope_id,iv,ciphertext,activation_token])))
 Li = SHA-256(L(i-1) || uint64_be(i) || entry_hash)
 ~~~
 
@@ -1877,8 +1877,8 @@ ciphertext = AES-256-GCM-ENCRYPT(
 Aktivierungsprüfung nach Eingabe der Recovery-URS:
 
 1. RecoveryArtifactV6 äußerlich per URS-AEAD entschlüsseln und Struktur,
-   Diary-/Epoch-ID, öffentlichen Successor-Manifest-Fingerprint,
-   google_account_binding und Recovery-Commitment prüfen. Bei
+   Diary-/Epoch-ID, google_account_binding sowie den aus den öffentlichen
+   Successor-Manifestzellen berechneten manifest_fingerprint prüfen. Bei
    activation_wrapped darf zu diesem Zeitpunkt **kein** Root-Key verfügbar sein.
 2. Source anhand source_sync_profile + diary_id + source_epoch_id über den
    jeweiligen v5/v6 Epoch-Locator authentifiziert discovern und rohe Source-Rows
@@ -1895,47 +1895,54 @@ Aktivierungsprüfung nach Eingabe der Recovery-URS:
    Bei allen anderen Übergängen müssen activation_commitment=null und bei
    v2-Source activation_token="" gelten; Source- und Successor-RK stammen aus
    ihren direct-Materialien.
-5. Source-Manifest mit dem so erhaltenen Source-RK decrypten; Diary-ID, Epoch-ID,
+5. Mit dem Successor-RK den ProtectedManifestV6 entschlüsseln und vollständig
+   prüfen: Diary/Epoch/Key-ID, Fingerprint, Account-Binding,
+   recovery_generation, aus der eingegebenen URS reproduziertes
+   recovery_urs_commitment, Writer-Startauthority und
+   Recovery-Takeover-Public-Key müssen exakt zum RecoveryArtifact passen.
+6. Den Successor-Remote vollständig mit TransferableSingleWriterV2Verifier
+   verifizieren; dessen finaler RemoteAnchorV2 muss den Artifact-remote_anchor
+   monoton umfassen. Aus diesem verifizierten Successor wird exakt das
+   kanonisch akzeptierte epoch-migration-sw-v2-Control als
+   successor_migration_control entnommen; es muss zur erwarteten Source und
+   migration_kind passen.
+7. Source-Manifest mit dem Source-RK decrypten; Diary-ID, Epoch-ID,
    Manifest-Fingerprint, Google-Account-Binding und Profil müssen exakt passen.
-6. Den zum source_sync_profile gehörenden produktiven Full Verifier auf dem
-   **Prefix bis einschließlich genau dieser Row** verwenden.
+8. Den zum source_sync_profile gehörenden produktiven Full Verifier auf dem
+   **Prefix bis einschließlich genau der in Schritt 3 bestimmten Row** verwenden.
    source_anchor_before ist dabei ein verpflichtender Freshness-Floor; der
    geprüfte Prefix muss ihn erweitern. Rows nach der Activation-Row sind für
    diesen Aktivierungsbeweis nicht erforderlich und können dessen Erfolg nicht
    nachträglich aufheben.
-7. expected_announcement_envelope muss an der so bestimmten Position
+9. expected_announcement_envelope muss an der so bestimmten Position
    byteidentisch vorliegen.
-8. Unmittelbar vor dieser konkreten Row muss der vom Source-Verifier berechnete
-   fachliche Semantic-Snapshot-Hash exakt dem source_semantic_snapshot_hash des
-   im Successor akzeptierten epoch-migration-sw-v2 entsprechen. Bei v2-Source
-   muss außerdem die zu diesem Zeitpunkt current Writer-Authority exakt
-   source_writer_authority dieses Migration-Controls entsprechen. Dadurch kann
-   keine nach dem Kopieren hinzugekommene gültige Fachrevision verloren gehen.
-9. Diese konkrete Row muss vom Source-Verifier als der kanonisch gültige
-   Rotation-Announcement-Control akzeptiert werden; bloße physische Existenz,
-   stale_writer_rejected, stale_after_seal_rejected oder ein konkurrierendes
-   Announcement genügen nicht.
-10. Das entschlüsselte Announcement muss exakt successor_epoch_id und
+10. Unmittelbar vor dieser konkreten Row muss der vom Source-Verifier berechnete
+    fachliche Semantic-Snapshot-Hash exakt
+    successor_migration_control.source.source_semantic_snapshot_hash entsprechen.
+    Bei v2-Source muss außerdem die zu diesem Zeitpunkt current Writer-Authority
+    exakt successor_migration_control.source_writer_authority entsprechen.
+    Dadurch kann keine nach dem Kopieren hinzugekommene gültige Fachrevision
+    verloren gehen.
+11. Diese konkrete Row muss vom Source-Verifier als der kanonisch gültige
+    Rotation-Announcement-Control akzeptiert werden; bloße physische Existenz,
+    stale_writer_rejected, stale_after_seal_rejected oder ein konkurrierendes
+    Announcement genügen nicht.
+12. Das entschlüsselte Announcement muss exakt successor_epoch_id und
     successor_manifest_fingerprint des RecoveryArtifacts/Successor-Manifests
     binden. Bei source_sync_profile =
     "google-sheets-transferable-single-writer-v2" muss zusätzlich
     successor_recovery_generation exakt der Recovery-Generation des
-    Successor-Manifests entsprechen. Bei recovery_rekey muss ferner der
-    signierte recovery_activation_commitment exakt activation_commitment
-    entsprechen und die physische vierte Row-Zelle exakt S enthalten. Beim
-    eingefrorenen v1-Announcement existieren diese Felder nicht; dort wird die
-    übernommene Generation separat über v1-Recovery-Commitment und
+    Successor-Manifests entsprechen. Bei recovery_rekey muss ferner
+    rotation_kind="recovery_rekey", der signierte
+    recovery_activation_commitment exakt activation_commitment und die physische
+    vierte Row-Zelle exakt S sein. Bei normaler v2-Rotation muss
+    rotation_kind="normal", Commitment=null und Token="" gelten. Beim
+    eingefrorenen v1-Announcement existieren diese v2-Felder nicht; dort wird
+    die übernommene Generation separat über v1-Recovery-Commitment und
     Successor-Manifest gebunden.
-11. Mit dem Successor-RK den ProtectedManifestV6 entschlüsseln und vollständig
-    prüfen: Diary/Epoch/Key-ID, Fingerprint, Account-Binding,
-    recovery_generation/commitment, Writer-Startauthority und
-    Recovery-Takeover-Public-Key müssen exakt zum RecoveryArtifact passen.
-    Anschließend den Successor-Remote vollständig mit
-    TransferableSingleWriterV2Verifier verifizieren; dessen finaler
-    RemoteAnchorV2 muss den Artifact-remote_anchor monoton umfassen.
-12. Erst nach Schritt 11 wird der Recovery-Takeover-Private-Key importiert und
-    der §19-Keypair-Check gegen das verifizierte Successor-Manifest ausgeführt.
-13. Nur dann ist das RecoveryArtifactV6 activated. Fehlt die Row, schlägt das
+13. Erst jetzt wird der Recovery-Takeover-Private-Key importiert und der
+    §19-Keypair-Check gegen das verifizierte Successor-Manifest ausgeführt.
+14. Nur dann ist das RecoveryArtifactV6 activated. Fehlt die Row, schlägt das
     Aktivierungs-Wrapping fehl, änderte sich der fachliche Source-Snapshot,
     gewann vorher eine andere Authority/Rotation oder wurde Source/Successor
     zurückgerollt, bleibt das Artifact unactivated und darf weder als aktueller
