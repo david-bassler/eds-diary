@@ -136,6 +136,40 @@ K_recovery_stage = HKDF-SHA-256(
   UTF8("eds-diary/recovery-takeover-staging/v2"),
   32
 )
+
+activation_context =
+  UTF8("eds-diary/recovery-activation-context/v2") || 0x00 ||
+  diary_id_bytes ||
+  source_epoch_id_bytes ||
+  successor_epoch_id_bytes ||
+  source_manifest_fingerprint_bytes ||
+  successor_manifest_fingerprint_bytes ||
+  uint64_be(successor_recovery_generation)
+
+recovery_activation_commitment =
+  Base64URL(SHA-256(
+    UTF8("eds-diary/recovery-activation-commitment/v2") || 0x00 ||
+    activation_context || recovery_activation_secret
+  ))
+
+activation_salt = SHA-256(
+  UTF8("eds-diary/recovery-activation-salt/v2") || 0x00 ||
+  activation_context
+)
+
+K_activation_source = HKDF-SHA-256(
+  recovery_activation_secret,
+  activation_salt,
+  UTF8("eds-diary/recovery-activation-source-root/v2"),
+  32
+)
+
+K_activation_successor = HKDF-SHA-256(
+  recovery_activation_secret,
+  activation_salt,
+  UTF8("eds-diary/recovery-activation-successor-root/v2"),
+  32
+)
 ~~~
 
 Keine v5-Domain darf für neue v2-Bytes verwendet werden.
@@ -1641,7 +1675,7 @@ recovery_artifact_id
 diary_id
 epoch_id
 key_id
-RK_epoch
+root_key_material
 manifest_fingerprint
 remote_anchor
 google_account_binding
@@ -1651,6 +1685,58 @@ recovery_takeover_public_key
 recovery_takeover_private_key_pkcs8
 activation_proof
 created_at
+~~~
+
+root_key_material ist exakt eine der beiden Formen:
+
+~~~text
+{
+  mode: "direct",
+  root_key
+}
+~~~
+
+oder
+
+~~~text
+{
+  mode: "activation_wrapped",
+  iv,
+  ciphertext
+}
+~~~
+
+root_key ist Base64URL von exakt 32 Byte. iv ist Base64URL von exakt 12 Byte,
+ciphertext Base64URL von exakt 48 Byte (32 Byte RK + 16 Byte GCM-Tag).
+
+Modusregeln:
+- native v2-Genesis: direct;
+- v1→v2-profile_upgrade ohne gleichzeitigen Recovery-Rekey: direct;
+- normale v2→v2-Rotation mit unveränderter URS: direct;
+- recovery_rekey: zwingend activation_wrapped. RK_epoch darf in diesem
+  RecoveryArtifactV6 nirgendwo zusätzlich direkt vorkommen.
+
+Für activation_wrapped:
+
+~~~text
+successor_root_AAD = UTF8(JCS({
+  purpose: "successor-root",
+  version: 2,
+  diary_id,
+  source_epoch_id,
+  successor_epoch_id: epoch_id,
+  source_manifest_fingerprint,
+  successor_manifest_fingerprint: manifest_fingerprint,
+  recovery_activation_commitment
+}))
+
+ciphertext = AES-256-GCM-ENCRYPT(
+  key=K_activation_successor,
+  iv=iv,
+  plaintext=RK_epoch,
+  aad=successor_root_AAD,
+  tagLength=128
+)
 ~~~
 
 activation_proof ist:
