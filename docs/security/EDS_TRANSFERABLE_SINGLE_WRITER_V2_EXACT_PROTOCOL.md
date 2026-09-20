@@ -3243,10 +3243,14 @@ successor_staging_anchor, die Writer-/Recovery-Authority oder der vorbereitete
 Successor anderweitig ungültig wurde.
 
 `cutover_race` darf ausschließlich **nach** durable Source-Announcement aus
-`announcement_durable` erreicht werden, wenn der aktuelle Successor-Prefix
-successor_staging_anchor nicht mehr exakt entspricht. Der Source-Seal wird
-niemals zurückgerollt; der Vorgang bleibt expliziter Support-/Recovery-Fall und
-darf weder activated Backup noch lokalen Switch erzeugen.
+`announcement_durable` oder `confirmation_unknown` erreicht werden, wenn
+der Successor den staging anchor erweitert und die **erste** neue physische Row
+nicht exakt die vorbereitete Confirmation ist bzw. diese nicht vollständig
+validiert. Ist die erste neue Row exakt die vorbereitete Confirmation, wird
+stattdessen nach `confirmation_durable` reconciliiert; ein danach gültiger
+post-activation Suffix ist kein Cutover-Race. Der Source-Seal wird niemals
+zurückgerollt; ein echter cutover_race bleibt expliziter Support-/Recovery-Fall
+und darf weder activated Backup noch lokalen Switch erzeugen.
 
 `switched`, `stale` und `cutover_race` sind terminal.
 
@@ -3270,8 +3274,10 @@ Feldinvarianten nach Stage:
   copying->successor_verified exakt aus dem vollständig verifizierten
   Successor-Prefix nach der Migration-Control gesetzt und danach immutable;
 - successor_activation_anchor: bis confirmation_durable null; ab
-  confirmation_durable exakt aus dem Successor-Prefix nach der Confirmation
-  gesetzt und immutable;
+  confirmation_durable exakt als Prefix-Grenze durch die erste gültige
+  Confirmation-Row einschließlich unmittelbar anschließender byte-identischer
+  Confirmation-Retries gesetzt und immutable. Ein späterer post-activation
+  Suffix verändert diesen Anchor nicht;
 - successor_creation_locator: ab successor_planned non-null und immutable; er
   muss exakt dem geschützten creation_locator des Successor-Manifests sowie dem
   successor_creation_locator des vorbereiteten Announcements entsprechen;
@@ -3292,14 +3298,17 @@ zwingend, weil RecoveryActivationProofV2 bzw. ProfileUpgradeActivationEntryV2
 die **exakten one-shot Announcement-Envelope-Bytes** bereits im RecoveryArtifact
 binden.
 
-Nach `announcement_durable` ist das Source-Seal irreversibel. Vor
-Confirmation-Append muss canonical_full des Successors weiterhin exakt
-successor_staging_anchor ergeben. Erst `confirmation_durable` erzeugt den
+Nach `announcement_durable` ist das Source-Seal irreversibel. Vor einem
+Confirmation-Append muss canonical_full des Successors entweder weiterhin exakt
+successor_staging_anchor ergeben **oder** bereits als erste Suffix-Row exakt die
+vorbereitete Confirmation enthalten; im zweiten Fall wird nur reconciliiert und
+nicht erneut appended. Erst `confirmation_durable` erzeugt den festen
 successor_activation_anchor. Vor `switched` muss zwingend ein neuer activated
 SyncBackupV6 des Successors erzeugt, Test-Restore-verifiziert und als
 `activated_backup_verified` persistiert sein; dessen exportierter RemoteAnchor
-muss exakt successor_activation_anchor sein. Das frühere
-staged Backup genügt dafür nicht.
+muss dem aktuellen vollständig verifizierten Prefix entsprechen und
+successor_activation_anchor monoton erweitern. Das frühere staged Backup genügt
+dafür nicht.
 
 Alle Resume-Pfade beginnen mit Verifikation der beteiligten Remote-Epochen und
 Abgleich der gespeicherten Anchor/Envelope-/Evidence-Bytes. Für einen staged
