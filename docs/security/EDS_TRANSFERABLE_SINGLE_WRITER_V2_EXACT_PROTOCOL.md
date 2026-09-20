@@ -888,9 +888,16 @@ verifizierten Source-Prefix unmittelbar vor dem geplanten Announcement.
 
 `rotation_kind` ist exakt `"normal" | "recovery_rekey"`.
 
-`successor_recovery_generation`:
-- normal: exakt source recovery_generation;
-- recovery_rekey: exakt source recovery_generation + 1.
+`successor_recovery_generation` muss exakt der Recovery-Generation des
+Successor-Manifests entsprechen. Bei der Proof-Erzeugung auf der vollständig
+verifizierten Source gilt zusätzlich:
+- normal: Successor-Generation == Source-Generation;
+- recovery_rekey: Successor-Generation == Source-Generation + 1.
+
+Die Recovery-Verifikation ohne Source-RK rekonstruiert die alte Generation nicht
+nachträglich aus verschlüsseltem Source-Material; sie vertraut hierfür auf die
+Writer-signierte Transition und prüft die Successor-Generation gegen das neue
+Manifest.
 
 `announcement_envelope` enthält die **exakt one-shot vorbereiteten und
 persistent reservierten** Rowbytes des signierten
@@ -905,8 +912,10 @@ UTF8("eds-diary/recovery-activation-proof/v2") || 0x00 ||
 UTF8(JCS(activation_proof_core))
 ~~~
 
-`activation_signature` ist Ed25519 mit dem an
-source_anchor_before_announcement kanonisch aktuellen Writer-Key.
+`activation_signature` ist exakt eine 64-Byte-Ed25519-Signatur als Base64URL
+mit dem an source_anchor_before_announcement kanonisch aktuellen Writer-Key.
+Die drei announcement_envelope-Felder müssen kanonisches Base64URL und dieselben
+EnvelopeV6-Row-Bounds wie normale Remote-Rows erfüllen.
 
 Bei normal/recovery_rekey übernimmt der Successor dieselbe Writer-Authority als
 Epoch-Start-Trust-Root. Recovery kann die Proof-Signatur deshalb gegen
@@ -917,8 +926,11 @@ Aktivierungsprüfung mit nur neuem URS + Google-Konto:
 
 1. RecoveryArtifactV6 entschlüsseln und Successor vollständig verifizieren.
 2. Proof-Struktur, Source-/Successor-IDs, Manifest-Fingerprint,
-   Writer-Authority, rotation_kind und successor_recovery_generation exakt
-   gegen Successor-Manifest und Artifact prüfen.
+   rotation_kind und successor_recovery_generation exakt gegen
+   Successor-Manifest und Artifact prüfen. Die vier source_writer_*-Felder
+   müssen exakt den vier `epoch_start_writer_*`-Feldern des Successors
+   entsprechen; v2→v2-Rotation trägt dieselbe Writer-Authority über die
+   Epoch-Grenze.
 3. activation_signature gegen Successor `epoch_start_writer_public_key`
    verifizieren.
 4. Source-Ressource über source_epoch_id/epoch_locator discovern; öffentliches
@@ -1082,12 +1094,15 @@ Write-Vorgangs:
 1. der konfigurierte RootWrap-Modus erfolgreich entsperrt ist. `best-effort`
    ist dabei zulässig, bleibt aber ausdrücklich nur Best-Effort-At-rest-Schutz;
    PRF/Passphrase sind die starken lokalen Modi;
-2. authentifizierte Provider-Session aktiv ist;
-3. Remote vollständig neu gelesen und gegen den persistierten RemoteAnchorV2
+2. `epoch_status="active"` ist; ein vorbereiteter/staged Successor bleibt
+   `remote_bound` oder `local_offline` und darf keine normalen Fach-/Grantwrites
+   erzeugen;
+3. authentifizierte Provider-Session aktiv ist;
+4. Remote vollständig neu gelesen und gegen den persistierten RemoteAnchorV2
    verifiziert wurde;
-4. source_epoch_sealed=false ist;
-5. verifizierte current authority exakt zum lokalen Device-Key passt;
-6. lokaler Status writer_active ist.
+5. source_epoch_sealed=false ist;
+6. verifizierte current authority exakt zum lokalen Device-Key passt;
+7. lokaler Status writer_active ist.
 
 Es gibt im strikten v2 **kein zeitbasiertes Offline-Lease und kein
 Freshness-Intervall**.
@@ -1125,8 +1140,8 @@ Ein HTTP-200 ohne finalen Full Readback ist niemals durable.
 
 Voraussetzungen:
 
-- A ist nach frischem Full Verify current writer und
-  source_epoch_sealed=false.
+- A ist auf einer kanonisch aktivierten Epoche (`epoch_status="active"`) nach
+  frischem Full Verify current writer und source_epoch_sealed=false.
 - B ist vollständig verifiziert read_only derselben Diary/Epoch.
 - A hat keine nicht-durablen eigenen Pending-Envelopes.
 - A verifiziert TransferdescriptorV2 von B.
@@ -1152,7 +1167,8 @@ Ein read-only Gerät muss URS erneut erhalten. Danach:
 3. recovery_takeover_key_id und Public Key müssen zum Manifest passen.
 4. PKCS#8 transient als non-extractable Ed25519 signing key importieren und den
    §19-Keypair-Check bestehen.
-5. Remote erneut vollständig verifizieren, source_epoch_sealed=false verlangen
+5. Kanonische Aktivierung der Epoche bestätigen (`epoch_status="active"`),
+   Remote erneut vollständig verifizieren, source_epoch_sealed=false verlangen
    und beweisen, dass der gelesene Prefix **alle** verfügbaren vertrauenswürdigen
    Freshness-Floors erweitert (Artifact-Anchor, lokaler Anchor, ggf.
    Backup-Anchor). Kein Anchor-Downgrade.
@@ -1421,6 +1437,17 @@ epoch_status ist exakt:
 ~~~text
 local_offline | remote_bound | active | offline_restored | retired | orphaned
 ~~~
+
+Für v2 gilt zusätzlich:
+- ein vorbereiteter Successor bleibt `remote_bound` (oder nach Backup-Restore
+  `local_offline`/`offline_restored`) und `writer_status="read_only"`, solange
+  seine kanonische Aktivierung nicht gemäß §10b bzw. beim profile_upgrade durch
+  die verifizierte v1-Source bewiesen ist;
+- `active` darf erst nach diesem Aktivierungsnachweis persistiert werden;
+- die Rotation-/Migrationsservices dürfen während ihrer expliziten
+  Maintenance-Operation die vorbereiteten Successor-Rows erzeugen; das ist kein
+  normales Writer-Gate und verleiht dem staged Successor keine interaktive
+  Writer-Authority.
 
 writer_status ist exakt "writer_active" | "read_only".
 
@@ -1726,9 +1753,14 @@ niemals automatisch gepusht.
 
 recovery_activation_proof ist exakt dasselbe null/Proof-Objekt wie im
 RecoveryArtifactV6. activation_state ist exakt "staged" | "activated".
-"activated" ist **keine selbstbeglaubigende Aussage**: Restore muss den Proof
-gegen die rohe Source-Historie gemäß §10b erneut prüfen. Ohne erfolgreiche
-Prüfung bleibt das Restore local_offline/read_only.
+"activated" ist **keine selbstbeglaubigende Aussage**. Restore muss die
+Aktivierung passend zum Epoch-Ursprung erneut beweisen:
+- native v2-Genesis: predecessor_epochs=[] + genesis-Grants vollständig prüfen;
+- v1→v2 profile_upgrade: mit derselben URS die v1-Source vollständig verifizieren
+  und ihr exaktes Rotation-Announcement auf diesen Successor bestätigen;
+- v2→v2: RecoveryActivationProofV2 gemäß §10b gegen die rohe Source-Historie
+  prüfen.
+Ohne erfolgreiche Prüfung bleibt das Restore local_offline/read_only.
 
 backup_manifest_iv ist exakt 12 CSPRNG-Bytes.
 
@@ -1812,8 +1844,9 @@ Union.
 Test-Restore muss Manifest, RecoveryArtifactV6-Bindung, sämtliche Hashes/Counts,
 RemoteAnchorV2, Writer-Authority und jede Row vollständig prüfen und anschließend
 den produktiven TransferableSingleWriterV2Verifier verwenden. Bei
-activation_state="activated" muss zusätzlich §10b erfolgreich sein; bei
-"staged" oder nicht prüfbarem Proof wird ausschließlich local_offline/read_only
+activation_state="activated" muss zusätzlich der oben definierte, zum
+Epoch-Ursprung passende Aktivierungsnachweis erfolgreich sein; bei "staged"
+oder nicht prüfbarer Aktivierung wird ausschließlich local_offline/read_only
 restored. Restore darf stale_writer_pending_rows nur als Quarantäne
 wiederherstellen.
 
@@ -1939,6 +1972,8 @@ Negative Vectors:
 - Recovery-Rekey-Recovery mit nur neuem URS, aber Takeover-Row vor geplantem
   Announcement => Successor staged/nicht aktiv;
 - manipulierte announcement_envelope-Bytes oder activation_signature;
+- staged Successor darf weder Fachwrite noch Handoff noch Forced Takeover
+  ausführen;
 - Transferdescriptor ohne Private-Key-Possession;
 - Rollback vor bereits bekannten Grant;
 - stale Fachrow nach Handoff;
