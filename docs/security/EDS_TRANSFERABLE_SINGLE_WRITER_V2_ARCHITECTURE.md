@@ -294,7 +294,9 @@ v2 erhält ein neues Control-Schema, beispielsweise:
 writer-grant-sw-v2
 ```
 
-Normativer Payload:
+Architektur-Payload; die **exakte geschlossene Wire-Fassung einschließlich
+writer_key_id und authorization** steht ausschließlich in
+`EDS_TRANSFERABLE_SINGLE_WRITER_V2_EXACT_PROTOCOL.md`:
 
 ```json
 {
@@ -347,9 +349,9 @@ Regeln:
 Der Control-Record läuft durch denselben verschlüsselten Envelope-Pfad wie
 andere Control-Records. Es ist keine zusätzliche Klartext-Steuerdatei nötig.
 
-Das exakte v2-Wire-Profil muss festlegen, wie der Recovery-Takeover-Proof
-erzeugt und verifiziert wird. Er muss von einer Recovery-Authority abhängen, die
-ein kompromittiertes Gerät mit Root-Key und Google-Zugriff **ohne aktuellen
+Das exakte v2-Wire-Profil legt fest, wie der Recovery-Takeover-Proof erzeugt und
+verifiziert wird. Er hängt von einer Recovery-Authority ab, die ein
+kompromittiertes Gerät mit Root-Key und Google-Zugriff **ohne aktuellen
 Recovery-Nachweis** nicht nachbilden kann.
 
 Normative Architekturgrenze dafür:
@@ -795,7 +797,7 @@ Nicht Teil von v2:
 
 ## 23. Implementierungsreihenfolge
 
-1. v2 Protokoll-/Schema-Definition exakt festschreiben.
+1. v2 Protokoll-/Schema-Definition exakt festschreiben. **Abgeschlossen; normative Quelle ist EDS_TRANSFERABLE_SINGLE_WRITER_V2_EXACT_PROTOCOL.md.**
 2. Writer-Provenienz in Revision/Verifier.
 3. Writer-Grant-Control-Automat.
 4. lokale Security-State-Erweiterung und fail-closed Writer-Gate.
@@ -1097,7 +1099,9 @@ eigentlichen Writer-Handoff-Implementierung geschehen.
 
 ## 26. Empfohlene Refactoring-Reihenfolge ohne Verhaltensänderung
 
-Vor v2-Funktionalität wird ein eigener vorbereitender Refactoring-PR verlangt. Im aktuellen Stack setzt PR #36 diese Vorentkopplung um; §26 gilt erst nach Merge und erneut grünem CI auf dem kombinierten Stand als abgeschlossen:
+Vor v2-Funktionalität war ein eigener vorbereitender Refactoring-PR verlangt.
+PR #36 ist gemergt und die vollständige Security Validation auf dem kombinierten
+Stand war grün; diese Vorentkopplung ist damit abgeschlossen:
 
 1. aktuelle v1-Konstanten und Typen explizit als V1 benennen;
 2. `RevisionV1` und `EpochLocalSecurityStateV5` als eingefrorene Typen
