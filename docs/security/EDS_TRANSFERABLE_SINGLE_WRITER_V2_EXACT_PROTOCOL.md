@@ -3004,7 +3004,10 @@ für mindestens:
     Cache-Ref-Hash.
 23. RotationOperationStateV2 für profile_upgrade/normal/recovery_rekey mit allen
     erlaubten Stage-Transitions und Null/non-null-Invarianten.
-24. SyncBackupV6 staged/activated Manifest/hash binding einschließlich
+24. Verifier-purpose canonical_full vs operation-gebundenes rotation_resume:
+    fehlende Migration-Control nur in successor_bound|copying als
+    staged_incomplete; niemals aktive Authority.
+25. SyncBackupV6 staged/activated Manifest/hash binding einschließlich
     activation_lineage und Recovery-Transition-Proof.
 
 Negative Vectors:
@@ -3039,6 +3042,10 @@ Negative Vectors:
   source_lineage_snapshot_hash oder falschen Head-Counts;
 - direkte Aktivierungsproofs gültig, aber EpochMigrationV2 inkonsistent =>
   Successor nicht aktiv;
+- canonical_full auf nicht-native Epoche ohne Migration-Control =>
+  migration_control_missing;
+- rotation_resume ohne passende MAC-authentifizierte RotationOperationStateV2
+  oder in falscher Stage => security_blocked;
 - Proof mit stale Writer-Key, der nicht der kanonischen Source-Authority am
   gebundenen Prefix entspricht;
 - falscher source_root_key in einem ActivationLineageV2-Eintrag oder
