@@ -459,11 +459,14 @@ Regeln:
   entsprechen.
 - Für **jeden** Grant muss writer_key_id aus writer_public_key exakt gemäß §2
   reproduzierbar sein. Mismatch => security_blocked.
-- grant_id darf in derselben Epoche nicht bereits als Grant-ID verwendet worden
-  sein. Bei carried_from_predecessor gilt die manifestgebundene
-  epoch_start_writer_grant_id bereits als reserviert; bei
-  genesis_grant_required ist ausschließlich die einmalige manifestgebundene
-  Gen-1-Bestätigungsrow von dieser Vorreservierung ausgenommen.
+- grant_id liegt mit rotation_id, migration_id, transition_id und confirmation_id
+  in einem **gemeinsamen epochweiten semantischen Control-ID-Namespace**. Ein
+  bereits unter irgendeinem dieser Feldtypen belegter Bytewert darf nicht erneut
+  verwendet werden; Wiederverwendung => protocol_id_collision /
+  security_blocked. Bei carried_from_predecessor gilt die manifestgebundene
+  epoch_start_writer_grant_id bereits als belegt; bei genesis_grant_required ist
+  ausschließlich die einmalige manifestgebundene Gen-1-Bestätigungsrow die
+  erlaubte Realisierung dieser Vorreservierung.
 - Handoff: authorization.kind="writer_handoff";
   authorization.signer_key_id = predecessor writer_key_id; Signatur mit dessen
   Public Key.
@@ -1415,6 +1418,7 @@ accepted_activation_confirmation
 migration_control_required
 authority_history_by_prefix
 recovery_history_by_prefix
+seen_protocol_semantic_ids
 seen_grant_ids
 seen_rotation_ids
 seen_migration_ids
@@ -1458,6 +1462,12 @@ Initialisierung:
   current_recovery_rekey_transition_id=null am Epoch-Start. Dieser Pending-
   Rekey-State wird **nicht** aus einer Source-Epoche in den Successor vererbt;
   eine erfolgreich aktivierte Successor-Epoche startet wieder ohne Pending-Rekey.
+- seen_protocol_semantic_ids startet mit epoch_start_writer_grant_id als
+  reserviertem Bytewert. Bei carried_from_predecessor ist diese ID bereits
+  realisierte Epoch-Start-Authority; bei genesis_grant_required darf exakt die
+  manifestgebundene Gen-1-Bestätigungsrow diese Reservation einmalig
+  realisieren. Jede Verwendung desselben Bytewerts als rotation_id,
+  migration_id, transition_id oder confirmation_id kollidiert ebenfalls.
 - seen_grant_ids startet bei carried_from_predecessor mit
   epoch_start_writer_grant_id; bei genesis_grant_required wird dieselbe
   manifestgebundene Gen-1-ID als einmalig erwartete/reservierte ID geführt.
@@ -1481,19 +1491,26 @@ Pro Row:
 2a. Für Control-IDs gilt nach Wrapper-/Schema-Validierung und **vor** semantischer
     State-Mutation:
     - grant_id, rotation_id, migration_id, transition_id und confirmation_id
-      sind jeweils in ihrem Typ-Namespace epochweit eindeutig;
+      teilen **einen gemeinsamen epochweiten Bytewert-Namespace**. Ein Bytewert,
+      der bereits unter irgendeinem dieser Feldtypen in
+      seen_protocol_semantic_ids belegt ist, darf in keinem anderen
+      Envelope/Revision-Objekt erneut auftreten;
     - byte-identische Retry-Duplikatrows wurden bereits in Schritt 1 als No-op
       abgefangen und sind die einzige Wiederholung, die keinen ID-Collision-Fehler
       erzeugt;
-    - dieselbe semantische ID in einem anderen Envelope/Revision-Objekt =>
+    - jede andere Wiederverwendung — auch **cross-type**, z.B.
+      transition_id == frühere rotation_id — =>
       protocol_id_collision / security_blocked, unabhängig davon, ob der neue
       Claim später stale geworden wäre;
-    - bei der ersten strukturell/schema-gültigen Erscheinung wird die jeweilige
-      ID **vor** weiterer semantischer Klassifikation in den passenden
+    - bei der ersten strukturell/schema-gültigen Erscheinung wird der Bytewert
+      **vor** weiterer semantischer Klassifikation in
+      seen_protocol_semantic_ids und zusätzlich in den passenden typisierten
       seen_*-Satz aufgenommen; dadurch kann auch eine später stale klassifizierte
-      Control-ID nicht erneut verwendet werden;
+      Control-ID weder im selben noch in einem anderen Control-ID-Feld erneut
+      verwendet werden;
     - bei Gen-1 ist die exakt manifestgebundene Bestätigungsrow die einmalige
-      erlaubte Realisierung der vorreservierten grant_id.
+      erlaubte Realisierung der vorreservierten grant_id; jede andere Verwendung
+      dieses reservierten Bytewerts kollidiert.
 2b. Falls genesis_grant_confirmation_required=true, ist **ausschließlich** der
     exakt manifestgebundene Gen-1-writer-grant-sw-v2 mit H0 zulässig. Jede
     andere semantische Row => security_blocked. Erst nach dessen erfolgreicher
@@ -3741,15 +3758,20 @@ für mindestens:
 31. Identifier-Format/Decode-Längen für cache_id, rotation_id, migration_id,
     transition_id und operation_id einschließlich Base64URL-Re-Encode; falsche
     Byte-Länge und nicht-kanonische Base64URL-Form werden abgelehnt.
-32. Epochweite Control-ID-Eindeutigkeit für grant_id/rotation_id/migration_id/
-    transition_id: gleiche semantische ID in anderem Envelope =>
-    protocol_id_collision; byte-identischer Envelope-Retry bleibt No-op.
+32. Gemeinsamer epochweiter Control-ID-Namespace für grant_id/rotation_id/
+    migration_id/transition_id/confirmation_id: derselbe Bytewert in einem
+    anderen Envelope **oder einem anderen Control-ID-Feld** (z.B.
+    transition_id == frühere rotation_id) => protocol_id_collision;
+    byte-identischer Envelope-Retry bleibt No-op.
 33. RecoveryAuthorityTransitionV2 mit frischem Takeover-Key sowie Versuch,
     Manifest-/früheren supersedierten Takeover-Key wiederzuverwenden =>
     recovery_takeover_key_reuse.
 34. successor_staging_anchor für v2→v2 und profile_upgrade: exakt direkt nach
-    Migration-Control, keine semantische Suffix-Row; Proof/Announcement/Artifact/
-    staged+activated Cutover-Backup binden denselben Anchor.
+    Migration-Control, keine semantische Suffix-Row; Proof/Announcement/Artifact
+    und staged Cutover-Backup binden exakt diesen Anchor. Das activated
+    Cutover-Backup exportiert dagegen exakt den nach der Confirmation entstehenden
+    successor_activation_anchor und bindet den staging anchor transitiv über die
+    verifizierte ActivationLineage.
 35. Source-Seal durable, Successor weicht vor Confirmation vom staging anchor
     ab => successor_cutover_race/profile_upgrade_successor_cutover_race, kein
     Switch.
@@ -3832,8 +3854,9 @@ Negative Vectors:
   RecoveryAuthorityTransitionProofV2 => nicht current/kein Forced Takeover.
 - RecoveryAuthorityTransitionV2 verwendet current oder früheren
   recovery_takeover_key_id erneut => recovery_takeover_key_reuse;
-- neuer Envelope mit bereits belegter grant_id/rotation_id/migration_id/
-  transition_id => protocol_id_collision;
+- neuer Envelope verwendet einen bereits belegten Control-ID-Bytewert erneut,
+  auch cross-type zwischen grant_id/rotation_id/migration_id/transition_id/
+  confirmation_id => protocol_id_collision;
 - ActivationProof/Announcement mit falschem successor_staging_anchor oder
   Successor-Row zwischen Migration-Control und staging anchor =>
   successor_staging_mismatch;
