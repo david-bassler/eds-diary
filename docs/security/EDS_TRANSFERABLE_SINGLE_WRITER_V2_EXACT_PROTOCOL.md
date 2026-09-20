@@ -1941,7 +1941,12 @@ Source-Recovery-State** unverändert in das Successor-Manifest und erzeugt für
 die neue Epoche ein neues RecoveryArtifactV6 mit neuem RK_epoch,
 Manifest-Fingerprint, erweiterter activation_lineage und finalem Successor-Anchor.
 
-Recovery-Rekey ist eine zweiphasige Maintenance-Operation:
+Recovery-Rekey ist eine **zwingend zweiphasige** Maintenance-Operation.
+Die same-epoch RecoveryAuthorityTransitionV2 ist nur der crash-sichere
+Authority-Cutover; der Recovery-Key-Wechsel ist erst nach einer anschließenden
+Successor-Epoch mit neuem RK_epoch abgeschlossen.
+
+Phase A – Recovery-Authority auf der noch aktiven Source:
 
 1. aktive Source vollständig verifizieren und lokal einfrieren;
 2. neuen URS + neues Recovery-Takeover-Keypair erzeugen;
@@ -1956,17 +1961,31 @@ Recovery-Rekey ist eine zweiphasige Maintenance-Operation:
 7. neues Artifact jetzt gegen den aktuellen Source-Recovery-State prüfen und
    Forced-Takeover-Keypair-Check durchführen;
 8. obligatorischen **activated Source-SyncBackupV6** erzeugen und
-   Test-Restore-verifizieren;
-9. erst jetzt gilt der Recovery-Key-Wechsel als durable abgeschlossen;
-10. falls der Rekey zugleich Epoch-Rotation verlangt, danach einen normalen
-    Successor-Aufbau starten; rotation_kind/migration_kind dürfen
-    "recovery_rekey" zur Audit-Semantik tragen, aber
-    successor_recovery_generation == bereits aktuelle Source-Generation.
+   Test-Restore-verifizieren.
+
+Phase B – verpflichtende recovery_rekey-Epoch-Rotation:
+
+9. unmittelbar danach RotationOperationStateV2 mit
+   rotation_kind="recovery_rekey" und exakt derselben transition_id starten.
+10. Successor erhält einen **neuen 32-Byte RK_epoch**, übernimmt aber die in
+    Phase A bereits aktuelle Recovery-Generation/URS-/Takeover-Authority.
+11. EpochMigrationV2, RotationAnnouncementV2 und RecoveryActivationProofV2
+    binden dieselbe recovery_transition_id; alle normalen §17
+    Migration-/Anchor-/Lineage-Gates gelten.
+12. Successor-RecoveryArtifactV6 unter dem neuen URS muss den **neuen**
+    Successor-RK enthalten; staged und activated Backup-Gates vollständig
+    durchlaufen.
+13. Erst nach `RotationOperationStateV2.stage="switched"`,
+    aktiviertem Successor-Backup und persistiertem Successor-Lineage-Cache darf
+    RecoveryRekeyOperationStateV2 `completed` werden.
 
 Altes Recovery-Takeover-Material darf ab der durable Transition keinen Grant
-mehr autorisieren. Alte RecoveryArtifacts bleiben immutable vorhanden, werden
-aber beim Full Verify als ältere Recovery-Generation erkannt und können keine
-Writer-Authority mehr herstellen.
+mehr autorisieren. Der alte URS kann während Phase A weiterhin das alte
+immutable Source-Artifact und damit den **historischen Source-RK** entschlüsseln;
+das ist bis zur Successor-Rotation unvermeidbar. Nach Phase B kann der alte URS
+den neuen aktiven Successor-RK nicht ableiten. Historische Vertraulichkeit kann
+durch Rekey nicht rückwirkend hergestellt werden, wenn das alte Artifact bereits
+kopiert oder kompromittiert war.
 
 ---
 
