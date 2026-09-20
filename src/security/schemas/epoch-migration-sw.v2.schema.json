@@ -3,49 +3,134 @@
   "$id": "epoch-migration-sw/v2",
   "type": "object",
   "additionalProperties": false,
-  "required": ["migration_id", "migration_kind", "source", "result_semantic_snapshot_hash", "active_head_count", "tombstone_head_count", "source_writer_authority"],
+  "required": [
+    "migration_id",
+    "migration_kind",
+    "source",
+    "result_semantic_snapshot_hash",
+    "active_head_count",
+    "tombstone_head_count",
+    "source_writer_authority"
+  ],
   "properties": {
-    "migration_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{43}$"},
-    "migration_kind": {"enum": ["normal", "local_rotation", "remote_enablement", "recovery_rekey", "emergency"]},
+    "migration_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{43}$"
+    },
+    "migration_kind": {
+      "enum": [
+        "profile_upgrade",
+        "normal",
+        "recovery_rekey",
+        "emergency"
+      ]
+    },
     "source": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["source_epoch_id", "source_manifest_fingerprint", "source_anchor", "source_lineage_snapshot_hash", "source_semantic_snapshot_hash"],
+      "required": [
+        "source_epoch_id",
+        "source_manifest_fingerprint",
+        "source_anchor",
+        "source_lineage_snapshot_hash",
+        "source_semantic_snapshot_hash"
+      ],
       "properties": {
-        "source_epoch_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{22}$"},
-        "source_manifest_fingerprint": {"type": "string", "pattern": "^[A-Za-z0-9_-]{43}$"},
+        "source_epoch_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{22}$"
+        },
+        "source_manifest_fingerprint": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$"
+        },
         "source_anchor": {
           "anyOf": [
-            {"type": "null"},
+            {
+              "type": "null"
+            },
             {
               "type": "object",
               "additionalProperties": false,
-              "required": ["anchor_profile", "covered_row_count", "prefix_hash"],
+              "required": [
+                "anchor_profile",
+                "covered_row_count",
+                "prefix_hash"
+              ],
               "properties": {
-                "anchor_profile": {"type": "string", "minLength": 1, "maxLength": 128},
-                "covered_row_count": {"type": "integer", "minimum": 0},
-                "prefix_hash": {"type": "string", "pattern": "^[A-Za-z0-9_-]{43}$"}
+                "anchor_profile": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "covered_row_count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "prefix_hash": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{43}$"
+                }
               }
             }
           ]
         },
-        "source_lineage_snapshot_hash": {"type": "string", "pattern": "^[A-Za-z0-9_-]{43}$"},
-        "source_semantic_snapshot_hash": {"type": "string", "pattern": "^[A-Za-z0-9_-]{43}$"}
+        "source_lineage_snapshot_hash": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$"
+        },
+        "source_semantic_snapshot_hash": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$"
+        }
       }
     },
-    "result_semantic_snapshot_hash": {"type": "string", "pattern": "^[A-Za-z0-9_-]{43}$"},
-    "active_head_count": {"type": "integer", "minimum": 0},
-    "tombstone_head_count": {"type": "integer", "minimum": 0},
+    "result_semantic_snapshot_hash": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{43}$"
+    },
+    "active_head_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "tombstone_head_count": {
+      "type": "integer",
+      "minimum": 0
+    },
     "source_writer_authority": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["writer_generation", "writer_grant_id", "writer_device_id", "writer_key_id"],
-      "properties": {
-        "writer_generation": {"type": "integer", "minimum": 1},
-        "writer_grant_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{43}$"},
-        "writer_device_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{22}$"},
-        "writer_key_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{43}$"}
-      }
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "writer_generation",
+            "writer_grant_id",
+            "writer_device_id",
+            "writer_key_id"
+          ],
+          "properties": {
+            "writer_generation": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "writer_grant_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{43}$"
+            },
+            "writer_device_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{22}$"
+            },
+            "writer_key_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{43}$"
+            }
+          }
+        }
+      ]
     }
   }
 }
