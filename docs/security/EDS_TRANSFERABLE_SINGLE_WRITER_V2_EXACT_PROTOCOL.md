@@ -1342,6 +1342,24 @@ recovery_history_by_prefix
 
 ~~~
 
+Recovery-State-Historieneintrag exakt:
+
+~~~text
+{
+  recovery_generation,
+  recovery_urs_commitment,
+  recovery_takeover_key_id,
+  recovery_takeover_public_key,
+  recovery_rekey_rotation_required,
+  recovery_rekey_transition_id
+}
+~~~
+
+Dabei gilt immer:
+- recovery_rekey_rotation_required=false <=> recovery_rekey_transition_id=null;
+- recovery_rekey_rotation_required=true <=> recovery_rekey_transition_id ist
+  exakt eine akzeptierte RecoveryAuthorityTransitionV2.transition_id.
+
 Initialisierung:
 
 - source_epoch_sealed=false.
