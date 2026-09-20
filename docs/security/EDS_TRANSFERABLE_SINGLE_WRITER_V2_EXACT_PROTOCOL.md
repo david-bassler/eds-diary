@@ -1495,8 +1495,10 @@ current_writer_key_id
 current_writer_public_key
 current_recovery_generation
 current_recovery_urs_commitment
+current_recovery_urs_id
 current_recovery_takeover_key_id
 current_recovery_takeover_public_key
+recovery_credential_history
 recovery_rekey_rotation_required
 current_recovery_rekey_transition_id
 source_epoch_sealed
@@ -1513,6 +1515,7 @@ seen_rotation_ids
 seen_migration_ids
 seen_recovery_transition_ids
 seen_confirmation_ids
+seen_recovery_urs_ids
 seen_recovery_takeover_key_ids
 
 ~~~
@@ -1523,6 +1526,7 @@ Recovery-State-Historieneintrag exakt:
 {
   recovery_generation,
   recovery_urs_commitment,
+  recovery_urs_id,
   recovery_takeover_key_id,
   recovery_takeover_public_key,
   recovery_rekey_rotation_required,
@@ -1541,12 +1545,14 @@ Initialisierung:
 - authority_history_by_prefix[0] enthält die manifestgebundene
   Epoch-Start-Writer-Authority und unsealed.
 - recovery_history_by_prefix[0] enthält Recovery-Generation, URS-Commitment,
-  Takeover-Key-ID und Takeover-Public-Key aus dem Manifest.
+  URS-ID, Takeover-Key-ID und Takeover-Public-Key aus dem Manifest.
 - current_recovery_generation, current_recovery_urs_commitment,
-  current_recovery_takeover_key_id und current_recovery_takeover_public_key
-  starten exakt aus dem Manifest und dürfen innerhalb derselben Epoche
-  ausschließlich durch eine gültige RecoveryAuthorityTransitionV2 atomar
-  fortgeschrieben werden.
+  current_recovery_urs_id, current_recovery_takeover_key_id und
+  current_recovery_takeover_public_key starten exakt aus dem Manifest.
+  recovery_credential_history startet als exakte Manifestliste; ihr letzter
+  Eintrag muss den aktuellen Recovery-State beschreiben. Fortschreibung ist
+  innerhalb derselben Epoche ausschließlich durch eine gültige
+  RecoveryAuthorityTransitionV2 zulässig.
 - recovery_rekey_rotation_required=false und
   current_recovery_rekey_transition_id=null am Epoch-Start. Dieser Pending-
   Rekey-State wird **nicht** aus einer Source-Epoche in den Successor vererbt;
@@ -1562,8 +1568,12 @@ Initialisierung:
   manifestgebundene Gen-1-ID als einmalig erwartete/reservierte ID geführt.
 - seen_rotation_ids, seen_migration_ids, seen_recovery_transition_ids und
   seen_confirmation_ids starten leer.
-- seen_recovery_takeover_key_ids startet mit dem manifestgebundenen
-  recovery_takeover_key_id.
+- seen_recovery_urs_ids startet mit **allen** recovery_urs_id-Werten aus der
+  manifestgebundenen recovery_credential_history.
+- seen_recovery_takeover_key_ids startet mit **allen**
+  recovery_takeover_key_id-Werten aus derselben Historie. Damit wird die
+  Freshness-Grenze über v2-Epoch-Rotationen hinweg fortgetragen und nicht am
+  Epoch-Start zurückgesetzt.
 - genesis_grant_confirmation_required ist genau dann true, wenn
   epoch_start_authority_mode="genesis_grant_required".
 - migration_control_required ist genau dann true, wenn predecessor_epochs genau
@@ -2290,9 +2300,11 @@ record_data exakt:
   transition_id,
   transition_kind: "recovery_rekey",
   from_recovery_generation,
+  from_recovery_urs_id,
   from_recovery_takeover_key_id,
   to_recovery_generation,
   to_recovery_urs_commitment,
+  to_recovery_urs_id,
   to_recovery_takeover_key_id,
   to_recovery_takeover_public_key,
   authority_anchor
@@ -2305,22 +2317,30 @@ Normen:
 - authority_anchor ist RemoteAnchorV2 und muss **exakt** dem physischen Prefix
   unmittelbar vor der Transition-Row entsprechen.
 - source_epoch_sealed muss false sein.
-- from_recovery_generation und from_recovery_takeover_key_id müssen exakt dem
-  aktuell verifizierten Recovery-State an diesem Prefix entsprechen.
+- from_recovery_generation, from_recovery_urs_id und
+  from_recovery_takeover_key_id müssen exakt dem aktuell verifizierten
+  Recovery-State an diesem Prefix entsprechen.
 - to_recovery_generation = from_recovery_generation + 1.
+- to_recovery_urs_id muss exakt gemäß §2 aus dem neuen 32-Byte-URS abgeleitet
+  sein; to_recovery_urs_commitment ist exakt das §10-Recovery-Commitment
+  desselben URS für to_recovery_generation.
 - to_recovery_takeover_public_key dekodiert zu exakt 32 Ed25519-Bytes.
 - to_recovery_takeover_key_id muss daraus gemäß §2 reproduzierbar sein.
-- to_recovery_takeover_key_id darf **keiner** bereits in derselben Epoche
-  akzeptierten Recovery-Takeover-Key-ID entsprechen, einschließlich des
-  Manifest-Startkeys und aller früheren/supersedierten Recovery-Generationen.
-  Wiederverwendung => recovery_takeover_key_reuse / security_blocked.
-- to_recovery_urs_commitment ist exakt das §10-Recovery-Commitment des neuen
-  32-Byte-URS für to_recovery_generation.
+- Weder to_recovery_urs_id noch to_recovery_takeover_key_id darf bereits in
+  seen_recovery_urs_ids bzw. seen_recovery_takeover_key_ids vorkommen. Diese
+  Sets stammen aus der über alle v2-Epochen fortgetragenen
+  recovery_credential_history. Wiederverwendung =>
+  recovery_credential_reuse / security_blocked.
+- Vor Annahme darf die fortgeschriebene recovery_credential_history den
+  manifestgebundenen Maximalwert nicht überschreiten. Bei Annahme wird exakt
+  ein neuer History-Eintrag für die to-Generation appended.
 - Der normale RevisionV2-Signing-Input bindet alle diese Felder an die aktuelle
   Writer-Authority.
 - Bei Annahme ersetzt der Verifier current_recovery_generation,
-  current_recovery_urs_commitment, current_recovery_takeover_key_id und
-  current_recovery_takeover_public_key atomar und setzt zusätzlich
+  current_recovery_urs_commitment, current_recovery_urs_id,
+  current_recovery_takeover_key_id und current_recovery_takeover_public_key
+  atomar, appended den neuen Eintrag an recovery_credential_history, nimmt die
+  beiden neuen IDs in die seen-Sets auf und setzt zusätzlich
   recovery_rekey_rotation_required=true sowie
   current_recovery_rekey_transition_id=transition_id.
 - Ist recovery_rekey_rotation_required bereits true, darf eine weitere gültige
@@ -2355,9 +2375,11 @@ Exakt:
   source_manifest_fingerprint,
   authority_anchor_before_transition,
   from_recovery_generation,
+  from_recovery_urs_id,
   from_recovery_takeover_key_id,
   to_recovery_generation,
   to_recovery_urs_commitment,
+  to_recovery_urs_id,
   to_recovery_takeover_key_id,
   to_recovery_takeover_public_key,
   transition_envelope: {
