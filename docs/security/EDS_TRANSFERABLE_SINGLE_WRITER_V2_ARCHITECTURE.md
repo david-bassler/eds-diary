@@ -749,11 +749,15 @@ Operation-State aus der durablen Transition und dem aktuellen RecoveryArtifact
 damit Resume-Hilfe, nicht die Sicherheitsquelle für die Rotationspflicht.
 
 Soll während eines Pending-Rekey ein weiterer Recovery-Key-Wechsel die aktuelle
-Transition superseden, darf ein neuer lokaler Rekey-Operation-State den alten
-State-Ref nur nach canonical_full-Bindung an die aktuellste Transition und nur
-ohne laufende Rotation ersetzen. Wird dieser neue Versuch vor seiner durablen
-Transition stale, bleibt der ältere Remote-Fence maßgeblich und muss wieder
-adoptiert werden.
+Transition superseden, gilt lokal eine zweiphasige State-Supersession: Vor der
+neuen Remote-Transition wird ein readback-verifizierter neuer Rekey-State
+persistiert und der einzige aktive `recovery_operation_state_ref` atomar auf
+ihn umgebunden; der alte durable State bleibt suspendiert. Scheitert der neue
+Versuch vor seiner durablen Transition, wird der alte Remote-Fence wieder
+gebunden/adoptiert. Erst nachdem canonical_full die **neuere Transition durable**
+als remote-current beweist, wird der alte State atomar terminal
+`superseded` und mit der neuen transition_id verknüpft. Ein superseded State
+darf nie wieder Resume-/Locking-Authority erhalten.
 
 Der Successor übernimmt die bereits aktuelle Recovery-Generation; die Rotation
 erhöht sie nicht noch einmal und startet wieder ohne Pending-Rekey-Fence. Der alte Recovery-Key kann danach den neuen
@@ -1038,10 +1042,11 @@ Mindestens:
     Takeover und adoptiert Phase B ohne alten lokalen Operation-State.
 56. zweite RecoveryAuthorityTransitionV2 während Pending-Rekey -> jüngste
     transition_id supersedet die ältere; nur sie darf die Rekey-Rotation binden.
-    Lokaler recovery_operation_state_ref wird dabei nur über einen neuen,
-    readback-verifizierten supersedierenden Operation-State umgebunden; stale
-    neuer Versuch fällt auf Adoption der weiterhin remote-current älteren
-    Transition zurück.
+    Lokaler recovery_operation_state_ref wird vor Remote-I/O auf den neuen
+    readback-verifizierten State umgebunden; der alte durable State bleibt
+    suspendiert. Erst nach durable neuer Transition wird er atomar terminal
+    `superseded`; stale neuer Versuch fällt auf die weiterhin remote-current
+    ältere Transition zurück.
 57. Pending-Rekey + normal-Rotation -> kein Seal; ausschließlich
     recovery_rekey-Rotation mit aktueller transition_id zulässig.
 58. v1→v2: zusätzliche v1-Row zwischen finalem Pre-Append-Read und Announcement
