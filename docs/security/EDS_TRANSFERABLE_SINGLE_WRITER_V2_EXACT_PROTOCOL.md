@@ -442,13 +442,16 @@ Regeln:
   authorization.signer_key_id = predecessor writer_key_id; Signatur mit dessen
   Public Key.
 - Forced Takeover: authorization.kind="recovery_takeover";
-  authorization.signer_key_id = **aktuell verifizierter**
-  recovery_takeover_key_id; Signatur mit demjenigen Recovery-Takeover-Key, den
-  der Verifier an dieser Row-Position aus Manifest plus gültigen
-  RecoveryAuthorityTransitionV2-Controls als current bestimmt.
-- Für jeden Grant muss record_data.recovery_generation exakt der **aktuell
-  verifizierten** Recovery-Generation an dieser Row-Position entsprechen; sie
-  kann innerhalb einer Epoche durch RecoveryAuthorityTransitionV2 steigen.
+  authorization.signer_key_id muss demjenigen recovery_takeover_key_id
+  entsprechen, der **am authority_anchor-Prefix** kanonisch war; Signatur gegen
+  dessen historischen Recovery-Takeover-Public-Key.
+- Für jeden Grant muss record_data.recovery_generation exakt der am
+  authority_anchor-Prefix verifizierten Recovery-Generation entsprechen.
+- Nur ein Grant mit authority_anchor unmittelbar vor seiner Row kann current
+  werden; deshalb entspricht diese historische Recovery-Authority beim Gewinner
+  zugleich dem aktuellen Recovery-State. Ein später appended, inzwischen
+  überholter Forced-Takeover-Grant kann so korrekt als stale statt fälschlich
+  fatal klassifiziert werden.
 - authority_anchor beschreibt den vollständig verifizierten **Entscheidungs-Prefix**,
   auf dessen Basis der Grant erzeugt wurde. covered_row_count darf deshalb kleiner
   als die Position unmittelbar vor der Grant-Row sein.
@@ -1200,6 +1203,7 @@ source_epoch_sealed
 genesis_grant_confirmation_required
 accepted_revision_graph
 authority_history_by_prefix
+recovery_history_by_prefix
 
 ~~~
 
@@ -1207,7 +1211,9 @@ Initialisierung:
 
 - source_epoch_sealed=false.
 - authority_history_by_prefix[0] enthält die manifestgebundene
-  Epoch-Start-Authority und unsealed.
+  Epoch-Start-Writer-Authority und unsealed.
+- recovery_history_by_prefix[0] enthält Recovery-Generation, URS-Commitment,
+  Takeover-Key-ID und Takeover-Public-Key aus dem Manifest.
 - current_recovery_generation, current_recovery_urs_commitment,
   current_recovery_takeover_key_id und current_recovery_takeover_public_key
   starten exakt aus dem Manifest und dürfen innerhalb derselben Epoche
@@ -1234,9 +1240,8 @@ Pro Row:
    - authority_anchor gegen den historischen Prefix und die dortige
      authority_history_by_prefix prüfen, nicht zwingend gegen rowIndex-1;
    - Handoff gegen den am Anchor gültigen predecessor Writer-Key;
-   - Forced Takeover gegen die an diesem Prefix aktuell verifizierte
-     Recovery-Takeover-Authority aus Manifest plus akzeptierten
-     RecoveryAuthorityTransitionV2-Controls;
+   - Forced Takeover gegen die in recovery_history_by_prefix am
+     authority_anchor verifizierte Recovery-Takeover-Authority;
    - ist der predecessor an der aktuellen Row weiterhin current, bei gültigem
      direkten Nachfolger Authority fortschreiben;
    - ist der Candidate relativ zu seinem historischen Anchor vollständig gültig,
@@ -1269,8 +1274,9 @@ Pro Row:
 5. Nur akzeptierte Fachrevisionen gehen in den fachlichen Graphen.
 6. Jede physische Row geht unabhängig von semantischer Annahme in Prefix-Hash
    und Bounds ein.
-7. Nach jeder Row wird der kanonische Authority-/Seal-Zustand für den neuen
-   Prefix in authority_history_by_prefix festgehalten.
+7. Nach jeder Row werden Writer-/Seal-State in authority_history_by_prefix und
+   Recovery-State in recovery_history_by_prefix für den neuen Prefix
+   festgehalten.
 8. EOF mit genesis_grant_confirmation_required=true => security_blocked /
    manifest_genesis_missing.
 
