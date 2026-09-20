@@ -1173,10 +1173,17 @@ Aktivierungsprüfung mit nur aktuellem URS + Google-Konto:
    `epoch_start_writer_*`-Feldern des Successors entsprechen. Das im
    Announcement gebundene `successor_creation_locator` muss exakt dem
    geschützten `creation_locator` des Successor-Manifests entsprechen.
-6a. Das RK_epoch des aktuellen Successor-RecoveryArtifactV6 muss byteweise von
+6a. Die `recovery_credential_history` des Successor-Manifests und des aktuellen
+    Successor-RecoveryArtifactV6 muss exakt der am
+    source_anchor_before_announcement vollständig verifizierten Source-Historie
+    entsprechen; aktuelle recovery_generation/recovery_urs_id/
+    recovery_takeover_key_id müssen deren letztem Eintrag entsprechen. Eine
+    verkürzte, umsortierte, ersetzte oder zusätzlich erfundene History =>
+    `recovery_credential_history_mismatch` / security_blocked.
+6b. Das RK_epoch des aktuellen Successor-RecoveryArtifactV6 muss byteweise von
     jedem source_root_key der vollständigen activation_lineage verschieden sein;
     sonst `successor_root_key_reuse` / security_blocked.
-6b. Den Successor-Prefix exakt bis successor_staging_anchor vollständig
+6c. Den Successor-Prefix exakt bis successor_staging_anchor vollständig
     verifizieren. Die akzeptierte EpochMigrationV2 muss die letzte semantische
     Row dieses Prefix sein; danach sind bis zum Anchor nur byte-identische
     Retry-Duplikate genau dieses Migration-Envelopes zulässig. Migration-
@@ -3837,8 +3844,13 @@ Reihenfolge:
    epoch_start_writer_grant_id + Writer-Authority planen.
 7. neuen unabhängig erzeugten 32-Byte RK_epoch und creation_locator für die
    v2-Epoche festlegen; der RK muss vom im ProfileUpgradeActivationEntryV2
-   gebundenen v1-source_root_key verschieden sein. Immutable ManifestV6 mit
-   genau diesem creation_locator lokal erzeugen und Fingerprint bestimmen.
+   gebundenen v1-source_root_key verschieden sein. Aus dem **aktuellen**
+   eingegebenen v1-URS wird recovery_urs_id gemäß §2 abgeleitet; zusammen mit
+   aktueller Recovery-Generation und dem neu erzeugten v2-Takeover-Key bildet
+   dies den exakt einen ersten Eintrag der v2-recovery_credential_history.
+   Historisch vor-v2 pensionierte Recovery-Secrets werden nicht behauptet.
+   Immutable ManifestV6 mit genau diesem creation_locator und dieser singleton
+   History lokal erzeugen und Fingerprint bestimmen.
 8. RecoveryTakeoverStagingV2 mit diesem Manifest-Fingerprint
    persistieren/readback-verifizieren; erst danach extrahierbaren temporären
    Recovery-Private-Key verwerfen und mutierendes Remote-I/O beginnen.
@@ -3950,6 +3962,7 @@ successor_cutover_race
 activation_confirmation_mismatch
 staged_pre_migration_control_forbidden
 successor_root_key_reuse
+recovery_credential_history_mismatch
 protocol_id_collision
 recovery_credential_reuse
 recovery_generation_mismatch
