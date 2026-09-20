@@ -1,6 +1,6 @@
 # EDS Diary – Exaktes Protokollprofil Google Sheets Single-Writer v1
 
-Stand: 15.09.2026
+Stand: 20.09.2026
 
 Status: **NORMATIV.** Diese Datei schließt die Byte-/Wire-/State-Lücken der gekürzten Repo-Spezifikationen. Für die Implementierung von `google-sheets-single-writer-v1` hat sie bei konkreten Serialisierungs-, Krypto-, Persistenz- und Transportdetails Vorrang vor den allgemeineren Dateien.
 
@@ -383,10 +383,10 @@ Wrapper wie Control oben. `record_data` exakt:
 `migration_kind` exakt:
 
 ```text
-"normal" | "local_rotation" | "remote_enablement" | "emergency"
+"normal" | "local_rotation" | "remote_enablement" | "recovery_rekey" | "emergency"
 ```
 
-Single-Writer v1 hat genau **eine** Source. `source_anchor` ist bei `normal` remote Rotation nicht-null und exakt der final vollständig verifizierte Single-Writer-Anchor nach Schreib-Freeze. Bei rein lokaler `local_rotation`/`remote_enablement` exakt `null`.
+Single-Writer v1 hat genau **eine** Source. `source_anchor` ist bei `normal` und `recovery_rekey` nicht-null und exakt der final vollständig verifizierte Single-Writer-Anchor nach Schreib-Freeze. Bei rein lokaler `local_rotation`/`remote_enablement` exakt `null`.
 
 Lineage-/Semantic-Snapshot-Hash verwendet die v5-Regeln: alle aktuellen fachlichen Heads erhalten; kein Timestamp-/Row-Winner. Bei unveränderter Ein-Source-Migration gilt zwingend:
 
@@ -888,6 +888,7 @@ Exaktes MAC-Payload-Schema:
   key_id,
   manifest_fingerprint,
   recovery_generation,
+  recovery_urs_commitment,
   remote_binding,
   remote_anchor,
   epoch_status,
