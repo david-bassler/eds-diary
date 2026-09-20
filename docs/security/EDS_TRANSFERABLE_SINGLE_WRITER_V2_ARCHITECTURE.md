@@ -248,8 +248,8 @@ remote_binding.remote_resource_id
 remote_binding.remote_identity_binding
 ```
 
-Die exakten Feldnamen werden im v2-State-Schema eingefroren. Ein
-Google-Provider-Identifier und
+Die exakten Feldnamen sind im v2-State-Schema der Exact-Protocol-Datei
+eingefroren. Ein Google-Provider-Identifier und
 `google-sheets-transferable-single-writer-v2` sind unterschiedliche
 Begriffe, auch wenn v1 sie historisch in einem Feld vermischt.
 
@@ -282,10 +282,9 @@ v2 verwendet einen eigenen exakt versionierten Anchor-Typ:
 ```
 
 `RemoteAnchorV1` wird nicht in-place erweitert oder als v2-State gespeichert.
-Die physische Prefix-Hash-Mechanik kann als Primitive wiederverwendet werden;
-ob v2 dieselbe Hash-Rekurrenz mit neuer Profilbindung oder eine neue
-Domain-Tag-Version verwendet, wird im exakten v2-Wire-Profil festgeschrieben und
-mit eigenen Golden Vectors abgesichert.
+Die Exact-Protocol-Datei legt für v2 eine eigene v6-Domain und die Hash-Rekurrenz
+über das vierzellige physische Rowformat fest; eigene Golden Vectors sind vor
+Implementierungsmerge Pflicht.
 
 ## 7. Writer-Control-Record
 
@@ -697,9 +696,17 @@ Zwei-Phasen-Aktivierung:
   Artifact zum Recovery-Trust-Root.
 
 Damit funktioniert `recovery_rekey` später nur mit neuem Recovery-Key +
-Google-Konto und ohne alten Recovery-Key, **ohne** dass ein nur vorgeschlagener,
-später abgebrochener neuer Recovery-Key vor Commit Gesundheitsdaten der Source
-oder des vorbereiteten Successors entschlüsseln kann.
+Google-Konto und ohne alten Recovery-Key. Vor einer **physischen**
+Rekey-Announcement-Row besitzt die neue URS keinen der beiden Root-Keys.
+
+Die rein clientseitige Grenze bleibt ausdrücklich: Wird eine vorbereitete
+Rekey-Row physisch geschrieben, verliert aber wegen einer unmittelbar zuvor
+kanonisch gewordenen konkurrierenden Authority semantisch das Rennen, ist ihr
+`activation_token` trotzdem öffentlich. Die neue URS kann dann die
+verschachtelten Root-Keys entpacken, das RecoveryArtifact bleibt jedoch
+unactivated und darf keine Writer-/Recovery-Authority begründen. Eine bedingte
+Geheimnisfreigabe nur bei semantischem Gewinn würde einen unabhängigen
+Koordinations-/Key-Release-Dienst benötigen.
 
 ## 18. Migration v1 -> v2
 
@@ -824,24 +831,28 @@ Mindestens:
 24. Recovery-Rekey nach Geräteverlust: nur neuer Recovery-Key + Google-Konto
     verifizieren über RecoveryActivationProofV2 den durable Successor; alter
     Recovery-Key ist nicht erforderlich.
-25. Vor dem kanonischen Rekey-Announcement kann der neue Recovery-Key weder
+25. Vor jeder physischen Rekey-Announcement-Row kann der neue Recovery-Key weder
     Source- noch Successor-RK entschlüsseln.
-26. Falscher/fehlender activation_token, Commitment-Mismatch oder Token auf
-    einer stale/verworfenen Announcement-Row -> Successor bleibt unactivated.
+26. Falscher/fehlender activation_token oder Commitment-Mismatch -> Successor
+    bleibt unactivated.
 27. Artifact bereits publiziert, dann konkurrierender Writer-Takeover vor
-    Announcement -> neue URS erhält keinen Root-Key; Successor bleibt orphaned.
-28. Neue gültige Fachrevision zwischen Successor-Kopie und Announcement ->
+    physischem Rekey-Append -> neue URS erhält keinen Root-Key; Successor bleibt
+    orphaned.
+28. Rekey-Row physisch nach einem knapp vorher gewonnenen Takeover appended:
+    Token kann Root-Keys technisch freischalten, die stale Row darf den
+    Successor trotzdem niemals aktivieren.
+29. Neue gültige Fachrevision zwischen Successor-Kopie und Announcement ->
     Aktivierung blockiert; stale/no-op physische Rows dürfen den fachlichen
     Snapshot nicht verändern.
-29. Vorbereitetes RecoveryArtifactV6 ohne durable kanonische Announcement-Row
+30. Vorbereitetes RecoveryArtifactV6 ohne durable kanonische Announcement-Row
     bleibt unactivated; physisch vorhandene stale Announcement-Row genügt nicht.
-30. Gen-1-Grant fehlt / kommt nach einer Fachrow / EOF davor -> fail-closed.
-31. Retry, Handoff und Forced Takeover nach Source-Seal -> kein Append.
-32. Transferdescriptor-Key stimmt nicht mit Zielgerät überein -> kein Promote.
-33. Transferdescriptor mit falschem Profil/Diary/Epoch -> Handoff wird vor Grant-Erzeugung abgelehnt.
-34. Transferdescriptor ohne gültigen Proof-of-Possession des Ziel-Private-Keys -> Handoff wird abgelehnt.
-35. Provider-Rollback vor einen dem Gerät bereits bekannten Writer-Grant -> fail-closed gegen den neueren Anchor.
-36. Vollständiger Verlust aller neueren Freshness-Belege -> als explizite nicht lösbare globale Freshness-Grenze dokumentiert; kein erfundener "latest"-Zustand.
+31. Gen-1-Grant fehlt / kommt nach einer Fachrow / EOF davor -> fail-closed.
+32. Retry, Handoff und Forced Takeover nach Source-Seal -> kein Append.
+33. Transferdescriptor-Key stimmt nicht mit Zielgerät überein -> kein Promote.
+34. Transferdescriptor mit falschem Profil/Diary/Epoch -> Handoff wird vor Grant-Erzeugung abgelehnt.
+35. Transferdescriptor ohne gültigen Proof-of-Possession des Ziel-Private-Keys -> Handoff wird abgelehnt.
+36. Provider-Rollback vor einen dem Gerät bereits bekannten Writer-Grant -> fail-closed gegen den neueren Anchor.
+37. Vollständiger Verlust aller neueren Freshness-Belege -> als explizite nicht lösbare globale Freshness-Grenze dokumentiert; kein erfundener "latest"-Zustand.
 
 ## 22. Nicht-Ziele
 
