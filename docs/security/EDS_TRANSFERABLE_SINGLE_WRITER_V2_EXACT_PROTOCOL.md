@@ -3740,8 +3740,10 @@ Reihenfolge:
     unmittelbar vor dieser Control-Row.
 12. Successor vollständig mit V2-Verifier verifizieren und §16a.1 gegen v1-Source
     und Successor erfolgreich ausführen. Den aktuellen Successor-RemoteAnchor als
-    successor_staging_anchor einfrieren; bis zum atomaren v2-Switch sind weitere
-    Successor-Appends verboten.
+    successor_staging_anchor einfrieren. Bis zur
+    SuccessorActivationConfirmation ist jede andere neue Row verboten; nach
+    exakt dieser Confirmation ist ein vollständig gültiger post-activation
+    Suffix zulässig.
 13. v1-Rotation-Announcement exakt one-shot vorbereiten. Aus genau diesen
     Announcement-Bytes die SuccessorActivationConfirmationV2 one-shot
     vorbereiten. Danach ProfileUpgradeActivationEntryV2 aus RK_v1, finalem
