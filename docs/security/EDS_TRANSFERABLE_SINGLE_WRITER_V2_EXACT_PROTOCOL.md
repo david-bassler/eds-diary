@@ -1429,6 +1429,10 @@ Pro Row:
     - dieselbe semantische ID in einem anderen Envelope/Revision-Objekt =>
       protocol_id_collision / security_blocked, unabhängig davon, ob der neue
       Claim später stale geworden wäre;
+    - bei der ersten strukturell/schema-gültigen Erscheinung wird die jeweilige
+      ID **vor** weiterer semantischer Klassifikation in den passenden
+      seen_*-Satz aufgenommen; dadurch kann auch eine später stale klassifizierte
+      Control-ID nicht erneut verwendet werden;
     - bei Gen-1 ist die exakt manifestgebundene Bestätigungsrow die einmalige
       erlaubte Realisierung der vorreservierten grant_id.
 2b. Falls genesis_grant_confirmation_required=true, ist **ausschließlich** der
@@ -2002,6 +2006,10 @@ Normen:
 - to_recovery_generation = from_recovery_generation + 1.
 - to_recovery_takeover_public_key dekodiert zu exakt 32 Ed25519-Bytes.
 - to_recovery_takeover_key_id muss daraus gemäß §2 reproduzierbar sein.
+- to_recovery_takeover_key_id darf **keiner** bereits in derselben Epoche
+  akzeptierten Recovery-Takeover-Key-ID entsprechen, einschließlich des
+  Manifest-Startkeys und aller früheren/supersedierten Recovery-Generationen.
+  Wiederverwendung => recovery_takeover_key_reuse / security_blocked.
 - to_recovery_urs_commitment ist exakt das §10-Recovery-Commitment des neuen
   32-Byte-URS für to_recovery_generation.
 - Der normale RevisionV2-Signing-Input bindet alle diese Felder an die aktuelle
