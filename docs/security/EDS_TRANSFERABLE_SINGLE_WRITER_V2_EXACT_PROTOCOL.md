@@ -774,6 +774,28 @@ Diese beiden appProperties sind die einzigen Protokoll-properties der Recovery-
 Ressource. Create-/Write-Unknown-Outcomes werden ausschließlich durch
 Discovery/Readback derselben kanonischen Bytes entschieden.
 
+Publish/Replacement ist exakt fail-closed:
+
+1. Discovery über exakten Dateinamen **und** recovery_locator; mehr als eine
+   plausible Ressource => ambiguous/security stop.
+2. Existiert noch kein Artefakt, Ressource erstellen und anschließend wieder per
+   Discovery eindeutig binden.
+3. Existiert bereits anderes Ciphertextmaterial unter demselben Locator, werden
+   altes und neues RecoveryArtifactV6 mit der eingegebenen URS entschlüsselt und
+   vollständig validiert.
+4. diary_id muss identisch sein.
+5. recovery_generation darf nicht sinken. Bei gleicher Recovery-Generation ist
+   Replacement nur für eine vollständig verifizierte direkte
+   Successor-Epoche zulässig, deren Manifest-Predecessor exakt auf
+   old.epoch_id + old.manifest_fingerprint zeigt.
+6. Bei höherer Recovery-Generation unter demselben Locator muss die Generation
+   exakt +1 sein; regulärer recovery_rekey verwendet jedoch eine neue zufällige
+   URS und damit normalerweise einen neuen Locator.
+7. Schreiben/Timeout wird ausschließlich durch bytegenauen Readback des neuen
+   kanonischen Artifact-JSON entschieden.
+8. Nach Write erneut Discovery: exakt dieselbe eine Ressource muss kanonisch
+   übrig sein.
+
 ---
 
 ## 11. RemoteAnchorV2
@@ -1539,27 +1561,32 @@ Migration ist Epoch-Rotation, keine In-place-Mutation.
 Reihenfolge:
 
 1. v1 Source full-verifizieren.
-2. Source lokal einfrieren.
-3. neues Writer-Ed25519-Keypair erzeugen.
-4. neues Recovery-Takeover-Keypair erzeugen.
-5. epoch_start_authority_mode="genesis_grant_required" setzen und
+2. aktuelle v1-URS gegen das authentifizierte v1-Recovery-Commitment verifizieren;
+   v1 recovery_generation unverändert in v2 übernehmen und daraus das neue
+   v6-Recovery-Commitment berechnen. Ein Recovery-Rekey wird nicht still mit dem
+   Profilupgrade kombiniert.
+3. Source lokal einfrieren.
+4. neue writer_device_id und neues Writer-Ed25519-Keypair erzeugen.
+5. für die übernommene Recovery-Generation das erste
+   Recovery-Takeover-Keypair erzeugen.
+6. epoch_start_authority_mode="genesis_grant_required" setzen und
    epoch_start_writer_grant_id + Writer-Authority planen.
-6. immutable ManifestV6 lokal erzeugen und Fingerprint bestimmen.
-7. RecoveryTakeoverStagingV2 mit diesem Manifest-Fingerprint
+7. immutable ManifestV6 lokal erzeugen und Fingerprint bestimmen.
+8. RecoveryTakeoverStagingV2 mit diesem Manifest-Fingerprint
    persistieren/readback-verifizieren; erst danach extrahierbaren temporären
    Recovery-Private-Key verwerfen und mutierendes Remote-I/O beginnen.
-8. Gen-1-Grant als erste _r-Row mit authority_anchor=H0 schreiben.
-9. fachliche Heads als RevisionV2 unter Gen-1-Authority schreiben/signieren.
-10. Migration-Control mit migration_kind="profile_upgrade" und
+9. Gen-1-Grant als erste _r-Row mit authority_anchor=H0 schreiben.
+10. fachliche Heads als RevisionV2 unter Gen-1-Authority schreiben/signieren.
+11. Migration-Control mit migration_kind="profile_upgrade" und
     source_writer_authority=null schreiben.
-11. Successor vollständig mit V2-Verifier verifizieren.
-12. aus RecoveryTakeoverStagingV2 das finale RecoveryArtifactV6 mit dem finalen
+12. Successor vollständig mit V2-Verifier verifizieren.
+13. aus RecoveryTakeoverStagingV2 das finale RecoveryArtifactV6 mit dem finalen
     Successor-Anchor erzeugen, lokal/remote readback-verifizieren und
     Test-Recovery durchführen.
-13. SyncBackupV6 erzeugen und Test-Restore durchführen.
-14. RecoveryTakeoverStagingV2 darf jetzt gelöscht werden.
-15. v1 Rotation Announcement durable machen.
-16. atomar auf v2 umschalten; v1 retire.
+14. SyncBackupV6 erzeugen und Test-Restore durchführen.
+15. RecoveryTakeoverStagingV2 darf jetzt gelöscht werden.
+16. v1 Rotation Announcement durable machen.
+17. atomar auf v2 umschalten; v1 retire.
 
 Kein v1-Client darf eine v2-Epoche als v1 interpretieren.
 
@@ -1631,6 +1658,8 @@ Negative Vectors:
 - gleiche Generation anderer Grant;
 - alte Recovery-Generation;
 - falscher Recovery-Takeover-Key;
+- Recovery-Ressourcen-Replacement ohne direkte verifizierte Successor-Lineage;
+- zwei plausible Recovery-Ressourcen desselben Locators;
 - Transferdescriptor ohne Private-Key-Possession;
 - Rollback vor bereits bekannten Grant;
 - stale Fachrow nach Handoff;
