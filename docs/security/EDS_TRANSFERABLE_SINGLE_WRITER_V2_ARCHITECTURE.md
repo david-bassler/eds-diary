@@ -784,6 +784,13 @@ Angreifer, der alle drei gleichzeitig kontrolliert, kann die Recovery-Authority
 auf eigenes Material umstellen. Ein stärkeres Modell benötigt einen zusätzlichen
 unabhängigen Recovery-Zweitfaktor und eine neue Protokollversion.
 
+RecoveryRekeyOperationStateV2 bleibt während Phase B nicht-terminal. Deshalb
+sperrt er normale Rotation, erlaubt in stage="successor_rotation_required" aber
+exakt die zu seiner current transition_id passende
+`recovery_rekey`-Rotation. Ein Ersatzgerät gewinnt bei Geräteverlust zuerst
+per Forced Takeover einen maintenance-only Writer und legt **danach** einen
+adoptierten Rekey-Operation-State an.
+
 Jede Rotation besitzt einen persistenten Crash-Resume-State mit den exakten
 one-shot Announcement-/Grant-Bytes. Die Stage-Reihenfolge ist geschlossen:
 Successor verifizieren -> Announcement one-shot vorbereiten ->
