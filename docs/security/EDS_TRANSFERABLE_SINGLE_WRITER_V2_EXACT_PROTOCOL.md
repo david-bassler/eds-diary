@@ -470,8 +470,11 @@ Für jede Recovery-Generation existiert genau ein Ed25519-Takeover-Schlüsselpaa
 Key-Lifecycle:
 
 1. Bei **v1→v2** wird ein neues Ed25519-Keypair transient erzeugt.
-2. Bei **recovery_rekey** wird recovery_generation exakt um 1 erhöht und ebenfalls
-   ein neues Ed25519-Keypair erzeugt.
+2. Bei **recovery_rekey** wird recovery_generation exakt um 1 erhöht, ein neues
+   Ed25519-Keypair erzeugt und zusätzlich ein 32-Byte-CSPRNG
+   recovery_activation_secret erzeugt. Dieses Secret bleibt bis zum kanonisch
+   akzeptierten Rotation-Announcement ausschließlich im lokalen verschlüsselten
+   Operation-State.
 3. Bei normaler **v2→v2-Rotation** bleiben recovery_generation,
    recovery_takeover_key_id und dasselbe Takeover-Keypair unverändert. Die
    aktuelle URS wird erneut eingegeben; das Source-RecoveryArtifactV6 wird
@@ -482,9 +485,10 @@ Key-Lifecycle:
    verifizierten Source-Artefakt übernommen.
 5. Public Key + Key-ID der Ziel-Recovery-Generation im geschützten
    Successor-Manifest binden.
-6. Vor jedem mutierenden Remote-Create/Manifest-Publish muss PKCS#8
-   crash-resumable als RecoveryTakeoverStagingV2 (§9.1) URS-verschlüsselt
-   persistiert und readback-verifiziert werden.
+6. Vor jedem mutierenden Remote-Create/Manifest-Publish müssen PKCS#8 und bei
+   recovery_rekey zusätzlich recovery_activation_secret crash-resumable als
+   RecoveryTakeoverStagingV2 (§9.1) URS-verschlüsselt persistiert und
+   readback-verifiziert werden.
 7. Plaintext-PKCS#8 und ein ggf. extrahierbarer temporärer Private Key danach aus
    dem normalen Sitzungszustand verwerfen.
 8. Nach finaler Successor-Verifikation wird der exakte Source-
@@ -492,13 +496,18 @@ Key-Lifecycle:
    reserviert, aber noch nicht remote appended.
 9. Aus dem Staging-Material wird das endgültige RecoveryArtifactV6 erzeugt. Für
    jede nicht-native Successor-Epoche enthält es zusätzlich den in §19.1
-   definierten RecoveryActivationProofV2 mit Source-RK, letztem verifizierten
-   Source-Anchor und exakt den vorbereiteten Announcement-Envelope-Bytes.
+   definierten RecoveryActivationProofV2. Bei recovery_rekey werden weder
+   Source-RK noch Successor-RK unter der neuen URS direkt offengelegt; beide sind
+   zusätzlich unter aus recovery_activation_secret abgeleiteten, getrennten
+   Aktivierungskeys gewrappt.
 10. RecoveryArtifactV6 wird lokal und remote bytegenau readback-verifiziert,
     bevor das Source-Announcement appended werden darf.
 11. Danach werden genau die im Activation Proof gebundenen
-    Announcement-Envelope-Bytes appended und die Source vollständig
-    readback-verifiziert.
+    Announcement-Envelope-Bytes appended. Bei recovery_rekey wird im selben
+    AppendCellsRequest in der vierten v2-Row-Zelle zusätzlich exakt
+    recovery_activation_secret veröffentlicht. Envelope und Aktivierungssecret
+    sind dadurch Bestandteil derselben physischen Row. Anschließend wird die
+    Source vollständig readback-verifiziert.
 12. Erst wenn dieses Announcement vom Source-Verifier als kanonisch gültiges
     Rotation-Announcement auf genau den gebundenen Successor akzeptiert wurde,
     ist das RecoveryArtifactV6 aktiviert.
@@ -566,9 +575,13 @@ Plaintext exakt:
 
 ~~~text
 {
-  recovery_takeover_private_key_pkcs8
+  recovery_takeover_private_key_pkcs8,
+  recovery_activation_secret
 }
 ~~~
+
+recovery_activation_secret ist bei recovery_rekey Base64URL von exakt 32 Byte,
+sonst exakt null.
 
 Verschlüsselung:
 
