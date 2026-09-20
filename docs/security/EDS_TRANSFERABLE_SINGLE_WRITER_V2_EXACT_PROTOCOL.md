@@ -125,6 +125,13 @@ K_recovery = HKDF-SHA-256(
   UTF8("eds-diary/recovery-wrap/v6"),
   32
 )
+
+K_recovery_stage = HKDF-SHA-256(
+  URS,
+  staging_salt_32_random_bytes,
+  UTF8("eds-diary/recovery-takeover-staging/v2"),
+  32
+)
 ~~~
 
 Keine v5-Domain darf für neue v2-Bytes verwendet werden.
@@ -457,20 +464,92 @@ Bei Erzeugung einer v2-Epoche oder recovery_rekey:
 3. Private Key einmalig als PKCS#8 exportieren.
 4. recovery_takeover_key_id aus Public Key ableiten.
 5. Public Key + Key-ID im geschützten Manifest binden.
-6. PKCS#8 ausschließlich in den verschlüsselten RecoveryArtifactV6-Payload aufnehmen.
-7. Plaintext-PKCS#8 und extrahierbaren temporären Private Key nach Artefakterzeugung
-   aus dem normalen Sitzungszustand verwerfen.
-8. Ein späterer Forced Takeover decryptet das RecoveryArtifactV6 erst nach
-   erneuter URS-Eingabe und importiert PKCS#8 für diese Ceremony als
-   extractable=false, usage=["sign"].
-9. Diese importierte Capability wird nach Readback/Abschluss verworfen.
+6. Vor jedem Remote-Create/Manifest-Publish muss PKCS#8 crash-resumable als
+   RecoveryTakeoverStagingV2 (§9.1) URS-verschlüsselt persistiert und
+   readback-verifiziert werden.
+7. Plaintext-PKCS#8 und extrahierbaren temporären Private Key danach aus dem
+   normalen Sitzungszustand verwerfen.
+8. Nach finaler Successor-Verifikation wird aus dem Staging-Material das
+   endgültige RecoveryArtifactV6 erzeugt, mit dem final verifizierten
+   RemoteAnchorV2 gebunden, lokal und remote readback-verifiziert.
+9. Erst wenn RecoveryArtifactV6 sicher verfügbar und der Recovery-/Backup-Gate
+   bestanden ist, darf RecoveryTakeoverStagingV2 gelöscht werden.
+10. Ein späterer Forced Takeover decryptet ausschließlich RecoveryArtifactV6 nach
+    erneuter URS-Eingabe und importiert PKCS#8 für diese Ceremony als
+    extractable=false, usage=["sign"].
+11. Diese importierte Capability wird nach Readback/Abschluss verworfen.
 
 Der normale lokale Writer-State enthält niemals recovery_takeover_private_key,
-PKCS#8 oder eine dauerhaft nutzbare Recovery-Takeover-Capability.
+PKCS#8 oder eine dauerhaft nutzbare Recovery-Takeover-Capability. Außerhalb des
+finalen RecoveryArtifactV6 darf PKCS#8 nur im nachfolgend exakt definierten,
+URS-verschlüsselten und operationsgebundenen Crash-Resume-Staging vorkommen.
 
 Ist URS bzw. das aktuelle RecoveryArtifactV6 kompromittiert, ist Forced Takeover
 für diese Recovery-Generation kompromittiert. recovery_rekey muss daher ein neues
 Takeover-Keypair erzeugen.
+
+### 9.1 RecoveryTakeoverStagingV2 – nur lokaler Operation-State
+
+Dieses Objekt ist **kein Export-/Remote-Wire-Artefakt**, darf nie an Google
+publiziert und nie als RecoveryArtifact akzeptiert werden. Es existiert nur
+während Epoch-Erzeugung/Rotation/recovery_rekey.
+
+Exakt:
+
+~~~text
+{
+  format: "recovery-takeover-staging-v2",
+  version: 2,
+  diary_id,
+  epoch_id,
+  recovery_generation,
+  recovery_takeover_key_id,
+  recovery_takeover_public_key,
+  manifest_fingerprint,
+  salt,
+  iv,
+  ciphertext
+}
+~~~
+
+salt=32 CSPRNG bytes, iv=12 CSPRNG bytes.
+
+AAD:
+
+~~~text
+UTF8(JCS({
+  format,
+  version,
+  diary_id,
+  epoch_id,
+  recovery_generation,
+  recovery_takeover_key_id,
+  recovery_takeover_public_key,
+  manifest_fingerprint,
+  salt,
+  iv
+}))
+~~~
+
+Plaintext exakt:
+
+~~~text
+{
+  recovery_takeover_private_key_pkcs8
+}
+~~~
+
+Verschlüsselung:
+
+~~~text
+AES-256-GCM(K_recovery_stage, iv, UTF8(JCS(plaintext)), AAD)
+~~~
+
+Vor Verlassen der Key-Generation-Phase muss das vollständige Staging-Objekt
+persistent geschrieben und byte-/AEAD-readback-verifiziert sein. Resume verlangt
+erneute URS-Eingabe und den §19-Keypair-Check. Staging-Material einer anderen
+Diary/Epoch/Manifest-Fingerprint/Recovery-Generation ist unbrauchbar und fatal
+für diesen Resume-Versuch.
 
 ---
 
@@ -1426,15 +1505,21 @@ Reihenfolge:
 4. neues Recovery-Takeover-Keypair erzeugen.
 5. epoch_start_authority_mode="genesis_grant_required" setzen und
    epoch_start_writer_grant_id + Writer-Authority planen.
-6. immutable ManifestV6 erzeugen.
-7. Gen-1-Grant als erste _r-Row mit authority_anchor=H0 schreiben.
-8. fachliche Heads als RevisionV2 unter Gen-1-Authority schreiben/signieren.
-9. Migration-Control schreiben.
-10. Successor vollständig mit V2-Verifier verifizieren.
-11. RecoveryArtifactV6 erzeugen und Test-Recovery durchführen.
-12. SyncBackupV6 erzeugen und Test-Restore durchführen.
-13. v1 Rotation Announcement durable machen.
-14. atomar auf v2 umschalten; v1 retire.
+6. immutable ManifestV6 lokal erzeugen und Fingerprint bestimmen.
+7. RecoveryTakeoverStagingV2 mit diesem Manifest-Fingerprint
+   persistieren/readback-verifizieren; erst danach extrahierbaren temporären
+   Recovery-Private-Key verwerfen und Remote-I/O beginnen.
+8. Gen-1-Grant als erste _r-Row mit authority_anchor=H0 schreiben.
+9. fachliche Heads als RevisionV2 unter Gen-1-Authority schreiben/signieren.
+10. Migration-Control schreiben.
+11. Successor vollständig mit V2-Verifier verifizieren.
+12. aus RecoveryTakeoverStagingV2 das finale RecoveryArtifactV6 mit dem finalen
+    Successor-Anchor erzeugen, lokal/remote readback-verifizieren und
+    Test-Recovery durchführen.
+13. SyncBackupV6 erzeugen und Test-Restore durchführen.
+14. RecoveryTakeoverStagingV2 darf jetzt gelöscht werden.
+15. v1 Rotation Announcement durable machen.
+16. atomar auf v2 umschalten; v1 retire.
 
 Kein v1-Client darf eine v2-Epoche als v1 interpretieren.
 
@@ -1491,8 +1576,9 @@ für mindestens:
 12. ManifestV6 Plaintext/AAD/Fingerprint einschließlich
     epoch_start_authority_mode und protocol_limits.
 13. v6 Google Account Binding + epoch_locator + recovery_artifact_locator.
-14. RecoveryArtifactV6 AAD/Payload/Keypair-Check roundtrip.
-15. SyncBackupV6 vollständiges Manifest/hash binding.
+14. RecoveryTakeoverStagingV2 KDF/AAD/Crash-Resume + falsche URS.
+15. RecoveryArtifactV6 AAD/Payload/Keypair-Check roundtrip.
+16. SyncBackupV6 vollständiges Manifest/hash binding.
 
 Negative Vectors:
 
@@ -1513,7 +1599,10 @@ Negative Vectors:
   nicht current war;
 - Rotation-Announcement gefolgt von Fachwrite/Grant auf versiegelter Source;
 - RecoveryArtifact mit älterem Anchor als lokal bereits verifiziert;
-- inkompatible bekannte Recovery-/Local-Anchor.
+- inkompatible bekannte Recovery-/Local-Anchor;
+- Crash nach Manifest-Erzeugung, aber vor finalem RecoveryArtifactV6: Resume nur
+  über gültiges RecoveryTakeoverStagingV2 + URS;
+- manipuliertes oder manifestfremdes RecoveryTakeoverStagingV2.
 
 ---
 
