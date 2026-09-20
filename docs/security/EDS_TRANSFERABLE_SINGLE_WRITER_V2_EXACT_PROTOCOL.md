@@ -61,6 +61,7 @@ grant_id                 32 CSPRNG bytes
 rotation_id              32 CSPRNG bytes
 migration_id             32 CSPRNG bytes
 transition_id            32 CSPRNG bytes
+confirmation_id          32 CSPRNG bytes
 operation_id             32 CSPRNG bytes
 transfer_nonce           32 CSPRNG bytes
 backup_id                32 CSPRNG bytes
@@ -222,6 +223,7 @@ pain-entry/v1
 pain-type-settings/v1
 recovery-authority-transition-sw-v2
 rotation-announcement-sw-v2
+successor-activation-confirmation-sw-v2
 writer-grant-sw-v2
 ~~~
 
@@ -242,9 +244,10 @@ writer_grant              -> writer-grant-sw-v2
 rotation_announcement     -> rotation-announcement-sw-v2
 epoch_migration           -> epoch-migration-sw-v2
 recovery_authority_transition -> recovery-authority-transition-sw-v2
+successor_activation_confirmation -> successor-activation-confirmation-sw-v2
 ~~~
 
-Für alle zehn Schema-IDs sind immutable maschinenlesbare Schema-Definitionen
+Für alle elf Schema-IDs sind immutable maschinenlesbare Schema-Definitionen
 gebunden; die vier neuen v2-Control-Schemas liegen als
 `src/security/schemas/*-sw.v2.schema.json` im Repo. Die produktive Registry wird
 ausschließlich aus diesen versionierten Schemaobjekten gebildet:
@@ -1385,6 +1388,7 @@ seen_grant_ids
 seen_rotation_ids
 seen_migration_ids
 seen_recovery_transition_ids
+seen_confirmation_ids
 seen_recovery_takeover_key_ids
 
 ~~~
@@ -1426,8 +1430,8 @@ Initialisierung:
 - seen_grant_ids startet bei carried_from_predecessor mit
   epoch_start_writer_grant_id; bei genesis_grant_required wird dieselbe
   manifestgebundene Gen-1-ID als einmalig erwartete/reservierte ID geführt.
-- seen_rotation_ids, seen_migration_ids und seen_recovery_transition_ids starten
-  leer.
+- seen_rotation_ids, seen_migration_ids, seen_recovery_transition_ids und
+  seen_confirmation_ids starten leer.
 - seen_recovery_takeover_key_ids startet mit dem manifestgebundenen
   recovery_takeover_key_id.
 - genesis_grant_confirmation_required ist genau dann true, wenn
@@ -1444,8 +1448,8 @@ Pro Row:
 2. Wrapper als exaktes RevisionV2 validieren.
 2a. Für Control-IDs gilt nach Wrapper-/Schema-Validierung und **vor** semantischer
     State-Mutation:
-    - grant_id, rotation_id, migration_id und transition_id sind jeweils in
-      ihrem Typ-Namespace epochweit eindeutig;
+    - grant_id, rotation_id, migration_id, transition_id und confirmation_id
+      sind jeweils in ihrem Typ-Namespace epochweit eindeutig;
     - byte-identische Retry-Duplikatrows wurden bereits in Schritt 1 als No-op
       abgefangen und sind die einzige Wiederholung, die keinen ID-Collision-Fehler
       erzeugt;
