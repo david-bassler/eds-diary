@@ -882,6 +882,22 @@ Explizite Warnung mit Recovery-Key-Ceremony. Kein unscheinbarer
 
 Eigener Problemzustand; nicht als normaler Sync-Konflikt darstellen.
 
+### Recovery-Rekey muss abgeschlossen werden
+
+Wenn canonical_full `recovery_rekey_rotation_required=true` liefert, zeigt die
+App keinen normalen Writer-Zustand, auch wenn das Gerät per Forced Takeover die
+aktuelle Writer-Authority besitzt:
+
+```text
+Recovery-Key-Wechsel ist noch nicht abgeschlossen.
+Neue Einträge und Schreibzugriff-Übertragung sind gesperrt.
+[Recovery-Key-Wechsel abschließen]
+```
+
+Nach Geräteverlust darf ein neues Gerät mit dem aktuellen Recovery-Key diesen
+Maintenance-Zustand aus der Remote-Historie rekonstruieren und Phase B
+fortsetzen.
+
 ## 20. Provider-/API-Auswirkungen
 
 Für die bevorzugte v2-Variante bleibt der Writer-Control-Log im bestehenden
@@ -999,6 +1015,23 @@ Mindestens:
     **neuem RK_epoch** -> security_blocked.
 52. nach abgeschlossenem Rekey kann altes URS den neuen aktiven Successor-RK
     nicht aus altem RecoveryArtifact ableiten.
+53. durable RecoveryAuthorityTransitionV2 + weiterhin derselbe Writer-Key +
+    Fachwrite -> remote rekey_rotation_required_rejected; Fachgraph unverändert.
+54. Pending-Rekey-Fence + Handoff -> abgewiesen; Forced Takeover bleibt
+    zulässig und erzeugt nur maintenance-only Writer.
+55. Geräteverlust nach durable Transition -> neues Gerät mit neuem URS erkennt
+    recovery_rekey_rotation_required aus Remote-Historie, übernimmt per Forced
+    Takeover und adoptiert Phase B ohne alten lokalen Operation-State.
+56. zweite RecoveryAuthorityTransitionV2 während Pending-Rekey -> jüngste
+    transition_id supersedet die ältere; nur sie darf die Rekey-Rotation binden.
+57. Pending-Rekey + normal-Rotation -> kein Seal; ausschließlich
+    recovery_rekey-Rotation mit aktueller transition_id zulässig.
+58. v1→v2: zusätzliche v1-Row zwischen finalem Pre-Append-Read und Announcement
+    -> profile_upgrade_source_race; Successor bleibt staged/read-only, kein
+    zweites Announcement/kein stiller Datenverlust.
+59. RecoveryArtifactV6 mit to-State vor durabler Transition -> nur mit gültigem
+    RecoveryAuthorityTransitionProofV2 staged/read-only; niemals current Forced
+    Takeover-Authority.
 
 ## 22. Nicht-Ziele
 
