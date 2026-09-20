@@ -57,7 +57,7 @@ creation_locator         16 CSPRNG bytes
 
 envelope_id              32 CSPRNG bytes
 revision_id              32 CSPRNG bytes
-writer_grant_id          32 CSPRNG bytes
+grant_id                 32 CSPRNG bytes
 rotation_id              32 CSPRNG bytes
 migration_id             32 CSPRNG bytes
 transition_id            32 CSPRNG bytes
@@ -82,7 +82,10 @@ Base64URL(SHA-256(
 
 Alle oben als CSPRNG markierten IDs werden unabhängig mit einem
 kryptographisch sicheren Zufallszahlengenerator erzeugt und als kanonisches
-Base64URL ohne "=" serialisiert. `operation_id` ist ausschließlich lokale
+Base64URL ohne "=" serialisiert.
+ `grant_id` ist der erzeugte Identifier im
+WriterGrantV2-Payload; Felder namens `writer_grant_id` referenzieren exakt
+diesen `grant_id` und sind **kein eigener ID-Typ**. `operation_id` ist ausschließlich lokale
 Crash-/Resume-Identität, besitzt aber dieselbe 32-Byte-CSPRNG-Regel. Der Name
 `cache_id` ist der einzige normative Feldname für den
 ActivationLineageCacheV2-Identifier; `activation_lineage_cache_id` ist kein
