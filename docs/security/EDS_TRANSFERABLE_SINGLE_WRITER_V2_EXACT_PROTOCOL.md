@@ -1639,14 +1639,18 @@ Zusätzlich gilt zwingend:
   muss dafür keine Successor-/Recovery-Ressource laden.
 
 rotation_kind="normal":
-- recovery_transition_id = null.
+- recovery_transition_id = null;
+- recovery_rekey_rotation_required muss am
+  source_anchor_before_announcement=false sein.
 
 rotation_kind="recovery_rekey":
-- recovery_transition_id benennt exakt eine zuvor durable akzeptierte
-  RecoveryAuthorityTransitionV2 derselben Source-Epoche;
-- diese Transition muss die am finalen Source-Prefix aktuelle Recovery-Generation
-  erzeugt haben und die jüngste akzeptierte RecoveryAuthorityTransitionV2 vor
-  dem Announcement sein;
+- recovery_rekey_rotation_required muss am
+  source_anchor_before_announcement=true sein;
+- recovery_transition_id muss exakt
+  current_recovery_rekey_transition_id an diesem Prefix sein;
+- die referenzierte Transition muss die am finalen Source-Prefix aktuelle
+  Recovery-Generation erzeugt haben und damit die jüngste akzeptierte
+  RecoveryAuthorityTransitionV2 vor dem Announcement sein;
 - der Beweis lautet damit nur „dieser Successor trägt genau diese durable
   Recovery-Rekey-Transition weiter“. Eine nicht remote beweisbare Behauptung
   über denselben UI-/Prozesslauf wird nicht Teil des Wire-Protokolls.
@@ -1866,7 +1870,19 @@ Normen:
   Writer-Authority.
 - Bei Annahme ersetzt der Verifier current_recovery_generation,
   current_recovery_urs_commitment, current_recovery_takeover_key_id und
-  current_recovery_takeover_public_key atomar.
+  current_recovery_takeover_public_key atomar und setzt zusätzlich
+  recovery_rekey_rotation_required=true sowie
+  current_recovery_rekey_transition_id=transition_id.
+- Ist recovery_rekey_rotation_required bereits true, darf eine weitere gültige
+  Transition den aktuellen Recovery-State erneut um genau eine Generation
+  fortschreiben. Sie supersedet dabei die bisherige Pending-Rekey-Transition:
+  current_recovery_rekey_transition_id wird atomar auf ihre transition_id
+  ersetzt. Das erlaubt, einen gerade neu kompromittierten Recovery-Key noch vor
+  der Successor-Rotation erneut zu ersetzen.
+- Solange recovery_rekey_rotation_required=true ist, darf die Source nicht in
+  normalen Fachbetrieb zurückkehren. Der Zustand ist vollständig aus der
+  Remote-Historie rekonstruierbar und darf nicht von lokalem
+  RecoveryRekeyOperationStateV2 abhängen.
 - Eine strukturell/kryptographisch gültige, aber bereits überholte Transition
   gegen einen historischen Recovery-State ist
   `stale_recovery_transition_rejected`; sie ändert keinen State.
