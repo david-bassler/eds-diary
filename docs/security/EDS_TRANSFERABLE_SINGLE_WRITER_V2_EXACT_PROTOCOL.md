@@ -317,8 +317,12 @@ UTF8("eds-diary/revision-signature/v2") || 0x00 ||
 UTF8(JCS(revision_signing_core))
 ~~~
 
-Verifikation erfolgt gegen den Public Key des aktuell kanonischen Grants an der
-physischen Row-Position der Revision.
+Für eine Revision der aktuellen Authority erfolgt die Verifikation gegen den an
+ihrer physischen Row-Position aktuellen Writer-Public-Key. Referenziert eine Row
+eine bereits verifizierte ältere Authority, wird ihre Signatur stattdessen gegen
+den exakt zu diesem historischen Grant gehörenden Public Key geprüft und die Row
+bei Erfolg als stale_writer_rejected klassifiziert. Eine unbekannte oder
+widersprüchliche Authority ist fatal.
 
 ---
 
@@ -1260,6 +1264,46 @@ Recovery-Rekey erzeugt zwingend:
 
 Altes Recovery-Takeover-Material darf in der neuen Recovery-Generation keinen
 Grant signieren.
+
+### 17.1 Exakter v2→v2-Rotationsablauf
+
+Für sowohl normale Rotation als auch recovery_rekey gilt:
+
+1. Source vollständig verifizieren; current Writer muss zum lokalen Writer-Key
+   passen, Source muss unsealed sein und es dürfen keine nicht-durablen eigenen
+   Pending-Envelopes verbleiben.
+2. Successor planen. Bei normaler Rotation Recovery-Generation/Takeover-Keypair
+   unverändert übernehmen; bei recovery_rekey neue URS, Generation+1 und neues
+   Takeover-Keypair verwenden.
+3. Successor-Manifest one-shot erzeugen, RecoveryTakeoverStagingV2 sichern und
+   Successor-Remote erstellen.
+4. Fach-Heads und epoch-migration-sw-v2 unter der fortgeführten Writer-Authority
+   schreiben; Successor vollständig verifizieren.
+5. Exakten rotation-announcement-sw-v2-Envelope auf der Source one-shot
+   vorbereiten und persistent reservieren, aber noch nicht appendieren. Sein
+   successor_recovery_generation muss §16a erfüllen.
+6. Finales RecoveryArtifactV6 des Successors erzeugen. Sein
+   RecoveryActivationProofV2 enthält source_root_key, den in Schritt 1
+   verifizierten Source-Anchor und exakt die in Schritt 5 reservierten
+   Announcement-Envelope-Bytes. Artifact remote publishen und bytegenau
+   readback-verifizieren.
+7. Source unmittelbar vor Append erneut vollständig verifizieren. Nur wenn
+   dieselbe Writer-Authority weiterhin current und Source weiterhin unsealed ist,
+   exakt die reservierten Announcement-Bytes appendieren; sonst Artifact/
+   Successor unactivated/orphaned lassen und nicht automatisch neu erzeugen.
+8. Source vollständig readback-verifizieren. Die konkrete Announcement-Row muss
+   kanonisch akzeptiert sein und §19.1 muss RecoveryArtifactV6 als activated
+   bestätigen.
+9. Erst jetzt kanonisches SyncBackupV6 mit activation_source_snapshot erzeugen
+   und vollständigen Test-Restore durchführen.
+10. RecoveryTakeoverStagingV2 löschen und lokal atomar auf den Successor
+    umschalten.
+
+Crash/Unknown-Outcome-Regel: In Schritten 5–8 werden niemals neue semantische
+Announcement-Bytes erzeugt. Ist das exakte Envelope remote vorhanden, entscheidet
+Full Readback. Fehlt es und Source ist weiterhin unsealed unter derselben
+Authority, dürfen exakt dieselben Bytes erneut appended werden. Andernfalls
+bleibt der vorbereitete Successor unactivated.
 
 ---
 
