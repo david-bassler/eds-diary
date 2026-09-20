@@ -833,23 +833,32 @@ Publish ist exakt fail-closed:
 Account+URS-Recovery:
 
 1. Über recovery_family_locator alle owner-only v6-Recovery-Ressourcen dieser
-   Familie discovern; jede Ressource strikt prüfen und mit URS entschlüsseln.
-2. Für jedes gültige Artifact den zugehörigen Epoch-Remote über den aus
-   diary_id+epoch_id berechenbaren v6 epoch_locator discovern und vollständig
-   verifizieren.
-3. Ein vorbereiteter Successor wird **nicht** allein durch Existenz,
-   predecessor_epochs oder sein RecoveryArtifact aktiv.
-4. Eine Successor-Epoche ist nur dann kanonisch aktiviert, wenn die vollständig
-   verifizierte Source-Epoche ein gültiges rotation-announcement-sw-v2 mit exakt
-   passendem successor_epoch_id + successor_manifest_fingerprint enthält.
-5. Ohne solches Announcement bleibt die Source kanonisch recoverbar, auch wenn
-   ein vorbereiteter Successor samt RecoveryArtifact bereits existiert.
-6. Mit durable gültigem Announcement folgt Recovery genau diesem Successor.
-   Mehrere inkompatible aktivierte Ketten oder mehr als ein unretired
-   kanonischer Leaf => ambiguous/security stop.
-7. Für den ersten v2 profile_upgrade bleibt bis zum durable v1
-   rotation-announcement die v1-Source kanonisch; deren bestehender v5-Recovery-
-   Pfad bleibt deshalb bis zum Switch erhalten.
+   URS-Familie discovern; jede Ressource strikt prüfen und mit URS entschlüsseln.
+2. Für jedes kryptographisch gültige Artifact den zugehörigen v6 Epoch-Remote
+   discovern und dessen Successor-Manifest/Remote vollständig verifizieren.
+3. Native v2-Genesis mit activation_proof=null ist nach erfolgreicher
+   Manifest-/Remote-/Recovery-Prüfung direkt recovery-fähig.
+4. Jede Nicht-Genesis-Epoche ist nur recovery-fähig, wenn ihr
+   RecoveryActivationProofV2 gemäß §19.1 erfolgreich ist. Die Source darf dabei
+   außerhalb der aktuellen recovery_family_locator-Familie liegen; insbesondere
+   nach recovery_rekey wird sie über die im Proof enthaltene Source-Identität
+   und den jeweiligen v5/v6 Epoch-Locator gefunden.
+5. Ein vorbereiteter Successor ohne erfolgreichen Activation Proof bleibt
+   unactivated und wird niemals aufgrund von Existenz, predecessor_epochs,
+   Timestamp oder Dateireihenfolge ausgewählt.
+6. Aus allen erfolgreich aktivierten Kandidaten muss genau eine kanonische,
+   nicht durch einen weiteren erfolgreich aktivierten Successor abgelöste
+   Leaf-Epoche resultieren. Mehrere inkompatible aktivierte Leaves =>
+   ambiguous/security stop.
+7. Zeigt eine mit der eingegebenen **alten** URS recovery-fähige Source ein
+   kanonisches Announcement auf einen Successor, dessen RecoveryArtifact mit
+   dieser URS nicht entschlüsselbar ist, ist die alte Recovery-Authority
+   superseded: fail-closed, niemals die versiegelte Source als aktuellen Stand
+   zurückgeben. Genau so wird recovery_rekey gegenüber der alten URS wirksam.
+8. Beim v1→v2-profile_upgrade bleibt die v1-Source bis zum durable v1
+   rotation-announcement kanonisch. Danach muss eine aktuelle Implementierung
+   dem Announcement auf den v2-Successor folgen; die eingefrorene v1-Source darf
+   nicht als aktives Tagebuch zurückgegeben werden.
 
 ---
 
@@ -1700,11 +1709,17 @@ Aktivierungsprüfung nach Eingabe der neuen URS:
    jeweiligen v5/v6 Epoch-Locator authentifiziert discovern.
 3. Source-Manifest mit source_root_key decrypten; Diary-ID, Epoch-ID,
    Manifest-Fingerprint, Google-Account-Binding und Profil müssen exakt passen.
-4. Den zum source_sync_profile gehörenden produktiven Full Verifier verwenden.
-   source_anchor_before ist dabei ein verpflichtender Freshness-Floor.
-5. Der vollständig gelesene Source-Prefix muss source_anchor_before erweitern.
-6. expected_announcement_envelope muss byteidentisch in einer physischen Row
-   nach source_anchor_before vorkommen.
+4. In den gelesenen Source-Rows die erste byteidentische
+   expected_announcement_envelope-Row nach source_anchor_before bestimmen. Fehlt
+   sie, ist der Proof unactivated.
+5. Den zum source_sync_profile gehörenden produktiven Full Verifier auf dem
+   **Prefix bis einschließlich genau dieser Row** verwenden.
+   source_anchor_before ist dabei ein verpflichtender Freshness-Floor; der
+   geprüfte Prefix muss ihn erweitern. Rows nach der Activation-Row sind für
+   diesen Aktivierungsbeweis nicht erforderlich und können dessen Erfolg nicht
+   nachträglich aufheben.
+6. expected_announcement_envelope muss an der so bestimmten Position
+   byteidentisch vorliegen.
 7. Unmittelbar vor dieser konkreten Row muss der vom Source-Verifier berechnete
    fachliche Semantic-Snapshot-Hash exakt dem source_semantic_snapshot_hash des
    im Successor akzeptierten epoch-migration-sw-v2 entsprechen. Bei v2-Source
