@@ -682,7 +682,9 @@ Remote-Reihenfolge muss deterministisch sein:
 
 - jedes v2-Rotation-Announcement trägt deshalb einen
   `source_anchor_before_announcement`, der **exakt** dem physischen Prefix
-  unmittelbar vor seiner eigenen Row entsprechen muss;
+  unmittelbar vor seiner eigenen Row entsprechen muss, **und** einen
+  `successor_staging_anchor`, der den exakt geprüften Successor-Prefix direkt
+  nach der Migration-Control bindet;
 - landet irgendeine physische Row vor dem vorbereiteten Announcement, wird
   dessen Anchor historisch. Das Announcement ist dann stale und darf die Source
   **nicht** versiegeln – auch dann nicht, wenn die Writer-Authority durch diese
@@ -1125,7 +1127,7 @@ Mindestens:
     protocol_id_collision; byte-identischer Envelope-Retry bleibt No-op.
 64. WriterGrant mit writer_key_id, das nicht aus writer_public_key gemäß §2
     ableitbar ist -> security_blocked.
-65. v2→v2 Cutover: Successor_staging_anchor exakt nach Migration-Control,
+65. v2→v2 Cutover: successor_staging_anchor exakt nach Migration-Control,
     Proof/Announcement/RecoveryArtifact/staged+activated Cutover-Backup binden
     denselben Anchor.
 66. zusätzliche Successor-Row zwischen staging-anchor-Freeze und durable
