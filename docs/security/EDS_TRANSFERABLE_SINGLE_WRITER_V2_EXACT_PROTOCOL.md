@@ -1101,15 +1101,18 @@ successor_recovery_generation
 source_writer_generation und source_writer_grant_id müssen dem writer_context
 der Control-Revision entsprechen.
 
-successor_recovery_generation ist exakt:
+successor_recovery_generation ist für dieses v2-Control exakt:
 - bei normaler v2→v2-Rotation gleich der Source-recovery_generation;
-- bei recovery_rekey exakt Source-recovery_generation + 1;
-- beim v1→v2-profile_upgrade gleich der aus v1 übernommenen
-  recovery_generation.
+- bei recovery_rekey exakt Source-recovery_generation + 1.
+
+Das eingefrorene v1 rotation-announcement-sw-v1 besitzt dieses Feld ausdrücklich
+nicht; beim v1→v2-profile_upgrade wird die übernommene Recovery-Generation daher
+über v1-Recovery-Commitment + Successor-Manifest geprüft, ohne das v1-Wireformat
+zu verändern.
 
 Das Feld bezeichnet ausschließlich die Recovery-Generation des gebundenen
-Successors; eine mehrdeutige nackte recovery_generation im Announcement ist
-verboten.
+v2-Successors; eine mehrdeutige nackte recovery_generation im v2-Announcement
+ist verboten.
 
 "epoch-migration-sw-v2" ist ebenfalls eine normale writer-autorisierte
 Control-RevisionV2.
@@ -1642,9 +1645,14 @@ Aktivierungsprüfung nach Eingabe der neuen URS:
    Rotation-Announcement-Control akzeptiert werden; bloße physische Existenz,
    stale_writer_rejected, stale_after_seal_rejected oder ein konkurrierendes
    Announcement genügen nicht.
-8. Das entschlüsselte Announcement muss exakt successor_epoch_id,
-   successor_manifest_fingerprint und successor_recovery_generation des
-   RecoveryArtifacts/Successor-Manifests binden.
+8. Das entschlüsselte Announcement muss exakt successor_epoch_id und
+   successor_manifest_fingerprint des RecoveryArtifacts/Successor-Manifests
+   binden. Bei source_sync_profile =
+   "google-sheets-transferable-single-writer-v2" muss zusätzlich
+   successor_recovery_generation exakt der Recovery-Generation des
+   Successor-Manifests entsprechen. Beim eingefrorenen v1-Announcement existiert
+   dieses Feld nicht; dort wird die übernommene Generation separat über
+   v1-Recovery-Commitment und Successor-Manifest gebunden.
 9. Nur dann ist das RecoveryArtifactV6 aktiviert. Fehlt die Row, gewann vorher
    eine andere Authority/Rotation oder wurde die Source zurückgerollt, bleibt das
    Artifact unactivated und darf weder als aktueller Diary-Trust-Root noch für
