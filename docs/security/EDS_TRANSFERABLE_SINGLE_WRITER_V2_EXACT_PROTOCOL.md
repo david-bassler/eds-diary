@@ -2893,8 +2893,10 @@ Crash-Regeln:
     "announcement_durable" |
     "activated_backup_verified" |
     "switched" |
-    "stale",
+    "stale" |
+    "cutover_race",
   source_anchor_before_announcement,
+  successor_staging_anchor,
   successor_manifest_fingerprint,
   source_recovery_transition_id,
   activation_lineage_sha256,
@@ -2937,19 +2939,30 @@ announcement_prepared -> recovery_artifact_verified
 recovery_artifact_verified -> staged_backup_verified
 staged_backup_verified -> announcement_unknown | announcement_durable
 announcement_unknown -> announcement_durable | stale
-announcement_durable -> activated_backup_verified
+announcement_durable -> activated_backup_verified | cutover_race
 activated_backup_verified -> switched
 ~~~
 
 `stale` darf zusätzlich aus jedem Stadium **vor**
-`announcement_durable` erreicht werden, wenn der gebundene Source-Anchor
-überholt, die Writer-/Recovery-Authority geändert oder der vorbereitete
-Successor anderweitig ungültig wurde. `switched` und `stale` sind terminal.
+`announcement_durable` erreicht werden, wenn der gebundene Source-Anchor,
+successor_staging_anchor, die Writer-/Recovery-Authority oder der vorbereitete
+Successor anderweitig ungültig wurde.
+
+`cutover_race` darf ausschließlich **nach** durable Source-Announcement aus
+`announcement_durable` erreicht werden, wenn der aktuelle Successor-Prefix
+successor_staging_anchor nicht mehr exakt entspricht. Der Source-Seal wird
+niemals zurückgerollt; der Vorgang bleibt expliziter Support-/Recovery-Fall und
+darf weder activated Backup noch lokalen Switch erzeugen.
+
+`switched`, `stale` und `cutover_race` sind terminal.
 
 Feldinvarianten nach Stage:
 
 - source_anchor_before_announcement: ab source_frozen_verified non-null und
   danach immutable;
+- successor_staging_anchor: bis copying null; beim Übergang
+  copying->successor_verified exakt aus dem vollständig verifizierten
+  Successor-Prefix nach der Migration-Control gesetzt und danach immutable;
 - successor_manifest_fingerprint: ab successor_bound non-null und immutable;
 - announcement_envelope + activation_evidence_sha256:
   bis successor_verified null; ab announcement_prepared beide non-null und
@@ -2968,9 +2981,12 @@ die **exakten one-shot Announcement-Envelope-Bytes** bereits im RecoveryArtifact
 binden.
 
 Nach `announcement_durable` ist das Source-Seal irreversibel. Vor
-`switched` muss zwingend ein neuer activated SyncBackupV6 des Successors
-erzeugt, Test-Restore-verifiziert und als `activated_backup_verified`
-persistiert sein. Das frühere staged Backup genügt dafür nicht.
+`activated_backup_verified` muss canonical_full des Successors weiterhin exakt
+successor_staging_anchor ergeben. Vor `switched` muss zwingend ein neuer
+activated SyncBackupV6 des Successors erzeugt, Test-Restore-verifiziert und als
+`activated_backup_verified` persistiert sein; dessen exportierter
+RemoteAnchor muss ebenfalls exakt successor_staging_anchor sein. Das frühere
+staged Backup genügt dafür nicht.
 
 Alle Resume-Pfade beginnen mit Verifikation der beteiligten Remote-Epochen und
 Abgleich der gespeicherten Anchor/Envelope-/Evidence-Bytes. Für einen staged
