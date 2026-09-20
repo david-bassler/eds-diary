@@ -417,6 +417,14 @@ Recovery-Autorisierung.
 Der Full Verifier verarbeitet `_r` weiterhin in physischer Reihenfolge und
 führt zusätzlich einen Writer-Authority-Automaten.
 
+Für Crash-Resume eines staged Successors gibt es zusätzlich einen eng
+operation-gebundenen Verify-Zweck: Nur bei MAC-authentifiziertem
+RotationOperationStateV2 in `successor_bound|copying` darf ein noch fehlendes
+EpochMigrationV2-Control als erwarteter Zwischenzustand gemeldet werden. Dieser
+Modus verleiht **niemals** aktive Epoche, Writer-Authority, Recovery-Aktivierung
+oder activated Backup-Status. Ab `successor_verified` ist wieder der
+kanonische Full Verify mit verpflichtender Migration-Control erforderlich.
+
 Für jede Row:
 
 1. Envelope strukturell und kryptographisch öffnen.
@@ -931,15 +939,18 @@ Mindestens:
 47. Recovery-Rekey-Rotation bindet exakt die durable
     RecoveryAuthorityTransitionV2.transition_id in Announcement, Proof und
     Migration-Control.
-48. RecoveryAuthorityTransitionV2 durable, aber Successor-Rotation noch nicht
+48. Crash in successor_bound/copying vor EpochMigrationV2 -> operation-gebundener
+    rotation_resume-Verify akzeptiert den erwarteten unvollständigen Prefix nur
+    als staged; canonical_full bleibt migration_control_missing.
+49. RecoveryAuthorityTransitionV2 durable, aber Successor-Rotation noch nicht
     abgeschlossen -> neuer URS kann Source recovern/takeovern; Rekey bleibt
     ausdrücklich unvollständig.
-49. alter URS nach durable Transition, aber vor Successor-Switch -> darf keine
+50. alter URS nach durable Transition, aber vor Successor-Switch -> darf keine
     Recovery-Takeover-Authority mehr erhalten, kann historischen Source-RK über
     altes Artifact aber noch lesen.
-50. Rekey `completed` ohne geswitchte recovery_rekey-Successor-Epoche mit
+51. Rekey `completed` ohne geswitchte recovery_rekey-Successor-Epoche mit
     **neuem RK_epoch** -> security_blocked.
-51. nach abgeschlossenem Rekey kann altes URS den neuen aktiven Successor-RK
+52. nach abgeschlossenem Rekey kann altes URS den neuen aktiven Successor-RK
     nicht aus altem RecoveryArtifact ableiten.
 
 ## 22. Nicht-Ziele
