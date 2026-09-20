@@ -973,6 +973,25 @@ Sheets-`spreadsheets.batchUpdate` bleibt der Mutationspfad. Ein einzelner
 Batch ist atomar, aber Writer-Authority entsteht ausschließlich aus
 append-only Control-Row + anschließendem vollständigem Readback.
 
+Source- und Successor-Epoche liegen in **getrennten** Provider-Ressourcen.
+Google liefert keine atomare Cross-Resource-Transaktion und keine
+kryptographische gemeinsame Uhr. `successor_staging_anchor` bindet deshalb
+exakt den vom Source-Cutover autorisierten Migrations-Prefix, und der ehrliche
+Rotation-Service friert ihn ein und prüft ihn unmittelbar vor sowie nach dem
+Source-Seal. Eine beobachtete Abweichung wird fail-closed als Cutover-Race
+behandelt.
+
+Nicht behauptet wird dagegen, dass ein Angreifer, der bereits den **aktuellen
+Writer-Private-Key und RK_epoch** kontrolliert, kryptographisch daran gehindert
+werden könne, eine für sich gültig signierte Successor-Row zeitlich vor dem
+Source-Announcement zu erzeugen: Ohne externen Koordinationsdienst ist ihre
+Cross-Resource-Zeitlage später nicht beweisbar. Solche Rows erhalten aber keine
+Migration-Provenienz und müssen unabhängig durch die normale Writer-Authority
+validieren; der Migrations-/Cutover-Basisprefix selbst bleibt durch
+successor_staging_anchor unverändert gebunden. Eine stärkere globale
+Cross-Resource-Causality-Garantie benötigt ein neues Koordinationsprimitive bzw.
+eine neue Protokollversion.
+
 Das logische RecoveryArtifactV6 kann durch ActivationLineageV2 größer als eine
 einzelne Sheets-Zelle werden. Die exakte v6-Speicherrepräsentation chunked
 `wrapped_payload` deshalb über mehrere Zellen eines strikt geschlossenen
@@ -1098,6 +1117,23 @@ Mindestens:
 61. cache_id/rotation_id/migration_id/transition_id/operation_id: exakte
     Decode-Länge und kanonisches Base64URL; falsche Länge oder nicht-kanonische
     Repräsentation -> fail-closed.
+62. Recovery-Rekey versucht aktuellen oder früheren supersedierten
+    Recovery-Takeover-Key derselben Epoche erneut als to-Key zu verwenden ->
+    recovery_takeover_key_reuse / security_blocked.
+63. zweite Control-Row in anderem Envelope verwendet bereits belegte
+    grant_id/rotation_id/migration_id/transition_id ->
+    protocol_id_collision; byte-identischer Envelope-Retry bleibt No-op.
+64. WriterGrant mit writer_key_id, das nicht aus writer_public_key gemäß §2
+    ableitbar ist -> security_blocked.
+65. v2→v2 Cutover: Successor_staging_anchor exakt nach Migration-Control,
+    Proof/Announcement/RecoveryArtifact/staged+activated Cutover-Backup binden
+    denselben Anchor.
+66. zusätzliche Successor-Row zwischen staging-anchor-Freeze und durable
+    Source-Announcement bzw. dessen unmittelbarem Readback ->
+    successor_cutover_race; Source-Seal nicht zurückrollen, kein Switch.
+67. v1→v2 analog: Successor verändert sich zwischen eingefrorenem
+    successor_staging_anchor und finalem Cutover ->
+    profile_upgrade_successor_cutover_race; kein activated Backup/Switch.
 
 ## 22. Nicht-Ziele
 
