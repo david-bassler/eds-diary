@@ -3042,16 +3042,20 @@ Crash-Regeln:
     "staged_backup_verified" |
     "announcement_unknown" |
     "announcement_durable" |
+    "confirmation_unknown" |
+    "confirmation_durable" |
     "activated_backup_verified" |
     "switched" |
     "stale" |
     "cutover_race",
   source_anchor_before_announcement,
   successor_staging_anchor,
+  successor_activation_anchor,
   successor_manifest_fingerprint,
   source_recovery_transition_id,
   activation_lineage_sha256,
   announcement_envelope,
+  confirmation_envelope,
   activation_evidence_sha256,
   recovery_artifact_id,
   staged_backup_id,
@@ -3090,7 +3094,9 @@ announcement_prepared -> recovery_artifact_verified
 recovery_artifact_verified -> staged_backup_verified
 staged_backup_verified -> announcement_unknown | announcement_durable
 announcement_unknown -> announcement_durable | stale
-announcement_durable -> activated_backup_verified | cutover_race
+announcement_durable -> confirmation_unknown | confirmation_durable | cutover_race
+confirmation_unknown -> confirmation_durable | cutover_race
+confirmation_durable -> activated_backup_verified
 activated_backup_verified -> switched
 ~~~
 
@@ -3114,9 +3120,12 @@ Feldinvarianten nach Stage:
 - successor_staging_anchor: bis copying null; beim Übergang
   copying->successor_verified exakt aus dem vollständig verifizierten
   Successor-Prefix nach der Migration-Control gesetzt und danach immutable;
+- successor_activation_anchor: bis confirmation_durable null; ab
+  confirmation_durable exakt aus dem Successor-Prefix nach der Confirmation
+  gesetzt und immutable;
 - successor_manifest_fingerprint: ab successor_bound non-null und immutable;
-- announcement_envelope + activation_evidence_sha256:
-  bis successor_verified null; ab announcement_prepared beide non-null und
+- announcement_envelope + confirmation_envelope + activation_evidence_sha256:
+  bis successor_verified null; ab announcement_prepared alle non-null und
   immutable;
 - activation_lineage_sha256 + recovery_artifact_id:
   bis announcement_prepared null; ab recovery_artifact_verified non-null und
@@ -3132,11 +3141,12 @@ die **exakten one-shot Announcement-Envelope-Bytes** bereits im RecoveryArtifact
 binden.
 
 Nach `announcement_durable` ist das Source-Seal irreversibel. Vor
-`activated_backup_verified` muss canonical_full des Successors weiterhin exakt
-successor_staging_anchor ergeben. Vor `switched` muss zwingend ein neuer
-activated SyncBackupV6 des Successors erzeugt, Test-Restore-verifiziert und als
-`activated_backup_verified` persistiert sein; dessen exportierter
-RemoteAnchor muss ebenfalls exakt successor_staging_anchor sein. Das frühere
+Confirmation-Append muss canonical_full des Successors weiterhin exakt
+successor_staging_anchor ergeben. Erst `confirmation_durable` erzeugt den
+successor_activation_anchor. Vor `switched` muss zwingend ein neuer activated
+SyncBackupV6 des Successors erzeugt, Test-Restore-verifiziert und als
+`activated_backup_verified` persistiert sein; dessen exportierter RemoteAnchor
+muss exakt successor_activation_anchor sein. Das frühere
 staged Backup genügt dafür nicht.
 
 Alle Resume-Pfade beginnen mit Verifikation der beteiligten Remote-Epochen und
