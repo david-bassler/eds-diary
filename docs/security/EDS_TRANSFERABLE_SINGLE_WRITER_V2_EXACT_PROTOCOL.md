@@ -1070,7 +1070,9 @@ current_writer_device_id
 current_writer_key_id
 current_writer_public_key
 current_recovery_generation
+current_recovery_urs_commitment
 current_recovery_takeover_key_id
+current_recovery_takeover_public_key
 source_epoch_sealed
 genesis_grant_confirmation_required
 accepted_revision_graph
@@ -1083,8 +1085,11 @@ Initialisierung:
 - source_epoch_sealed=false.
 - authority_history_by_prefix[0] enthält die manifestgebundene
   Epoch-Start-Authority und unsealed.
-- current_recovery_generation und current_recovery_takeover_key_id stammen exakt
-  aus dem Manifest und ändern sich innerhalb derselben Epoche nicht.
+- current_recovery_generation, current_recovery_urs_commitment,
+  current_recovery_takeover_key_id und current_recovery_takeover_public_key
+  starten exakt aus dem Manifest und dürfen innerhalb derselben Epoche
+  ausschließlich durch eine gültige RecoveryAuthorityTransitionV2 atomar
+  fortgeschrieben werden.
 - genesis_grant_confirmation_required ist genau dann true, wenn
   epoch_start_authority_mode="genesis_grant_required".
 
@@ -1130,6 +1135,11 @@ Pro Row:
      => security_blocked;
    - unbekannte historische Authority oder zukünftige Generation ohne Grant
      => security_blocked;
+   - ein gültiges recovery-authority-transition-sw-v2 der current authority
+     wird zusätzlich nach §16b geprüft; nur bei exakt aktuellem Recovery-from-
+     State und Anchor unmittelbar vor der Row wird der Recovery-State atomar auf
+     die to-Felder fortgeschrieben. Historisch überholte, sonst gültige
+     Transition => stale_recovery_transition_rejected;
    - ein gültiges rotation-announcement-sw-v2 der current authority setzt
      source_epoch_sealed irreversibel auf true.
 5. Nur akzeptierte Fachrevisionen gehen in den fachlichen Graphen.
@@ -2122,6 +2132,7 @@ Nicht-fatal semantisch verworfen:
 ~~~text
 stale_writer_rejected
 stale_grant_rejected
+stale_recovery_transition_rejected
 stale_after_seal_rejected
 ~~~
 
@@ -2137,6 +2148,7 @@ manifest_genesis_mismatch
 manifest_genesis_missing
 recovery_generation_mismatch
 recovery_key_mismatch
+recovery_transition_state_mismatch
 duplicate_envelope_id_with_different_bytes
 iv_reuse_across_envelope_ids
 rollback_against_persisted_anchor
