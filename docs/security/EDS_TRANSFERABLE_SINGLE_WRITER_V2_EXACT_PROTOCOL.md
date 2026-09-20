@@ -1237,8 +1237,9 @@ Pro Row:
    - authority_anchor gegen den historischen Prefix und die dortige
      authority_history_by_prefix prüfen, nicht zwingend gegen rowIndex-1;
    - Handoff gegen den am Anchor gültigen predecessor Writer-Key;
-   - Forced Takeover gegen die manifestgebundene aktuelle
-     Recovery-Takeover-Authority;
+   - Forced Takeover gegen die an diesem Prefix aktuell verifizierte
+     Recovery-Takeover-Authority aus Manifest plus akzeptierten
+     RecoveryAuthorityTransitionV2-Controls;
    - ist der predecessor an der aktuellen Row weiterhin current, bei gültigem
      direkten Nachfolger Authority fortschreiben;
    - ist der Candidate relativ zu seinem historischen Anchor vollständig gültig,
@@ -1358,9 +1359,13 @@ gehören.
 
 Ein read-only Gerät muss URS erneut erhalten. Danach:
 
-1. RecoveryArtifactV6 decrypten und vollständig binden.
-2. Recovery-Generation muss zum verifizierten Manifest passen.
-3. recovery_takeover_key_id und Public Key müssen zum Manifest passen.
+1. RecoveryArtifactV6 decrypten, activation_lineage vollständig prüfen und
+   gegebenenfalls RecoveryAuthorityTransitionProofV2 gemäß §16c
+   prüfen/abschließen.
+2. Recovery-Generation und recovery_urs_commitment müssen zum **vollständig
+   verifizierten aktuellen Recovery-State** der Epoche passen.
+3. recovery_takeover_key_id und Public Key müssen zu diesem aktuellen
+   Recovery-State passen.
 4. PKCS#8 transient als non-extractable Ed25519 signing key importieren und den
    §19-Keypair-Check bestehen.
 5. Kanonische Aktivierung der Epoche bestätigen (`epoch_status="active"`),
@@ -1409,11 +1414,14 @@ successor_recovery_generation
 source_writer_generation und source_writer_grant_id müssen dem writer_context
 der Control-Revision entsprechen.
 
-Für rotation_kind="normal" gilt:
-successor_recovery_generation == aktuelle Source-Recovery-Generation.
+Für **beide** rotation_kind-Werte gilt:
+successor_recovery_generation == aktuell verifizierte
+Source-Recovery-Generation am finalen Source-Prefix.
 
-Für rotation_kind="recovery_rekey" gilt:
-successor_recovery_generation == aktuelle Source-Recovery-Generation + 1.
+rotation_kind="recovery_rekey" bedeutet, dass innerhalb derselben
+Maintenance-Operation zuvor eine RecoveryAuthorityTransitionV2 durable wurde.
+Die Generationserhöhung findet **dort auf der Source** statt, nicht erst im
+Successor-Manifest.
 
 Diese Felder werden durch die normale RevisionV2-Writer-Signatur geschützt und
 müssen mit dem RecoveryActivationProofV2 sowie dem Successor-Manifest
