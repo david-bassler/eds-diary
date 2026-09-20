@@ -1497,23 +1497,45 @@ rotation_kind = "normal" | "recovery_rekey"
 source_writer_generation
 source_writer_grant_id
 successor_recovery_generation
+source_anchor_before_announcement
+recovery_transition_id
 ~~~
 
 source_writer_generation und source_writer_grant_id müssen dem writer_context
 der Control-Revision entsprechen.
 
-Für **beide** rotation_kind-Werte gilt:
-successor_recovery_generation == aktuell verifizierte
-Source-Recovery-Generation am finalen Source-Prefix.
+source_anchor_before_announcement ist RemoteAnchorV2 und muss **exakt** dem
+physischen Prefix unmittelbar vor dieser Announcement-Row entsprechen. Nur dann
+darf das Announcement die Source versiegeln.
 
-rotation_kind="recovery_rekey" bedeutet, dass innerhalb derselben
-Maintenance-Operation zuvor eine RecoveryAuthorityTransitionV2 durable wurde.
-Die Generationserhöhung findet **dort auf der Source** statt, nicht erst im
-Successor-Manifest.
+Zusätzlich gilt zwingend:
+
+- from_epoch_id == aktuelle Source-epoch_id;
+- successor_epoch_id != from_epoch_id;
+- successor_recovery_generation == aktuell verifizierte
+  Source-Recovery-Generation am source_anchor_before_announcement;
+- source_anchor_before_announcement == source_anchor_before_announcement des
+  zugehörigen RecoveryActivationProofV2.
+
+rotation_kind="normal":
+- recovery_transition_id = null.
+
+rotation_kind="recovery_rekey":
+- recovery_transition_id ist die transition_id der zuvor innerhalb **dieser**
+  Maintenance-Operation durable akzeptierten RecoveryAuthorityTransitionV2;
+- diese Transition muss die am finalen Source-Prefix aktuelle Recovery-Generation
+  erzeugt haben und die jüngste akzeptierte RecoveryAuthorityTransitionV2 vor
+  dem Announcement sein.
+
+Ein ansonsten korrekt signiertes Announcement mit historischem
+source_anchor_before_announcement wird
+`stale_rotation_announcement_rejected` und **versiegelt die Source nicht**.
+Ein falscher/future Anchor, falsche Transition-Bindung oder inkonsistenter
+Successor ist security_blocked.
 
 Diese Felder werden durch die normale RevisionV2-Writer-Signatur geschützt und
-müssen mit dem RecoveryActivationProofV2 sowie dem Successor-Manifest
-übereinstimmen.
+müssen mit RecoveryActivationProofV2, EpochMigrationV2 und dem
+Successor-Manifest übereinstimmen.
 
 "epoch-migration-sw-v2" ist ebenfalls eine normale writer-autorisierte
 Control-RevisionV2.
