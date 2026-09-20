@@ -672,17 +672,25 @@ zuständig.
 Über **mehrere Geräte** reicht lokales `operation_generation` nicht. Die
 Remote-Reihenfolge muss deterministisch sein:
 
-- landet ein gültiger Takeover-Grant vor dem Rotation-Announcement, ist ein
-  danach vom alten Writer signiertes Announcement stale/ungültig und der
-  vorbereitete Successor darf nicht aktiviert werden;
-- landet das gültige Rotation-Announcement zuerst, ist die Source-Epoche ab
-  dieser kanonischen Row **versiegelt**; spätere Fachwrites, Writer-Grants und
-  andere authority-mutierende Controls auf der Source sind semantisch ungültig.
-  Recovery/Takeover muss dann gegen den kanonischen Successor erfolgen.
+- jedes v2-Rotation-Announcement trägt deshalb einen
+  `source_anchor_before_announcement`, der **exakt** dem physischen Prefix
+  unmittelbar vor seiner eigenen Row entsprechen muss;
+- landet irgendeine physische Row vor dem vorbereiteten Announcement, wird
+  dessen Anchor historisch. Das Announcement ist dann stale und darf die Source
+  **nicht** versiegeln – auch dann nicht, wenn die Writer-Authority durch diese
+  Row unverändert blieb;
+- landet ein gültiger Takeover-Grant vor dem Rotation-Announcement, ist das
+  vorbereitete Announcement dadurch ebenfalls stale und der Successor darf nicht
+  aktiviert werden;
+- landet das anchor-exakte gültige Rotation-Announcement zuerst, ist die
+  Source-Epoche ab dieser kanonischen Row **versiegelt**; spätere Fachwrites,
+  Writer-Grants und andere authority-mutierende Controls auf der Source sind
+  semantisch ungültig. Recovery/Takeover muss dann gegen den kanonischen
+  Successor erfolgen.
 
-Rotation-Announcement und andere autoritätsverändernde Control-Records müssen
-deshalb im v2-Verifier ebenfalls an die zum jeweiligen Row-Zeitpunkt gültige
-Writer-/Recovery-Authority gebunden sein.
+Rotation-Announcement und andere autoritätsverändernde Control-Records sind
+damit sowohl an die Writer-/Recovery-Authority als auch an den exakten
+Entscheidungs-Prefix gebunden.
 
 Recovery-Rekey ändert den Writer nicht automatisch. Die neue
 Recovery-Authority wird zuerst auf der **noch aktiven, unsealed Source** durch
@@ -705,10 +713,21 @@ v1→v2-/v2→v2-Aktivierungsbeweise. Jeder Link wird vom Root nach vorn gegen d
 jeweilige echte Source-Historie geprüft; ein gültiger direkter Link heilt keinen
 älteren ungültigen oder fehlenden Link.
 
+Jeder nicht-native Link verlangt zusätzlich **exakt ein**
+`epoch-migration-sw-v2` im Successor. Dessen Source-Semantic-/Lineage-Hashes
+werden gegen den verifizierten Source-Graph am gebundenen Source-Anchor
+nachgerechnet; Result-Semantic-Hash und Head-Counts gegen den Successor-Graph
+unmittelbar vor der Migration-Control-Row. Aktivierungsproof ohne korrekte
+Migration-Integrität genügt nicht. Dadurch kann ein kryptographisch korrekt
+aktivierter, aber unvollständig kopierter Successor nicht kanonisch werden.
+
 Ein unter RK_epoch verschlüsselter `ActivationLineageCacheV2` hält diese
 Lineage lokal für Rotation/Rekey verfügbar, auch wenn der alte URS verloren ist.
-Kompromittierung des aktuellen URS offenbart dadurch bewusst auch die in der
-Lineage enthaltenen historischen Root-Keys.
+Er besitzt einen eigenen Cache-Identifier/Cache-Hash und ist **kein**
+Operation-State. Kompromittierung des aktuellen URS offenbart bewusst die im
+RecoveryArtifact enthaltenen historischen Root-Keys; kompromittiertes RK_epoch
+**plus Zugriff auf den lokalen Lineage-Cache** offenbart dieselben historischen
+Keys ebenfalls.
 
 **Bewusste Recovery-Rekey-Grenze:** Weil der alte Recovery-Key gerade verloren
 sein darf, reicht zur Recovery-Authority-Transition die aktuell kanonische
@@ -718,7 +737,12 @@ auf eigenes Material umstellen. Ein stärkeres Modell benötigt einen zusätzlic
 unabhängigen Recovery-Zweitfaktor und eine neue Protokollversion.
 
 Jede Rotation besitzt einen persistenten Crash-Resume-State mit den exakten
-one-shot Announcement-/Grant-Bytes. Vor dem finalen lokalen Switch ist neben dem
+one-shot Announcement-/Grant-Bytes. Die Stage-Reihenfolge ist geschlossen:
+Successor verifizieren -> Announcement one-shot vorbereiten ->
+Activation-Evidence/Lineage bilden -> RecoveryArtifact -> staged Backup ->
+Announcement append/readback -> activated Backup -> Switch. Das Announcement
+muss **vor** RecoveryArtifact/Backup vorbereitet sein, weil diese seine exakten
+Bytes kryptographisch binden. Vor dem finalen lokalen Switch ist neben dem
 staged Backup zwingend ein **activated SyncBackupV6** zu erzeugen und per
 Test-Restore zu prüfen. Ein Backup kann Daten/Schlüssel offline wiederherstellen;
 remote-active Writer-Recovery benötigt weiterhin die historische
