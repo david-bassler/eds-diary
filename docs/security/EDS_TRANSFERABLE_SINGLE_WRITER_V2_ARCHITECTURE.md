@@ -1,5 +1,7 @@
 # EDS Diary – Transferable Single Writer v2
 
+Die Begründungen stabiler Sicherheitsentscheidungen und verworfener Alternativen stehen ergänzend in `EDS_TRANSFERABLE_SINGLE_WRITER_V2_DECISIONS.md`; spätere Reviews sollen dort zwischen neuer Erkenntnis und bloßem Design-Pendeln unterscheiden.
+
 Status: **ARCHITEKTURRAHMEN DEFINIERT / EXAKTES v2-PROTOKOLL IN EDS_TRANSFERABLE_SINGLE_WRITER_V2_EXACT_PROTOCOL.md EINGEFROREN / NOCH NICHT IMPLEMENTIERT**
 
 Stand: 20.09.2026
@@ -729,16 +731,21 @@ Recovery-Rekey ändert den Writer nicht automatisch. Die neue
 Recovery-Authority wird zuerst auf der **noch aktiven, unsealed Source** durch
 einen writer-signierten `RecoveryAuthorityTransitionV2` aktiviert. Das neue
 RecoveryArtifactV6 wird bereits davor unter dem neuen URS publiziert und bindet
-die exakt vorbereiteten Transition-Envelope-Bytes. Nach Crash darf Recovery diese
-Bytes nur fertig appendieren, wenn die Source noch exakt am gebundenen Anchor
-steht; jede intervenierende Row macht den vorbereiteten Rekey stale.
+die exakt vorbereiteten Transition-Envelope-Bytes. Dieser Publish/Readback ist
+ein bewusster **Point of no local return**: Danach kann ein lokaler Abort die
+bereits remote gespeicherte, writer-signierte bedingte Capability nicht
+widerrufen. Solange die Source noch exakt am gebundenen Anchor steht, muss die
+Transition fertiggestellt/reconciliiert werden; erst eine andere physische Row
+macht sie tatsächlich stale.
 
-Jede akzeptierte RecoveryAuthorityTransitionV2 muss ein **frisches**
-Recovery-Takeover-Keypair verwenden. Die neue recovery_takeover_key_id darf in
-derselben Source-Epoche weder dem Manifest-Startkey noch irgendeiner früheren,
-auch bereits supersedierten Recovery-Generation entsprechen. Das verhindert,
-dass kompromittiertes altes Takeover-Material durch eine spätere Generation
-wieder zur aktuellen Authority wird.
+Jede akzeptierte RecoveryAuthorityTransitionV2 muss **frischen URS und frisches
+Recovery-Takeover-Keypair** verwenden. v2 führt dafür ab seiner ersten
+Aktivierung eine epochübergreifend fortgetragene
+`recovery_credential_history`: der generationsunabhängige `recovery_urs_id`
+und die recovery_takeover_key_id dürfen weder aktuell noch historisch bereits
+vorgekommen sein. Das verhindert auch nach Epoch-Rotation ein K1→K2→K1 bzw.
+U1→U2→U1. Vor-v2 Recovery-Credentials können mangels historischer v1-IDs nicht
+rückwirkend erkannt werden; diese Legacy-Grenze ist ausdrücklich akzeptiert.
 
 Nach durable Transition ist die alte Recovery-Generation auch innerhalb
 derselben Source für neue Forced Takeovers ungültig. Gleichzeitig setzt der
@@ -830,7 +837,10 @@ benötigen. Er ersetzt aber nicht den **aktuellen** URS: Jede normale Rotation
 muss den aktuellen URS erneut erhalten, das aktuelle Source-RecoveryArtifactV6
 entschlüsseln und dessen Recovery-Takeover-Keypair prüfen, weil nur dort das
 Takeover-Private-Key-Material liegt, das in das neue Successor-Artifact
-übernommen werden muss. Ist der aktuelle URS verloren, wird zuerst ein
+übernommen werden muss. Auch ein **carried** Keypair wird für die konkrete
+Successor-Epoche erneut als RecoveryTakeoverStagingV2 unter dem aktuellen URS
+persistiert/readback-verifiziert; Crash-Sicherheit gilt nicht nur für neu
+generierte Keypairs. Ist der aktuelle URS verloren, wird zuerst ein
 recovery_rekey auf einen neuen URS durchgeführt; ein zusätzliches lokales
 Private-Key-Escrow gibt es nicht. Der Cache besitzt einen eigenen
 Cache-Identifier/Cache-Hash und ist **kein** Operation-State. Kompromittierung des aktuellen URS offenbart bewusst die im
@@ -1385,19 +1395,34 @@ Remote-Eigenschaft ist.
 Gemeinsame Push-/Readback-/Generation-Mechanik kann wiederverwendet werden.
 Der Coordinator darf dabei weder `RemoteAnchorV1` noch v1-Prefix-Helper kennen:
 er delegiert Anchor-Erzeugung/-Fortschrittsprüfung an den aktiven Profilcodec.
-Die Schreibfreigabe läuft zusätzlich über eine profilabhängige
-Authority-Schnittstelle, z.B.:
+
+Zwei zusätzliche Grenzen sind nach adversarial Review verbindlich:
+
+- Nach einem Unknown Outcome reicht ein struktureller Read **nicht**. Fehlt das
+  vorbereitete Envelope, muss vor jedem Retry erneut canonical full verifiziert
+  werden; erst danach entscheidet die profilabhängige Authority für genau diese
+  Envelope-Bytes `push` oder `quarantine_stale_writer`.
+- Persistenz bekommt den vollständigen `VerifiedRemoteState` mit semantischen
+  Envelope-Dispositionen. Physische Row-Anwesenheit/Anchor-Coverage allein darf
+  niemals `durable` bedeuten, weil v2 eine physisch vorhandene
+  `stale_writer_rejected`-Revision ausdrücklich zulässt.
+
+Die Schreibfreigabe läuft deshalb über eine profilabhängige
+Authority-Schnittstelle:
 
 ```text
 WriteAuthority {
-  canPrepareDomainWrite(...)
-  verifyBeforePush(...)
-  verifyAfterReadback(...)
+  canPrepareDomainWrite(verified)
+  verifyBeforePush(envelope, verified, initial|unknown_outcome_retry)
+    -> push | quarantine_stale_writer
+  accessAfterReadback(verified)
 }
 ```
 
 v1 bekommt eine Adapterimplementierung mit exakt bisheriger Semantik. v2 prüft
-Grant/Generation/Device-ID.
+Grant/Generation/Device-ID sowie Seal-/Pending-Rekey-State. `CoordinatorStore`
+entscheidet Outbox-Durability anhand der verifizierten semantischen
+Envelope-Sets, nicht anhand roher Rows.
 
 #### `src/data/localDatabase.ts`
 
@@ -1554,19 +1579,26 @@ eigentlichen Writer-Handoff-Implementierung geschehen.
 ## 26. Empfohlene Refactoring-Reihenfolge ohne Verhaltensänderung
 
 Vor v2-Funktionalität war ein eigener vorbereitender Refactoring-PR verlangt.
-PR #36 ist gemergt und die vollständige Security Validation auf dem kombinierten
-Stand war grün; diese Vorentkopplung ist damit abgeschlossen:
+PR #36 hat die ursprüngliche Profilentkopplung sauber hergestellt. Spätere
+adversariale Reviews haben jedoch gezeigt, dass zwei **semantische** Contract-
+Grenzen damals noch nicht sichtbar waren: Unknown-Outcome-Retry brauchte keinen
+erneuten Full Verify, und lokale Durability konnte nur physische Row-Anwesenheit
+sehen. Diese Erkenntnis ist kein Zurückdrehen von #36, sondern eine stärkere
+Anforderung, die erst durch v2-stale-writer-Semantik entsteht. Der
+Implementierungsstart bleibt blockiert, bis auch diese Nachhärtung grün ist:
 
 1. aktuelle v1-Konstanten und Typen explizit als V1 benennen;
 2. `RevisionV1` und `EpochLocalSecurityStateV5` als eingefrorene Typen
    herausziehen;
 3. v1-Verifier hinter eine profilbezogene Verifier-Schnittstelle setzen;
 4. Coordinator-Schreibfreigabe hinter eine profilneutrale
-   `WriteAuthority`-Policy mit `writer | read_only` ziehen; diese Policy
-   gehört in den Protokoll-/lokalen State-Layer, **nicht** in den
-   Google-Provider;
-5. `VerifiedRemoteState` an `profileId` binden und einen abgegrenzten
-   `profileState` für spätere v2-Authority-Daten vorsehen;
+   `WriteAuthority`-Policy ziehen; die Policy besitzt getrennte Prepare-,
+   Push-/Retry- und Readback-Gates und kann stale Writer explizit
+   quarantinieren. Sie gehört in den Protokoll-/lokalen State-Layer, **nicht**
+   in den Google-Provider;
+5. `VerifiedRemoteState` an `profileId` binden, einen abgegrenzten
+   `profileState` für spätere v2-Authority-Daten vorsehen und semantische
+   accepted/stale-writer Envelope-Sets an die Persistenz weitergeben;
 6. auch `RemoteAnchorV1` explizit als eingefrorenes v1-Wireformat benennen und
    Anchor-Policy aus dem gemeinsamen Coordinator in den Profilcodec verschieben;
 7. Remote-Binding/Profile-ID aus fest codierten lokalen Persistenzstellen
