@@ -136,6 +136,13 @@ K_recovery_stage = HKDF-SHA-256(
   UTF8("eds-diary/recovery-takeover-staging/v2"),
   32
 )
+
+K_activation_lineage_cache = HKDF-SHA-256(
+  RK_epoch,
+  epoch_salt,
+  UTF8("eds-diary/activation-lineage-cache/v2"),
+  32
+)
 ~~~
 
 Keine v5-Domain darf für neue v2-Bytes verwendet werden.
@@ -661,7 +668,8 @@ protocol_limits ist exakt:
   max_unique_canonical_bytes: 134217728,
   max_remote_physical_rows: 100000,
   max_remote_physical_canonical_bytes: 134217728,
-  max_canonical_row_bytes: 21936
+  max_canonical_row_bytes: 21936,
+  max_activation_lineage_entries: 128
 }
 ~~~
 
