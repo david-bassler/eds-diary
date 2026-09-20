@@ -2040,9 +2040,12 @@ activation_source_snapshot ist:
   source_manifest_public enthält die exakten öffentlichen Manifestzellen der
   Source; source_record_rows_through_activation enthält die exakte physische
   Source-Reihenfolge mindestens bis einschließlich der im
-  RecoveryActivationProofV2 gebundenen Announcement-Row.
+  RecoveryActivationProofV2 gebundenen Announcement-Row. Bei v1-Source sind das
+  exakte 3-String-Rows, bei v2-Source exakte 4-String-Rows einschließlich
+  activation_token.
 
-record_rows enthält die exakte physische Remote-Reihenfolge des Successors.
+record_rows enthält die exakte physische Remote-Reihenfolge des Successors als
+v2-4-String-Rows.
 pending_outbox_rows enthält lokale aktuelle-Authority-Envelopes, die noch nicht
 byteidentisch remote vorhanden sind. stale_writer_pending_rows enthält
 ausschließlich quarantinierte ältere Writer-Envelopes und wird bei Restore
@@ -2134,13 +2137,25 @@ Die v5-Grenzen bleiben für v6 unverändert: maximal 256 MiB Backup-Dokument,
 100000 eindeutige Envelopes und 134217728 kanonische Bytes für die eindeutige
 Union.
 
-Test-Restore muss Manifest, RecoveryArtifactV6-Bindung, sämtliche Hashes/Counts,
-RemoteAnchorV2, Writer-Authority und jede Row vollständig prüfen und anschließend
-den produktiven TransferableSingleWriterV2Verifier verwenden. Für Nicht-Genesis
-muss zusätzlich RecoveryActivationProofV2 offline gegen
-activation_source_snapshot mit dem jeweiligen produktiven v1/v2-Source-Verifier
-erfolgreich sein. Restore darf stale_writer_pending_rows nur als Quarantäne
-wiederherstellen.
+Exakte Restore-Bootstrap-Reihenfolge:
+
+1. Top-Level-Struktur und harte Dokument-/Row-Bounds prüfen.
+2. RecoveryArtifactV6 mit eingegebener URS äußerlich AEAD-decrypten.
+3. Bei Nicht-Genesis RecoveryActivationProofV2 **offline** gegen
+   activation_source_snapshot ausführen. Bei recovery_rekey liefert erst der im
+   Snapshot enthaltene activation_token den Schlüssel zum Unwrap des
+   Successor-RK.
+4. Erst mit dem so erhaltenen Successor-RK K_backup(backup_id) ableiten und das
+   Backup-Manifest AEAD-decrypten.
+5. recovery_artifact_sha256, activation_source_snapshot_sha256, sämtliche
+   Counts/Hashes/Bytegrenzen, ManifestV6, RemoteAnchorV2, Writer-Authority und
+   jede Successor-Row vollständig prüfen.
+6. Den produktiven TransferableSingleWriterV2Verifier auf record_rows verwenden.
+7. stale_writer_pending_rows ausschließlich als Quarantäne wiederherstellen.
+
+Damit kann der unverschlüsselte Top-Level-Snapshot den Backup-Key nicht ersetzen:
+seine Bytes werden zunächst nur als Aktivierungsbeleg benutzt und anschließend
+gegen den authentifizierten Manifest-Hash aus Schritt 4/5 gebunden.
 
 ---
 
@@ -2215,6 +2230,9 @@ wrong_authority_anchor
 manifest_genesis_mismatch
 recovery_generation_mismatch
 recovery_key_mismatch
+invalid_activation_token
+activation_commitment_mismatch
+unactivated_recovery_artifact
 duplicate_envelope_id_with_different_bytes
 iv_reuse_across_envelope_ids
 rollback_against_persisted_anchor
@@ -2272,14 +2290,21 @@ Negative Vectors:
   werden;
 - RecoveryActivationProof mit physisch vorhandener, aber stale/verworfener
   Announcement-Row;
-- RecoveryActivationProof mit falschem Source-RK, Source-Manifest-Fingerprint,
-  Source-Anchor oder anderen Announcement-Bytes;
+- RecoveryActivationProof mit falschem direct/wrapped Source-Key-Material,
+  Source-Manifest-Fingerprint, Source-Anchor oder anderem Announcement-Kern;
+- recovery_rekey mit falschem/fehlendem activation_token, falschem
+  activation_commitment, falschem Activation-Wrap-IV/Ciphertext oder
+  vertauschtem Source-/Successor-Aktivierungskey;
 - gültige Fachrevision zwischen Successor-Kopie und Source-Announcement =>
   Successor bleibt unactivated; stale/no-op physische Row darf den fachlichen
   Snapshot dagegen nicht verändern;
 - recovery_rekey: Recovery nur mit neuer URS und ohne alte URS muss nach
-  durablem Announcement funktionieren; vor Announcement muss dieselbe neue URS
-  den Successor als unactivated ablehnen;
+  durablem kanonischem Announcement funktionieren; vor **jeder physischen**
+  Veröffentlichung des Rekey-Rows darf dieselbe neue URS weder Source- noch
+  Successor-RK entpacken;
+- Rekey-Row physisch vorhanden, aber wegen vorherigem Takeover stale: Root-Wrap
+  kann durch den veröffentlichten Token technisch öffnbar sein, Artifact muss
+  dennoch zwingend unactivated bleiben und darf keine Authority begründen;
 - Gen-1-Manifest ohne Gen-1-Grant, Fachrow vor Gen-1-Grant und EOF vor
   Gen-1-Grant => security_blocked;
 - Retry/Handoff/Forced-Takeover nach Source-Seal => kein Append;
@@ -2309,7 +2334,8 @@ Reihenfolge:
 3. TransferableSingleWriterV2Verifier;
 4. WriterGrantStateMachine;
 5. EpochLocalSecurityStateV6 + Writer-Key-Store;
-6. RecoveryArtifactV6 / RecoveryTakeoverAuthorityV2;
+6. RecoveryArtifactV6 / RecoveryTakeoverAuthorityV2 /
+   RecoveryActivationProofV2;
 7. SyncBackupV6;
 8. v1->v2 Migration;
 9. read-only Join;
@@ -2336,3 +2362,14 @@ aktuelle Writer-Revision erzeugen.
 
 Ein kopierter aktueller Writer-Private-Key ist protokollseitig dieselbe
 Writer-Authority. Echte Hardware-/Anti-Cloning-Bindung ist nicht Teil von v2.
+
+Recovery-Rekey trennt **Authority-Aktivierung** von bloßer physischer
+Token-Veröffentlichung. Wenn ein vorbereiteter recovery_rekey-Row physisch
+geschrieben wird, aber durch eine unmittelbar zuvor kanonisch gewordene
+konkurrierende Authority semantisch stale ist, kann der darin öffentliche
+activation_token einem Inhaber der vorgeschlagenen neuen URS das Entpacken der
+verschachtelten Root-Keys ermöglichen. Das RecoveryArtifact bleibt trotzdem
+unactivated und darf nicht als kanonischer Recovery-/Writer-Trust-Root dienen.
+Eine atomare bedingte Geheimnisfreigabe ausschließlich bei semantischem Gewinn
+würde einen unabhängigen Koordinations-/Key-Release-Dienst voraussetzen und ist
+nicht Teil dieses Profils.
