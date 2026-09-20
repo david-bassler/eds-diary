@@ -515,7 +515,8 @@ Ablauf:
    `writer_device_id + writer_signing_public_key`.
 5. A erzeugt Grant `g+1` für B, gebunden an aktuellen Anchor und Grant `g`,
    und signiert ihn mit As aktuellem Writer-Schlüssel.
-6. A appendet exakt diesen Grant.
+6. Unmittelbar vor Append full-verifiziert A erneut; nur bei weiterhin derselben
+   current Authority und unsealed Source wird exakt dieser Grant appended.
 7. A liest Remote vollständig zurück.
 8. Nur wenn der Grant kanonisch und die Handoff-Signatur gültig ist, persistiert
    A lokal `read_only`.
@@ -541,7 +542,7 @@ Ceremony starten:
 1. erfolgreiches lokales Unlock gemäß konfiguriertem RootWrap-Modus;
 2. Google Account Binding;
 3. Recovery-Key erneut eingeben;
-4. aktuelles Remote vollständig verifizieren;
+4. aktuelles Remote vollständig verifizieren; die Source muss unsealed sein;
 5. Warnung, dass auf dem alten Gerät noch ausschließlich lokale, nie
    synchronisierte Änderungen existieren könnten;
 6. Recovery-Takeover-Authority für die **aktuelle Recovery-Generation**
