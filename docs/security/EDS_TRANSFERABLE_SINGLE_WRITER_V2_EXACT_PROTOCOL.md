@@ -3418,10 +3418,15 @@ für mindestens:
     profile_upgrade_source_race.
 30. SyncBackupV6 staged/activated Manifest/hash binding einschließlich
     activation_lineage und Recovery-Transition-Proof.
+31. Identifier-Format/Decode-Längen für cache_id, rotation_id, migration_id,
+    transition_id und operation_id einschließlich Base64URL-Re-Encode; falsche
+    Byte-Länge und nicht-kanonische Base64URL-Form werden abgelehnt.
 
 Negative Vectors:
 
 - falsche Diary/Epoch;
+- cache_id/rotation_id/migration_id/transition_id/operation_id mit falscher
+  Decode-Länge oder nicht-kanonischem Base64URL;
 - falscher writer_key_id;
 - manipuliertes Public Key Byte;
 - manipulierte Ed25519-Signatur;
