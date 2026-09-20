@@ -701,10 +701,25 @@ Bytes nur fertig appendieren, wenn die Source noch exakt am gebundenen Anchor
 steht; jede intervenierende Row macht den vorbereiteten Rekey stale.
 
 Nach durable Transition ist die alte Recovery-Generation auch innerhalb
-derselben Source für neue Forced Takeovers ungültig. Ein obligatorisches
-activated Source-Backup muss erfolgreich getestet sein, bevor eine
-recovery_rekey-Epoch-Rotation beginnt. Der Successor übernimmt anschließend die
-bereits aktuelle Recovery-Generation; die Rotation erhöht sie nicht noch einmal.
+derselben Source für neue Forced Takeovers ungültig. Das ist aber **noch nicht**
+der vollständige Recovery-Key-Wechsel: das alte immutable RecoveryArtifact kann
+den bisherigen Source-RK weiterhin unter dem alten URS offenlegen.
+
+Deshalb ist anschließend zwingend:
+
+1. activated Source-Backup unter der neuen Recovery-Authority testen;
+2. eine `recovery_rekey`-Epoch-Rotation starten, die exakt die durable
+   RecoveryAuthorityTransitionV2.transition_id bindet;
+3. einen **neuen Successor-RK** erzeugen;
+4. Migration-/Announcement-/Activation-Lineage- und activated-Backup-Gates
+   vollständig durchlaufen;
+5. erst nach dem atomaren Switch gilt der Recovery-Key-Wechsel als abgeschlossen.
+
+Der Successor übernimmt die bereits aktuelle Recovery-Generation; die Rotation
+erhöht sie nicht noch einmal. Der alte Recovery-Key kann danach den neuen
+aktiven Successor-RK nicht ableiten. Historische Vertraulichkeit kann ein Rekey
+nicht rückwirkend herstellen, wenn das alte Artifact bereits kopiert oder
+kompromittiert wurde.
 
 Aktivierung über mehrere Epochen wird durch `ActivationLineageV2` transitiv
 bewiesen. Das aktuelle RecoveryArtifact trägt unter dem aktuellen URS die
