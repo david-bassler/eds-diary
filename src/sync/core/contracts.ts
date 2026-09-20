@@ -37,6 +37,7 @@ export interface RemoteProfileVerifier {
 
 export type WriteAccess = 'writer' | 'read_only'
 export type WritePushPhase = 'initial' | 'unknown_outcome_retry'
+export type WritePushDecision = 'push' | 'quarantine_stale_writer'
 export interface WriteAuthority {
   readonly profileId: string
   accessAfterPull(verified: VerifiedRemoteState): Promise<WriteAccess> | WriteAccess
@@ -46,7 +47,7 @@ export interface WriteAuthority {
   /** Re-checks the exact prepared envelope against the latest verified state.
    * Unknown-outcome retries must pass phase='unknown_outcome_retry' after a new
    * full verification; a structural read alone is never sufficient. */
-  assertBeforePush(envelope: PreparedEnvelope, verified: VerifiedRemoteState, phase: WritePushPhase): Promise<void> | void
+  verifyBeforePush(envelope: PreparedEnvelope, verified: VerifiedRemoteState, phase: WritePushPhase): Promise<WritePushDecision> | WritePushDecision
   accessAfterReadback(verified: VerifiedRemoteState): Promise<WriteAccess> | WriteAccess
 }
 
