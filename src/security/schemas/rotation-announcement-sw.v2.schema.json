@@ -91,5 +91,46 @@
         }
       ]
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "rotation_kind": {
+            "const": "normal"
+          }
+        },
+        "required": [
+          "rotation_kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "recovery_transition_id": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "rotation_kind": {
+            "const": "recovery_rekey"
+          }
+        },
+        "required": [
+          "rotation_kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "recovery_transition_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{43}$"
+          }
+        }
+      }
+    }
+  ]
 }
