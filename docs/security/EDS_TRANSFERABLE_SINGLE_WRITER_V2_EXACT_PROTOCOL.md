@@ -1625,8 +1625,10 @@ Bei Timeout/unklarem Ergebnis:
    §16c bei exakt unverändertem Transition-Anchor.
 8. **rotation-announcement-sw-v2 / v1 profile-upgrade announcement:** Retry nur,
    wenn der aktuelle Source-Prefix exakt dem im ActivationProof/Operation-State
-   gespeicherten source_anchor_before_announcement entspricht. Jede intervenierende
-   Row => vorbereitete Rotation stale/nicht aktivieren.
+   gespeicherten source_anchor_before_announcement und der aktuelle
+   Successor-Prefix exakt successor_staging_anchor entspricht. Jede
+   intervenierende Source- oder Successor-Row vor durable Announcement =>
+   vorbereitete Rotation stale/nicht aktivieren.
 9. Ist Source inzwischen sealed oder Writer-/Recovery-Authority anderweitig
    fortgeschritten => nicht erneut appendieren; Fachrevision quarantinieren bzw.
    Operation-State auf stale setzen.
@@ -3392,32 +3394,40 @@ Reihenfolge:
     v1-Source-Prefix berechnet; Result-Hash/Counts aus dem Successor-Fachgraphen
     unmittelbar vor dieser Control-Row.
 12. Successor vollständig mit V2-Verifier verifizieren und §16a.1 gegen v1-Source
-    und Successor erfolgreich ausführen.
+    und Successor erfolgreich ausführen. Den aktuellen Successor-RemoteAnchor als
+    successor_staging_anchor einfrieren; bis zum atomaren v2-Switch sind weitere
+    Successor-Appends verboten.
 13. v1-Rotation-Announcement exakt one-shot vorbereiten. Danach
-    ProfileUpgradeActivationEntryV2 aus RK_v1, finalem v1-Source-Anchor und
-    genau diesen Announcement-Bytes erzeugen;
+    ProfileUpgradeActivationEntryV2 aus RK_v1, finalem v1-Source-Anchor,
+    successor_staging_anchor und genau diesen Announcement-Bytes erzeugen;
     activation_lineage=[dieser Eintrag].
-14. aus RecoveryTakeoverStagingV2 das finale RecoveryArtifactV6 mit finalem
-    Successor-Anchor, activation_lineage und
+14. aus RecoveryTakeoverStagingV2 das finale RecoveryArtifactV6 mit
+    remote_anchor=successor_staging_anchor, activation_lineage und
     recovery_authority_transition_proof=null erzeugen, lokal/remote
     readback-verifizieren und staged Test-Recovery durchführen.
 15. staged SyncBackupV6 erzeugen und Test-Restore als local_offline/read_only
-    durchführen.
+    durchführen; record_rows/remote_anchor_at_export müssen exakt
+    successor_staging_anchor reproduzieren.
 16. RecoveryTakeoverStagingV2 darf jetzt gelöscht werden.
-17. v1-Source **erneut vollständig lesen**; ihr aktueller RemoteAnchor muss exakt
-    dem in ProfileUpgradeActivationEntryV2 gebundenen
-    source_anchor_before_announcement entsprechen. Andernfalls Upgrade vor
+17. v1-Source **und Successor erneut vollständig lesen**. Der v1-RemoteAnchor
+    muss exakt source_anchor_before_announcement und der Successor-RemoteAnchor
+    exakt successor_staging_anchor entsprechen. Andernfalls Upgrade vor
     Announcement abbrechen und v1 weiter als Source behandeln.
-18. exakt vorbereitetes v1 Rotation Announcement durable machen und v1-Source
-    unmittelbar danach erneut vollständig lesen. Liegt das Announcement nicht
+18. exakt vorbereitetes v1 Rotation Announcement durable machen und danach
+    **beide** Remotes unmittelbar erneut lesen. Liegt das Announcement nicht
     unmittelbar nach dem gebundenen Source-Prefix, =>
-    profile_upgrade_source_race gemäß §21.1; Successor bleibt staged.
-19. vollständige activation_lineage-Prüfung bestätigt jetzt den Successor als
-    aktiviert.
+    profile_upgrade_source_race gemäß §21.1. Weicht der Successor jetzt von
+    successor_staging_anchor ab => profile_upgrade_successor_cutover_race.
+    In beiden Fällen bleibt der Successor staged/read_only; kein activated
+    Backup/Switch.
+19. vollständige activation_lineage-Prüfung bestätigt jetzt den Successor an
+    exakt successor_staging_anchor als aktiviert.
 20. **obligatorisch** ein neues activation_state="activated" SyncBackupV6 des
-    Successors erzeugen und Test-Restore-verifizieren.
+    Successors erzeugen und Test-Restore-verifizieren; auch dieses Cutover-
+    Backup muss exakt successor_staging_anchor exportieren.
 21. ActivationLineageCacheV2 persistieren/readback-verifizieren.
-22. erst danach atomar auf v2 umschalten; v1 retire.
+22. erst danach atomar auf v2 umschalten; v1 retire und normale Successor-Writes
+    freigeben.
 
 Kein v1-Client darf eine v2-Epoche als v1 interpretieren.
 
