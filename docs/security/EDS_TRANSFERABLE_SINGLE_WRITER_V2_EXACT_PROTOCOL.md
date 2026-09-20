@@ -1698,6 +1698,22 @@ Remote-Reihenfolge auf der Source entscheidet:
   verworfen; weitere Takeover-Aktionen müssen gegen den kanonischen Successor
   erfolgen.
 
+Für **jede** v2→v2-Rotation ist die Backup-/Aktivierungsreihenfolge verbindlich:
+
+1. activation_lineage der aktiven Source vollständig validieren.
+2. Successor erzeugen/verifizieren und Lineage um genau einen v2_rotation-Eintrag
+   erweitern.
+3. Successor-RecoveryArtifactV6 publizieren/readback-verifizieren.
+4. activation_state="staged" SyncBackupV6 erzeugen und read-only Test-Restore.
+5. exaktes one-shot Rotation-Announcement appendieren + Full Readback.
+6. erweiterte activation_lineage vollständig bis zum neuen Successor prüfen.
+7. **obligatorisch** neues activation_state="activated" SyncBackupV6 erzeugen
+   und Test-Restore-verifizieren.
+8. ActivationLineageCacheV2 des Successors persistent/readback-verifizieren.
+9. erst danach lokaler atomarer Switch/Retire.
+
+Ein staged Backup ersetzt Schritt 7 niemals.
+
 Normale v2→v2-Rotation übernimmt recovery_generation,
 recovery_urs_commitment, recovery_takeover_key_id und
 recovery_takeover_public_key aus dem **final verifizierten aktuellen
