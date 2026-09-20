@@ -1386,18 +1386,27 @@ Vor jedem Remote-Append werden exakte Envelope-Bytes persistent gespeichert.
 
 Bei Timeout/unklarem Ergebnis:
 
-1. niemals semantisch neuen Grant oder neue Revision erzeugen;
+1. niemals semantisch neue Bytes für dieselbe Benutzeraktion erzeugen;
 2. Remote vollständig lesen;
 3. gleiche envelope_id + gleiche Bytes => dieses konkrete Envelope existiert;
 4. gleiche envelope_id + andere Bytes => fatal;
-5. fehlt das Envelope und Authority ist unverändert **und**
-   source_epoch_sealed=false => exakt dieselben Bytes erneut appendieren;
-6. fehlt das Envelope und Authority unverändert, aber Source inzwischen sealed
-   => nicht erneut appendieren; staged/quarantiniert behandeln und kanonischen
-   Successor discovern;
-7. fehlt das Envelope und Authority hat sich geändert => nicht erneut appendieren;
-   Fachrevision als stale_writer_pending quarantinieren bzw. den zugehörigen
-   WriterGrantOperationStateV2 auf stage="stale" setzen.
+5. **Fachrevision:** fehlt das Envelope, current Writer-Authority ist unverändert
+   und source_epoch_sealed=false => exakt dieselben Bytes dürfen erneut appended
+   werden;
+6. **WriterGrantV2:** fehlt das Envelope => Retry nur, wenn der vollständig
+   verifizierte aktuelle RemoteAnchorV2 **exakt** dem im Grant gespeicherten
+   authority_anchor entspricht, predecessor/recovery-State noch passen und
+   Source unsealed ist. Jede intervenierende physische Row macht den
+   vorbereiteten Grant stale; keine spätere Authority-Übertragung.
+7. **RecoveryAuthorityTransitionV2:** Retry/Crash-Completion ausschließlich nach
+   §16c bei exakt unverändertem Transition-Anchor.
+8. **rotation-announcement-sw-v2 / v1 profile-upgrade announcement:** Retry nur,
+   wenn der aktuelle Source-Prefix exakt dem im ActivationProof/Operation-State
+   gespeicherten source_anchor_before_announcement entspricht. Jede intervenierende
+   Row => vorbereitete Rotation stale/nicht aktivieren.
+9. Ist Source inzwischen sealed oder Writer-/Recovery-Authority anderweitig
+   fortgeschritten => nicht erneut appendieren; Fachrevision quarantinieren bzw.
+   Operation-State auf stale setzen.
 
 Ein HTTP-200 ohne finalen Full Readback ist niemals durable.
 
