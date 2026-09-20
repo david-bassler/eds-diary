@@ -62,6 +62,7 @@ backup_id                32 CSPRNG bytes
 
 RK_epoch                 32 CSPRNG bytes
 URS                      32 CSPRNG bytes
+recovery_activation_secret 32 CSPRNG bytes (recovery_rekey only)
 Ed25519 public key       32 bytes
 Ed25519 signature        64 bytes
 ~~~
@@ -180,7 +181,24 @@ Keine v5-Domain darf für neue v2-Bytes verwendet werden.
 
 One-shot-Regeln aus v1 bleiben erhalten: envelope_id wird vor Verschlüsselung
 persistent reserviert; unter einer envelope_id findet exakt eine neue
-Verschlüsselung statt; Retry sendet dieselben persistierten Bytes.
+Verschlüsselung statt.
+
+Die persistierte Retry-Einheit ist in v2 jedoch die **vollständige physische
+Remote-Row**:
+
+~~~text
+PreparedRemoteRowV2 = {
+  envelope_id,
+  iv,
+  ciphertext,
+  activation_token
+}
+~~~
+
+Vor jedem Append muss dieses vollständige Objekt persistent/readback-verifiziert
+sein. Retry sendet ausschließlich dieselben vier Strings. activation_token darf
+bei einem bestehenden PreparedRemoteRowV2 niemals neu erzeugt, ersetzt oder
+geleert werden.
 
 Buckets:
 
@@ -1716,8 +1734,10 @@ oder
 }
 ~~~
 
-root_key ist Base64URL von exakt 32 Byte. iv ist Base64URL von exakt 12 Byte,
-ciphertext Base64URL von exakt 48 Byte (32 Byte RK + 16 Byte GCM-Tag).
+root_key ist Base64URL von exakt 32 Byte. iv ist Base64URL von exakt 12
+CSPRNG-Bytes, ciphertext Base64URL von exakt 48 Byte (32 Byte RK + 16 Byte
+GCM-Tag). Source- und Successor-Aktivierungswrap verwenden getrennt erzeugte
+12-Byte-IVs; kein IV wird unter demselben Aktivierungskey wiederverwendet.
 
 Modusregeln:
 - native v2-Genesis: direct;
@@ -1832,9 +1852,9 @@ Regeln:
   - bei v1→v2-profile_upgrade und normaler v2→v2-Rotation
     {mode:"direct",root_key} mit 32-Byte-Base64URL-Source-RK;
   - bei recovery_rekey
-    {mode:"activation_wrapped",iv,ciphertext}, wobei iv 12 Byte und ciphertext
-    exakt 48 Byte decodiert. Ein direkter Source-RK ist bei recovery_rekey
-    verboten.
+    {mode:"activation_wrapped",iv,ciphertext}, wobei iv exakt 12
+    CSPRNG-Byte und ciphertext exakt 48 Byte decodiert. Ein direkter Source-RK
+    ist bei recovery_rekey verboten.
 - source_key_material ist keine Writer-/Takeover-Signierauthority.
 - Bei activation_wrapped gilt:
 
