@@ -858,46 +858,32 @@ Account+URS-Recovery:
    verifizieren.
 3. Ein vorbereiteter Successor wird **nicht** allein durch Existenz,
    predecessor_epochs oder sein RecoveryArtifact aktiv.
-4. Native v2-Genesis mit predecessor_epochs=[] ist ohne
-   RecoveryActivationProofV2 aktivierbar.
-5. Für v1→v2 profile_upgrade bleibt bis zum durable v1
-   rotation-announcement die v1-Source kanonisch. Das Successor-
-   RecoveryArtifact enthält dafür activation_source_root_key=RK_v1; die
-   v1-Source wird damit unabhängig vom Vorhandensein eines separaten alten
-   RecoveryArtifacts vollständig verifiziert und ihr exaktes v1-Announcement
-   auf den Successor bestätigt.
-6. Für jeden Successor mit genau einem Predecessor enthält dessen
-   RecoveryArtifactV6 den **direkten Predecessor-RK** verschlüsselt als
-   activation_source_root_key. Dadurch kann die Source für die
-   Aktivierungsentscheidung vollständig verifiziert werden, ohne den alten
-   Recovery-Key noch zu besitzen.
-7. Für v2→v2 normal/recovery_rekey muss das Successor-RecoveryArtifactV6
-   zusätzlich einen gültigen RecoveryActivationProofV2 (§10b) enthalten.
-8. Die Source wird mit activation_source_root_key und ihrem öffentlichen
-   Manifest vollständig durch den passenden v1-/v2-Verifier geprüft. Nur wenn
-   der Proof-Anchor ein Prefix dieser **vollständig verifizierten** Source ist
-   und die source_writer_*-Authority dort kanonisch current war, darf die
-   Proof-Signatur als Autorisierung gelten.
-9. Zusätzlich muss der vollständig verifizierte Source-Prefix exakt von der im
-   Proof gebundenen, byte-identischen und als gültiges
-   rotation-announcement-sw-v2 entschlüsselten/verifizierten Envelope-Row
-   gefolgt werden. Ein zuvor gelandeter Takeover-/anderer Row-Claim ändert den
-   Prefix und macht den Proof ungültig.
-10. Mit gültigem Aktivierungsbeweis folgt Recovery genau diesem Successor.
-    Mehrere inkompatible aktivierte Ketten oder mehr als ein unretired
-    kanonischer Leaf => ambiguous/security stop.
-11. Ein vorbereiteter Successor ohne gültigen Aktivierungsbeweis bleibt staged
-    und darf niemals als remote aktiv wiederhergestellt werden.
+4. Native v2-Genesis ist genau dann Aktivierungs-Root, wenn
+   predecessor_epochs=[] und activation_lineage=[].
+5. Für jede nicht-native v2-Epoche muss activation_lineage (§10c) die **gesamte**
+   Kette vom vertrauenswürdigen Root bis zur aktuellen Epoche lückenlos
+   beweisen. Nur den direkten Predecessor zu prüfen genügt ausdrücklich nicht.
+6. Eine RecoveryAuthorityTransitionV2 innerhalb der aktuellen Epoche wird
+   zusätzlich durch recovery_authority_transition_proof (§16c) geprüft bzw. bei
+   exakt unverändertem Anchor crash-resumable abgeschlossen.
+7. Erst wenn Manifest, aktuelle _r-Historie, activation_lineage und gegebenenfalls
+   Recovery-Authority-Transition gemeinsam konsistent sind, darf das Artifact
+   als current Recovery-Authority verwendet werden.
+8. Mehrere inkompatible vollständig gültige aktivierte Ketten oder mehr als ein
+   unretired kanonischer Leaf => ambiguous/security stop.
+9. Ein vorbereiteter Successor oder Recovery-Rekey ohne vollständigen
+   Aktivierungs-/Transition-Beweis bleibt staged/read-only und darf niemals
+   remote-active oder Forced-Takeover-fähig werden.
 
 ---
 ## 10b. RecoveryActivationProofV2
 
-Zweck: Nach einer v2→v2-Rotation, insbesondere nach `recovery_rekey`, muss
-Recovery mit **nur dem neuen URS** beweisen können, dass der vorbereitete
-Successor tatsächlich durch die Source aktiviert wurde. Der alte Recovery-Key
-ist dafür nicht erforderlich; der direkte Source-RK wird ausschließlich als
-verschlüsseltes Aktivierungs-Verifikationsmaterial im Successor-
-RecoveryArtifactV6 weitergereicht.
+Zweck: Für **einen einzelnen v2→v2-Link** beweist dieser Proof, dass der
+vorbereitete Successor tatsächlich durch seine direkte Source aktiviert wurde.
+Der zugehörige Source-RK steht ausschließlich im passenden
+ActivationLineageV2-Eintrag (§10c). Die vollständige Recovery vertraut nie nur
+diesem direkten Link, sondern validiert die gesamte activation_lineage vom Root
+bis zur aktuellen Epoche.
 
 Der Proof wird erzeugt, während die Source noch vollständig verifiziert und
 unsealed ist und der aktuelle Writer-Private-Key verfügbar ist. Er bindet den
@@ -973,15 +959,15 @@ Authority.
 Aktivierungsprüfung mit nur aktuellem URS + Google-Konto:
 
 1. RecoveryArtifactV6 entschlüsseln und Successor vollständig verifizieren.
-2. activation_source_root_key muss exakt 32 Byte enthalten und zur im Proof
-   benannten direkten Source gehören.
+2. Der umgebende ActivationLineageV2-Eintrag muss source_root_key als exakt
+   32-Byte-RK der im Proof benannten direkten Source liefern.
 3. Source-Ressource über source_epoch_id/epoch_locator discovern; öffentliches
    Source-Manifest lesen und dessen Fingerprint exakt mit
    source_manifest_fingerprint vergleichen.
-4. Source-Manifest mit activation_source_root_key entschlüsseln und vollständig
+4. Source-Manifest mit source_root_key entschlüsseln und vollständig
    gegen Fingerprint, Diary-/Epoch-ID, Account-Binding, Recovery-Bindungen,
    Schema-Registry und Protokollgrenzen prüfen.
-5. Source-`_r` mit demselben Source-RK **vollständig** durch den
+5. Source-`_r` mit demselben source_root_key **vollständig** durch den
    TransferableSingleWriterV2Verifier verifizieren, mindestens bis einschließlich
    source_anchor_before_announcement.covered_row_count. Der an genau diesem
    Prefix kanonische Writer muss exakt source_writer_generation,
@@ -997,7 +983,7 @@ Aktivierungsprüfung mit nur aktuellem URS + Google-Konto:
    Selbstbehauptung.
 8. Die **unmittelbar nächste physische Source-Row** muss byte-identisch
    `[envelope_id,iv,ciphertext]` aus announcement_envelope sein. Diese Row mit
-   activation_source_root_key öffnen und als gültiges
+   source_root_key öffnen und als gültiges
    rotation-announcement-sw-v2 der bei Schritt 5 current Source-Authority
    vollständig verifizieren. Ihre Successor-ID, Manifest-Fingerprint,
    rotation_kind und successor_recovery_generation müssen exakt dem Proof und
