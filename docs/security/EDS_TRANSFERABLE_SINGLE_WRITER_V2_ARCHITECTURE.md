@@ -931,6 +931,16 @@ Mindestens:
 47. Recovery-Rekey-Rotation bindet exakt die durable
     RecoveryAuthorityTransitionV2.transition_id in Announcement, Proof und
     Migration-Control.
+48. RecoveryAuthorityTransitionV2 durable, aber Successor-Rotation noch nicht
+    abgeschlossen -> neuer URS kann Source recovern/takeovern; Rekey bleibt
+    ausdrücklich unvollständig.
+49. alter URS nach durable Transition, aber vor Successor-Switch -> darf keine
+    Recovery-Takeover-Authority mehr erhalten, kann historischen Source-RK über
+    altes Artifact aber noch lesen.
+50. Rekey `completed` ohne geswitchte recovery_rekey-Successor-Epoche mit
+    **neuem RK_epoch** -> security_blocked.
+51. nach abgeschlossenem Rekey kann altes URS den neuen aktiven Successor-RK
+    nicht aus altem RecoveryArtifact ableiten.
 
 ## 22. Nicht-Ziele
 
