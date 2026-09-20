@@ -1,0 +1,222 @@
+# Transferable Single Writer v2 – Security Decision Ledger
+
+Stand: 20.09.2026
+
+Status: **NORMATIVE RATIONALE / ANTI-CHURN COMPANION** to
+`EDS_TRANSFERABLE_SINGLE_WRITER_V2_EXACT_PROTOCOL.md`.
+
+This file exists because repeated adversarial reviews legitimately changed a
+number of transition rules. The exact protocol remains the normative source for
+wire bytes and verifier behavior; this ledger records **why** a rule exists,
+which alternative was rejected, and what assumption would have to change before
+reversing it. A later review must not silently flip one of these decisions just
+because another formulation looks locally simpler.
+
+## How to use this ledger
+
+For every security-sensitive protocol change:
+
+1. identify the attack/inconsistency that motivated it;
+2. state the invariant the chosen rule preserves;
+3. record the rejected alternative;
+4. state the condition under which reconsideration would be justified;
+5. update the corresponding Golden/Negative Vector.
+
+A change that merely reintroduces a rejected alternative without a changed
+assumption is a regression, not a new design choice.
+
+---
+
+## D-001 – Recovery credential freshness is diary-wide from first v2 activation
+
+**Decision.** v2 derives a stable, generation-independent `recovery_urs_id`
+from the 32-byte URS and carries an ordered `recovery_credential_history`
+through every v2 epoch. A new RecoveryAuthorityTransition must use both a URS ID
+and a takeover-key ID not previously present in that history.
+
+**Why.** Per-epoch freshness prevents K1→K2→K1 only inside one epoch. After an
+epoch rotation the old seen-set otherwise disappears, allowing previously
+compromised URS/takeover material to become current again. The
+generation-bound `recovery_urs_commitment` cannot detect reuse because the same
+URS produces a different commitment in a different generation.
+
+**Rejected alternative.** Keep freshness only in
+`recovery_history_by_prefix` of the current epoch. Rejected because epoch
+rotation would erase the security memory the Rekey promise depends on.
+
+**Bound/legacy choice.** History is capped at 128 entries. Once exhausted,
+another protocol version is required rather than introducing an unreviewed
+accumulator/compaction scheme. v1 did not record stable historical URS IDs, so
+credentials retired before the first v2 activation cannot be reconstructed or
+retroactively banned. That limitation is explicit rather than hidden.
+
+**Revisit only if.** A new protocol version introduces a cryptographically
+verified compact history/accumulator or a migration mechanism that can prove
+pre-v2 credential history.
+
+---
+
+## D-002 – Publishing the staged RecoveryArtifact is a point of no local return
+
+**Decision.** A recovery_rekey may be freely abandoned before successful
+RecoveryArtifact publish/readback. Afterwards it cannot be cancelled merely by
+changing local state while its authority anchor remains current. It must either
+finish the exact prepared transition or become stale because another physical
+remote row has actually overtaken the anchor.
+
+**Why.** The published immutable artifact already contains the writer-signed
+one-shot Transition envelope. Possession of the new URS therefore grants a
+conditional, remotely exercisable capability. Deleting or changing an
+IndexedDB operation state cannot revoke bytes already stored remotely.
+
+**Rejected alternative.** Allow `transition_unknown -> stale` after a local
+"abort" if the Transition is not yet visible remotely. Rejected because the
+remote artifact can later complete the supposedly aborted transition.
+
+**Revisit only if.** A future protocol adds a remotely verifiable revocation/
+abort control that is ordered against the prepared transition.
+
+---
+
+## D-003 – Unknown-outcome retry requires a new full semantic verification
+
+**Decision.** If an append returns unknown outcome and the exact envelope is
+missing on readback, the coordinator performs canonical full verification of
+that new snapshot before any retry. The profile-specific WriteAuthority then
+decides `push` or `quarantine_stale_writer` for the exact prepared envelope.
+
+**Why.** A structural read cannot prove that writer authority, seal state,
+pending-rekey fence, or a control record's decision anchor are unchanged.
+Retrying first and verifying afterwards is too late: the client may already
+have appended bytes it no longer had authority to append.
+
+**Rejected alternative.** Read + check envelope absence + blindly retry the same
+bytes, followed by full verification. Byte identity alone solves one-shot
+encryption; it does not solve authority freshness.
+
+**Revisit only if.** The storage provider supplies a protocol-bound atomic
+compare-and-swap against the verified prefix/authority state.
+
+---
+
+## D-004 – Physical row presence is not semantic durability
+
+**Decision.** Shared persistence consumes the full `VerifiedRemoteState`,
+including explicit accepted and `stale_writer_rejected` envelope sets.
+`CoordinatorStore` must not decide durability from row presence/anchor coverage
+alone. A stale writer envelope remains quarantined even when its exact bytes are
+physically present remotely.
+
+**Why.** v2 deliberately permits a stale writer's ciphertext to exist in the
+append-only physical log while excluding the revision from the canonical domain
+graph. Treating "present in covered prefix" as "durable commit" would silently
+turn a rejected user change into a successful local status.
+
+**Rejected alternative.** Reuse the v1 store contract `rows + anchor` and let
+the store infer durability. This is valid only because v1 has no writer-authority
+semantic rejection state.
+
+**Revisit only if.** The v2 verifier model is changed so every structurally
+valid physical envelope is necessarily a canonical semantic commit—which would
+be a different protocol.
+
+---
+
+## D-005 – Writer authority is checked at preparation, push and readback
+
+**Decision.** The shared WriteAuthority contract has three distinct gates:
+`canPrepareDomainWrite`, `verifyBeforePush`, and
+`accessAfterReadback`. `verifyBeforePush` receives the exact prepared
+envelope, the latest verified state, and whether the call is an initial push or
+an unknown-outcome retry. It may return `quarantine_stale_writer`.
+
+**Why.** v2's guarantee is stronger than "check once before network I/O". A new
+immutable RevisionV2 must not even be persisted as an ordinary writable commit
+without fresh authority, and a previously prepared envelope can become stale
+before retry/readback.
+
+**Rejected alternative.** Parameterless `assertBeforePush()`. It cannot bind
+the decision to a specific envelope, writer_context, verified prefix or retry
+phase.
+
+**Revisit only if.** Domain-write preparation and remote append become one
+atomic operation under a stronger external authority primitive.
+
+---
+
+## D-006 – The staging freeze ends at Confirmation for the remote, not for the initiator
+
+**Decision.** Before SuccessorActivationConfirmation, any other first successor
+suffix row is a cutover race. Once the exact Confirmation is durable, other
+legitimate writers may create a fully verified post-activation suffix. The
+rotation-initiating device itself remains blocked from normal successor writes
+until its local activated-backup/lineage/switch gates complete.
+
+**Why.** Earlier wording said "all successor appends are blocked until local
+switch" while the protocol simultaneously allowed a post-confirmation suffix.
+Those statements described two different actors and were contradictory.
+
+**Rejected alternative.** Globally prohibit all remote successor rows until one
+particular device finishes its local switch. There is no provider-side lease or
+cross-device mechanism that can enforce that claim.
+
+**Revisit only if.** v2 adopts an external coordination/lease primitive.
+
+---
+
+## D-007 – Normal rotation re-stages carried recovery private material
+
+**Decision.** Normal v2→v2 rotation requires the current URS, decrypts and
+verifies the current Source RecoveryArtifact/keypair, and re-persists the
+carried takeover private key for the new successor as an operation-bound
+RecoveryTakeoverStagingV2 before mutating successor remote state.
+
+**Why.** The private key intentionally does not live in ordinary local writer
+state. A normal rotation nevertheless has to create a new successor
+RecoveryArtifact containing that same current takeover keypair. Crash-resume
+must therefore have a protected source of the private bytes even when the
+keypair itself was not newly generated.
+
+**Rejected alternative.** Apply RecoveryTakeoverStaging only to newly generated
+keypairs. That leaves normal rotation dependent on transient memory after the
+Source artifact was opened.
+
+**Revisit only if.** A future design stores takeover signing capability in a
+different explicitly reviewed persistent security boundary.
+
+---
+
+## D-008 – Storage provider identity and sync profile identity are separate
+
+**Decision.** Shared transport contracts expose `providerId` separately from
+`profileId`. The Google storage provider is
+`google-drive-sheets-v1`; the frozen v1 sync profile remains
+`google-sheets-single-writer-v1`. Existing v1 persisted
+`remote_binding.provider_id` keeps its historical wire meaning and is not
+silently rewritten.
+
+**Why.** v1 happened to use one string as both concepts. v2 explicitly reuses
+the storage provider with a different sync profile. Keeping the concepts
+collapsed would make a transport appear protocol-authoritative merely because
+it uses the same Google backend.
+
+**Rejected alternative.** Rename/rewrite old persisted v1 bindings. Rejected
+because v1 bytes/state are frozen.
+
+**Revisit only if.** A new persisted-state version deliberately migrates the
+legacy v1 binding with explicit compatibility rules.
+
+---
+
+## Stability rule for future reviews
+
+The repeated reviews are expected to find **new adversarial facts**. They should
+not cause oscillation between already-considered alternatives. When a future
+finding touches D-001…D-008, the review should state one of:
+
+- **new assumption/evidence:** name it, then update this decision;
+- **implementation mismatch:** fix implementation without changing the decision;
+- **wording mismatch:** align the document without changing the decision;
+- **same tradeoff as before:** keep the recorded decision.
+
+This distinction is part of the review checklist.
