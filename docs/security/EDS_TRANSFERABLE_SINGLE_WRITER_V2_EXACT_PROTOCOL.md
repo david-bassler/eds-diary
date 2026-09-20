@@ -923,15 +923,12 @@ verifizierten Source-Prefix unmittelbar vor dem geplanten Announcement.
 `rotation_kind` ist exakt `"normal" | "recovery_rekey"`.
 
 `successor_recovery_generation` muss exakt der Recovery-Generation des
-Successor-Manifests entsprechen. Bei der Proof-Erzeugung auf der vollständig
-verifizierten Source gilt zusätzlich:
-- normal: Successor-Generation == Source-Generation;
-- recovery_rekey: Successor-Generation == Source-Generation + 1.
+Successor-Manifests **und** der am finalen Source-Prefix aktuell verifizierten
+Recovery-Generation entsprechen.
 
-Die Recovery-Verifikation ohne Source-RK rekonstruiert die alte Generation nicht
-nachträglich aus verschlüsseltem Source-Material; sie vertraut hierfür auf die
-Writer-signierte Transition und prüft die Successor-Generation gegen das neue
-Manifest.
+Bei rotation_kind="recovery_rekey" muss die Generationserhöhung bereits zuvor
+durch RecoveryAuthorityTransitionV2 auf der Source durable geworden sein. Der
+Rotation-Announcement selbst erhöht keine Recovery-Generation.
 
 `announcement_envelope` enthält die **exakt one-shot vorbereiteten und
 persistent reservierten** Rowbytes des signierten
