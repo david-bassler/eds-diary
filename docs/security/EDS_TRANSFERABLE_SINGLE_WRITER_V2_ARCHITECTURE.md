@@ -802,6 +802,13 @@ Sheets-`spreadsheets.batchUpdate` bleibt der Mutationspfad. Ein einzelner
 Batch ist atomar, aber Writer-Authority entsteht ausschließlich aus
 append-only Control-Row + anschließendem vollständigem Readback.
 
+Das logische RecoveryArtifactV6 kann durch ActivationLineageV2 größer als eine
+einzelne Sheets-Zelle werden. Die exakte v6-Speicherrepräsentation chunked
+`wrapped_payload` deshalb über mehrere Zellen eines strikt geschlossenen
+Recovery-Grids; Header, Chunkzahl, Länge und SHA-256 werden vollständig
+readback-verifiziert. Das logische RecoveryArtifact-/Backup-Wireformat bleibt
+von dieser Provider-Repräsentation getrennt.
+
 ## 21. Tests vor Implementierungsfreigabe
 
 Mindestens:
