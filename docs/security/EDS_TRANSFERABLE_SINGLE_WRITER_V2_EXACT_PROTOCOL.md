@@ -1962,7 +1962,16 @@ den vorbereiteten Rekey dennoch überholen; dann gilt Schritt 6 fail-closed.
 
 ## 17. Rotation und Recovery-Rekey
 
-Normale Epoch-Rotation setzt im Successor
+Eine **normale** Epoch-Rotation ist nur zulässig, wenn canonical_full auf der
+Source recovery_rekey_rotation_required=false liefert.
+
+Ist recovery_rekey_rotation_required=true, darf ausschließlich eine
+rotation_kind="recovery_rekey"-Rotation gegen die aktuell verifizierte
+current_recovery_rekey_transition_id gestartet werden. Diese Pflicht stammt aus
+der Remote-Historie und gilt unabhängig davon, ob auf dem ausführenden Gerät ein
+älterer RecoveryRekeyOperationStateV2 existiert.
+
+Die zulässige Rotation setzt im Successor
 epoch_start_authority_mode="carried_from_predecessor" und übernimmt die aktuelle
 Writer-Authority in den Successor-Manifest-Trust-Root:
 
@@ -2065,6 +2074,13 @@ Phase B – verpflichtende recovery_rekey-Epoch-Rotation:
 
 9. unmittelbar danach RotationOperationStateV2 mit
    rotation_kind="recovery_rekey" und exakt derselben transition_id starten.
+   Geht das ursprüngliche Gerät nach der durablen Transition verloren, muss ein
+   anderes Gerät mit dem neuen URS zunächst die aktuelle Recovery-Authority und
+   recovery_rekey_rotation_required=true remote verifizieren, bei Bedarf per
+   Forced Takeover Writer werden und anschließend gemäß §18.3 einen
+   RecoveryRekeyOperationStateV2 mit
+   operation_origin="remote_pending_rekey_adoption" erzeugen. Die
+   verpflichtende Phase B bleibt dadurch vollständig fortsetzbar.
 10. Successor erhält einen **neuen 32-Byte RK_epoch**, übernimmt aber die in
     Phase A bereits aktuelle Recovery-Generation/URS-/Takeover-Authority.
 11. EpochMigrationV2, RotationAnnouncementV2 und RecoveryActivationProofV2
@@ -2075,7 +2091,10 @@ Phase B – verpflichtende recovery_rekey-Epoch-Rotation:
     durchlaufen.
 13. Erst nach `RotationOperationStateV2.stage="switched"`,
     aktiviertem Successor-Backup und persistiertem Successor-Lineage-Cache darf
-    RecoveryRekeyOperationStateV2 `completed` werden.
+    RecoveryRekeyOperationStateV2 `completed` werden. Der Successor startet
+    aus seinem Manifest-Baseline-Recovery-State wieder mit
+    recovery_rekey_rotation_required=false und
+    current_recovery_rekey_transition_id=null.
 
 Altes Recovery-Takeover-Material darf ab der durable Transition keinen Grant
 mehr autorisieren. Der alte URS kann während Phase A weiterhin das alte
