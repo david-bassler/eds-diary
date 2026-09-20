@@ -1782,6 +1782,85 @@ Diese Felder werden durch die normale RevisionV2-Writer-Signatur geschützt und
 müssen mit RecoveryActivationProofV2, EpochMigrationV2,
 successor_staging_anchor und dem Successor-Manifest übereinstimmen.
 
+"successor-activation-confirmation-sw-v2" ist die **Successor-seitige
+Aktivierungsgrenze** für jede nicht-native v2-Epoche. Sie wird one-shot bereits
+vor dem Source-Announcement vorbereitet, darf aber semantisch erst nach
+nachgewiesen durable Source-Announcement als unmittelbare nächste Successor-Row
+am successor_staging_anchor abgeschlossen werden.
+
+Wrapper:
+
+~~~text
+record_type = "successor_activation_confirmation"
+record_schema = "successor-activation-confirmation-sw-v2"
+record_status = "control"
+parent_revision_ids = []
+migration_origin = null
+~~~
+
+Die Row ist eine normale writer-autorisierte RevisionV2 der am
+successor_staging_anchor aktuellen Successor-Writer-Authority.
+
+record_data exakt:
+
+~~~text
+{
+  confirmation_id,
+  activation_kind: "profile_upgrade" | "v2_rotation",
+  source_profile,
+  source_epoch_id,
+  source_manifest_fingerprint,
+  source_anchor_before_announcement,
+  successor_epoch_id,
+  successor_manifest_fingerprint,
+  successor_staging_anchor,
+  source_announcement_envelope_sha256
+}
+~~~
+
+~~~text
+source_announcement_envelope_sha256 =
+Base64URL(SHA-256(
+  UTF8("eds-diary/source-announcement-envelope/v2") || 0x00 ||
+  UTF8(JCS([announcement_envelope.envelope_id,
+            announcement_envelope.iv,
+            announcement_envelope.ciphertext]))
+))
+~~~
+
+Normen:
+
+- confirmation_id ist eine epochweit eindeutige 32-Byte-CSPRNG-ID.
+- successor_epoch_id / successor_manifest_fingerprint müssen exakt der
+  aktuellen Successor-Epoche entsprechen.
+- successor_staging_anchor muss exakt dem physischen Successor-Prefix
+  **unmittelbar vor** dieser Confirmation-Row entsprechen.
+- activation_kind="profile_upgrade" =>
+  source_profile="google-sheets-single-writer-v1" und Source-Anchor ist
+  RemoteAnchorV1.
+- activation_kind="v2_rotation" =>
+  source_profile="google-sheets-transferable-single-writer-v2" und Source-Anchor
+  ist RemoteAnchorV2.
+- source_announcement_envelope_sha256 muss aus dem im zugehörigen
+  ProfileUpgradeActivationEntryV2 bzw. RecoveryActivationProofV2 gebundenen
+  Announcement-Envelope exakt reproduzierbar sein.
+- Cross-Epoch-Aktivierung muss **zuerst** den Source-Announcement-Beweis
+  vollständig erfolgreich prüfen und **danach** diese Confirmation-Row.
+- Für eine nicht-native Epoche darf exakt eine akzeptierte
+  SuccessorActivationConfirmationV2 existieren. Eine zweite unterschiedliche
+  Confirmation ist security_blocked.
+- Erst die durable, cross-epoch verifizierte Confirmation setzt die
+  Remote-Aktivierungsgrenze des Successors. Normale Successor-Rows dürfen
+  protokollseitig erst **nach** dieser Row als post-activation Suffix gelten.
+
+Fehlt die Confirmation, obwohl der Source-Announcement bereits durable ist, darf
+Recovery die im Activation-Evidence one-shot gebundenen Confirmation-Bytes
+**nur** dann exakt einmal appendieren, wenn der aktuelle Successor-Prefix noch
+exakt successor_staging_anchor ist. Steht irgendeine andere physische Row zuerst,
+=> successor_cutover_race; keine alternative Confirmation erzeugen.
+
+---
+
 "epoch-migration-sw-v2" ist ebenfalls eine normale writer-autorisierte
 Control-RevisionV2.
 
