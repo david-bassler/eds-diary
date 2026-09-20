@@ -2,6 +2,7 @@ import type { RemoteCandidate, RemoteSnapshot } from '../core/contracts'
 import { SINGLE_WRITER_PROFILE, TransportError, type RemoteTransport } from '../core/contracts'
 
 export class InMemoryTransport implements RemoteTransport {
+  readonly providerId = 'in-memory-test-provider'
   readonly profileId = SINGLE_WRITER_PROFILE
   readonly remotes = new Map<string, RemoteSnapshot>()
   readonly properties = new Map<string,Readonly<Record<string,string>>>()
