@@ -1142,6 +1142,9 @@ RecoveryTakeoverAuthorityV2
 RecoveryAuthorityTransitionV2
 RecoveryAuthorityTransitionProofV2
 RecoveryActivationProofV2
+RotationAnnouncementV2
+EpochMigrationV2
+MigrationIntegrityV2
 ActivationLineageV2
 ActivationLineageCacheV2
 WriterGrantOperationStateV2
