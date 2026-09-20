@@ -149,6 +149,12 @@ Frame:
 uint32_be(payload_length) || payload_jcs_utf8 || zero_padding
 ~~~
 
+Remote-/lokale Duplikatregel: dieselbe envelope_id mit anderen Rowbytes ist
+fatal. Eine byte-identische physische Retry-Duplikatrow zählt in Prefix/Bounds,
+wird semantisch aber nur beim ersten Auftreten verarbeitet. Derselbe IV bei
+unterschiedlichen envelope_id ist eine RNG-/Security-Anomalie und blockiert neue
+Verschlüsselungen/fail-closed.
+
 AAD exakt:
 
 ~~~json
@@ -202,8 +208,9 @@ rotation_announcement     -> rotation-announcement-sw-v2
 epoch_migration           -> epoch-migration-sw-v2
 ~~~
 
-Für alle neun Schema-IDs liegen immutable maschinenlesbare Schema-Definitionen
-im Implementierungsstand vor. Registry:
+Für alle neun Schema-IDs müssen vor dem ersten v2-Implementierungsmerge immutable
+maschinenlesbare Schema-Definitionen committed werden. Die produktive Registry
+wird ausschließlich daraus gebildet:
 
 ~~~text
 schema_registry_entries = [
@@ -739,12 +746,17 @@ Initialisierung:
 - source_epoch_sealed=false.
 - authority_history_by_prefix[0] enthält die manifestgebundene
   Epoch-Start-Authority und unsealed.
+- current_recovery_generation und current_recovery_takeover_key_id stammen exakt
+  aus dem Manifest und ändern sich innerhalb derselben Epoche nicht.
 - genesis_grant_confirmation_required ist genau dann true, wenn
   epoch_start_authority_mode="genesis_grant_required".
 
 Pro Row:
 
-1. Grid-/Bounds-/Base64URL-/Envelope-AEAD vollständig prüfen.
+1. Grid-/Bounds-/Base64URL-/Envelope-AEAD vollständig prüfen. Gleiche
+   envelope_id + andere Bytes => security_blocked. Byte-identische spätere
+   Retry-Duplikate zählen physisch, sind aber semantische No-ops und springen
+   direkt zu Schritt 6/7.
 2. Wrapper als exaktes RevisionV2 validieren.
 3. Bei writer-grant-sw-v2:
    - falls source_epoch_sealed=true: einen sonst vollständig wohlgeformten Grant
@@ -863,9 +875,13 @@ Ein read-only Gerät muss URS erneut erhalten. Danach:
 1. RecoveryArtifactV6 decrypten und vollständig binden.
 2. Recovery-Generation muss zum verifizierten Manifest passen.
 3. recovery_takeover_key_id und Public Key müssen zum Manifest passen.
-4. PKCS#8 transient als non-extractable Ed25519 signing key importieren.
-5. Remote erneut vollständig verifizieren.
-6. Grant g+1 reason="forced_takeover" erzeugen.
+4. PKCS#8 transient als non-extractable Ed25519 signing key importieren und den
+   §19-Keypair-Check bestehen.
+5. Remote erneut vollständig verifizieren und beweisen, dass der gelesene Prefix
+   **alle** verfügbaren vertrauenswürdigen Freshness-Floors erweitert
+   (Artifact-Anchor, lokaler Anchor, ggf. Backup-Anchor). Kein Anchor-Downgrade.
+6. Grant g+1 reason="forced_takeover" gegen genau diesen frisch verifizierten
+   Entscheidungs-Prefix erzeugen.
 7. Grant-Signing-Input mit Recovery-Takeover-Key signieren.
 8. Append + Full Readback.
 9. writer_active nur bei kanonisch akzeptiertem eigenen Grant.
@@ -1055,9 +1071,15 @@ nur bei writer_active nicht-null und müssen dann exakt
 verified_writer_generation/verified_writer_grant_id entsprechen. Bei read_only
 sind writer_generation=null und writer_grant_id=null.
 
-verified_writer_* beschreibt immer die zuletzt vollständig remote verifizierte
-kanonische Authority und ist nach erfolgreichem gebundenem Full Verify nicht
-null.
+verified_writer_device_id, verified_writer_key_id,
+verified_writer_generation und verified_writer_grant_id sind entweder gemeinsam
+null (noch kein gebundener Full Verify) oder gemeinsam gesetzt. Nach erfolgreichem
+gebundenem Full Verify beschreiben sie exakt die zuletzt vollständig remote
+verifizierte kanonische Authority.
+
+recovery_takeover_key_id ist nach Manifestverifikation nicht-null und muss exakt
+zum Manifest passen. stale_writer_pending_count und operation_generation sind
+nichtnegative Safe-Integer.
 
 rotation_state_ref und migration_state_ref verwenden dieselbe geschlossene
 {operation_id,state,state_record_hash}-Form wie v1.
@@ -1088,10 +1110,11 @@ v2 besitzt ein eigenes lokales Wrap-Schema; RootWrapV5 bleibt unverändert.
 }
 ~~~
 
+wrap_id ist exakt 16 CSPRNG-Bytes Base64URL, wrap_iv exakt 12 CSPRNG-Bytes.
 AAD ist UTF8(JCS(desselben Objekts ohne wrap_iv und wrapped_root_key)).
 
 Best-Effort: mode_metadata={}, eigener non-extractable AES-256-GCM CryptoKey im
-Browserprofil.
+Browserprofil. wrapped_root_key ist AES-256-GCM(RootKey, wrap_iv, AAD).
 
 Passphrase:
 
@@ -1102,8 +1125,11 @@ mode_metadata = {
 }
 ~~~
 
-Argon2id-Parameter bleiben 64 MiB, 3 Iterationen, Parallelism 1, Output 32 Byte.
-Danach:
+passphrase_salt ist 16 CSPRNG-Bytes. Argon2id v0x13 verwendet exakt
+password=exact_UTF8(passphrase), salt=passphrase_salt, 64 MiB, 3 Iterationen,
+Parallelism 1, Output 32 Byte. Eingaberegeln bleiben wie v1: mindestens 15
+Unicode-Codepoints, maximal 1024 UTF-8-Bytes, kein trim/keine Normalisierung und
+lokale Common-Passphrase-Blockliste. Danach:
 
 ~~~text
 pass_context =
@@ -1129,6 +1155,9 @@ mode_metadata = {
   prf_wrap_salt,
   rp_id
 }
+
+prf_eval_input = 32 CSPRNG bytes
+prf_wrap_salt = 32 CSPRNG bytes
 
 credential_id_hash = SHA-256(credential_id_bytes)
 prf_context =
@@ -1213,7 +1242,8 @@ Header exakt:
 }
 ~~~
 
-Encrypted Payload exakt:
+Encrypted Payload exakt; remote_anchor ist für ein aktivierbares v2-Artefakt
+nicht-null:
 
 ~~~text
 recovery_artifact_id
@@ -1302,6 +1332,8 @@ byteidentisch remote vorhanden sind. stale_writer_pending_rows enthält
 ausschließlich quarantinierte ältere Writer-Envelopes und wird bei Restore
 niemals automatisch gepusht.
 
+backup_manifest_iv ist exakt 12 CSPRNG-Bytes.
+
 Backup-AAD exakt:
 
 ~~~text
@@ -1310,6 +1342,10 @@ UTF8(JCS({
   backup_format_version: 6,
   backup_id
 }))
+
+backup_manifest_plaintext = UTF8(JCS(backup_manifest))
+AES-256-GCM(K_backup(backup_id), backup_manifest_iv,
+            backup_manifest_plaintext, Backup-AAD)
 ~~~
 
 Das verschlüsselte Backup-Manifest enthält exakt:
@@ -1364,6 +1400,8 @@ kanonischen End-Authority entsprechen. recovery_artifact.remote_anchor muss von
 remote_anchor_at_export monoton umfasst werden; sonst ist das Backup ungültig.
 Counts, JCS-Hashes und Bytegrenzen werden für jede Kategorie separat und für die
 eindeutige Union aller Envelope-IDs geprüft. Gleiche envelope_id mit anderen Bytes ist fatal.
+
+created_at ist exakt YYYY-MM-DDTHH:mm:ss.SSSZ.
 
 Die v5-Grenzen bleiben für v6 unverändert: maximal 256 MiB Backup-Dokument,
 100000 eindeutige Envelopes und 134217728 kanonische Bytes für die eindeutige
@@ -1424,6 +1462,7 @@ manifest_genesis_mismatch
 recovery_generation_mismatch
 recovery_key_mismatch
 duplicate_envelope_id_with_different_bytes
+iv_reuse_across_envelope_ids
 rollback_against_persisted_anchor
 schema_or_canonicalization_failure
 ~~~
