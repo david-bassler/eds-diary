@@ -2514,6 +2514,7 @@ current.
   operation_id,
   operation_origin: "local_rekey" | "remote_pending_rekey_adoption",
   supersedes_transition_id,
+  superseded_by_transition_id,
   epoch_id,
   stage:
     "new_material_staged" |
@@ -2524,7 +2525,8 @@ current.
     "source_backup_verified" |
     "successor_rotation_required" |
     "completed" |
-    "stale",
+    "stale" |
+    "superseded",
   authority_anchor_before_transition,
   transition_id,
   transition_envelope,
@@ -2559,21 +2561,51 @@ Für operation_origin="local_rekey" gilt:
   supersedes_transition_id muss exakt current_recovery_rekey_transition_id sein.
   Das ist ein ausdrücklich neuer Rekey-Versuch, der den noch ausstehenden
   Recovery-Key erneut ersetzt.
+- superseded_by_transition_id startet immer null.
 
-Existiert lokal bereits ein nicht-terminaler RecoveryRekeyOperationStateV2 und
-soll ein solcher supersedierender Rekey gestartet werden, ist das nur erlaubt,
-wenn kein nicht-terminaler RotationOperationStateV2 existiert. Der neue
-RecoveryRekeyOperationStateV2 wird vollständig persistiert/readback-verifiziert
-und anschließend wird recovery_operation_state_ref atomar auf dessen operation_id
-umgebunden. Der ältere Operation-State bleibt als nicht-autoritatives Audit-
-Objekt erhalten; die Sicherheitsquelle für die noch ausstehende Rotation ist
-weiterhin canonical_full Remote-Historie.
+### Lokale Supersession eines bereits durablen Pending-Rekey
 
-Wird der neue supersedierende Versuch **vor** durabler neuer Transition stale
-oder abgebrochen, bleibt die ältere Remote-Pending-Transition kanonisch. Bevor
-irgendeine andere Mutation erfolgen darf, muss der Client dafür einen
-operation_origin="remote_pending_rekey_adoption"-State neu anlegen oder einen
-noch passenden lokalen State wieder vollständig gegen canonical_full binden.
+Existiert lokal bereits ein durch recovery_operation_state_ref referenzierter,
+nicht-terminaler RecoveryRekeyOperationStateV2 für die remote-current
+Pending-Transition und soll ein weiterer Recovery-Key-Wechsel ihn superseden,
+gilt exakt:
+
+1. canonical_full muss recovery_rekey_rotation_required=true liefern und die
+   transition_id des alten referenzierten States muss exakt
+   current_recovery_rekey_transition_id sein.
+2. Es darf kein nicht-terminaler RotationOperationStateV2 existieren.
+3. Der neue operation_origin="local_rekey"-State wird mit
+   supersedes_transition_id=alte transition_id und
+   superseded_by_transition_id=null vollständig persistent geschrieben und
+   readback-verifiziert.
+4. In **einer** lokalen atomaren, MAC-authentifizierten Transaktion wird
+   recovery_operation_state_ref vom alten auf den neuen operation_id umgebunden.
+   Der alte State bleibt unverändert persistent, ist aber solange **suspendiert**
+   und nimmt nicht an Operation-Locking/Resume teil, solange der Ref auf den
+   neuen State zeigt.
+5. Erst danach dürfen die neuen RecoveryArtifact-/Transition-Remote-Schritte
+   beginnen.
+6. Wird der neue Versuch vor durabler neuer Transition stale/abgebrochen, wird
+   sein State terminal `stale`. Danach muss canonical_full erneut ausgeführt
+   werden. Zeigt Remote weiterhin die alte transition_id, wird
+   recovery_operation_state_ref atomar wieder auf den alten suspendierten State
+   gebunden, sofern dessen Hash/Stage unverändert gültig ist; andernfalls wird
+   ein `remote_pending_rekey_adoption`-State für die alte Transition erzeugt.
+7. Wird die neue Transition durable, muss canonical_full beweisen:
+   current_recovery_rekey_transition_id == neue transition_id und
+   supersedes_transition_id == alte transition_id. Danach werden **in einer
+   lokalen atomaren Transaktion**:
+   - der alte State auf stage=`superseded` gesetzt;
+   - dessen superseded_by_transition_id=neue transition_id gesetzt;
+   - der neue State auf/bei stage=`transition_durable` belassen;
+   - recovery_operation_state_ref auf dem neuen operation_id bestätigt.
+8. `superseded` ist terminal und darf niemals wieder resumed oder als
+   Rotationspflicht interpretiert werden. Die remote-current Transition des
+   Verifiers bleibt allein maßgeblich.
+
+Damit existiert zu jedem Zeitpunkt höchstens **ein referenzierter aktiver**
+RecoveryRekeyOperationStateV2, während eine vor-durable Supersession bei Crash
+auf die weiterhin kanonische ältere Remote-Transition zurückfallen kann.
 
 operation_origin="remote_pending_rekey_adoption" hat
 supersedes_transition_id=null und darf ausschließlich neu
@@ -2608,8 +2640,9 @@ source_backup_verified -> successor_rotation_required
 successor_rotation_required -> completed
 ~~~
 
-Für operation_origin="remote_pending_rekey_adoption" ist
-`transition_durable` der einzige zulässige Initialzustand; danach gilt exakt
+Für operation_origin="remote_pending_rekey_adoption" gilt
+supersedes_transition_id=null und superseded_by_transition_id=null.
+`transition_durable` ist der einzige zulässige Initialzustand; danach gilt exakt
 derselbe Suffix:
 
 ~~~text
@@ -2618,10 +2651,13 @@ source_backup_verified -> successor_rotation_required
 successor_rotation_required -> completed
 ~~~
 
-`stale` darf nur **vor** durable RecoveryAuthorityTransitionV2 erreicht werden,
-wenn der Transition-Anchor überholt wurde. Nach `transition_durable` ist die
-neue Recovery-Authority bereits kanonisch; der Rekey darf dann nicht abgebrochen
-oder auf die alte Generation zurückgesetzt werden.
+`stale` darf nur **vor** der zu diesem Operation-State gehörenden durablen
+RecoveryAuthorityTransitionV2 erreicht werden, wenn der Transition-Anchor
+überholt wurde. Nach `transition_durable` ist die neue Recovery-Authority
+bereits kanonisch; der Rekey darf dann nicht abgebrochen oder auf die alte
+Generation zurückgesetzt werden. Ein post-durable State darf ausschließlich
+durch eine **neuere durable RecoveryAuthorityTransitionV2** gemäß der obigen
+atomaren Supersession auf `superseded` wechseln.
 
 Crash-Regeln:
 
