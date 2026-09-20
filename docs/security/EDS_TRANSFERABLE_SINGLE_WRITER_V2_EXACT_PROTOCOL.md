@@ -1299,7 +1299,10 @@ Write-Vorgangs:
    verifiziert wurde;
 5. source_epoch_sealed=false ist;
 6. verifizierte current authority exakt zum lokalen Device-Key passt;
-7. lokaler Status writer_active ist.
+7. lokaler Status writer_active ist;
+8. kein nicht-terminaler rotation_state_ref, migration_state_ref,
+   writer_operation_state_ref oder recovery_operation_state_ref die konkrete
+   Mutation sperrt.
 
 Es gibt im strikten v2 **kein zeitbasiertes Offline-Lease und kein
 Freshness-Intervall**.
@@ -1730,6 +1733,9 @@ Exakt diese Top-Level-Properties, keine weiteren:
   operation_generation,
   rotation_state_ref,
   migration_state_ref,
+  writer_operation_state_ref,
+  recovery_operation_state_ref,
+  activation_lineage_cache_ref,
   local_journal_count,
   local_journal_hash,
   writer_status,
@@ -1794,8 +1800,15 @@ recovery_takeover_key_id ist nach Manifestverifikation nicht-null und muss exakt
 zum Manifest passen. stale_writer_pending_count und operation_generation sind
 nichtnegative Safe-Integer.
 
-rotation_state_ref und migration_state_ref verwenden dieselbe geschlossene
-{operation_id,state,state_record_hash}-Form wie v1.
+rotation_state_ref, migration_state_ref, writer_operation_state_ref,
+recovery_operation_state_ref und activation_lineage_cache_ref sind null oder
+verwenden exakt die geschlossene
+{operation_id,state,state_record_hash}-Referenzform.
+
+recovery_generation, recovery_urs_commitment und recovery_takeover_key_id
+beschreiben nach gebundenem Full Verify den **aktuellen** Recovery-State nach
+allen akzeptierten RecoveryAuthorityTransitionV2-Controls; sie sind nicht
+notwendig identisch mit den immutable Manifest-Startwerten.
 
 Der Writer-Private-CryptoKey liegt in einem getrennten lokalen Key-Store und wird
 über writer_signing_key_id referenziert. State und Referenz werden über
@@ -1974,6 +1987,152 @@ writer_device_id_bytes || raw_writer_public_key
 Der Private Key signiert diese Bytes; Verifikation muss mit writer_public_key
 erfolgreich sein. Fehlschlag => read_only/security error, niemals Key-
 Neugenerierung als stiller Ersatz.
+
+### 18.3 Exakte v2 Crash-Resume-Operation-States
+
+Kein sicherheitsrelevanter Remote-Append darf ausschließlich durch flüchtigen
+UI-/Promise-State repräsentiert sein. Vor dem ersten möglichen Remote-Append
+werden die exakten one-shot Envelope-Bytes und der Entscheidungs-Anchor
+persistent gespeichert und über den State-Record-Hash readback-verifiziert.
+
+Gemeinsame Prepared Row:
+
+~~~text
+PreparedEnvelopeRowV2 = {
+  envelope_id,
+  iv,
+  ciphertext
+}
+~~~
+
+### WriterGrantOperationStateV2
+
+~~~text
+{
+  format: "writer-grant-operation-v2",
+  version: 2,
+  operation_id,
+  operation_kind: "handoff" | "forced_takeover",
+  epoch_id,
+  stage:
+    "prepared" |
+    "append_unknown" |
+    "durable" |
+    "stale",
+  authority_anchor,
+  prepared_envelope,
+  expected_writer_generation,
+  expected_writer_grant_id
+}
+~~~
+
+`prepared_envelope` ist das exakte WriterGrantV2-Envelope.
+Retry ist nur gemäß §14 zulässig; durch die Grant-Freshness-Regel aus §8 wird
+ein historisch gewordener vorbereiteter Grant zu `stale`, niemals später doch
+current.
+
+### RecoveryRekeyOperationStateV2
+
+~~~text
+{
+  format: "recovery-rekey-operation-v2",
+  version: 2,
+  operation_id,
+  epoch_id,
+  stage:
+    "new_material_staged" |
+    "recovery_artifact_published" |
+    "transition_pending" |
+    "transition_unknown" |
+    "transition_durable" |
+    "activated_backup_verified" |
+    "completed" |
+    "stale",
+  authority_anchor_before_transition,
+  transition_envelope,
+  recovery_artifact_id,
+  recovery_artifact_locator,
+  transition_proof_sha256,
+  to_recovery_generation,
+  to_recovery_takeover_key_id
+}
+~~~
+
+Dieser State enthält **niemals** URS, PKCS#8 oder plaintext Root-Keys.
+RecoveryTakeoverStagingV2 hält das private Takeover-Material separat
+URS-verschlüsselt.
+
+Crash-Regeln:
+
+- Vor `recovery_artifact_published` ist keine neue Remote-Recovery-Authority
+  behauptbar.
+- Nach `recovery_artifact_published`, aber vor durable Transition, kann nur
+  §16c die exakt vorbereitete Transition crash-resumable abschließen.
+- Nach `transition_durable` muss ein activated SyncBackupV6 der **Source**
+  erzeugt und Test-Restore-verifiziert werden, bevor der Rekey als
+  `completed` gilt oder eine recovery_rekey-Successor-Rotation beginnt.
+- Wird der Transition-Anchor überholt, stage=`stale`; keine neuen Envelope-
+  Bytes aus denselben Semantiken erzeugen.
+
+### RotationOperationStateV2
+
+~~~text
+{
+  format: "rotation-operation-v2",
+  version: 2,
+  operation_id,
+  rotation_kind: "normal" | "recovery_rekey" | "profile_upgrade",
+  source_epoch_id,
+  successor_epoch_id,
+  stage:
+    "source_frozen_verified" |
+    "successor_planned" |
+    "successor_bound" |
+    "copying" |
+    "successor_verified" |
+    "recovery_artifact_verified" |
+    "staged_backup_verified" |
+    "announcement_prepared" |
+    "announcement_unknown" |
+    "announcement_durable" |
+    "activated_backup_verified" |
+    "switched" |
+    "stale",
+  source_anchor_before_announcement,
+  successor_manifest_fingerprint,
+  activation_lineage_sha256,
+  announcement_envelope,
+  activation_proof_sha256,
+  recovery_artifact_id,
+  staged_backup_id,
+  activated_backup_id
+}
+~~~
+
+`announcement_envelope` und `activation_proof_sha256` sind bis
+`announcement_prepared` null und danach immutable/non-null.
+`activated_backup_id` ist bis `activated_backup_verified` null.
+
+Nach `announcement_durable` ist das Source-Seal irreversibel. Vor
+`switched` muss zwingend ein **neuer activated SyncBackupV6** des Successors
+erzeugt, Test-Restore-verifiziert und als `activated_backup_verified`
+persistiert sein. Das frühere staged Backup genügt dafür nicht.
+
+Alle Resume-Pfade beginnen mit Full Verify der beteiligten Remote-Epochen und
+Abgleich der gespeicherten Anchor/Envelope-Bytes. Ein State-Record-Hash-Mismatch,
+unbekannte Stage oder semantisch inkonsistente Kombination ist
+security_blocked; kein „best effort“-Fortsetzen.
+
+### Operation-Locking
+
+- Während nicht-terminalem RecoveryRekeyOperationStateV2 sind Fachwrites,
+  Handoff, Forced Takeover und Rotation lokal gesperrt.
+- Während nicht-terminalem RotationOperationStateV2 sind normale Source-Writes
+  ab dem dokumentierten Freeze gesperrt.
+- Handoff und Forced Takeover dürfen nicht parallel zu einem anderen
+  WriterGrantOperationStateV2 laufen.
+- Web Locks bleiben zusätzlich erforderlich, sind aber **nicht** die persistente
+  Crash-Grenze.
 
 ---
 
