@@ -985,12 +985,15 @@ authentisieren.
 Ein Gerät darf RevisionV2 erst persistent erzeugen, wenn innerhalb desselben
 Write-Vorgangs:
 
-1. starke lokale Entsperrung aktiv ist;
+1. lokales Unlock gemäß dem konfigurierten RootWrapV6-Modus erfolgreich ist;
+   Best-Effort bleibt dabei ausdrücklich eine schwächere At-rest-Grenze, ist aber
+   kein eigenes Writer-Authority-Kriterium;
 2. authentifizierte Provider-Session aktiv ist;
 3. Remote vollständig neu gelesen und gegen den persistierten RemoteAnchorV2
    verifiziert wurde;
-4. verifizierte current authority exakt zum lokalen Device-Key passt;
-5. lokaler Status writer_active ist.
+4. source_epoch_sealed=false ist;
+5. verifizierte current authority exakt zum lokalen Device-Key passt;
+6. lokaler Status writer_active ist.
 
 Es gibt im strikten v2 **kein zeitbasiertes Offline-Lease und kein
 Freshness-Intervall**.
@@ -1012,10 +1015,11 @@ Bei Timeout/unklarem Ergebnis:
 2. Remote vollständig lesen;
 3. gleiche envelope_id + gleiche Bytes => dieses konkrete Envelope existiert;
 4. gleiche envelope_id + andere Bytes => fatal;
-5. fehlt das Envelope und Authority ist unverändert => exakt dieselben Bytes erneut
-   appendieren;
-6. fehlt das Envelope und Authority hat sich geändert => nicht erneut appendieren;
-   als stale_writer_pending bzw. stale_grant_attempt quarantinieren.
+5. fehlt das Envelope und Authority ist unverändert und
+   source_epoch_sealed=false => exakt dieselben Bytes erneut appendieren;
+6. fehlt das Envelope und Authority sich geändert hat oder
+   source_epoch_sealed=true => nicht erneut appendieren; als
+   stale_writer_pending bzw. stale_grant_attempt quarantinieren.
 
 Ein HTTP-200 ohne finalen Full Readback ist niemals durable.
 
@@ -1030,9 +1034,10 @@ Voraussetzungen:
 - A hat keine nicht-durablen eigenen Pending-Envelopes.
 - A verifiziert TransferdescriptorV2 von B.
 
-A plant exakt einen Grant g+1, persistiert dessen exakte Bytes, signiert den
-Grant-Signing-Input mit As aktuellem Writer-Key, appendet und liest vollständig
-zurück.
+A plant exakt einen Grant g+1 und persistiert dessen exakte Bytes. Unmittelbar
+vor Append erfolgt erneut ein Full Verify; nur wenn dieselbe Authority weiterhin
+current und source_epoch_sealed=false ist, signiert/appendet A den exakt
+geplanten Grant und liest vollständig zurück.
 
 A persistiert read_only erst, wenn derselbe Grant kanonisch akzeptiert wurde.
 
@@ -1054,6 +1059,7 @@ Ein read-only Gerät muss URS erneut erhalten. Danach:
 5. Remote erneut vollständig verifizieren und beweisen, dass der gelesene Prefix
    **alle** verfügbaren vertrauenswürdigen Freshness-Floors erweitert
    (Artifact-Anchor, lokaler Anchor, ggf. Backup-Anchor). Kein Anchor-Downgrade.
+   Zusätzlich muss source_epoch_sealed=false sein.
 6. Grant g+1 reason="forced_takeover" gegen genau diesen frisch verifizierten
    Entscheidungs-Prefix erzeugen.
 7. Grant-Signing-Input mit Recovery-Takeover-Key signieren.
@@ -1089,11 +1095,21 @@ successor_manifest_fingerprint
 rotation_kind = "normal"
 source_writer_generation
 source_writer_grant_id
-recovery_generation
+successor_recovery_generation
 ~~~
 
 source_writer_generation und source_writer_grant_id müssen dem writer_context
 der Control-Revision entsprechen.
+
+successor_recovery_generation ist exakt:
+- bei normaler v2→v2-Rotation gleich der Source-recovery_generation;
+- bei recovery_rekey exakt Source-recovery_generation + 1;
+- beim v1→v2-profile_upgrade gleich der aus v1 übernommenen
+  recovery_generation.
+
+Das Feld bezeichnet ausschließlich die Recovery-Generation des gebundenen
+Successors; eine mehrdeutige nackte recovery_generation im Announcement ist
+verboten.
 
 "epoch-migration-sw-v2" ist ebenfalls eine normale writer-autorisierte
 Control-RevisionV2.
@@ -1350,8 +1366,29 @@ v2 besitzt ein eigenes lokales Wrap-Schema; RootWrapV5 bleibt unverändert.
 wrap_id ist exakt 16 CSPRNG-Bytes Base64URL, wrap_iv exakt 12 CSPRNG-Bytes.
 AAD ist UTF8(JCS(desselben Objekts ohne wrap_iv und wrapped_root_key)).
 
+Die gemeinsame RootWrap-Verschlüsselung ist exakt:
+
+~~~text
+plaintext = RK_epoch
+iv        = wrap_iv
+aad       = AAD
+tagLength = 128
+
+K_wrap =
+  best-effort -> lokaler non-extractable AES-256-GCM CryptoKey
+  prf         -> K_local_prf
+  passphrase  -> K_local_passphrase
+
+wrapped_root_key =
+  AES-256-GCM-ENCRYPT(key=K_wrap, iv=wrap_iv,
+                      plaintext=RK_epoch, aad=AAD, tagLength=128)
+~~~
+
+Öffnen verwendet exakt dieselben Parameter mit AES-256-GCM-DECRYPT und muss
+exakt 32 Plaintext-Bytes ergeben; jede andere Länge ist fatal.
+
 Best-Effort: mode_metadata={}, eigener non-extractable AES-256-GCM CryptoKey im
-Browserprofil. wrapped_root_key ist AES-256-GCM(RootKey, wrap_iv, AAD).
+Browserprofil.
 
 Passphrase:
 
