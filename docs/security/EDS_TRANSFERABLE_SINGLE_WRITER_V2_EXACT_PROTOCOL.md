@@ -819,10 +819,17 @@ epoch_locator = <oben definierter Wert>
 
 Keine weiteren Protokoll-appProperties sind zulässig.
 
-Die Epoch-Ressource verwendet dieselbe strikte Zwei-Tab-Google-Grid-Struktur und
-dieselben owner-only/permission/Drive-Invarianten wie v1: exakt "_m" und "_r",
-keine Merges, ausschließlich String-Zellen, produktive Row-Writes ausschließlich
-über AppendCellsRequest.
+Die Epoch-Ressource besitzt genau zwei GRID-Sheets "_m" und "_r", keine weiteren
+Tabs und keine Merges. "_m" hat exakt columnCount=4 und rowCount=1.
+"_r" hat exakt columnCount=4, 1 <= rowCount <= 100000, keine Headerzeile und
+innerhalb 1..last_protocol_row keine Lücke. Alle Protokollzellen sind
+ausschließlich userEnteredValue.stringValue; Formeln, Zahlen, Bool-/Errorwerte
+und berechnete Ersatzwerte sind unzulässig.
+
+Drive-owner-/permission-Invarianten entsprechen v1. Produktive Row-Writes
+verwenden ausschließlich spreadsheets.batchUpdate + AppendCellsRequest auf der
+expliziten "_r".sheetId mit fields="userEnteredValue"; values.append bleibt
+verboten.
 
 Abweichend vom eingefrorenen v1 besitzt jede physische v2-_r-Row **exakt vier**
 String-Zellen:
@@ -1184,7 +1191,7 @@ from_epoch_id
 successor_epoch_id
 successor_creation_locator
 successor_manifest_fingerprint
-rotation_kind = "normal"
+rotation_kind = "normal" | "recovery_rekey"
 source_writer_generation
 source_writer_grant_id
 successor_recovery_generation
@@ -1194,15 +1201,16 @@ recovery_activation_commitment
 source_writer_generation und source_writer_grant_id müssen dem writer_context
 der Control-Revision entsprechen.
 
-successor_recovery_generation ist für dieses v2-Control exakt:
-- bei normaler v2→v2-Rotation gleich der Source-recovery_generation;
-- bei recovery_rekey exakt Source-recovery_generation + 1.
-
-recovery_activation_commitment ist:
-- bei normaler v2→v2-Rotation exakt null und die vierte physische Row-Zelle
-  activation_token ist exakt "";
-- bei recovery_rekey exakt der §19.1-Commitmentwert und activation_token ist
-  exakt das zugehörige 32-Byte-Aktivierungssecret als Base64URL.
+rotation_kind und Recovery-Felder sind gekoppelt:
+- rotation_kind="normal":
+  successor_recovery_generation == Source-recovery_generation,
+  recovery_activation_commitment=null und die vierte physische Row-Zelle
+  activation_token="".
+- rotation_kind="recovery_rekey":
+  successor_recovery_generation == Source-recovery_generation + 1,
+  recovery_activation_commitment ist exakt der §19.1-Commitmentwert und
+  activation_token ist exakt das zugehörige 32-Byte-Aktivierungssecret als
+  Base64URL.
 
 Das eingefrorene v1 rotation-announcement-sw-v1 besitzt dieses Feld ausdrücklich
 nicht; beim v1→v2-profile_upgrade wird die übernommene Recovery-Generation daher
