@@ -248,7 +248,7 @@ successor_activation_confirmation -> successor-activation-confirmation-sw-v2
 ~~~
 
 Für alle elf Schema-IDs sind immutable maschinenlesbare Schema-Definitionen
-gebunden; die vier neuen v2-Control-Schemas liegen als
+gebunden; die fünf neuen v2-Control-Schemas liegen als
 `src/security/schemas/*-sw.v2.schema.json` im Repo. Die produktive Registry wird
 ausschließlich aus diesen versionierten Schemaobjekten gebildet:
 
@@ -1677,6 +1677,11 @@ Bei Timeout/unklarem Ergebnis:
    Successor-Prefix exakt successor_staging_anchor entspricht. Jede
    intervenierende Source- oder Successor-Row vor durable Announcement =>
    vorbereitete Rotation stale/nicht aktivieren.
+8a. **SuccessorActivationConfirmationV2:** Retry/Crash-Completion nur, wenn das
+    gebundene Source-Announcement bereits vollständig durable verifiziert ist
+    und der aktuelle Successor-Prefix exakt successor_staging_anchor entspricht.
+    Es werden ausschließlich dieselben one-shot Confirmation-Bytes erneut
+    verwendet; jede andere Successor-Row zuerst => successor_cutover_race.
 9. Ist Source inzwischen sealed oder Writer-/Recovery-Authority anderweitig
    fortgeschritten => nicht erneut appendieren; Fachrevision quarantinieren bzw.
    Operation-State auf stale setzen.
@@ -2330,9 +2335,11 @@ Für **jede** v2→v2-Rotation ist die Reihenfolge verbindlich:
    successor_staging_anchor entsprechen. Andernfalls stage=stale und kein
    Announcement wird vorbereitet. Erst danach das exakte Rotation-Announcement
    one-shot vorbereiten. Es bindet source_anchor_before_announcement **und**
-   successor_staging_anchor.
-6. RecoveryActivationProofV2 mit genau diesen Announcement-Bytes und demselben
-   successor_staging_anchor erzeugen und signieren; erst jetzt die verifizierte
+   successor_staging_anchor. Aus genau diesen Announcement-Bytes anschließend
+   die SuccessorActivationConfirmationV2 one-shot vorbereiten; ihr
+   source_announcement_envelope_sha256 bindet exakt dieses Announcement.
+6. RecoveryActivationProofV2 mit genau diesen Announcement- **und Confirmation-
+   Bytes** und demselben successor_staging_anchor erzeugen und signieren; erst jetzt die verifizierte
    Source-Lineage um genau einen V2RotationActivationEntryV2 erweitern.
 7. Successor-RecoveryArtifactV6 mit dieser erweiterten Lineage
    publizieren/readback-verifizieren. Für diesen staged Successor muss
@@ -3449,11 +3456,14 @@ Test-Restore muss Manifest, RecoveryArtifactV6-Bindung, sämtliche Hashes/Counts
 RemoteAnchorV2, Writer-Authority und jede Row vollständig prüfen und anschließend
 den produktiven TransferableSingleWriterV2Verifier verwenden.
 
-Für das obligatorische staged **und** activated Cutover-Backup einer noch nicht
-lokal geswitchten nicht-nativen Epoche gilt zusätzlich:
-remote_anchor_at_export muss exakt successor_staging_anchor des zugehörigen
-Activation-Evidence entsprechen. Ein Cutover-Backup mit erweitertem oder
-abweichendem Successor-Prefix ist ungültig.
+Für die obligatorischen Cutover-Backups einer noch nicht lokal geswitchten
+nicht-nativen Epoche gilt zusätzlich:
+- activation_state="staged" => remote_anchor_at_export muss exakt
+  successor_staging_anchor des Activation-Evidence entsprechen;
+- activation_state="activated" => remote_anchor_at_export muss exakt
+  successor_activation_anchor nach der durablen SuccessorActivationConfirmation
+  entsprechen.
+Ein Cutover-Backup mit einem anderen Prefix ist ungültig.
 
 - activation_state="staged" => ausschließlich local_offline/read_only Restore.
 - activation_state="activated" + strukturell/kryptographisch ungültiger,
@@ -3571,9 +3581,11 @@ Reihenfolge:
     und Successor erfolgreich ausführen. Den aktuellen Successor-RemoteAnchor als
     successor_staging_anchor einfrieren; bis zum atomaren v2-Switch sind weitere
     Successor-Appends verboten.
-13. v1-Rotation-Announcement exakt one-shot vorbereiten. Danach
-    ProfileUpgradeActivationEntryV2 aus RK_v1, finalem v1-Source-Anchor,
-    successor_staging_anchor und genau diesen Announcement-Bytes erzeugen;
+13. v1-Rotation-Announcement exakt one-shot vorbereiten. Aus genau diesen
+    Announcement-Bytes die SuccessorActivationConfirmationV2 one-shot
+    vorbereiten. Danach ProfileUpgradeActivationEntryV2 aus RK_v1, finalem
+    v1-Source-Anchor, successor_staging_anchor und genau diesen Announcement-
+    **und Confirmation-Bytes** erzeugen;
     activation_lineage=[dieser Eintrag].
 14. aus RecoveryTakeoverStagingV2 das finale RecoveryArtifactV6 mit
     remote_anchor=successor_staging_anchor, activation_lineage und
