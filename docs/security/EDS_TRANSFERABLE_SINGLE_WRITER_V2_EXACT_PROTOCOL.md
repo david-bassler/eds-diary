@@ -1681,6 +1681,7 @@ Top-Level exakt:
   backup_manifest_ciphertext,
   epoch_manifest_public,
   recovery_artifact,
+  activation_source_snapshot,
   record_rows,
   pending_outbox_rows,
   stale_writer_pending_rows
@@ -1691,7 +1692,16 @@ epoch_manifest_public sind exakt die vier persistierten ManifestV6-Zellen.
 recovery_artifact ist ein vollständiges RecoveryArtifactV6-Objekt; dessen
 Ciphertext wird nicht für den Backup-Export neu erzeugt.
 
-record_rows enthält die exakte physische Remote-Reihenfolge.
+activation_source_snapshot ist:
+- bei nativer v2-Genesis exakt null;
+- sonst exakt
+  { source_manifest_public, source_record_rows_through_activation }.
+  source_manifest_public enthält die exakten öffentlichen Manifestzellen der
+  Source; source_record_rows_through_activation enthält die exakte physische
+  Source-Reihenfolge mindestens bis einschließlich der im
+  RecoveryActivationProofV2 gebundenen Announcement-Row.
+
+record_rows enthält die exakte physische Remote-Reihenfolge des Successors.
 pending_outbox_rows enthält lokale aktuelle-Authority-Envelopes, die noch nicht
 byteidentisch remote vorhanden sind. stale_writer_pending_rows enthält
 ausschließlich quarantinierte ältere Writer-Envelopes und wird bei Restore
@@ -1727,6 +1737,7 @@ Das verschlüsselte Backup-Manifest enthält exakt:
   recovery_generation,
   recovery_takeover_key_id,
   recovery_artifact_sha256,
+  activation_source_snapshot_sha256,
   record_row_count,
   record_rows_canonical_bytes,
   record_prefix_hash,
@@ -1757,6 +1768,16 @@ writer_authority_at_export ist exakt:
 ~~~
 
 recovery_artifact_sha256 ist Base64URL(SHA-256(UTF8(JCS(recovery_artifact)))).
+activation_source_snapshot_sha256 ist bei nativer Genesis null, sonst
+Base64URL(SHA-256(UTF8(JCS(activation_source_snapshot)))).
+
+Ein kanonisch exportierbares SyncBackupV6 darf erst nach erfolgreicher
+§19.1-Aktivierungsprüfung erzeugt werden. Für Nicht-Genesis muss sein
+activation_source_snapshot denselben RecoveryActivationProofV2 offline
+reproduzierbar verifizieren. Ein vor Source-Announcement erzeugter
+Successor-Testdump ist ausdrücklich kein SyncBackupV6 und darf nicht als
+Recovery-Backup exportiert/importiert werden.
+
 remote_anchor_at_export ist für ein exportierbares gebundenes v2-Profil
 nicht-null und muss exakt aus record_rows reproduzierbar sein.
 record_prefix_hash muss RemoteAnchorV2.prefix_hash entsprechen.
@@ -1774,8 +1795,11 @@ Union.
 
 Test-Restore muss Manifest, RecoveryArtifactV6-Bindung, sämtliche Hashes/Counts,
 RemoteAnchorV2, Writer-Authority und jede Row vollständig prüfen und anschließend
-den produktiven TransferableSingleWriterV2Verifier verwenden. Restore darf
-stale_writer_pending_rows nur als Quarantäne wiederherstellen.
+den produktiven TransferableSingleWriterV2Verifier verwenden. Für Nicht-Genesis
+muss zusätzlich RecoveryActivationProofV2 offline gegen
+activation_source_snapshot mit dem jeweiligen produktiven v1/v2-Source-Verifier
+erfolgreich sein. Restore darf stale_writer_pending_rows nur als Quarantäne
+wiederherstellen.
 
 ---
 
@@ -1805,13 +1829,19 @@ Reihenfolge:
 11. Migration-Control mit migration_kind="profile_upgrade" und
     source_writer_authority=null schreiben.
 12. Successor vollständig mit V2-Verifier verifizieren.
-13. aus RecoveryTakeoverStagingV2 das finale RecoveryArtifactV6 mit dem finalen
-    Successor-Anchor erzeugen, lokal/remote readback-verifizieren und
-    Test-Recovery durchführen.
-14. SyncBackupV6 erzeugen und Test-Restore durchführen.
-15. RecoveryTakeoverStagingV2 darf jetzt gelöscht werden.
-16. v1 Rotation Announcement durable machen.
-17. atomar auf v2 umschalten; v1 retire.
+13. den exakten v1 Rotation-Announcement-Envelope one-shot gegen den in Schritt 2
+    verifizierten Source-Zustand vorbereiten und persistent reservieren, aber noch
+    nicht appendieren.
+14. aus RecoveryTakeoverStagingV2 das finale RecoveryArtifactV6 erzeugen; sein
+    RecoveryActivationProofV2 enthält den v1-Source-RK, den final verifizierten
+    Source-Anchor vor Announcement und exakt die in Schritt 13 reservierten
+    Announcement-Envelope-Bytes. Artifact lokal/remote readback-verifizieren.
+15. genau diese v1 Rotation-Announcement-Bytes appendieren und Source vollständig
+    readback-verifizieren; §19.1 muss aktiviert ergeben.
+16. erst jetzt SyncBackupV6 einschließlich activation_source_snapshot erzeugen
+    und Test-Restore durchführen.
+17. RecoveryTakeoverStagingV2 darf jetzt gelöscht werden.
+18. atomar auf v2 umschalten; v1 retire.
 
 Kein v1-Client darf eine v2-Epoche als v1 interpretieren.
 
@@ -1871,7 +1901,10 @@ für mindestens:
     epoch-spezifischer recovery_artifact_locator.
 14. RecoveryTakeoverStagingV2 KDF/AAD/Crash-Resume + falsche URS.
 15. RecoveryArtifactV6 AAD/Payload/Keypair-Check roundtrip.
-16. SyncBackupV6 vollständiges Manifest/hash binding.
+16. RecoveryActivationProofV2 für v1→v2, normale v2-Rotation und
+    recovery_rekey einschließlich exakter Announcement-Envelope-Bytes.
+17. SyncBackupV6 vollständiges Manifest/hash binding einschließlich
+    activation_source_snapshot.
 
 Negative Vectors:
 
@@ -1888,6 +1921,16 @@ Negative Vectors:
 - zwei plausible Recovery-Ressourcen desselben epoch-spezifischen Locators;
 - vorbereiteter Successor ohne Source-Announcement darf bei Recovery nicht aktiv
   werden;
+- RecoveryActivationProof mit physisch vorhandener, aber stale/verworfener
+  Announcement-Row;
+- RecoveryActivationProof mit falschem Source-RK, Source-Manifest-Fingerprint,
+  Source-Anchor oder anderen Announcement-Bytes;
+- recovery_rekey: Recovery nur mit neuer URS und ohne alte URS muss nach
+  durablem Announcement funktionieren; vor Announcement muss dieselbe neue URS
+  den Successor als unactivated ablehnen;
+- Gen-1-Manifest ohne Gen-1-Grant, Fachrow vor Gen-1-Grant und EOF vor
+  Gen-1-Grant => security_blocked;
+- Retry/Handoff/Forced-Takeover nach Source-Seal => kein Append;
 - Transferdescriptor ohne Private-Key-Possession;
 - Rollback vor bereits bekannten Grant;
 - stale Fachrow nach Handoff;
