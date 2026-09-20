@@ -1280,8 +1280,43 @@ physischen Prefix und damit des Anchors.
 
 ## 12. Verifier-Automat
 
-Der v2-Full-Verifier beginnt ausschließlich aus dem Manifest-Trust-Root und
+Der v2-Verifier beginnt ausschließlich aus dem Manifest-Trust-Root und
 verarbeitet _r strikt in physischer Reihenfolge.
+
+Er besitzt exakt zwei Verifikationszwecke:
+
+~~~text
+verification_purpose =
+  "canonical_full" |
+  "rotation_resume"
+~~~
+
+`canonical_full` ist der einzige Modus für Aktivierung, Join, Recovery,
+Writer-Gates, Backup-Export/-Restore und normale Remote-Verifikation.
+
+`rotation_resume` ist ausschließlich für einen lokal MAC-authentifizierten,
+nicht-terminalen RotationOperationStateV2 zulässig, dessen successor_epoch_id
+und successor_manifest_fingerprint exakt zur geprüften staged Successor-Epoche
+passen und dessen stage `"successor_bound"` oder `"copying"` ist.
+
+rotation_resume:
+
+- prüft **jede bereits vorhandene Row** mit denselben Struktur-, AEAD-,
+  Signatur-, Authority-, Graph- und Bounds-Regeln wie canonical_full;
+- erlaubt bei EOF ausschließlich, dass die für eine nicht-native Epoche
+  erforderliche EpochMigrationV2 noch fehlt;
+- erlaubt null oder exakt eine akzeptierte Migration-Control; zwei bleiben
+  fatal;
+- liefert nur `staged_incomplete` bzw. `staged_migration_present` an den
+  Rotation-/Migration-Service;
+- darf niemals `epoch_status="active"`, `writer_active`, einen normalen
+  VerifiedRemoteState für Fachwrites, einen activated Backup-Status oder eine
+  Recovery-/Join-Aktivierung erzeugen;
+- darf nicht verwendet werden, sobald RotationOperationStateV2
+  `successor_verified` oder eine spätere Stage erreicht hat.
+
+Damit kann ein Crash während Copy/Control-Erzeugung sicher fortgesetzt werden,
+ohne die kanonische Aktivierungsregel abzuschwächen.
 
 Zustand:
 
@@ -1393,8 +1428,13 @@ Pro Row:
    festgehalten.
 8. EOF mit genesis_grant_confirmation_required=true => security_blocked /
    manifest_genesis_missing.
-9. EOF mit migration_control_required=true und accepted_epoch_migration=null =>
-   security_blocked / migration_control_missing.
+9. EOF mit migration_control_required=true und accepted_epoch_migration=null:
+   - verification_purpose="canonical_full" => security_blocked /
+     migration_control_missing;
+   - verification_purpose="rotation_resume" und gebundene Operation-Stage
+     successor_bound|copying => staged_incomplete, **kein** kanonischer
+     VerifiedRemoteState;
+   - jeder andere Fall => security_blocked.
 
 Ein Root-Key-besitzendes stale Gerät kann neue Ciphertexte erzeugen, aber ohne
 aktuellen Writer-Key weder aktuelle Fachrevisionen noch einen Handoff-Grant
@@ -2539,8 +2579,11 @@ Nach `announcement_durable` ist das Source-Seal irreversibel. Vor
 erzeugt, Test-Restore-verifiziert und als `activated_backup_verified`
 persistiert sein. Das frühere staged Backup genügt dafür nicht.
 
-Alle Resume-Pfade beginnen mit Full Verify der beteiligten Remote-Epochen und
-Abgleich der gespeicherten Anchor/Envelope-/Evidence-Bytes. Ein
+Alle Resume-Pfade beginnen mit Verifikation der beteiligten Remote-Epochen und
+Abgleich der gespeicherten Anchor/Envelope-/Evidence-Bytes. Für einen staged
+Successor in stage successor_bound|copying ist dafür ausschließlich der oben
+definierte operation-gebundene `rotation_resume`-Modus zulässig; ab
+successor_verified ist wieder `canonical_full` Pflicht. Ein
 State-Record-Hash-Mismatch, unbekannte Stage, übersprungene Stage oder
 semantisch inkonsistente Feldkombination ist security_blocked; kein
 „best effort“-Fortsetzen.
