@@ -21,8 +21,7 @@
       "enum": [
         "profile_upgrade",
         "normal",
-        "recovery_rekey",
-        "emergency"
+        "recovery_rekey"
       ]
     },
     "source": {
