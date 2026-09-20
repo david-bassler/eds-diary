@@ -2336,9 +2336,9 @@ Crash-Regeln:
     "successor_bound" |
     "copying" |
     "successor_verified" |
+    "announcement_prepared" |
     "recovery_artifact_verified" |
     "staged_backup_verified" |
-    "announcement_prepared" |
     "announcement_unknown" |
     "announcement_durable" |
     "activated_backup_verified" |
@@ -2346,28 +2346,87 @@ Crash-Regeln:
     "stale",
   source_anchor_before_announcement,
   successor_manifest_fingerprint,
+  source_recovery_transition_id,
   activation_lineage_sha256,
   announcement_envelope,
-  activation_proof_sha256,
+  activation_evidence_sha256,
   recovery_artifact_id,
   staged_backup_id,
   activated_backup_id
 }
 ~~~
 
-`announcement_envelope` und `activation_proof_sha256` sind bis
-`announcement_prepared` null und danach immutable/non-null.
-`activated_backup_id` ist bis `activated_backup_verified` null.
+Typbindung:
+
+- rotation_kind="profile_upgrade":
+  source_anchor_before_announcement ist RemoteAnchorV1 und
+  source_recovery_transition_id=null.
+- rotation_kind="normal":
+  source_anchor_before_announcement ist RemoteAnchorV2 und
+  source_recovery_transition_id=null.
+- rotation_kind="recovery_rekey":
+  source_anchor_before_announcement ist RemoteAnchorV2 und
+  source_recovery_transition_id ist die exakt gebundene transition_id gemäß
+  §16a/§16a.1.
+
+`activation_evidence_sha256` ist:
+- bei profile_upgrade:
+  Base64URL(SHA-256(UTF8(JCS(ProfileUpgradeActivationEntryV2))));
+- bei normal/recovery_rekey:
+  Base64URL(SHA-256(UTF8(JCS(RecoveryActivationProofV2)))).
+
+Die Stage-Reihenfolge ist geschlossen. Erlaubt sind nur:
+
+~~~text
+source_frozen_verified -> successor_planned
+successor_planned -> successor_bound
+successor_bound -> copying
+copying -> successor_verified
+successor_verified -> announcement_prepared
+announcement_prepared -> recovery_artifact_verified
+recovery_artifact_verified -> staged_backup_verified
+staged_backup_verified -> announcement_unknown | announcement_durable
+announcement_unknown -> announcement_durable | stale
+announcement_durable -> activated_backup_verified
+activated_backup_verified -> switched
+~~~
+
+`stale` darf zusätzlich aus jedem Stadium **vor**
+`announcement_durable` erreicht werden, wenn der gebundene Source-Anchor
+überholt, die Writer-/Recovery-Authority geändert oder der vorbereitete
+Successor anderweitig ungültig wurde. `switched` und `stale` sind terminal.
+
+Feldinvarianten nach Stage:
+
+- source_anchor_before_announcement: ab source_frozen_verified non-null und
+  danach immutable;
+- successor_manifest_fingerprint: ab successor_bound non-null und immutable;
+- announcement_envelope + activation_evidence_sha256:
+  bis successor_verified null; ab announcement_prepared beide non-null und
+  immutable;
+- activation_lineage_sha256 + recovery_artifact_id:
+  bis announcement_prepared null; ab recovery_artifact_verified non-null und
+  immutable;
+- staged_backup_id: bis recovery_artifact_verified null; ab
+  staged_backup_verified non-null und immutable;
+- activated_backup_id: bis announcement_durable null; ab
+  activated_backup_verified non-null und immutable.
+
+Die Reihenfolge `announcement_prepared -> recovery_artifact_verified` ist
+zwingend, weil RecoveryActivationProofV2 bzw. ProfileUpgradeActivationEntryV2
+die **exakten one-shot Announcement-Envelope-Bytes** bereits im RecoveryArtifact
+binden.
 
 Nach `announcement_durable` ist das Source-Seal irreversibel. Vor
-`switched` muss zwingend ein **neuer activated SyncBackupV6** des Successors
+`switched` muss zwingend ein neuer activated SyncBackupV6 des Successors
 erzeugt, Test-Restore-verifiziert und als `activated_backup_verified`
 persistiert sein. Das frühere staged Backup genügt dafür nicht.
 
 Alle Resume-Pfade beginnen mit Full Verify der beteiligten Remote-Epochen und
-Abgleich der gespeicherten Anchor/Envelope-Bytes. Ein State-Record-Hash-Mismatch,
-unbekannte Stage oder semantisch inkonsistente Kombination ist
-security_blocked; kein „best effort“-Fortsetzen.
+Abgleich der gespeicherten Anchor/Envelope-/Evidence-Bytes. Ein
+State-Record-Hash-Mismatch, unbekannte Stage, übersprungene Stage oder
+semantisch inkonsistente Feldkombination ist security_blocked; kein
+„best effort“-Fortsetzen.
 
 ### Operation-Locking
 
