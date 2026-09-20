@@ -991,6 +991,11 @@ Pro Row:
      => security_blocked;
    - unbekannte historische Authority oder zukünftige Generation ohne Grant
      => security_blocked;
+   - für alle nicht-Rotation-Revisionen muss activation_token exakt "" sein;
+   - bei rotation-announcement-sw-v2 müssen successor_recovery_generation,
+     recovery_activation_commitment und activation_token exakt §16a/§19.1
+     erfüllen; insbesondere ist ein nichtleerer Token nur für recovery_rekey
+     zulässig;
    - ein gültiges rotation-announcement-sw-v2 der current authority setzt
      source_epoch_sealed irreversibel auf true.
 6. Nur akzeptierte Fachrevisionen gehen in den fachlichen Graphen.
@@ -1136,6 +1141,7 @@ rotation_kind = "normal"
 source_writer_generation
 source_writer_grant_id
 successor_recovery_generation
+recovery_activation_commitment
 ~~~
 
 source_writer_generation und source_writer_grant_id müssen dem writer_context
@@ -1144,6 +1150,12 @@ der Control-Revision entsprechen.
 successor_recovery_generation ist für dieses v2-Control exakt:
 - bei normaler v2→v2-Rotation gleich der Source-recovery_generation;
 - bei recovery_rekey exakt Source-recovery_generation + 1.
+
+recovery_activation_commitment ist:
+- bei normaler v2→v2-Rotation exakt null und die vierte physische Row-Zelle
+  activation_token ist exakt "";
+- bei recovery_rekey exakt der §19.1-Commitmentwert und activation_token ist
+  exakt das zugehörige 32-Byte-Aktivierungssecret als Base64URL.
 
 Das eingefrorene v1 rotation-announcement-sw-v1 besitzt dieses Feld ausdrücklich
 nicht; beim v1→v2-profile_upgrade wird die übernommene Recovery-Generation daher
