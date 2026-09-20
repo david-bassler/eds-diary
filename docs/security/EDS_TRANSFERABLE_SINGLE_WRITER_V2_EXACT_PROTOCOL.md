@@ -160,9 +160,10 @@ Frame:
 uint32_be(payload_length) || payload_jcs_utf8 || zero_padding
 ~~~
 
-Remote-/lokale Duplikatregel: dieselbe envelope_id mit anderen Rowbytes ist
-fatal. Eine byte-identische physische Retry-Duplikatrow zählt in Prefix/Bounds,
-wird semantisch aber nur beim ersten Auftreten verarbeitet. Derselbe IV bei
+Remote-/lokale Duplikatregel: dieselbe envelope_id mit anderen **vollständigen
+v2-Rowbytes einschließlich activation_token** ist fatal. Eine byte-identische
+physische Retry-Duplikatrow zählt in Prefix/Bounds, wird semantisch aber nur beim
+ersten Auftreten verarbeitet. Derselbe IV bei
 unterschiedlichen envelope_id ist eine RNG-/Security-Anomalie und blockiert neue
 Verschlüsselungen/fail-closed.
 
@@ -663,7 +664,7 @@ protocol_limits ist exakt:
   max_unique_canonical_bytes: 134217728,
   max_remote_physical_rows: 100000,
   max_remote_physical_canonical_bytes: 134217728,
-  max_canonical_row_bytes: 21936
+  max_canonical_row_bytes: 21982
 }
 ~~~
 
@@ -774,7 +775,21 @@ Keine weiteren Protokoll-appProperties sind zulässig.
 Die Epoch-Ressource verwendet dieselbe strikte Zwei-Tab-Google-Grid-Struktur und
 dieselben owner-only/permission/Drive-Invarianten wie v1: exakt "_m" und "_r",
 keine Merges, ausschließlich String-Zellen, produktive Row-Writes ausschließlich
-über AppendCellsRequest. Create/Reconciliation und Unknown-Create-Outcome folgen
+über AppendCellsRequest.
+
+Abweichend vom eingefrorenen v1 besitzt jede physische v2-_r-Row **exakt vier**
+String-Zellen:
+
+~~~text
+[envelope_id, iv, ciphertext, activation_token]
+~~~
+
+activation_token ist normalerweise exakt der leere String. Ausschließlich bei
+einem recovery_rekey-Rotation-Announcement ist er Base64URL eines 32-Byte-
+CSPRNG-Aktivierungssecrets gemäß §19.1. Andere nichtleere Werte sind
+security_blocked. Ein v1-Row bleibt unverändert ein Tripel.
+
+Create/Reconciliation und Unknown-Create-Outcome folgen
 dem v1-Ablauf, jedoch ausschließlich mit den hier definierten v6 Manifestbytes,
 "app_format=sync-v6" und dem v6 epoch_locator; Response-IDs sind nur Kandidaten,
 Discovery/Readback entscheidet. Der v1-Wire-Identifier "sync-v5" und dessen
@@ -893,7 +908,8 @@ Hi = SHA-256(
 )
 ~~~
 
-row_jcs ist JCS des exakten String-Tripels [envelope_id, iv, ciphertext].
+row_jcs ist JCS des exakten v2-String-Quadrupels
+[envelope_id, iv, ciphertext, activation_token].
 
 Auch stale_writer_rejected- und stale_grant_rejected-Rows bleiben Bestandteil des
 physischen Prefix und damit des Anchors.
