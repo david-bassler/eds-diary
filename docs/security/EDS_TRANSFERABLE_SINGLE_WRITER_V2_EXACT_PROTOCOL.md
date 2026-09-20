@@ -193,6 +193,7 @@ Jedes v2-Manifest erlaubt für den ersten Implementierungsstand exakt:
 activity-entry/v1
 activity-type-settings/v1
 epoch-migration-sw-v2
+recovery-authority-transition-sw-v2
 medication-entry/v1
 medication-prescription/v1
 pain-entry/v1
@@ -217,10 +218,11 @@ activity_type_settings    -> activity-type-settings/v1
 writer_grant              -> writer-grant-sw-v2
 rotation_announcement     -> rotation-announcement-sw-v2
 epoch_migration           -> epoch-migration-sw-v2
+recovery_authority_transition -> recovery-authority-transition-sw-v2
 ~~~
 
-Für alle neun Schema-IDs sind immutable maschinenlesbare Schema-Definitionen
-gebunden; die drei neuen v2-Control-Schemas liegen als
+Für alle zehn Schema-IDs sind immutable maschinenlesbare Schema-Definitionen
+gebunden; die vier neuen v2-Control-Schemas liegen als
 `src/security/schemas/*-sw.v2.schema.json` im Repo. Die produktive Registry wird
 ausschließlich aus diesen versionierten Schemaobjekten gebildet:
 
@@ -317,8 +319,11 @@ UTF8("eds-diary/revision-signature/v2") || 0x00 ||
 UTF8(JCS(revision_signing_core))
 ~~~
 
-Verifikation erfolgt gegen den Public Key des aktuell kanonischen Grants an der
-physischen Row-Position der Revision.
+Verifikation erfolgt gegen denjenigen Writer-Public-Key, den der Verifier aus
+`writer_context` und seiner bereits verifizierten Authority-Historie bestimmt:
+current authority bei aktuellen Rows, historischer Writer-Key bei
+`stale_writer_rejected`. Eine Revision darf niemals allein deshalb gegen den
+aktuellen Key geprüft werden, weil sie physisch später steht.
 
 ---
 
@@ -443,12 +448,22 @@ Regeln:
   aktiv und die Source noch nicht versiegelt war.
 - Ein Grant darf nur einen direkten Nachfolger dieser am Anchor gültigen Authority
   beanspruchen: writer_generation = previous_writer_generation + 1.
-- Ist dieselbe predecessor-Authority an der Grant-Row weiterhin aktuell, kann der
-  Grant die Authority fortschreiben.
+- **Nur** wenn authority_anchor exakt dem physischen Prefix unmittelbar vor der
+  Grant-Row entspricht **und** dieselbe predecessor-Authority dort weiterhin
+  aktuell/unsealed ist, darf der Grant die Authority fortschreiben.
+- Ist der Anchor historisch älter als der Prefix unmittelbar vor der Grant-Row,
+  darf der Grant niemals mehr Authority übertragen.
 - Ist inzwischen bereits ein anderer gültiger Nachfolgegrant kanonisch geworden,
-  bleibt ein ansonsten vollständig gültiger, gegen denselben oder einen älteren
-  passenden historischen Entscheidungs-Prefix erzeugter Claim
-  stale_grant_rejected. Genau dadurch sind parallele g+1-Claims nicht fatal.
+  bleibt ein ansonsten vollständig gültiger Claim gegen seinen historischen
+  Entscheidungs-Prefix `stale_grant_rejected`.
+- Ist noch dieselbe predecessor-Authority current, aber seit dem historischen
+  Anchor mindestens eine andere physische Row hinzugekommen, ist der alte,
+  vorbereitete Grant ebenfalls `stale_grant_rejected`. Dadurch können einmal
+  signierte Handoff-/Takeover-Grants nicht zeitlich unbegrenzt nachträglich
+  Authority übertragen.
+- Concurrent g+1-Claims bleiben trotzdem deterministisch: nur der Claim, dessen
+  Anchor beim Append unmittelbar vor seiner Row liegt, kann gewinnen; weitere
+  zuvor gegen denselben Prefix vorbereitete Claims sind stale.
 - Ist current_writer_generation bereits größer als die Candidate-Generation und
   der Candidate war relativ zu seinem historischen Anchor vollständig gültig,
   ist er ebenfalls stale_grant_rejected.
