@@ -679,18 +679,27 @@ einer älteren Recovery-Generation darf in der neuen Epoche keinen Forced
 Takeover autorisieren.
 
 Jede nicht-native Successor-Epoche besitzt zusätzlich einen
-`RecoveryActivationProofV2` im neuen RecoveryArtifact. Der Proof enthält
-verschlüsselt unter der neuen URS den direkten Source-RK, den letzten
-verifizierten Source-Anchor vor dem vorbereiteten Announcement und exakt die
-one-shot vorbereiteten Announcement-Envelope-Bytes. Das Artifact darf bereits
-vor dem Announcement durable gespeichert werden, wird aber erst Recovery-
-Trust-Root, wenn die Source mit diesem Source-RK vollständig verifiziert wurde
-und genau diese Row vom jeweiligen v1/v2-Source-Verifier als kanonisches
-Announcement auf den Successor akzeptiert wird.
+`RecoveryActivationProofV2` im neuen RecoveryArtifact. Bei v1→v2 und normaler
+v2→v2-Rotation darf die bereits autorisierte Recovery-URS die direkten Source-/
+Successor-RKs weiterhin schützen. Bei `recovery_rekey` gilt dagegen eine echte
+Zwei-Phasen-Aktivierung:
 
-Damit funktioniert insbesondere `recovery_rekey` später mit neuem Recovery-Key
-ohne alten Recovery-Key, während ein nur vorbereiteter oder durch einen
-konkurrierenden Takeover überholter Successor nicht aktiviert wird.
+- die neue URS sieht im vorab publizierten RecoveryArtifact weder Source- noch
+  Successor-RK direkt;
+- beide Root-Keys sind mit getrennten, aus einem zufälligen
+  `recovery_activation_secret` abgeleiteten Keys zusätzlich gewrappt;
+- das signierte v2-Rotation-Announcement bindet nur einen Commitmentwert dieses
+  Secrets;
+- genau dieselbe physische v2-Source-Row veröffentlicht das Secret atomar in
+  einer vierten `activation_token`-Zelle;
+- erst nach Token/Commitment-Prüfung, Root-Key-Unwrap, vollständiger Successor-
+  und Source-Verifikation und kanonisch akzeptiertem Announcement wird das
+  Artifact zum Recovery-Trust-Root.
+
+Damit funktioniert `recovery_rekey` später nur mit neuem Recovery-Key +
+Google-Konto und ohne alten Recovery-Key, **ohne** dass ein nur vorgeschlagener,
+später abgebrochener neuer Recovery-Key vor Commit Gesundheitsdaten der Source
+oder des vorbereiteten Successors entschlüsseln kann.
 
 ## 18. Migration v1 -> v2
 
@@ -758,15 +767,20 @@ Eigener Problemzustand; nicht als normaler Sync-Konflikt darstellen.
 ## 20. Provider-/API-Auswirkungen
 
 Für die bevorzugte v2-Variante bleibt der Writer-Control-Log im bestehenden
-verschlüsselten `_r`-Log.
+verschlüsselten `_r`-Log. Das v2-Profil verwendet dort jedoch absichtlich eine
+neue exakte vierzellige Rowform
+`[envelope_id, iv, ciphertext, activation_token]`; v1 bleibt beim eingefrorenen
+Tripel. Der zusätzliche Token ist leer außer beim `recovery_rekey`-
+Rotation-Announcement.
 
-Daher sind voraussichtlich:
+Daher sind:
 
 - kein zusätzlicher Google-OAuth-Scope;
-- keine neue Google-Datei;
+- keine zusätzliche Epoch-Datei nur für Writer-Authority;
 - keine neue Google-API-Endpunktfamilie
 
-notwendig.
+notwendig. Die bereits separat definierte owner-only RecoveryArtifact-Ressource
+bleibt Bestandteil des Recovery-Designs.
 
 Die aktuelle Drive-v3-`files.update`-Schnittstelle bietet Patch-Semantik für
 Dateimetadaten und `appProperties`, aber das v2-Design verlässt sich bewusst
@@ -810,15 +824,24 @@ Mindestens:
 24. Recovery-Rekey nach Geräteverlust: nur neuer Recovery-Key + Google-Konto
     verifizieren über RecoveryActivationProofV2 den durable Successor; alter
     Recovery-Key ist nicht erforderlich.
-25. Vorbereitetes RecoveryArtifactV6 ohne durable kanonische Announcement-Row
+25. Vor dem kanonischen Rekey-Announcement kann der neue Recovery-Key weder
+    Source- noch Successor-RK entschlüsseln.
+26. Falscher/fehlender activation_token, Commitment-Mismatch oder Token auf
+    einer stale/verworfenen Announcement-Row -> Successor bleibt unactivated.
+27. Artifact bereits publiziert, dann konkurrierender Writer-Takeover vor
+    Announcement -> neue URS erhält keinen Root-Key; Successor bleibt orphaned.
+28. Neue gültige Fachrevision zwischen Successor-Kopie und Announcement ->
+    Aktivierung blockiert; stale/no-op physische Rows dürfen den fachlichen
+    Snapshot nicht verändern.
+29. Vorbereitetes RecoveryArtifactV6 ohne durable kanonische Announcement-Row
     bleibt unactivated; physisch vorhandene stale Announcement-Row genügt nicht.
-26. Gen-1-Grant fehlt / kommt nach einer Fachrow / EOF davor -> fail-closed.
-27. Retry, Handoff und Forced Takeover nach Source-Seal -> kein Append.
-28. Transferdescriptor-Key stimmt nicht mit Zielgerät überein -> kein Promote.
-29. Transferdescriptor mit falschem Profil/Diary/Epoch -> Handoff wird vor Grant-Erzeugung abgelehnt.
-30. Transferdescriptor ohne gültigen Proof-of-Possession des Ziel-Private-Keys -> Handoff wird abgelehnt.
-31. Provider-Rollback vor einen dem Gerät bereits bekannten Writer-Grant -> fail-closed gegen den neueren Anchor.
-32. Vollständiger Verlust aller neueren Freshness-Belege -> als explizite nicht lösbare globale Freshness-Grenze dokumentiert; kein erfundener "latest"-Zustand.
+30. Gen-1-Grant fehlt / kommt nach einer Fachrow / EOF davor -> fail-closed.
+31. Retry, Handoff und Forced Takeover nach Source-Seal -> kein Append.
+32. Transferdescriptor-Key stimmt nicht mit Zielgerät überein -> kein Promote.
+33. Transferdescriptor mit falschem Profil/Diary/Epoch -> Handoff wird vor Grant-Erzeugung abgelehnt.
+34. Transferdescriptor ohne gültigen Proof-of-Possession des Ziel-Private-Keys -> Handoff wird abgelehnt.
+35. Provider-Rollback vor einen dem Gerät bereits bekannten Writer-Grant -> fail-closed gegen den neueren Anchor.
+36. Vollständiger Verlust aller neueren Freshness-Belege -> als explizite nicht lösbare globale Freshness-Grenze dokumentiert; kein erfundener "latest"-Zustand.
 
 ## 22. Nicht-Ziele
 
