@@ -800,6 +800,11 @@ Mindestens:
 26. Transferdescriptor ohne gültigen Proof-of-Possession des Ziel-Private-Keys -> Handoff wird abgelehnt.
 27. Provider-Rollback vor einen dem Gerät bereits bekannten Writer-Grant -> fail-closed gegen den neueren Anchor.
 28. Vollständiger Verlust aller neueren Freshness-Belege -> als explizite nicht lösbare globale Freshness-Grenze dokumentiert; kein erfundener "latest"-Zustand.
+29. recovery_rekey: Recovery nur mit **neuem** URS + Google, alter URS nicht verfügbar -> aktivierter Successor wird über RecoveryActivationProofV2 erkannt.
+30. recovery_rekey: Takeover-/andere Row landet vor geplantem Announcement -> neuer Successor bleibt staged; kein falscher Recovery-Switch.
+31. staged Successor -> Fachwrite, Handoff und Forced Takeover blockiert.
+32. Gen-1-Grant fehlt oder erste semantische Row ist kein manifestgebundener Gen-1-Grant -> fail-closed.
+33. Unknown Outcome nach Source-Seal -> kein Retry auf versiegelter Source.
 
 ## 22. Nicht-Ziele
 
@@ -1023,6 +1028,7 @@ RemoteAnchorV2
 WriterDeviceKeyV2
 WriterSignatureV2
 RecoveryTakeoverAuthorityV2
+RecoveryActivationProofV2
 SyncBackupV6
 RecoveryArtifactV6
 WriterGrantV2
