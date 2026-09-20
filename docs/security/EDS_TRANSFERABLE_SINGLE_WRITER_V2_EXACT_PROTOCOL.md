@@ -992,6 +992,7 @@ Exakt:
   source_epoch_id,
   source_manifest_fingerprint,
   source_anchor_before_announcement,
+  successor_staging_anchor,
   source_writer_generation,
   source_writer_grant_id,
   source_writer_device_id,
@@ -1012,6 +1013,14 @@ Exakt:
 
 `source_anchor_before_announcement` ist RemoteAnchorV2 des vollständig
 verifizierten Source-Prefix unmittelbar vor dem geplanten Announcement.
+
+`successor_staging_anchor` ist RemoteAnchorV2 des **exakten staged
+Successor-Prefix**, der unmittelbar nach der akzeptierten EpochMigrationV2-Row
+(ggf. plus ausschließlich byte-identischen Retry-Duplikatrows genau dieses
+Migration-Envelopes) endet. Zwischen der ersten akzeptierten Migration-Control
+und diesem Anchor darf keine andere semantische Row liegen. Dieser Anchor wird
+vor Announcement-Prepare eingefroren und ist Bestandteil der
+Source-Writer-Signatur über RecoveryActivationProofV2.
 
 `rotation_kind` ist exakt `"normal" | "recovery_rekey"`.
 
@@ -1068,10 +1077,16 @@ Aktivierungsprüfung mit nur aktuellem URS + Google-Konto:
    source_writer_grant_id, source_writer_device_id und source_writer_key_id des
    Proofs entsprechen; der dazugehörige historische Public Key wird aus dieser
    verifizierten Source-Historie gewonnen.
-6. Proof-Struktur, Source-/Successor-IDs, Manifest-Fingerprint, rotation_kind und
-   successor_recovery_generation exakt gegen Source-/Successor-Manifest und
-   Artifact prüfen. Die source_writer_*-Authority muss zusätzlich exakt den
+6. Proof-Struktur, Source-/Successor-IDs, Manifest-Fingerprint, rotation_kind,
+   successor_recovery_generation und successor_staging_anchor exakt gegen
+   Source-/Successor-Manifest, Artifact und die zugehörige EpochMigrationV2
+   prüfen. Die source_writer_*-Authority muss zusätzlich exakt den
    `epoch_start_writer_*`-Feldern des Successors entsprechen.
+6a. Den Successor-Prefix exakt bis successor_staging_anchor vollständig
+    verifizieren. Die akzeptierte EpochMigrationV2 muss die letzte semantische
+    Row dieses Prefix sein; danach sind bis zum Anchor nur byte-identische
+    Retry-Duplikate genau dieses Migration-Envelopes zulässig. Migration-
+    Integrität/Provenienz müssen an diesem Prefix vollständig bestehen.
 7. activation_signature gegen den **aus der verifizierten Source-Historie**
    ermittelten Writer-Public-Key prüfen; nicht gegen eine bloße Successor-
    Selbstbehauptung.
@@ -1126,6 +1141,7 @@ ProfileUpgradeActivationEntryV2 = {
   source_anchor_before_announcement,
   successor_epoch_id,
   successor_manifest_fingerprint,
+  successor_staging_anchor,
   announcement_envelope: {
     envelope_id,
     iv,
@@ -1169,9 +1185,13 @@ ProfileUpgrade-Prüfung:
 4. Diese Row mit source_root_key öffnen und als gültiges
    rotation-announcement-sw-v1 auf successor_epoch_id +
    successor_manifest_fingerprint prüfen.
-5. Die exakt eine EpochMigrationV2 des Successors muss die
-   profile_upgrade-Migration-Integritätsprüfung gemäß §16a.1 bestehen.
-6. Erst dann ist die erste v2-Epoche aktiviert.
+5. successor_staging_anchor muss exakt einen verifizierten Successor-Prefix
+   unmittelbar nach der akzeptierten EpochMigrationV2 (ggf. nur mit
+   byte-identischen Retry-Duplikaten dieser Row als Suffix) binden.
+6. Die exakt eine EpochMigrationV2 des Successors muss an genau diesem
+   successor_staging_anchor die profile_upgrade-Migration-Integritätsprüfung
+   gemäß §16a.1 bestehen.
+7. Erst dann ist die erste v2-Epoche aktiviert.
 
 V2-Link-Prüfung:
 
