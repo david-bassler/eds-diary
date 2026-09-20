@@ -181,8 +181,9 @@ Der exakte v2-Wire-Stand legt Ed25519 mit 32-Byte-Raw-Public-Key und 64-Byte-Sig
 - kein Ableiten aus Hardwaremerkmalen;
 - keine globale Wiederverwendung;
 - Public Key eindeutig an die `writer_device_id` gebunden;
-- Private Key nach Möglichkeit als nicht extrahierbarer Browser-`CryptoKey`
-  persistiert;
+- Private Key ausschließlich als nicht extrahierbarer Ed25519-`CryptoKey`
+  persistiert; kein Raw-/PKCS#8-Fallback für Writer-Keys; unterstützt die
+  Plattform dies nicht persistent, ist v2-Writerbetrieb dort nicht verfügbar;
 - lokaler Security-State bindet Device-ID und Key-ID per State-MAC;
 - Public Key darf im verschlüsselten Writer-Control-Payload liegen;
 - Private Key verlässt das Gerät nicht.
@@ -251,21 +252,22 @@ Google-Provider-Identifier und
 `google-sheets-transferable-single-writer-v2` sind unterschiedliche
 Begriffe, auch wenn v1 sie historisch in einem Feld vermischt.
 
-`writer_status`:
+`writer_status` ist im persistierten exakten V6-State ausschließlich:
 
 ```text
 read_only
-writer_candidate
 writer_active
-writer_stale
-writer_conflict
 ```
+
+`writer_candidate`, `writer_stale` und `writer_conflict` bleiben rein transiente
+UI-/Operationsklassifikationen und werden nicht als persistierter writer_status
+gespeichert.
 
 Nur `writer_active` darf Fachrevisionen erzeugen.
 
 `writer_active` ist kein UI-Flag. Der Status darf nur nach vollständiger
-Remote-Verifikation und exakter Übereinstimmung von lokaler Device-ID,
-Generation, Grant-ID und Anchor gesetzt werden.
+Remote-Verifikation, `source_epoch_sealed=false` und exakter Übereinstimmung von
+lokaler Device-ID, Generation, Grant-ID und Anchor gesetzt werden.
 
 
 ### 6.1 RemoteAnchorV2
@@ -535,10 +537,13 @@ Crash-Sicherheit:
 Ein read-only Gerät darf eine erzwungene Übernahme nur nach besonders deutlicher
 Ceremony starten:
 
-1. starkes lokales Unlock;
+1. den konfigurierten RootWrap-Modus erfolgreich entsperren; Best-Effort ist
+   zulässig, bleibt aber ausdrücklich schwächerer lokaler At-rest-Schutz als
+   PRF/Passphrase;
 2. Google Account Binding;
 3. Recovery-Key erneut eingeben;
-4. aktuelles Remote vollständig verifizieren;
+4. aktuelles Remote vollständig verifizieren und `source_epoch_sealed=false`
+   verlangen;
 5. Warnung, dass auf dem alten Gerät noch ausschließlich lokale, nie
    synchronisierte Änderungen existieren könnten;
 6. Recovery-Takeover-Authority für die **aktuelle Recovery-Generation**
@@ -583,9 +588,12 @@ Koordinationsdienst **nicht freigabefähig**.
 
 Vor jedem neuen Fachcommit:
 
-1. lokales starkes Unlock prüfen;
+1. den konfigurierten RootWrap-Modus erfolgreich entsperren; Best-Effort ist
+   zulässig, bleibt aber ausdrücklich schwächerer lokaler At-rest-Schutz als
+   PRF/Passphrase;
 2. Google-Session vorhanden;
-3. Writer-Authority remote gegen aktuellen Anchor verifizieren;
+3. Writer-Authority remote gegen aktuellen Anchor verifizieren und
+   `source_epoch_sealed=false` verlangen;
 4. lokale `writer_device_id`, Generation und Grant-ID müssen exakt matchen;
 5. erst dann Revision mit `writer_context` erzeugen, kanonisch mit dem
    aktuellen Geräte-Private-Key signieren und als Envelope lokal persistent
@@ -669,6 +677,28 @@ Recovery-Takeover-Authority zusammen mit der Recovery-Generation rotieren. Das
 neue Verifikationsmaterial wird in das Successor-Manifest gebunden; Material
 einer älteren Recovery-Generation darf in der neuen Epoche keinen Forced
 Takeover autorisieren.
+
+Damit Recovery nach einem Rekey ohne alten Recovery-Key möglich bleibt, bindet
+das neue RecoveryArtifactV6 zusätzlich:
+
+- den direkten Predecessor-RK ausschließlich als verschlüsseltes
+  Aktivierungs-Verifikationsmaterial; und
+- einen `RecoveryActivationProofV2` aus historisch verifiziertem Source-Prefix,
+  exakt vorbereiteten Rotation-Announcement-Envelope-Bytes,
+  Successor-Identität und Signatur der damaligen Source-Writer-Authority.
+
+Recovery entschlüsselt mit dem **aktuellen** URS den direkten Source-RK, verifiziert
+damit die Source selbst vollständig und stellt die dort am gebundenen Prefix
+kanonische Writer-Authority fest. Erst gegen **diesen aus der Source verifizierten
+Public Key** wird der Activation-Proof geprüft. Eine bloße Authority-Behauptung
+des Successor-Manifests reicht nicht. Landet vor dem geplanten Announcement ein
+Takeover-/anderer Row-Claim oder stammt der Proof von einem stale Writer-Key,
+schlägt die Aktivierung fail-closed fehl.
+
+Der Tradeoff ist explizit: Kompromittierung des aktuellen URS offenbart dadurch
+auch den direkten Vorgänger-RK. Das ist die gewählte Grenze, um Recovery-Rekey
+ohne alten URS dennoch unabhängig gegen die Source-Historie verifizieren zu
+können.
 
 ## 18. Migration v1 -> v2
 
@@ -783,6 +813,11 @@ Mindestens:
 26. Transferdescriptor ohne gültigen Proof-of-Possession des Ziel-Private-Keys -> Handoff wird abgelehnt.
 27. Provider-Rollback vor einen dem Gerät bereits bekannten Writer-Grant -> fail-closed gegen den neueren Anchor.
 28. Vollständiger Verlust aller neueren Freshness-Belege -> als explizite nicht lösbare globale Freshness-Grenze dokumentiert; kein erfundener "latest"-Zustand.
+29. recovery_rekey: Recovery nur mit **neuem** URS + Google, alter URS nicht verfügbar -> aktivierter Successor wird über RecoveryActivationProofV2 erkannt.
+30. recovery_rekey: Takeover-/andere Row landet vor geplantem Announcement -> neuer Successor bleibt staged; kein falscher Recovery-Switch.
+31. staged Successor -> Fachwrite, Handoff und Forced Takeover blockiert.
+32. Gen-1-Grant fehlt oder erste semantische Row ist kein manifestgebundener Gen-1-Grant -> fail-closed.
+33. Unknown Outcome nach Source-Seal -> kein Retry auf versiegelter Source.
 
 ## 22. Nicht-Ziele
 
@@ -991,6 +1026,8 @@ Folgende Bausteine sollen nicht neu erfunden werden:
 - Recovery-Key-KDF;
 - Backup-/Recovery-**Mechanik** (KDF/AEAD, Bounds, Readback, Test-Restore) als
   Implementierungsbausteine; die v5-Artefakt-Schemas selbst bleiben eingefroren;
+- der v2-spezifische Recovery-Aktivierungsnachweis ist dagegen neu und darf
+  nicht aus v1 implizit abgeleitet werden;
 - Creation-/Unknown-Outcome-Grundmaschine;
 - Epoch-Rotation als Migrationsmechanismus.
 
@@ -1004,6 +1041,7 @@ RemoteAnchorV2
 WriterDeviceKeyV2
 WriterSignatureV2
 RecoveryTakeoverAuthorityV2
+RecoveryActivationProofV2
 SyncBackupV6
 RecoveryArtifactV6
 WriterGrantV2
