@@ -819,8 +819,65 @@ Die private owner-only Recovery-Ressource ist **epoch-spezifisch und immutable**
 Eine normale Rotation mit derselben URS erzeugt deshalb eine neue Ressource und
 überschreibt niemals das Source-Artefakt.
 
-Sie verwendet exakt einen GRID-Tab "_a" mit rowCount=1, columnCount=1, keinen
-Merges und RecoveryArtifactV6 als kanonischen JSON-String in A1.
+Wegen der Google-Sheets-Zellgrößengrenze darf RecoveryArtifactV6 **nicht** als
+ein einzelner großer JSON-String in A1 gespeichert werden. v6 verwendet eine
+exakt gechunkte Grid-Repräsentation.
+
+Recovery-Grid exakt:
+
+~~~text
+Tab: "_a"
+rowCount = 45
+columnCount = 1
+keine Merges
+~~~
+
+A1 ist UTF8/JCS-Text des exakten Grid-Headers:
+
+~~~text
+{
+  grid_format: "sync-recovery-grid-v6",
+  grid_version: 6,
+  artifact_header: {
+    format: "sync-recovery-v6",
+    version: 6,
+    recovery_artifact_id,
+    kdf_profile_id: "recovery-hkdf-v6-1",
+    salt,
+    wrap_iv
+  },
+  wrapped_payload_chars,
+  wrapped_payload_sha256,
+  chunk_chars: 32000,
+  chunk_count
+}
+~~~
+
+`wrapped_payload_sha256 =
+Base64URL(SHA-256(UTF8(wrapped_payload)))`.
+
+A2..A(1+chunk_count) enthalten ausschließlich aufeinanderfolgende Substrings
+des **Base64URL-Strings** `wrapped_payload`, jeweils exakt 32000 Zeichen außer
+dem letzten Chunk mit 1..32000 Zeichen. chunk_count ist exakt
+ceil(wrapped_payload_chars / 32000), mindestens 1 und höchstens 44.
+
+Alle Zellen nach dem letzten Chunk bis A45 müssen leer sein. Andere Spalten,
+Formeln, Rich Text, Fehlerwerte oder zusätzliche Daten sind verboten.
+
+Readback rekonstruiert:
+
+~~~text
+wrapped_payload = concat(A2 ... A(1+chunk_count))
+
+RecoveryArtifactV6 = {
+  ...artifact_header,
+  wrapped_payload
+}
+~~~
+
+Danach müssen Zeichenlänge, SHA-256, Base64URL-Kanonizität, Ciphertext-Bytebound
+und das vollständige logische RecoveryArtifactV6-Schema erneut geprüft werden.
+
 Drive-/Permission-Invarianten sind dieselben owner-only-Regeln wie bei v1.
 
 ~~~text
@@ -839,17 +896,20 @@ Publish ist exakt fail-closed:
 1. Für das konkrete (diary_id,epoch_id) Discovery über exakten Dateinamen und
    recovery_artifact_locator. Mehr als eine plausible Ressource =>
    ambiguous/security stop.
-2. Existiert noch kein Artefakt, Ressource erstellen und anschließend wieder per
-   Discovery eindeutig binden.
-3. Existiert dieselbe Ressource bereits, darf ihr A1 entweder leer sein oder
-   exakt dieselben kanonischen RecoveryArtifactV6-Bytes enthalten. Andere
-   bereits vorhandene Artifact-Bytes unter demselben epoch-spezifischen Locator
-   => security stop; kein semantisches Replacement.
-4. Schreiben/Timeout wird ausschließlich durch bytegenauen Readback derselben
-   kanonischen Artifact-Bytes entschieden.
-5. Nach Write erneut Discovery: exakt dieselbe eine epoch-spezifische Ressource
+2. Existiert noch keine Ressource, GRID mit exakter Form erzeugen und danach
+   wieder per Discovery eindeutig binden.
+3. Header + alle Chunks werden in **einem** Sheets-batchUpdate geschrieben.
+4. Existiert dieselbe Ressource bereits, darf die rekonstruierte logische
+   RecoveryArtifactV6-Struktur entweder noch vollständig leer/uninitialisiert
+   sein oder exakt dieselben kanonischen logischen Artifact-Bytes ergeben.
+   Andere bereits vorhandene Artifact-Bytes unter demselben epoch-spezifischen
+   Locator => security stop; kein semantisches Replacement.
+5. Schreiben/Timeout wird ausschließlich durch vollständigen Grid-Readback,
+   Chunk-Rekonstruktion und bytegenauen Vergleich des logischen Artifacts
+   entschieden.
+6. Nach Write erneut Discovery: exakt dieselbe eine epoch-spezifische Ressource
    muss kanonisch übrig sein.
-6. Historische Source-Artefakte werden bei Rotation **nicht** gelöscht oder
+7. Historische Source-Artefakte werden bei Rotation **nicht** gelöscht oder
    überschrieben. Garbage Collection ist nicht Teil des v2-Sicherheitsprotokolls.
 
 Account+URS-Recovery:
