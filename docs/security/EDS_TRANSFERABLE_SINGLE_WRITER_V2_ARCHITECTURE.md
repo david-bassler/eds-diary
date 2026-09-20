@@ -251,21 +251,22 @@ Google-Provider-Identifier und
 `google-sheets-transferable-single-writer-v2` sind unterschiedliche
 Begriffe, auch wenn v1 sie historisch in einem Feld vermischt.
 
-`writer_status`:
+`writer_status` ist im persistierten exakten V6-State ausschließlich:
 
 ```text
 read_only
-writer_candidate
 writer_active
-writer_stale
-writer_conflict
 ```
+
+`writer_candidate`, `writer_stale` und `writer_conflict` bleiben rein transiente
+UI-/Operationsklassifikationen und werden nicht als persistierter writer_status
+gespeichert.
 
 Nur `writer_active` darf Fachrevisionen erzeugen.
 
 `writer_active` ist kein UI-Flag. Der Status darf nur nach vollständiger
-Remote-Verifikation und exakter Übereinstimmung von lokaler Device-ID,
-Generation, Grant-ID und Anchor gesetzt werden.
+Remote-Verifikation, `source_epoch_sealed=false` und exakter Übereinstimmung von
+lokaler Device-ID, Generation, Grant-ID und Anchor gesetzt werden.
 
 
 ### 6.1 RemoteAnchorV2
@@ -535,10 +536,13 @@ Crash-Sicherheit:
 Ein read-only Gerät darf eine erzwungene Übernahme nur nach besonders deutlicher
 Ceremony starten:
 
-1. starkes lokales Unlock;
+1. den konfigurierten RootWrap-Modus erfolgreich entsperren; Best-Effort ist
+   zulässig, bleibt aber ausdrücklich schwächerer lokaler At-rest-Schutz als
+   PRF/Passphrase;
 2. Google Account Binding;
 3. Recovery-Key erneut eingeben;
-4. aktuelles Remote vollständig verifizieren;
+4. aktuelles Remote vollständig verifizieren und `source_epoch_sealed=false`
+   verlangen;
 5. Warnung, dass auf dem alten Gerät noch ausschließlich lokale, nie
    synchronisierte Änderungen existieren könnten;
 6. Recovery-Takeover-Authority für die **aktuelle Recovery-Generation**
@@ -583,9 +587,12 @@ Koordinationsdienst **nicht freigabefähig**.
 
 Vor jedem neuen Fachcommit:
 
-1. lokales starkes Unlock prüfen;
+1. den konfigurierten RootWrap-Modus erfolgreich entsperren; Best-Effort ist
+   zulässig, bleibt aber ausdrücklich schwächerer lokaler At-rest-Schutz als
+   PRF/Passphrase;
 2. Google-Session vorhanden;
-3. Writer-Authority remote gegen aktuellen Anchor verifizieren;
+3. Writer-Authority remote gegen aktuellen Anchor verifizieren und
+   `source_epoch_sealed=false` verlangen;
 4. lokale `writer_device_id`, Generation und Grant-ID müssen exakt matchen;
 5. erst dann Revision mit `writer_context` erzeugen, kanonisch mit dem
    aktuellen Geräte-Private-Key signieren und als Envelope lokal persistent
@@ -669,6 +676,15 @@ Recovery-Takeover-Authority zusammen mit der Recovery-Generation rotieren. Das
 neue Verifikationsmaterial wird in das Successor-Manifest gebunden; Material
 einer älteren Recovery-Generation darf in der neuen Epoche keinen Forced
 Takeover autorisieren.
+
+Damit Recovery nach einem Rekey ohne alten Recovery-Key möglich bleibt, bindet
+das neue RecoveryArtifactV6 zusätzlich einen `RecoveryActivationProofV2`:
+historisch verifizierter Source-Prefix, exakt vorbereitete
+Rotation-Announcement-Envelope-Bytes, Successor-Identität und eine Signatur der
+damaligen Source-Writer-Authority. Recovery kann damit die rohe Source-Rowfolge
+prüfen, ohne den alten Source-RK zu besitzen. Landet vor dem geplanten
+Announcement ein Takeover-/anderer Row-Claim, schlägt der Aktivierungsbeweis
+fail-closed fehl.
 
 ## 18. Migration v1 -> v2
 
@@ -991,6 +1007,8 @@ Folgende Bausteine sollen nicht neu erfunden werden:
 - Recovery-Key-KDF;
 - Backup-/Recovery-**Mechanik** (KDF/AEAD, Bounds, Readback, Test-Restore) als
   Implementierungsbausteine; die v5-Artefakt-Schemas selbst bleiben eingefroren;
+- der v2-spezifische Recovery-Aktivierungsnachweis ist dagegen neu und darf
+  nicht aus v1 implizit abgeleitet werden;
 - Creation-/Unknown-Outcome-Grundmaschine;
 - Epoch-Rotation als Migrationsmechanismus.
 
