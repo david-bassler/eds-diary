@@ -1378,6 +1378,12 @@ Pro Row:
    - falls source_epoch_sealed=true: einen sonst vollständig wohlgeformten Grant
      als stale_after_seal_rejected behandeln; malformed/kryptographisch ungültige
      Rows bleiben security_blocked;
+   - falls recovery_rekey_rotation_required=true und reason!="forced_takeover":
+     einen ansonsten vollständig gültigen Grant als
+     rekey_rotation_required_rejected behandeln; er ändert keine Writer-
+     Authority. Forced Takeover bleibt zulässig, damit nach Geräteverlust wieder
+     ein Writer gewonnen werden kann, der die verpflichtende Rekey-Rotation
+     ausführt;
    - authority_anchor gegen den historischen Prefix sowie Writer-/Recovery-State
      an diesem Prefix prüfen;
    - Handoff gegen den am Anchor gültigen predecessor Writer-Key;
@@ -1397,7 +1403,12 @@ Pro Row:
      gegen ihre historische Authority korrekt signierte Row als
      stale_after_seal_rejected behandeln;
    - entspricht writer_context exakt der current authority, Signatur gegen
-     current_writer_public_key prüfen und die Row normal auswerten;
+     current_writer_public_key prüfen. Falls recovery_rekey_rotation_required=true
+     und record_schema weder "recovery-authority-transition-sw-v2" noch
+     "rotation-announcement-sw-v2" ist, wird die ansonsten vollständig gültige
+     Row als rekey_rotation_required_rejected behandelt und semantisch **nicht**
+     angewendet. Damit sind insbesondere Fachwrites und zusätzliche
+     EpochMigration-Controls während des Pending-Rekey-Fence remote blockiert;
    - referenziert writer_context eine bereits verifizierte **ältere** Authority,
      deren Device-/Grant-/Key-Tupel exakt in der Authority-Historie existiert,
      Signatur gegen deren historischen Public Key prüfen und bei Erfolg
@@ -1462,8 +1473,8 @@ authentisieren.
 
 ## 13. Schreibfreigabe / Freshness
 
-Ein Gerät darf RevisionV2 erst persistent erzeugen, wenn innerhalb desselben
-Write-Vorgangs:
+Ein Gerät darf eine **normale Fachrevision oder einen kooperativen Handoff**
+erst persistent erzeugen, wenn innerhalb desselben Write-Vorgangs:
 
 1. der konfigurierte RootWrap-Modus erfolgreich entsperrt ist. `best-effort`
    ist dabei zulässig, bleibt aber ausdrücklich nur Best-Effort-At-rest-Schutz;
@@ -1475,11 +1486,16 @@ Write-Vorgangs:
 4. Remote vollständig neu gelesen und gegen den persistierten RemoteAnchorV2
    verifiziert wurde;
 5. source_epoch_sealed=false ist;
-6. verifizierte current authority exakt zum lokalen Device-Key passt;
-7. lokaler Status writer_active ist;
-8. kein nicht-terminaler rotation_state_ref, migration_state_ref,
+6. recovery_rekey_rotation_required=false ist;
+7. verifizierte current authority exakt zum lokalen Device-Key passt;
+8. lokaler Status writer_active ist;
+9. kein nicht-terminaler rotation_state_ref, migration_state_ref,
    writer_operation_state_ref oder recovery_operation_state_ref die konkrete
    Mutation sperrt.
+
+Forced Takeover, RecoveryAuthorityTransitionV2 und die bei aktivem Pending-Rekey-
+Fence zwingende recovery_rekey-Rotation verwenden ihre jeweils strengeren
+Service-Gates aus §§16-17; sie werden durch Punkt 6 nicht verboten.
 
 Es gibt im strikten v2 **kein zeitbasiertes Offline-Lease und kein
 Freshness-Intervall**.
@@ -1528,7 +1544,8 @@ Ein HTTP-200 ohne finalen Full Readback ist niemals durable.
 Voraussetzungen:
 
 - A ist auf einer kanonisch aktivierten Epoche (`epoch_status="active"`) nach
-  frischem Full Verify current writer und source_epoch_sealed=false.
+  frischem Full Verify current writer, source_epoch_sealed=false und
+  recovery_rekey_rotation_required=false.
 - B ist vollständig verifiziert read_only derselben Diary/Epoch.
 - A hat keine nicht-durablen eigenen Pending-Envelopes.
 - A verifiziert TransferdescriptorV2 von B.
