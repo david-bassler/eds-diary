@@ -360,8 +360,10 @@ Recovery-Nachweis** nicht nachbilden kann.
 
 Normative Architekturgrenze dafür:
 
-- das v2-Manifest enthält nur das zur aktuellen Recovery-Generation gehörende
-  **Verifikationsmaterial**;
+- das v2-Manifest bindet den **Recovery-Startzustand der Epoche**; eine spätere
+  RecoveryAuthorityTransitionV2 darf Recovery-Generation, URS-Commitment und
+  Takeover-Verifikationsmaterial innerhalb derselben unsealed Epoche
+  writer-autorisiert fortschreiben;
 - der Recovery-Key bzw. das mit ihm entschlüsselbare RecoveryArtifact muss die
   dazugehörige **Takeover-Signier-/Proof-Capability** freischalten;
 - diese Capability wird nicht als normaler lokaler Writer-State persistiert;
@@ -371,7 +373,13 @@ Normative Architekturgrenze dafür:
   Transition ist die alte Recovery-Generation auch innerhalb derselben Source
   für neue Takeovers ungültig.
 
-Das exakte Profil legt hierfür pro Recovery-Generation ein separates Ed25519-Takeover-Schlüsselpaar fest: Public Key im geschützten Manifest, exportierter Private Key ausschließlich im URS-verschlüsselten RecoveryArtifactV6; Forced Takeover importiert ihn nur transient als nicht extrahierbaren Signing-Key. Eine bloße UI-Abfrage des Recovery-Keys genügt nicht.
+Das exakte Profil legt hierfür pro Recovery-Generation ein separates
+Ed25519-Takeover-Schlüsselpaar fest: der Epoch-Start-Public-Key liegt im
+geschützten Manifest; spätere same-epoch Keys werden durch
+RecoveryAuthorityTransitionV2 gebunden. Der exportierte Private Key liegt
+ausschließlich im URS-verschlüsselten RecoveryArtifactV6; Forced Takeover
+importiert ihn nur transient als nicht extrahierbaren Signing-Key. Eine bloße
+UI-Abfrage des Recovery-Keys genügt nicht.
 
 ## 8. Writer-Provenienz jeder Revision
 
