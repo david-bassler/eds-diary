@@ -1192,9 +1192,11 @@ Mindestens:
 61. cache_id/rotation_id/migration_id/transition_id/confirmation_id/operation_id:
     exakte Decode-Länge und kanonisches Base64URL; falsche Länge oder
     nicht-kanonische Repräsentation -> fail-closed.
-62. Recovery-Rekey versucht aktuellen oder früheren supersedierten
-    Recovery-Takeover-Key derselben Epoche erneut als to-Key zu verwenden ->
-    recovery_takeover_key_reuse / security_blocked.
+62. Recovery-Rekey verwendet einen seit der ersten v2-Aktivierung
+    bereits bekannten URS oder Recovery-Takeover-Key erneut — auch aus einer
+    Vorgänger-Epoche -> recovery_credential_reuse / security_blocked. Die
+    v1→v2-Legacy-Grenze für historisch vor-v2 pensionierte Credentials bleibt
+    ausdrücklich dokumentiert.
 63. zweite Control-Row in anderem Envelope verwendet einen bereits belegten
     Control-ID-Bytewert erneut — auch cross-type zwischen
     grant_id/rotation_id/migration_id/transition_id/confirmation_id ->
@@ -1233,6 +1235,17 @@ Mindestens:
     Control-IDs.
 75. successor_creation_locator im Announcement != geschützter
     Manifest.creation_locator -> security_blocked.
+76. Successor-Manifest/RecoveryArtifact kürzt, ersetzt oder erfindet
+    recovery_credential_history gegenüber der final verifizierten v2-Source ->
+    recovery_credential_history_mismatch / security_blocked.
+77. staged RecoveryArtifact bereits publiziert, lokaler Abort bei weiterhin
+    unverändertem Transition-Anchor -> unzulässig; exakte Transition bleibt
+    completion-pflichtig.
+78. Unknown Outcome mit fehlendem Envelope -> ohne erneutes canonical_full kein
+    Retry; wird die vorbereitete Revision inzwischen stale, landet sie in
+    stale_writer_pending statt in einem zweiten Append.
+79. physisch vorhandene stale_writer_rejected-Row -> niemals allein wegen
+    Prefix-Coverage als lokaler durable Commit markieren.
 
 ## 22. Nicht-Ziele
 
