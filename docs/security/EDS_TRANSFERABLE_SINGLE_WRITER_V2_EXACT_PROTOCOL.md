@@ -2370,7 +2370,8 @@ current.
     "transition_pending" |
     "transition_unknown" |
     "transition_durable" |
-    "activated_backup_verified" |
+    "source_backup_verified" |
+    "successor_rotation_required" |
     "completed" |
     "stale",
   authority_anchor_before_transition,
@@ -2381,7 +2382,9 @@ current.
   transition_proof_sha256,
   to_recovery_generation,
   to_recovery_urs_commitment,
-  to_recovery_takeover_key_id
+  to_recovery_takeover_key_id,
+  completed_successor_epoch_id,
+  completed_successor_manifest_fingerprint
 }
 ~~~
 
@@ -2395,6 +2398,23 @@ vorbereiteten RecoveryAuthorityTransitionV2-Envelope und des
 RecoveryAuthorityTransitionProofV2 entsprechen und sind ab
 `new_material_staged` immutable.
 
+Geschlossene Stage-Reihenfolge:
+
+~~~text
+new_material_staged -> recovery_artifact_published
+recovery_artifact_published -> transition_pending
+transition_pending -> transition_unknown | transition_durable
+transition_unknown -> transition_durable | stale
+transition_durable -> source_backup_verified
+source_backup_verified -> successor_rotation_required
+successor_rotation_required -> completed
+~~~
+
+`stale` darf nur **vor** durable RecoveryAuthorityTransitionV2 erreicht werden,
+wenn der Transition-Anchor überholt wurde. Nach `transition_durable` ist die
+neue Recovery-Authority bereits kanonisch; der Rekey darf dann nicht abgebrochen
+oder auf die alte Generation zurückgesetzt werden.
+
 Crash-Regeln:
 
 - Vor `recovery_artifact_published` ist keine neue Remote-Recovery-Authority
@@ -2402,10 +2422,20 @@ Crash-Regeln:
 - Nach `recovery_artifact_published`, aber vor durable Transition, kann nur
   §16c die exakt vorbereitete Transition crash-resumable abschließen.
 - Nach `transition_durable` muss ein activated SyncBackupV6 der **Source**
-  erzeugt und Test-Restore-verifiziert werden, bevor der Rekey als
-  `completed` gilt oder eine recovery_rekey-Successor-Rotation beginnt.
-- Wird der Transition-Anchor überholt, stage=`stale`; keine neuen Envelope-
-  Bytes aus denselben Semantiken erzeugen.
+  erzeugt und Test-Restore-verifiziert werden; danach stage=
+  `successor_rotation_required`.
+- In `successor_rotation_required` muss eine RotationOperationStateV2 mit
+  rotation_kind="recovery_rekey", derselben source_epoch_id und derselben
+  source_recovery_transition_id erfolgreich bis `switched` geführt werden.
+  Ein einzelner stale Rotation-Versuch beendet den Rekey nicht; ein neuer
+  anchor-frischer RotationOperationStateV2 darf gestartet werden.
+- `completed_successor_epoch_id` und
+  `completed_successor_manifest_fingerprint` sind bis `completed` null. Beim
+  Übergang zu `completed` werden sie exakt aus dem erfolgreich geswitchten
+  Successor übernommen und danach immutable.
+- `completed` ist nur zulässig, wenn der Successor einen **anderen neuen
+  RK_epoch** besitzt, seine activated Backup-/Lineage-Gates bestanden hat und
+  der lokale Switch abgeschlossen ist.
 
 ### RotationOperationStateV2
 
