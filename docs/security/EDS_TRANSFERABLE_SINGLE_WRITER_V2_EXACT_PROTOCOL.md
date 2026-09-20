@@ -1984,14 +1984,26 @@ Unknown Outcome:
   dauerhaft unactivated/orphaned; kein automatischer Ersatzsuccessor unter
   derselben Artifact-Identität.
 
-Bei recovery_rekey besitzt die neue URS **vor** der kanonisch akzeptierten
-Announcement-Row weder Source-RK noch Successor-RK im Klartext oder direkt unter
-K_recovery. Erst der atomar in dieser Row veröffentlichte activation_token
-schaltet beide Root-Keys frei. Ein abgebrochener vorgeschlagener neuer
-Recovery-Key erhält dadurch keinen Zugriff auf Gesundheitsdaten der Source oder
-des vorbereiteten Successors. Die alte Recovery-Authority erhält umgekehrt
-keinen Successor-RK und kann die neue Epoche nach erfolgreichem recovery_rekey
-nicht aus dem alten Artifact ableiten.
+Bei recovery_rekey besitzt die neue URS **vor jeder physischen Veröffentlichung
+des vorbereiteten Rekey-Rows** weder Source-RK noch Successor-RK im Klartext
+oder direkt unter K_recovery. Erst der in dieser Row veröffentlichte
+activation_token schaltet beide Root-Keys frei. Die **Authority-Aktivierung**
+bleibt davon getrennt und erfordert zusätzlich den vollständig erfolgreichen
+§19.1-Nachweis, dass genau diese Row kanonisch akzeptiert wurde.
+
+Unvermeidbare client-only Race-Grenze: Wird die vorbereitete Rekey-Row physisch
+appended, verliert aber wegen einer unmittelbar zuvor kanonisch gewordenen
+konkurrierenden Authority semantisch das Rennen, ist activation_token trotzdem
+öffentlich. Ein Inhaber der vorgeschlagenen neuen URS kann dann die verschachtelt
+gewrappten Root-Keys entschlüsseln, das Artifact bleibt jedoch unactivated und
+darf keinerlei Writer-/Recovery-Authority begründen. Eine stärkere Eigenschaft
+"kein Root-Key-Zugriff, falls der physisch geschriebene Rekey später stale ist"
+benötigt einen unabhängigen atomaren Key-Release-/Koordinationsdienst und ist
+nicht Teil dieses rein clientseitigen Profils.
+
+Die alte Recovery-Authority erhält umgekehrt keinen Successor-RK und kann die
+neue Epoche nach erfolgreichem recovery_rekey nicht aus dem alten Artifact
+ableiten.
 
 ---
 
