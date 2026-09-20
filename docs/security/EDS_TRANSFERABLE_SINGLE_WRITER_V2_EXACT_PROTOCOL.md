@@ -572,7 +572,6 @@ AAD:
 UTF8(JCS({
   format,
   version,
-  cache_id,
   diary_id,
   epoch_id,
   recovery_generation,
