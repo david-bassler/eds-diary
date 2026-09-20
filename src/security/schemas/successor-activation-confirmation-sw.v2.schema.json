@@ -1,62 +1,44 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "rotation-announcement-sw/v2",
+  "$id": "successor-activation-confirmation-sw/v2",
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "rotation_id",
-    "from_epoch_id",
-    "successor_epoch_id",
-    "successor_creation_locator",
-    "successor_manifest_fingerprint",
-    "rotation_kind",
-    "source_writer_generation",
-    "source_writer_grant_id",
-    "successor_recovery_generation",
+    "confirmation_id",
+    "activation_kind",
+    "source_profile",
+    "source_epoch_id",
+    "source_manifest_fingerprint",
     "source_anchor_before_announcement",
+    "successor_epoch_id",
+    "successor_manifest_fingerprint",
     "successor_staging_anchor",
-    "recovery_transition_id"
+    "source_announcement_envelope_sha256"
   ],
   "properties": {
-    "rotation_id": {
+    "confirmation_id": {
       "type": "string",
       "pattern": "^[A-Za-z0-9_-]{43}$"
     },
-    "from_epoch_id": {
-      "type": "string",
-      "pattern": "^[A-Za-z0-9_-]{22}$"
-    },
-    "successor_epoch_id": {
-      "type": "string",
-      "pattern": "^[A-Za-z0-9_-]{22}$"
-    },
-    "successor_creation_locator": {
-      "type": "string",
-      "pattern": "^[A-Za-z0-9_-]{22}$"
-    },
-    "successor_manifest_fingerprint": {
-      "type": "string",
-      "pattern": "^[A-Za-z0-9_-]{43}$"
-    },
-    "rotation_kind": {
+    "activation_kind": {
       "enum": [
-        "normal",
-        "recovery_rekey"
+        "profile_upgrade",
+        "v2_rotation"
       ]
     },
-    "source_writer_generation": {
-      "type": "integer",
-      "minimum": 1,
-      "maximum": 9007199254740991
+    "source_profile": {
+      "enum": [
+        "google-sheets-single-writer-v1",
+        "google-sheets-transferable-single-writer-v2"
+      ]
     },
-    "source_writer_grant_id": {
+    "source_epoch_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{22}$"
+    },
+    "source_manifest_fingerprint": {
       "type": "string",
       "pattern": "^[A-Za-z0-9_-]{43}$"
-    },
-    "successor_recovery_generation": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 9007199254740991
     },
     "source_anchor_before_announcement": {
       "type": "object",
@@ -68,7 +50,10 @@
       ],
       "properties": {
         "anchor_profile": {
-          "const": "google-sheets-transferable-single-writer-v2"
+          "enum": [
+            "google-sheets-single-writer-v1",
+            "google-sheets-transferable-single-writer-v2"
+          ]
         },
         "covered_row_count": {
           "type": "integer",
@@ -81,16 +66,13 @@
         }
       }
     },
-    "recovery_transition_id": {
-      "anyOf": [
-        {
-          "type": "null"
-        },
-        {
-          "type": "string",
-          "pattern": "^[A-Za-z0-9_-]{43}$"
-        }
-      ]
+    "successor_epoch_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{22}$"
+    },
+    "successor_manifest_fingerprint": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{43}$"
     },
     "successor_staging_anchor": {
       "type": "object",
@@ -114,24 +96,35 @@
           "pattern": "^[A-Za-z0-9_-]{43}$"
         }
       }
+    },
+    "source_announcement_envelope_sha256": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{43}$"
     }
   },
   "allOf": [
     {
       "if": {
         "properties": {
-          "rotation_kind": {
-            "const": "normal"
+          "activation_kind": {
+            "const": "profile_upgrade"
           }
         },
         "required": [
-          "rotation_kind"
+          "activation_kind"
         ]
       },
       "then": {
         "properties": {
-          "recovery_transition_id": {
-            "type": "null"
+          "source_profile": {
+            "const": "google-sheets-single-writer-v1"
+          },
+          "source_anchor_before_announcement": {
+            "properties": {
+              "anchor_profile": {
+                "const": "google-sheets-single-writer-v1"
+              }
+            }
           }
         }
       }
@@ -139,19 +132,25 @@
     {
       "if": {
         "properties": {
-          "rotation_kind": {
-            "const": "recovery_rekey"
+          "activation_kind": {
+            "const": "v2_rotation"
           }
         },
         "required": [
-          "rotation_kind"
+          "activation_kind"
         ]
       },
       "then": {
         "properties": {
-          "recovery_transition_id": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{43}$"
+          "source_profile": {
+            "const": "google-sheets-transferable-single-writer-v2"
+          },
+          "source_anchor_before_announcement": {
+            "properties": {
+              "anchor_profile": {
+                "const": "google-sheets-transferable-single-writer-v2"
+              }
+            }
           }
         }
       }
