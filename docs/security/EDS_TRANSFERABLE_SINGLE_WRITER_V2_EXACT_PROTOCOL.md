@@ -1327,7 +1327,8 @@ Bei Timeout/unklarem Ergebnis:
    => nicht erneut appendieren; staged/quarantiniert behandeln und kanonischen
    Successor discovern;
 7. fehlt das Envelope und Authority hat sich geändert => nicht erneut appendieren;
-   als stale_writer_pending bzw. stale_grant_attempt quarantinieren.
+   Fachrevision als stale_writer_pending quarantinieren bzw. den zugehörigen
+   WriterGrantOperationStateV2 auf stage="stale" setzen.
 
 Ein HTTP-200 ohne finalen Full Readback ist niemals durable.
 
@@ -1811,9 +1812,10 @@ null (noch kein gebundener Full Verify) oder gemeinsam gesetzt. Nach erfolgreich
 gebundenem Full Verify beschreiben sie exakt die zuletzt vollständig remote
 verifizierte kanonische Authority.
 
-recovery_takeover_key_id ist nach Manifestverifikation nicht-null und muss exakt
-zum Manifest passen. stale_writer_pending_count und operation_generation sind
-nichtnegative Safe-Integer.
+recovery_takeover_key_id ist nach gebundenem Full Verify nicht-null und muss
+exakt zum **aktuellen** Recovery-State des Verifiers passen.
+stale_writer_pending_count und operation_generation sind nichtnegative
+Safe-Integer.
 
 rotation_state_ref, migration_state_ref, writer_operation_state_ref,
 recovery_operation_state_ref und activation_lineage_cache_ref sind null oder
@@ -2447,18 +2449,23 @@ Reihenfolge:
 11. Migration-Control mit migration_kind="profile_upgrade" und
     source_writer_authority=null schreiben.
 12. Successor vollständig mit V2-Verifier verifizieren.
-13. aus RecoveryTakeoverStagingV2 das finale RecoveryArtifactV6 mit dem finalen
-    Successor-Anchor und activation_source_root_key=RK_v1 erzeugen,
-    lokal/remote readback-verifizieren und Test-Recovery durchführen. Bei
-    profile_upgrade ist recovery_activation_proof=null.
-14. staged SyncBackupV6 erzeugen und Test-Restore als local_offline/read_only
+13. ProfileUpgradeActivationEntryV2 aus RK_v1, finalem v1-Source-Anchor
+    und den exakt one-shot vorbereiteten v1-Rotation-Announcement-Bytes erzeugen;
+    activation_lineage=[dieser Eintrag].
+14. aus RecoveryTakeoverStagingV2 das finale RecoveryArtifactV6 mit finalem
+    Successor-Anchor, activation_lineage und
+    recovery_authority_transition_proof=null erzeugen, lokal/remote
+    readback-verifizieren und staged Test-Recovery durchführen.
+15. staged SyncBackupV6 erzeugen und Test-Restore als local_offline/read_only
     durchführen.
-15. RecoveryTakeoverStagingV2 darf jetzt gelöscht werden.
-16. v1 Rotation Announcement durable machen.
-17. Successor-Aktivierung über vollständig verifizierte v1-Source bestätigen.
-18. **obligatorisch** ein neues activation_state="activated" SyncBackupV6 des
+16. RecoveryTakeoverStagingV2 darf jetzt gelöscht werden.
+17. exakt vorbereitetes v1 Rotation Announcement durable machen.
+18. vollständige activation_lineage-Prüfung bestätigt jetzt den Successor als
+    aktiviert.
+19. **obligatorisch** ein neues activation_state="activated" SyncBackupV6 des
     Successors erzeugen und Test-Restore-verifizieren.
-19. erst danach atomar auf v2 umschalten; v1 retire.
+20. ActivationLineageCacheV2 persistieren/readback-verifizieren.
+21. erst danach atomar auf v2 umschalten; v1 retire.
 
 Kein v1-Client darf eine v2-Epoche als v1 interpretieren.
 
