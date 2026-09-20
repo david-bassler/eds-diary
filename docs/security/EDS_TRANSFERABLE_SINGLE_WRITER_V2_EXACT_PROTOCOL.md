@@ -188,6 +188,35 @@ Die sechs fachlichen record_schema-Versionen bleiben inhaltlich dieselben
 maschinenlesbaren Domänenschemas; nur der umgebende RevisionV2-Wrapper ändert
 sich. Andere Control-Schemas sind in dieser Profilversion verboten.
 
+record_type -> record_schema ist exakt:
+
+~~~text
+pain_entry                -> pain-entry/v1
+activity_entry            -> activity-entry/v1
+medication_entry          -> medication-entry/v1
+medication_prescription   -> medication-prescription/v1
+pain_type_settings        -> pain-type-settings/v1
+activity_type_settings    -> activity-type-settings/v1
+writer_grant              -> writer-grant-sw-v2
+rotation_announcement     -> rotation-announcement-sw-v2
+epoch_migration           -> epoch-migration-sw-v2
+~~~
+
+Für alle neun Schema-IDs liegen immutable maschinenlesbare Schema-Definitionen
+im Implementierungsstand vor. Registry:
+
+~~~text
+schema_registry_entries = [
+  { record_schema, schema_sha256 }, ...
+]
+
+schema_sha256 = Base64URL(SHA-256(UTF8(JCS(machine_readable_schema))))
+record_schema_registry_hash =
+  Base64URL(SHA-256(UTF8(JCS(schema_registry_entries))))
+~~~
+
+Die Entries sind nach UTF-8-Bytes von record_schema sortiert und eindeutig.
+
 Exakt diese Properties, keine weiteren:
 
 ~~~text
@@ -378,10 +407,14 @@ Regeln:
 - Der Gen-1-Grant ist nur gültig, wenn grant_id, Device-ID, Key-ID, Public Key,
   Generation und Recovery-Generation exakt den manifestgebundenen Initialwerten
   entsprechen.
-- Handoff: authorization.kind="writer_handoff"; Signatur mit dem Public Key des
-  unmittelbar vorher kanonischen Writer-Grants.
-- Forced Takeover: authorization.kind="recovery_takeover"; Signatur mit dem im
+- Handoff: authorization.kind="writer_handoff";
+  authorization.signer_key_id = predecessor writer_key_id; Signatur mit dessen
+  Public Key.
+- Forced Takeover: authorization.kind="recovery_takeover";
+  authorization.signer_key_id = recovery_takeover_key_id; Signatur mit dem im
   Manifest für die aktuelle Recovery-Generation gebundenen Recovery-Takeover-Key.
+- Für jeden Grant muss record_data.recovery_generation exakt der
+  manifestgebundenen Recovery-Generation dieser Epoche entsprechen.
 - authority_anchor beschreibt den vollständig verifizierten **Entscheidungs-Prefix**,
   auf dessen Basis der Grant erzeugt wurde. covered_row_count darf deshalb kleiner
   als die Position unmittelbar vor der Grant-Row sein.
@@ -519,6 +552,18 @@ Base64URL(HMAC-SHA-256(
 ))
 ~~~
 
+predecessor_epochs ist exakt:
+
+~~~text
+[]                                  # echte v2-Genesis ohne Source
+[{epoch_id, manifest_fingerprint}]  # v1→v2 oder v2→v2 Single-Source-Übergang
+~~~
+
+Mehr als ein Predecessor ist in diesem Profil verboten. Bei v1→v2 und v2→v2
+ist exakt ein Predecessor erforderlich.
+
+created_at ist exakt YYYY-MM-DDTHH:mm:ss.SSSZ.
+
 Manifest-AAD:
 
 ~~~json
@@ -529,6 +574,25 @@ Manifest-AAD:
   "diary_id": "<diary>",
   "epoch_id": "<epoch>"
 }
+~~~
+
+~~~text
+manifest_plaintext = UTF8(JCS(protected_manifest))
+AES-256-GCM(K_epoch_manifest, manifest_iv, manifest_plaintext, manifest_AAD)
+manifest_iv = 12 CSPRNG bytes
+~~~
+
+Fingerprint exakt:
+
+~~~text
+manifest_public_bytes = UTF8(JCS({
+  format: "sync-v6",
+  protocol_version: 6,
+  manifest_iv,
+  manifest_ciphertext
+}))
+
+manifest_fingerprint = Base64URL(SHA-256(manifest_public_bytes))
 ~~~
 
 ---
@@ -579,8 +643,11 @@ Keine weiteren Protokoll-appProperties sind zulässig.
 Die Epoch-Ressource verwendet dieselbe strikte Zwei-Tab-Google-Grid-Struktur und
 dieselben owner-only/permission/Drive-Invarianten wie v1: exakt "_m" und "_r",
 keine Merges, ausschließlich String-Zellen, produktive Row-Writes ausschließlich
-über AppendCellsRequest. Der v1-Wire-Identifier "sync-v5" und dessen Locator-
-Domain dürfen in v2 niemals verwendet werden.
+über AppendCellsRequest. Create/Reconciliation und Unknown-Create-Outcome folgen
+dem v1-Ablauf, jedoch ausschließlich mit den hier definierten v6 Manifestbytes,
+"app_format=sync-v6" und dem v6 epoch_locator; Response-IDs sind nur Kandidaten,
+Discovery/Readback entscheidet. Der v1-Wire-Identifier "sync-v5" und dessen
+Locator-Domain dürfen in v2 niemals verwendet werden.
 
 Recovery-Artifact-Locator:
 
@@ -590,13 +657,20 @@ recovery_artifact_locator = Base64URL(first16(SHA-256(
 )))
 ~~~
 
-Die private owner-only Recovery-Ressource verwendet:
+Die private owner-only Recovery-Ressource verwendet exakt einen GRID-Tab "_a"
+mit rowCount=1, columnCount=1, keinen Merges und RecoveryArtifactV6 als
+kanonischen JSON-String in A1. Drive-/Permission-Invarianten sind dieselben
+owner-only-Regeln wie bei v1.
 
 ~~~text
 filename = "eds-diary-recovery-" + recovery_artifact_locator
 app_format = "sync-recovery-v6"
 recovery_locator = recovery_artifact_locator
 ~~~
+
+Diese beiden appProperties sind die einzigen Protokoll-properties der Recovery-
+Ressource. Create-/Write-Unknown-Outcomes werden ausschließlich durch
+Discovery/Readback derselben kanonischen Bytes entschieden.
 
 ---
 
@@ -660,6 +734,14 @@ authority_history_by_prefix
 
 ~~~
 
+Initialisierung:
+
+- source_epoch_sealed=false.
+- authority_history_by_prefix[0] enthält die manifestgebundene
+  Epoch-Start-Authority und unsealed.
+- genesis_grant_confirmation_required ist genau dann true, wenn
+  epoch_start_authority_mode="genesis_grant_required".
+
 Pro Row:
 
 1. Grid-/Bounds-/Base64URL-/Envelope-AEAD vollständig prüfen.
@@ -686,14 +768,20 @@ Pro Row:
 4. Bei normaler Revision:
    - source_epoch_sealed wird **niemals** auf false zurückgesetzt;
    - falls source_epoch_sealed=true: eine sonst vollständig wohlgeformte und
-     korrekt signierte Row als stale_after_seal_rejected behandeln;
-   - andernfalls writer_context muss exakt current authority sein;
-   - writer_signature muss über §6 gültig sein;
-   - ältere Authority => stale_writer_rejected;
-   - gleiche Generation mit anderer Grant-/Key-/Device-ID => security_blocked;
-   - zukünftige Authority ohne Grant => security_blocked;
-   - ein gültiges rotation-announcement-sw-v2 setzt source_epoch_sealed
-     irreversibel auf true.
+     gegen ihre historische Authority korrekt signierte Row als
+     stale_after_seal_rejected behandeln;
+   - entspricht writer_context exakt der current authority, Signatur gegen
+     current_writer_public_key prüfen und die Row normal auswerten;
+   - referenziert writer_context eine bereits verifizierte **ältere** Authority,
+     deren Device-/Grant-/Key-Tupel exakt in der Authority-Historie existiert,
+     Signatur gegen deren historischen Public Key prüfen und bei Erfolg
+     stale_writer_rejected klassifizieren;
+   - gleiche writer_generation wie current, aber andere Grant-/Key-/Device-ID
+     => security_blocked;
+   - unbekannte historische Authority oder zukünftige Generation ohne Grant
+     => security_blocked;
+   - ein gültiges rotation-announcement-sw-v2 der current authority setzt
+     source_epoch_sealed irreversibel auf true.
 5. Nur akzeptierte Fachrevisionen gehen in den fachlichen Graphen.
 6. Jede physische Row geht unabhängig von semantischer Annahme in Prefix-Hash
    und Bounds ein.
@@ -789,6 +877,17 @@ Ein read-only Gerät muss URS erneut erhalten. Danach:
 
 "rotation-announcement-sw-v2" ist eine normale writer-autorisierte Control-
 RevisionV2 und wird mit der zum Row-Zeitpunkt aktuellen Writer-Authority signiert.
+
+Wrapper zusätzlich zu §5 exakt:
+
+~~~text
+record_type = "rotation_announcement"
+record_schema = "rotation-announcement-sw-v2"
+record_status = "control"
+parent_revision_ids = []
+migration_origin = null
+~~~
+
 record_data exakt:
 
 ~~~text
@@ -807,7 +906,19 @@ source_writer_generation und source_writer_grant_id müssen dem writer_context
 der Control-Revision entsprechen.
 
 "epoch-migration-sw-v2" ist ebenfalls eine normale writer-autorisierte
-Control-RevisionV2. record_data exakt:
+Control-RevisionV2.
+
+Wrapper zusätzlich zu §5 exakt:
+
+~~~text
+record_type = "epoch_migration"
+record_schema = "epoch-migration-sw-v2"
+record_status = "control"
+parent_revision_ids = []
+migration_origin = null
+~~~
+
+record_data exakt:
 
 ~~~text
 migration_id
@@ -958,6 +1069,132 @@ K_local_state_mac authentifiziert.
 Ein fehlender, nicht nutzbarer oder nicht zum Public Key passender Private Key
 führt zu read_only, nicht zu stiller Neugenerierung.
 
+### 18.1 RootWrapV6 und lokales Journal
+
+v2 besitzt ein eigenes lokales Wrap-Schema; RootWrapV5 bleibt unverändert.
+
+~~~text
+{
+  local_wrap_version: 6,
+  mode: "best-effort" | "prf" | "passphrase",
+  diary_id,
+  epoch_id,
+  key_id,
+  manifest_fingerprint,
+  wrap_id,
+  wrap_iv,
+  wrapped_root_key,
+  mode_metadata
+}
+~~~
+
+AAD ist UTF8(JCS(desselben Objekts ohne wrap_iv und wrapped_root_key)).
+
+Best-Effort: mode_metadata={}, eigener non-extractable AES-256-GCM CryptoKey im
+Browserprofil.
+
+Passphrase:
+
+~~~text
+mode_metadata = {
+  passphrase_profile: "argon2id-v6-1",
+  passphrase_salt
+}
+~~~
+
+Argon2id-Parameter bleiben 64 MiB, 3 Iterationen, Parallelism 1, Output 32 Byte.
+Danach:
+
+~~~text
+pass_context =
+  UTF8("eds-diary/local-passphrase-wrap/v6") || 0x00 ||
+  diary_id_bytes || epoch_id_bytes || key_id_bytes
+
+K_local_passphrase = HKDF-SHA-256(
+  argon_base,
+  SHA-256(UTF8("eds-diary/local-passphrase-salt/v6") || 0x00 ||
+         diary_id_bytes || epoch_id_bytes),
+  pass_context,
+  32
+)
+~~~
+
+PRF:
+
+~~~text
+mode_metadata = {
+  prf_profile: "webauthn-prf-v6-1",
+  credential_id,
+  prf_eval_input,
+  prf_wrap_salt,
+  rp_id
+}
+
+credential_id_hash = SHA-256(credential_id_bytes)
+prf_context =
+  UTF8("eds-diary/local-prf-wrap/v6") || 0x00 ||
+  diary_id_bytes || epoch_id_bytes || key_id_bytes || credential_id_hash
+
+K_local_prf = HKDF-SHA-256(
+  prf_output_32_bytes,
+  prf_wrap_salt,
+  prf_context,
+  32
+)
+~~~
+
+userVerification="required", exakte Credential-ID und Post-Enrollment-PRF-
+Verifikation bleiben Pflicht.
+
+Lokales Envelope-Journal:
+
+~~~text
+L0 = SHA-256(
+  UTF8("eds-diary/local-journal/v6") || 0x00 ||
+  diary_id_bytes || epoch_id_bytes
+)
+
+entry_hash = SHA-256(UTF8(JCS([envelope_id,iv,ciphertext])))
+Li = SHA-256(L(i-1) || uint64_be(i) || entry_hash)
+~~~
+
+State-Tag:
+
+~~~text
+local_state_tag = Base64URL(HMAC-SHA-256(
+  K_local_state_mac,
+  UTF8(JCS(epoch_local_security_state_v6))
+))
+~~~
+
+### 18.2 WriterDeviceKeyV2 Local Store
+
+Separater IndexedDB-Key-Store-Eintrag exakt:
+
+~~~text
+{
+  writer_signing_key_id,
+  writer_device_id,
+  writer_public_key,
+  private_key
+}
+~~~
+
+private_key ist ein non-extractable Ed25519 CryptoKey mit usage=["sign"].
+writer_signing_key_id muss aus writer_public_key gemäß §2 reproduzierbar sein.
+
+Beim Laden wird die Keypair-Bindung durch folgende Challenge geprüft:
+
+~~~text
+UTF8("eds-diary/writer-device-key-check/v2") || 0x00 ||
+diary_id_bytes || epoch_id_bytes ||
+writer_device_id_bytes || raw_writer_public_key
+~~~
+
+Der Private Key signiert diese Bytes; Verifikation muss mit writer_public_key
+erfolgreich sein. Fehlschlag => read_only/security error, niemals Key-
+Neugenerierung als stiller Ersatz.
+
 ---
 
 ## 19. RecoveryArtifactV6
@@ -1013,6 +1250,14 @@ Ed25519.verify(manifest_public_key, signature, key_check_input) == true
 
 Zusätzlich müssen recovery_takeover_key_id und Public Key aus dem Artifact exakt
 den manifestgebundenen Werten entsprechen.
+
+salt ist exakt 32 Byte, wrap_iv exakt 12 Byte. wrapped_payload muss nach
+Base64URL-Decoding mindestens 16 und höchstens 65536 Byte enthalten.
+
+~~~text
+recovery_plaintext = UTF8(JCS(encrypted_payload))
+AES-256-GCM(K_recovery, wrap_iv, recovery_plaintext, Artifact-AAD)
+~~~
 
 Artifact-AAD ist UTF8(JCS(header_ohne_wrapped_payload)).
 
@@ -1111,9 +1356,14 @@ writer_authority_at_export ist exakt:
 ~~~
 
 recovery_artifact_sha256 ist Base64URL(SHA-256(UTF8(JCS(recovery_artifact)))).
-record_prefix_hash muss RemoteAnchorV2.prefix_hash entsprechen. Counts, JCS-
-Hashes und Bytegrenzen werden für jede Kategorie separat und für die eindeutige
-Union aller Envelope-IDs geprüft. Gleiche envelope_id mit anderen Bytes ist fatal.
+remote_anchor_at_export ist für ein exportierbares gebundenes v2-Profil
+nicht-null und muss exakt aus record_rows reproduzierbar sein.
+record_prefix_hash muss RemoteAnchorV2.prefix_hash entsprechen.
+writer_authority_at_export muss der durch dieselben record_rows verifizierten
+kanonischen End-Authority entsprechen. recovery_artifact.remote_anchor muss von
+remote_anchor_at_export monoton umfasst werden; sonst ist das Backup ungültig.
+Counts, JCS-Hashes und Bytegrenzen werden für jede Kategorie separat und für die
+eindeutige Union aller Envelope-IDs geprüft. Gleiche envelope_id mit anderen Bytes ist fatal.
 
 Die v5-Grenzen bleiben für v6 unverändert: maximal 256 MiB Backup-Dokument,
 100000 eindeutige Envelopes und 134217728 kanonische Bytes für die eindeutige
