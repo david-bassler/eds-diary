@@ -1564,11 +1564,14 @@ rotation_kind="normal":
 - recovery_transition_id = null.
 
 rotation_kind="recovery_rekey":
-- recovery_transition_id ist die transition_id der zuvor innerhalb **dieser**
-  Maintenance-Operation durable akzeptierten RecoveryAuthorityTransitionV2;
+- recovery_transition_id benennt exakt eine zuvor durable akzeptierte
+  RecoveryAuthorityTransitionV2 derselben Source-Epoche;
 - diese Transition muss die am finalen Source-Prefix aktuelle Recovery-Generation
   erzeugt haben und die jüngste akzeptierte RecoveryAuthorityTransitionV2 vor
-  dem Announcement sein.
+  dem Announcement sein;
+- der Beweis lautet damit nur „dieser Successor trägt genau diese durable
+  Recovery-Rekey-Transition weiter“. Eine nicht remote beweisbare Behauptung
+  über denselben UI-/Prozesslauf wird nicht Teil des Wire-Protokolls.
 
 Ein ansonsten korrekt signiertes Announcement mit historischem
 source_anchor_before_announcement wird
