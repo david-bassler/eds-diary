@@ -1,4 +1,4 @@
-import { SINGLE_WRITER_V1_PROFILE, type RemoteProfileVerifier, type RemoteTransport, type TransportProfileCodec } from '../core/contracts'
+import { GOOGLE_DRIVE_SHEETS_PROVIDER, SINGLE_WRITER_V1_PROFILE, type RemoteProfileVerifier, type RemoteTransport, type TransportProfileCodec } from '../core/contracts'
 import type { SingleWriterProvider, SingleWriterProviderSession } from '../core/provider'
 import { IndependentBootstrapAuthority } from '../core/remoteVerifier'
 import { GoogleAuthProvider, isAuthenticatedGoogleApiClient } from './GoogleAuthProvider'
@@ -13,7 +13,7 @@ import {
 } from './GoogleSheetsSingleWriterTransport'
 
 class GoogleSingleWriterProviderSession implements SingleWriterProviderSession {
-  readonly providerId = SINGLE_WRITER_V1_PROFILE
+  readonly providerId = GOOGLE_DRIVE_SHEETS_PROVIDER
   readonly profileId = SINGLE_WRITER_V1_PROFILE
 
   constructor(
@@ -63,7 +63,7 @@ export function googleProviderSessionFromAuthenticatedClient(
 }
 
 export class GoogleSingleWriterProvider implements SingleWriterProvider {
-  readonly providerId = SINGLE_WRITER_V1_PROFILE
+  readonly providerId = GOOGLE_DRIVE_SHEETS_PROVIDER
   constructor(private readonly authUrl:string){}
 
   async authenticate(actionId:string):Promise<SingleWriterProviderSession>{
