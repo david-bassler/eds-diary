@@ -102,6 +102,23 @@ Base64URL(SHA-256(
 ))
 ~~~
 
+Der Recovery-Secret-Identifier ist absichtlich **generationsunabhängig**:
+
+~~~text
+recovery_urs_id =
+Base64URL(SHA-256(
+  UTF8("eds-diary/recovery-urs-id/v2") || 0x00 || URS
+))
+~~~
+
+`recovery_urs_id` ist kein Ersatz für `recovery_urs_commitment`: Der
+Commitment bleibt diary-/generationsgebunden und beweist die konkrete aktuelle
+Recovery-Generation; der stabile Identifier dient ausschließlich dazu, die
+Wiederverwendung eines früheren 32-Byte-URS ab der ersten v2-Aktivierung
+erkennen und fail-closed ablehnen zu können. Wegen 256 Bit CSPRNG-Entropie des
+URS ist der öffentlich gebundene Hash keine praktisch nutzbare
+Offline-Wörterbuchoberfläche.
+
 ---
 
 ## 3. v6 Krypto-Domains
@@ -660,6 +677,8 @@ key_id
 creation_locator
 recovery_generation
 recovery_urs_commitment
+recovery_urs_id
+recovery_credential_history
 diary_marker = "epoch-manifest-v6"
 crypto_suite = "A256GCM-HKDF-SHA256-ED25519-v6"
 sync_profile = "google-sheets-transferable-single-writer-v2"
@@ -685,11 +704,38 @@ recovery_takeover_public_key
 CSPRNG-Wert aus §10a. Er ist Bestandteil der geschützten Manifestbytes und
 damit des Manifest-Fingerprints; nach Manifest-Erzeugung ist er immutable.
 
-Die vier Recovery-Felder `recovery_generation`,
-`recovery_urs_commitment`, `recovery_takeover_key_id` und
+Die Recovery-Felder `recovery_generation`, `recovery_urs_commitment`,
+`recovery_urs_id`, `recovery_takeover_key_id` und
 `recovery_takeover_public_key` sind der **Recovery-Startzustand dieser
 Epoche**. Sie bleiben als Manifestbytes immutable, können aber im laufenden
 Verifier-State durch RecoveryAuthorityTransitionV2 fortgeschrieben werden.
+
+`recovery_credential_history` ist eine geordnete, nicht leere Liste mit exakt:
+
+~~~text
+{
+  recovery_generation,
+  recovery_urs_id,
+  recovery_takeover_key_id
+}
+~~~
+
+Sie enthält alle seit der **ersten v2-Aktivierung dieses Tagebuchs** bekannten
+Recovery-Credentials einschließlich des aktuellen Manifest-Startzustands,
+streng nach recovery_generation aufsteigend. Der letzte Eintrag muss exakt
+recovery_generation/recovery_urs_id/recovery_takeover_key_id des Manifests
+entsprechen. URS-IDs und Takeover-Key-IDs sind innerhalb der Liste jeweils
+eindeutig. Mehr als
+`protocol_limits.max_recovery_credential_history_entries=128` Einträge sind
+verboten; ist das Limit erreicht, ist ein weiterer recovery_rekey in diesem
+Profil nicht zulässig und benötigt eine neue Protokollversion.
+
+Native v2-Genesis startet mit genau einem Eintrag. Beim v1→v2-Upgrade kann nur
+der **aktuelle** v1-Recovery-Key in diese Historie aufgenommen werden; ältere
+vor-v2 URSs/Takeover-Credentials sind mangels v1-Identifier nicht
+rekonstruierbar. Das ist eine explizite Legacy-Grenze. Jeder v2→v2-Successor
+muss dagegen die am final verifizierten Source-Prefix vollständige
+recovery_credential_history byte-/semantikgleich übernehmen.
 
 epoch_start_authority_mode ist exakt:
 
@@ -730,6 +776,7 @@ protocol_limits ist exakt:
   max_remote_physical_canonical_bytes: 134217728,
   max_canonical_row_bytes: 21936,
   max_activation_lineage_entries: 128,
+  max_recovery_credential_history_entries: 128,
   max_recovery_artifact_ciphertext_bytes: 1048576,
   recovery_grid_chunk_chars: 32000,
   max_recovery_grid_chunks: 44
