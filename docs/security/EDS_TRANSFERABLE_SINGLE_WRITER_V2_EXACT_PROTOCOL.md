@@ -615,16 +615,22 @@ epoch_start_authority_mode ist exakt:
 "genesis_grant_required" | "carried_from_predecessor"
 ~~~
 
-Für v1→v2 gilt "genesis_grant_required", epoch_start_writer_generation = 1.
-Der Gen-1-Grant wird vor Manifest-Verschlüsselung vollständig geplant; deshalb
-sind Grant-ID, Device-ID, Key-ID und Public Key bereits im immutable Manifest
-gebunden. Vor diesem Grant darf keine andere _r-Protokollrow stehen. Sein
-authority_anchor ist exakt H0 mit covered_row_count=0. Der Verifier startet aus
-dem Manifest-Trust-Root, verlangt diese Row als einmalige
-manifest_genesis-Bestätigung und ändert durch sie die bereits manifestgebundene
-Authority nicht noch einmal.
+Für **native v2-Genesis** mit predecessor_epochs=[] gilt zwingend
+"genesis_grant_required" und epoch_start_writer_generation=1.
 
-Für v2→v2-Rotation gilt "carried_from_predecessor". Der Successor übernimmt
+Für **v1→v2** gilt ebenfalls "genesis_grant_required",
+epoch_start_writer_generation=1 und predecessor_epochs enthält exakt die
+v1-Source.
+
+In beiden genesis_grant_required-Fällen wird der Gen-1-Grant vor
+Manifest-Verschlüsselung vollständig geplant; deshalb sind Grant-ID, Device-ID,
+Key-ID und Public Key bereits im immutable Manifest gebunden. Vor diesem Grant
+darf keine andere _r-Protokollrow stehen. Sein authority_anchor ist exakt H0 mit
+covered_row_count=0. Der Verifier startet aus dem Manifest-Trust-Root, verlangt
+diese Row als einmalige manifest_genesis-Bestätigung und ändert durch sie die
+bereits manifestgebundene Authority nicht noch einmal.
+
+Für **v2→v2-Rotation** gilt "carried_from_predecessor". Der Successor übernimmt
 Generation, Grant-ID, Device-ID, Key-ID und Public Key unverändert als
 Epoch-Start-Trust-Root. Es wird **kein** künstlicher Genesis-/Duplikatgrant
 geschrieben; der erste spätere WriterGrant muss ein normaler direkter Nachfolger
@@ -661,8 +667,14 @@ predecessor_epochs ist exakt:
 [{epoch_id, manifest_fingerprint}]  # v1→v2 oder v2→v2 Single-Source-Übergang
 ~~~
 
-Mehr als ein Predecessor ist in diesem Profil verboten. Bei v1→v2 und v2→v2
-ist exakt ein Predecessor erforderlich.
+Mehr als ein Predecessor ist in diesem Profil verboten.
+
+Konsistenz:
+- predecessor_epochs=[] => epoch_start_authority_mode muss
+  "genesis_grant_required" sein.
+- "carried_from_predecessor" => exakt ein Predecessor.
+- v1→v2 => exakt ein Predecessor + "genesis_grant_required".
+- v2→v2 => exakt ein Predecessor + "carried_from_predecessor".
 
 created_at ist exakt YYYY-MM-DDTHH:mm:ss.SSSZ.
 
@@ -751,50 +763,76 @@ dem v1-Ablauf, jedoch ausschließlich mit den hier definierten v6 Manifestbytes,
 Discovery/Readback entscheidet. Der v1-Wire-Identifier "sync-v5" und dessen
 Locator-Domain dürfen in v2 niemals verwendet werden.
 
-Recovery-Artifact-Locator:
+Recovery Discovery verwendet zwei getrennte Locator:
 
 ~~~text
+recovery_family_locator = Base64URL(first16(SHA-256(
+  UTF8("eds-diary/recovery-family-locator/v6") || 0x00 || URS
+)))
+
 recovery_artifact_locator = Base64URL(first16(SHA-256(
-  UTF8("eds-diary/recovery-artifact-locator/v6") || 0x00 || URS
+  UTF8("eds-diary/recovery-artifact-locator/v6") || 0x00 ||
+  URS || 0x00 || diary_id_bytes || epoch_id_bytes
 )))
 ~~~
 
-Die private owner-only Recovery-Ressource verwendet exakt einen GRID-Tab "_a"
-mit rowCount=1, columnCount=1, keinen Merges und RecoveryArtifactV6 als
-kanonischen JSON-String in A1. Drive-/Permission-Invarianten sind dieselben
-owner-only-Regeln wie bei v1.
+Die private owner-only Recovery-Ressource ist **epoch-spezifisch und immutable**.
+Eine normale Rotation mit derselben URS erzeugt deshalb eine neue Ressource und
+überschreibt niemals das Source-Artefakt.
+
+Sie verwendet exakt einen GRID-Tab "_a" mit rowCount=1, columnCount=1, keinen
+Merges und RecoveryArtifactV6 als kanonischen JSON-String in A1.
+Drive-/Permission-Invarianten sind dieselben owner-only-Regeln wie bei v1.
 
 ~~~text
 filename = "eds-diary-recovery-" + recovery_artifact_locator
+
 app_format = "sync-recovery-v6"
-recovery_locator = recovery_artifact_locator
+recovery_family_locator = recovery_family_locator
+recovery_artifact_locator = recovery_artifact_locator
 ~~~
 
-Diese beiden appProperties sind die einzigen Protokoll-properties der Recovery-
-Ressource. Create-/Write-Unknown-Outcomes werden ausschließlich durch
-Discovery/Readback derselben kanonischen Bytes entschieden.
+Diese drei appProperties sind die einzigen Protokoll-properties der Recovery-
+Ressource.
 
-Publish/Replacement ist exakt fail-closed:
+Publish ist exakt fail-closed:
 
-1. Discovery über exakten Dateinamen **und** recovery_locator; mehr als eine
-   plausible Ressource => ambiguous/security stop.
+1. Für das konkrete (diary_id,epoch_id) Discovery über exakten Dateinamen und
+   recovery_artifact_locator. Mehr als eine plausible Ressource =>
+   ambiguous/security stop.
 2. Existiert noch kein Artefakt, Ressource erstellen und anschließend wieder per
    Discovery eindeutig binden.
-3. Existiert bereits anderes Ciphertextmaterial unter demselben Locator, werden
-   altes und neues RecoveryArtifactV6 mit der eingegebenen URS entschlüsselt und
-   vollständig validiert.
-4. diary_id muss identisch sein.
-5. recovery_generation darf nicht sinken. Bei gleicher Recovery-Generation ist
-   Replacement nur für eine vollständig verifizierte direkte
-   Successor-Epoche zulässig, deren Manifest-Predecessor exakt auf
-   old.epoch_id + old.manifest_fingerprint zeigt.
-6. Bei höherer Recovery-Generation unter demselben Locator muss die Generation
-   exakt +1 sein; regulärer recovery_rekey verwendet jedoch eine neue zufällige
-   URS und damit normalerweise einen neuen Locator.
-7. Schreiben/Timeout wird ausschließlich durch bytegenauen Readback des neuen
-   kanonischen Artifact-JSON entschieden.
-8. Nach Write erneut Discovery: exakt dieselbe eine Ressource muss kanonisch
-   übrig sein.
+3. Existiert dieselbe Ressource bereits, darf ihr A1 entweder leer sein oder
+   exakt dieselben kanonischen RecoveryArtifactV6-Bytes enthalten. Andere
+   bereits vorhandene Artifact-Bytes unter demselben epoch-spezifischen Locator
+   => security stop; kein semantisches Replacement.
+4. Schreiben/Timeout wird ausschließlich durch bytegenauen Readback derselben
+   kanonischen Artifact-Bytes entschieden.
+5. Nach Write erneut Discovery: exakt dieselbe eine epoch-spezifische Ressource
+   muss kanonisch übrig sein.
+6. Historische Source-Artefakte werden bei Rotation **nicht** gelöscht oder
+   überschrieben. Garbage Collection ist nicht Teil des v2-Sicherheitsprotokolls.
+
+Account+URS-Recovery:
+
+1. Über recovery_family_locator alle owner-only v6-Recovery-Ressourcen dieser
+   Familie discovern; jede Ressource strikt prüfen und mit URS entschlüsseln.
+2. Für jedes gültige Artifact den zugehörigen Epoch-Remote über den aus
+   diary_id+epoch_id berechenbaren v6 epoch_locator discovern und vollständig
+   verifizieren.
+3. Ein vorbereiteter Successor wird **nicht** allein durch Existenz,
+   predecessor_epochs oder sein RecoveryArtifact aktiv.
+4. Eine Successor-Epoche ist nur dann kanonisch aktiviert, wenn die vollständig
+   verifizierte Source-Epoche ein gültiges rotation-announcement-sw-v2 mit exakt
+   passendem successor_epoch_id + successor_manifest_fingerprint enthält.
+5. Ohne solches Announcement bleibt die Source kanonisch recoverbar, auch wenn
+   ein vorbereiteter Successor samt RecoveryArtifact bereits existiert.
+6. Mit durable gültigem Announcement folgt Recovery genau diesem Successor.
+   Mehrere inkompatible aktivierte Ketten oder mehr als ein unretired
+   kanonischer Leaf => ambiguous/security stop.
+7. Für den ersten v2 profile_upgrade bleibt bis zum durable v1
+   rotation-announcement die v1-Source kanonisch; deren bestehender v5-Recovery-
+   Pfad bleibt deshalb bis zum Switch erhalten.
 
 ---
 
@@ -1455,7 +1493,8 @@ key_check_input =
   raw_recovery_takeover_public_key
 
 signature = Ed25519.sign(imported_private_key, key_check_input)
-Ed25519.verify(manifest_public_key, signature, key_check_input) == true
+Ed25519.verify(recovery_takeover_public_key_from_ProtectedManifestV6,
+               signature, key_check_input) == true
 ~~~
 
 Zusätzlich müssen recovery_takeover_key_id und Public Key aus dem Artifact exakt
@@ -1682,7 +1721,8 @@ für mindestens:
 11. historischer Grant-Anchor bei zwei konkurrierenden g+1-Claims.
 12. ManifestV6 Plaintext/AAD/Fingerprint einschließlich
     epoch_start_authority_mode und protocol_limits.
-13. v6 Google Account Binding + epoch_locator + recovery_artifact_locator.
+13. v6 Google Account Binding + epoch_locator + recovery_family_locator +
+    epoch-spezifischer recovery_artifact_locator.
 14. RecoveryTakeoverStagingV2 KDF/AAD/Crash-Resume + falsche URS.
 15. RecoveryArtifactV6 AAD/Payload/Keypair-Check roundtrip.
 16. SyncBackupV6 vollständiges Manifest/hash binding.
@@ -1698,8 +1738,10 @@ Negative Vectors:
 - gleiche Generation anderer Grant;
 - alte Recovery-Generation;
 - falscher Recovery-Takeover-Key;
-- Recovery-Ressourcen-Replacement ohne direkte verifizierte Successor-Lineage;
-- zwei plausible Recovery-Ressourcen desselben Locators;
+- Versuch, ein epoch-spezifisches RecoveryArtifact mit anderen Bytes zu ersetzen;
+- zwei plausible Recovery-Ressourcen desselben epoch-spezifischen Locators;
+- vorbereiteter Successor ohne Source-Announcement darf bei Recovery nicht aktiv
+  werden;
 - Transferdescriptor ohne Private-Key-Possession;
 - Rollback vor bereits bekannten Grant;
 - stale Fachrow nach Handoff;
