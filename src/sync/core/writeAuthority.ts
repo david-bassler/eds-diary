@@ -8,7 +8,7 @@ export class SingleWriterV1WriteAuthority implements WriteAuthority {
   readonly profileId = SINGLE_WRITER_V1_PROFILE
   accessAfterPull(): 'writer' { return 'writer' }
   canPrepareDomainWrite(): 'writer' { return 'writer' }
-  assertBeforePush(): void {}
+  verifyBeforePush(): 'push' { return 'push' }
   accessAfterReadback(): 'writer' { return 'writer' }
 }
 
