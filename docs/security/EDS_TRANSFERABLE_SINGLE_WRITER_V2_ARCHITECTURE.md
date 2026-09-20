@@ -748,6 +748,13 @@ Operation-State aus der durablen Transition und dem aktuellen RecoveryArtifact
 **adoptieren** und ab `transition_durable` fortsetzen. Ein lokaler State ist
 damit Resume-Hilfe, nicht die Sicherheitsquelle für die Rotationspflicht.
 
+Soll während eines Pending-Rekey ein weiterer Recovery-Key-Wechsel die aktuelle
+Transition superseden, darf ein neuer lokaler Rekey-Operation-State den alten
+State-Ref nur nach canonical_full-Bindung an die aktuellste Transition und nur
+ohne laufende Rotation ersetzen. Wird dieser neue Versuch vor seiner durablen
+Transition stale, bleibt der ältere Remote-Fence maßgeblich und muss wieder
+adoptiert werden.
+
 Der Successor übernimmt die bereits aktuelle Recovery-Generation; die Rotation
 erhöht sie nicht noch einmal und startet wieder ohne Pending-Rekey-Fence. Der alte Recovery-Key kann danach den neuen
 aktiven Successor-RK nicht ableiten. Historische Vertraulichkeit kann ein Rekey
@@ -1031,6 +1038,10 @@ Mindestens:
     Takeover und adoptiert Phase B ohne alten lokalen Operation-State.
 56. zweite RecoveryAuthorityTransitionV2 während Pending-Rekey -> jüngste
     transition_id supersedet die ältere; nur sie darf die Rekey-Rotation binden.
+    Lokaler recovery_operation_state_ref wird dabei nur über einen neuen,
+    readback-verifizierten supersedierenden Operation-State umgebunden; stale
+    neuer Versuch fällt auf Adoption der weiterhin remote-current älteren
+    Transition zurück.
 57. Pending-Rekey + normal-Rotation -> kein Seal; ausschließlich
     recovery_rekey-Rotation mit aktueller transition_id zulässig.
 58. v1→v2: zusätzliche v1-Row zwischen finalem Pre-Append-Read und Announcement
