@@ -552,9 +552,13 @@ Key-Lifecycle:
 10. Diese importierte Capability wird nach Readback/Abschluss verworfen.
 
 Der normale lokale Writer-State enthält niemals recovery_takeover_private_key,
-PKCS#8 oder eine dauerhaft nutzbare Recovery-Takeover-Capability. Außerhalb des
-finalen RecoveryArtifactV6 darf PKCS#8 nur im nachfolgend exakt definierten,
-URS-verschlüsselten und operationsgebundenen Crash-Resume-Staging vorkommen.
+PKCS#8 oder eine dauerhaft nutzbare Recovery-Takeover-Capability. Persistiert
+darf PKCS#8 außerhalb des finalen RecoveryArtifactV6 ausschließlich im
+nachfolgend exakt definierten, URS-verschlüsselten und operationsgebundenen
+Crash-Resume-Staging vorkommen. Flüchtig im Arbeitsspeicher darf es nur während
+einer expliziten, bereits authentifizierten Recovery-/Forced-Takeover- oder
+Rotation-Ceremony nach erfolgreichem Artifact-/Keypair-Check existieren und muss
+unmittelbar danach verworfen werden.
 
 Ist URS bzw. das aktuelle RecoveryArtifactV6 kompromittiert, ist Forced Takeover
 für diese Recovery-Generation kompromittiert. recovery_rekey erzeugt daher neue
@@ -653,6 +657,7 @@ Protected Payload exakt:
 diary_id
 epoch_id
 key_id
+creation_locator
 recovery_generation
 recovery_urs_commitment
 diary_marker = "epoch-manifest-v6"
@@ -675,6 +680,10 @@ epoch_start_writer_public_key
 recovery_takeover_key_id
 recovery_takeover_public_key
 ~~~
+
+`creation_locator` ist exakt der vor dem Remote-Create erzeugte 16-Byte-
+CSPRNG-Wert aus §10a. Er ist Bestandteil der geschützten Manifestbytes und
+damit des Manifest-Fingerprints; nach Manifest-Erzeugung ist er immutable.
 
 Die vier Recovery-Felder `recovery_generation`,
 `recovery_urs_commitment`, `recovery_takeover_key_id` und
@@ -821,6 +830,12 @@ Vor Create:
 creation_locator = 16 CSPRNG bytes, Base64URL
 filename = "sync-" + creation_locator
 ~~~
+
+Exakt derselbe `creation_locator` muss vor Manifest-Verschlüsselung in das
+Protected ManifestV6 übernommen werden. Create-/Unknown-Outcome-Reconciliation
+darf nur eine Ressource binden, deren entschlüsseltes Manifest genau diesen
+Locator enthält. Ein späterer Dateiname ist kein Trust-Root; nach erfolgreicher
+epoch_locator-Bindung entscheidet der geschützte Manifestwert.
 
 Nach Manifest-Readback sind die Protokoll-appProperties exakt:
 
@@ -1101,8 +1116,13 @@ Aktivierungsprüfung mit nur aktuellem URS + Google-Konto:
    successor_recovery_generation und successor_staging_anchor exakt gegen
    Source-/Successor-Manifest, Artifact und die zugehörige EpochMigrationV2
    prüfen. Die source_writer_*-Authority muss zusätzlich exakt den
-   `epoch_start_writer_*`-Feldern des Successors entsprechen.
-6a. Den Successor-Prefix exakt bis successor_staging_anchor vollständig
+   `epoch_start_writer_*`-Feldern des Successors entsprechen. Das im
+   Announcement gebundene `successor_creation_locator` muss exakt dem
+   geschützten `creation_locator` des Successor-Manifests entsprechen.
+6a. Das RK_epoch des aktuellen Successor-RecoveryArtifactV6 muss byteweise von
+    jedem source_root_key der vollständigen activation_lineage verschieden sein;
+    sonst `successor_root_key_reuse` / security_blocked.
+6b. Den Successor-Prefix exakt bis successor_staging_anchor vollständig
     verifizieren. Die akzeptierte EpochMigrationV2 muss die letzte semantische
     Row dieses Prefix sein; danach sind bis zum Anchor nur byte-identische
     Retry-Duplikate genau dieses Migration-Envelopes zulässig. Migration-
@@ -1124,17 +1144,27 @@ Aktivierungsprüfung mit nur aktuellem URS + Google-Konto:
    der Aktivierungsbeweis ungültig.
 10. Eine byte-identische Retry-Duplikatrow **nach** der ersten gültigen
     Announcement-Row ändert die Source-Aktivierungsentscheidung nicht.
-11. Auf dem Successor muss die **unmittelbar nächste** physische Row nach
-    successor_staging_anchor byte-identisch successor_confirmation_envelope sein
-    und vollständig als SuccessorActivationConfirmationV2 validieren. Fehlt sie,
-    obwohl Schritt 8 das Source-Announcement durable bewiesen hat und der
-    Successor noch exakt am staging anchor steht, darf Recovery exakt die
-    vorbereiteten Confirmation-Bytes einmal appendieren und Full Readback
-    durchführen. Steht irgendeine andere Row zuerst => successor_cutover_race.
-12. Die zugehörige EpochMigrationV2 muss zusätzlich die vollständige
+11. Den Successor-Suffix ab successor_staging_anchor auswerten:
+    - steht der Successor noch exakt am staging anchor, darf Recovery nach
+      durable bewiesenem Source-Announcement exakt die vorbereiteten
+      successor_confirmation_envelope-Bytes einmal appendieren und Full Readback
+      durchführen;
+    - existiert bereits eine nächste physische Row, muss **diese erste Row**
+      byte-identisch successor_confirmation_envelope sein und vollständig als
+      SuccessorActivationConfirmationV2 validieren. Dann wird sie als bereits
+      durable Confirmation reconciliiert; es werden keine alternativen Bytes
+      erzeugt;
+    - jede andere erste Row => successor_cutover_race.
+12. successor_activation_anchor ist der exakte Prefix durch die erste gültige
+    Confirmation-Row einschließlich unmittelbar anschließender byte-identischer
+    Retry-Duplikate genau dieser Confirmation. Ein danach vorhandener Suffix ist
+    zulässiger **post-activation** Suffix, muss aber vollständig mit normaler
+    Writer-Authority durch canonical_full validieren; der aktuelle RemoteAnchor
+    muss successor_activation_anchor monoton erweitern.
+13. Die zugehörige EpochMigrationV2 muss zusätzlich die vollständige
     Migration-Integritätsprüfung gemäß §16a.1 bestehen.
-13. Erst nach erfolgreicher Confirmation gilt der Successor remote als aktiviert.
-14. Der Proof ist kein Ersatz für die normale Source-Verifikation im laufenden
+14. Erst nach erfolgreicher Confirmation gilt der Successor remote als aktiviert.
+15. Der Proof ist kein Ersatz für die normale Source-Verifikation im laufenden
     Writer-Betrieb. Er ist ausschließlich ein Recovery-/Backup-Aktivierungsbeweis
     für eine bereits geplante v2→v2-Rotation.
 
@@ -1206,6 +1236,14 @@ Konstruktionsregeln:
   Lineage-Erweiterung dienen.
 - Jeder Eintrag muss auf den unmittelbar vorherigen/folgenden Epoch-Fingerprint
   passen; Lücken, Wiederholungen, alternative Branches oder Zyklus => fatal.
+- Für **jede nicht-native v2-Epoche** muss das RK_epoch des zugehörigen
+  RecoveryArtifactV6 byteweise verschieden von **jedem** `source_root_key`
+  der resultierenden activation_lineage sein. Gleichheit mit dem direkten oder
+  irgendeinem historischen Source-RK => `successor_root_key_reuse` /
+  security_blocked. Damit ist insbesondere bei recovery_rekey die Eigenschaft
+  „alter URS kann den neuen aktiven Successor-RK nicht aus einem historischen
+  Artifact gewinnen“ Teil der Cross-Epoch-Verifikation und nicht nur eine
+  lokale Erzeugungsregel.
 
 ProfileUpgrade-Prüfung:
 
@@ -1248,9 +1286,13 @@ kann einen früheren fehlenden/ungültigen Link niemals heilen.
 
 ### 10d. ActivationLineageCacheV2 – lokaler verschlüsselter Cache
 
-Damit normale Rotation und recovery_rekey auch dann möglich bleiben, wenn der
-alte URS nicht mehr bekannt ist, wird die zuletzt vollständig verifizierte
-activation_lineage lokal unter RK_epoch verschlüsselt gehalten.
+Damit Rotation und recovery_rekey keine **historischen** URSs benötigen, wird
+die zuletzt vollständig verifizierte activation_lineage lokal unter RK_epoch
+verschlüsselt gehalten. Das ersetzt nicht den **aktuellen** URS: Eine normale
+Rotation benötigt ihn weiterhin, um das aktuelle RecoveryArtifactV6 zu
+entschlüsseln und das darin enthaltene Recovery-Takeover-Private-Key-Material
+für das Successor-Artifact zu übernehmen. Ist der aktuelle URS verloren, muss
+zuerst recovery_rekey auf einen neuen aktuellen URS durchgeführt werden.
 
 Exakt:
 
@@ -1515,6 +1557,18 @@ Pro Row:
     exakt manifestgebundene Gen-1-writer-grant-sw-v2 mit H0 zulässig. Jede
     andere semantische Row => security_blocked. Erst nach dessen erfolgreicher
     Validierung wird das Flag irreversibel gelöscht.
+2c. Solange migration_control_required=true und accepted_epoch_migration=null
+    ist, befindet sich eine nicht-native Epoche im **pre-migration staged
+    authority freeze**. Control-Rows sind dort ausschließlich
+    - die exakt manifestgebundene Gen-1-Bestätigungsrow aus 2b, falls sie am
+      Row-Anfang noch erforderlich war, oder
+    - die eine epoch-migration-sw-v2-Row.
+    Jeder WriterGrant, jede RecoveryAuthorityTransition, jedes
+    RotationAnnouncement und jede SuccessorActivationConfirmation vor der
+    Migration-Control => staged_pre_migration_control_forbidden /
+    security_blocked. Damit bleibt die Successor-Writer-Authority vom
+    Epoch-Start bis einschließlich Migration-Control unverändert; kopierte
+    Fachrevisionen validieren zwingend unter dieser eingefrorenen Authority.
 3. Bei writer-grant-sw-v2:
    - falls source_epoch_sealed=true: einen sonst vollständig wohlgeformten Grant
      als stale_after_seal_rejected behandeln; malformed/kryptographisch ungültige
@@ -1623,6 +1677,14 @@ Pro Row:
      successor_bound|copying => staged_incomplete, **kein** kanonischer
      VerifiedRemoteState;
    - jeder andere Fall => security_blocked.
+10. EOF mit migration_control_required=true, akzeptierter Migration-Control,
+    aber accepted_activation_confirmation=null ist bei canonical_full der
+    explizite recoverbare Zustand `activation_confirmation_missing` /
+    `staged_confirmation_missing`. Der Prefix ist strukturell verifiziert,
+    verleiht aber **keinen** epoch_status=active, keine Writer-Freigabe und keine
+    Forced-Takeover-Fähigkeit. Ob die vorbereitete Confirmation nachgetragen
+    werden darf, entscheidet erst die Cross-Epoch-Prüfung des durable
+    Source-Announcements gemäß §§10b/10c.
 
 Ein Root-Key-besitzendes stale Gerät kann neue Ciphertexte erzeugen, aber ohne
 aktuellen Writer-Key weder aktuelle Fachrevisionen noch einen Handoff-Grant
@@ -1695,10 +1757,13 @@ Bei Timeout/unklarem Ergebnis:
    intervenierende Source- oder Successor-Row vor durable Announcement =>
    vorbereitete Rotation stale/nicht aktivieren.
 8a. **SuccessorActivationConfirmationV2:** Retry/Crash-Completion nur, wenn das
-    gebundene Source-Announcement bereits vollständig durable verifiziert ist
-    und der aktuelle Successor-Prefix exakt successor_staging_anchor entspricht.
-    Es werden ausschließlich dieselben one-shot Confirmation-Bytes erneut
-    verwendet; jede andere Successor-Row zuerst => successor_cutover_race.
+    gebundene Source-Announcement bereits vollständig durable verifiziert ist.
+    Steht der Successor exakt am successor_staging_anchor, dürfen ausschließlich
+    dieselben one-shot Confirmation-Bytes erneut verwendet werden. Erweitert der
+    Prefix den staging anchor bereits, muss die erste neue Row exakt diese
+    Confirmation sein; dann wird ihr Erfolg reconciliiert und ein nachfolgender
+    vollständig gültiger post-activation Suffix akzeptiert. Jede andere erste
+    Successor-Row => successor_cutover_race.
 9. Ist Source inzwischen sealed oder Writer-/Recovery-Authority anderweitig
    fortgeschritten => nicht erneut appendieren; Fachrevision quarantinieren bzw.
    Operation-State auf stale setzen.
@@ -1810,6 +1875,9 @@ Zusätzlich gilt zwingend:
 
 - from_epoch_id == aktuelle Source-epoch_id;
 - successor_epoch_id != from_epoch_id;
+- successor_creation_locator dekodiert zu exakt 16 Byte und muss bei der
+  Cross-Epoch-Aktivierungsprüfung exakt dem geschützten `creation_locator` des
+  Successor-Manifests entsprechen;
 - successor_recovery_generation == aktuell verifizierte
   Source-Recovery-Generation am source_anchor_before_announcement;
 - bei der **Cross-Epoch-Aktivierungsprüfung** müssen
@@ -1916,11 +1984,16 @@ Normen:
   Remote-Aktivierungsgrenze des Successors. Normale Successor-Rows dürfen
   protokollseitig erst **nach** dieser Row als post-activation Suffix gelten.
 
-Fehlt die Confirmation, obwohl der Source-Announcement bereits durable ist, darf
-Recovery die im Activation-Evidence one-shot gebundenen Confirmation-Bytes
-**nur** dann exakt einmal appendieren, wenn der aktuelle Successor-Prefix noch
-exakt successor_staging_anchor ist. Steht irgendeine andere physische Row zuerst,
-=> successor_cutover_race; keine alternative Confirmation erzeugen.
+Fehlt die Confirmation, obwohl der Source-Announcement bereits durable ist, ist
+das `activation_confirmation_missing`: ein **recoverbarer staged Zustand**,
+kein fataler Verifierfehler. Recovery darf die im Activation-Evidence one-shot
+gebundenen Confirmation-Bytes nur dann exakt einmal appendieren, wenn der
+aktuelle Successor-Prefix noch exakt successor_staging_anchor ist. Existiert
+bereits ein Suffix, muss dessen **erste** Row exakt diese vorbereitete
+Confirmation sein; dann wird sie reconciliiert und ein danach vorhandener,
+vollständig gültiger Suffix als post-activation verarbeitet. Steht eine andere
+erste Row nach dem staging anchor, => successor_cutover_race; keine alternative
+Confirmation erzeugen.
 
 ---
 
@@ -2294,6 +2367,18 @@ current_recovery_rekey_transition_id gestartet werden. Diese Pflicht stammt aus
 der Remote-Historie und gilt unabhängig davon, ob auf dem ausführenden Gerät ein
 älterer RecoveryRekeyOperationStateV2 existiert.
 
+**Recovery-Key-Material für jede Rotation:** Vor Erzeugung des finalen
+Successor-RecoveryArtifactV6 muss der **aktuelle URS** erneut eingegeben werden.
+Das aktuelle Source-RecoveryArtifactV6 wird eindeutig discovered, entschlüsselt,
+gegen den vollständig verifizierten aktuellen Recovery-State geprüft und der
+§19-Keypair-Check ausgeführt. Nur daraus darf das aktuelle
+recovery_takeover_private_key_pkcs8 transient für das neue Successor-Artifact
+übernommen werden. Historische URSs werden dank ActivationLineageCacheV2 nicht
+benötigt. Ist bei einer normalen Rotation der aktuelle URS verloren, ist die
+Rotation blockiert; der aktuelle Writer muss stattdessen zuerst recovery_rekey
+mit einem neuen URS durchführen. Es gibt kein zusätzliches lokales
+Takeover-Private-Key-Escrow.
+
 Die zulässige Rotation setzt im Successor
 epoch_start_authority_mode="carried_from_predecessor" und übernimmt die aktuelle
 Writer-Authority in den Successor-Manifest-Trust-Root:
@@ -2330,10 +2415,14 @@ Remote-Reihenfolge auf der Source entscheidet:
 
 Für **jede** v2→v2-Rotation ist die Reihenfolge verbindlich:
 
-1. activation_lineage der aktiven Source vollständig validieren und finalen
+1. activation_lineage der aktiven Source vollständig validieren, aktuellen URS
+   und aktuelles Source-RecoveryArtifactV6 gemäß obiger Regel prüfen und finalen
    Source-Anchor/Writer-/Recovery-State einfrieren.
-2. Successor erzeugen. Jeden am eingefrorenen Source-Prefix aktuellen
-   nicht-Control-Head exakt nach §16a.0 als neue Successor-Genesis-Revision
+2. Successor mit **neuem unabhängig erzeugtem 32-Byte-CSPRNG-RK_epoch** erzeugen.
+   Dieser RK darf keinem source_root_key der resultierenden ActivationLineage
+   entsprechen; Gleichheit => successor_root_key_reuse / security_blocked.
+   Jeden am eingefrorenen Source-Prefix aktuellen nicht-Control-Head exakt nach
+   §16a.0 als neue Successor-Genesis-Revision
    kopieren/signieren: gleiche Fachsemantik, leere Parents und
    `migration_origin` exakt auf die eine kopierte Source-Revision.
 3. Exakt eine EpochMigrationV2 schreiben. source.source_anchor ist der finale
@@ -2370,26 +2459,39 @@ Für **jede** v2→v2-Rotation ist die Reihenfolge verbindlich:
    intervenierende physische Source-Row macht den vorbereiteten Source-Anchor
    historisch; das Announcement darf dann nicht versiegeln.
 10. **Sofort nach durable Source-Announcement** den Successor erneut vollständig
-    lesen. Sein RemoteAnchor muss weiterhin exakt successor_staging_anchor sein.
-    Jede zusätzliche Successor-Row => successor_cutover_race; Source-Seal bleibt
-    irreversibel, aber der Successor wird lokal **nicht** aktiviert.
-11. Exakt die bereits im RecoveryActivationProofV2 gebundenen
-    successor_confirmation_envelope-Bytes appendieren + Full Readback. Unknown
-    Outcome darf nur bei unverändertem successor_staging_anchor durch Retry der
-    identischen Bytes aufgelöst werden. Die Confirmation muss die unmittelbar
-    nächste physische Successor-Row sein und vollständig validieren.
-12. Den daraus resultierenden RemoteAnchorV2 als successor_activation_anchor
-    persistieren; er umfasst staging anchor + genau die erste gültige
-    Confirmation-Row (ggf. plus byte-identische Retry-Duplikate dieser
-    Confirmation).
+    lesen und den Suffix ab successor_staging_anchor klassifizieren:
+    - exakt staging anchor => Schritt 11 darf die vorbereitete Confirmation
+      appendieren;
+    - erste neue Row ist byte-identisch die vorbereitete Confirmation und
+      validiert vollständig => bereits durable Confirmation reconciliieren;
+    - jede andere erste neue Row => successor_cutover_race; Source-Seal bleibt
+      irreversibel und es gibt keinen Switch.
+11. Falls die Confirmation noch fehlt, exakt die bereits im
+    RecoveryActivationProofV2 gebundenen successor_confirmation_envelope-Bytes
+    appendieren + Full Readback. Unknown Outcome wird ausschließlich durch
+    Readback derselben Bytes entschieden; niemals alternative Confirmation
+    erzeugen.
+12. successor_activation_anchor als **Aktivierungsgrenze** persistieren: exakter
+    Prefix durch die erste gültige Confirmation-Row einschließlich unmittelbar
+    anschließender byte-identischer Retry-Duplikate dieser Confirmation. Ein
+    danach bereits vorhandener Suffix ist post-activation und muss vollständig
+    durch canonical_full unter der jeweils gültigen Writer-Authority
+    verifizieren; der aktuelle RemoteAnchor muss successor_activation_anchor
+    monoton erweitern.
 13. erweiterte activation_lineage einschließlich §16a.1 und Confirmation
-    vollständig bis zum Successor prüfen.
+    vollständig bis zum Successor prüfen. Hat ein gültiger post-activation
+    Suffix die Writer-Authority geändert, wird der lokale writer_status beim
+    späteren Switch aus dieser **final verifizierten** Authority abgeleitet und
+    ggf. read_only.
 14. **obligatorisch** neues activation_state="activated" SyncBackupV6 erzeugen
-    und Test-Restore-verifizieren. Dieses Cutover-Backup muss exakt
-    successor_activation_anchor als record_rows/remote_anchor_at_export tragen.
+    und Test-Restore-verifizieren. Dessen remote_anchor_at_export muss dem
+    vollständig verifizierten aktuellen Successor-Prefix entsprechen und
+    successor_activation_anchor monoton erweitern; ohne Suffix sind beide
+    identisch.
 15. ActivationLineageCacheV2 des Successors persistent/readback-verifizieren.
-16. erst danach lokaler atomarer Switch/Retire; erst ab diesem Switch dürfen
-    normale Successor-Writes beginnen.
+16. erst danach lokaler atomarer Switch/Retire; erst ab diesem Switch darf
+    dieses Gerät normale Successor-Writes erzeugen, sofern es nach finalem
+    Verify weiterhin current Writer ist.
 
 Ein staged Backup ersetzt das obligatorische activated Cutover-Backup niemals.
 
@@ -2397,8 +2499,10 @@ Ein staged Backup ersetzt das obligatorische activated Cutover-Backup niemals.
 Ressourcen ohne gemeinsame atomare Transaktion/Uhr. successor_staging_anchor
 beweist deshalb exakt den autorisierten Migrations-Basisprefix; der
 Rotation-Service friert ihn ein und prüft ihn unmittelbar vor und nach dem
-Source-Seal. Ein bei diesem Ablauf beobachteter Suffix ist ein Cutover-Race und
-blockiert Aktivierung/Switch.
+Source-Seal. Ein **vor** der gebundenen Confirmation beobachteter anderer Suffix ist ein
+Cutover-Race und blockiert Aktivierung/Switch. Ein Suffix **nach** exakt der
+gebundenen Confirmation ist dagegen post-activation und wird normal durch die
+Writer-Authority verifiziert.
 
 Aus einer späteren Recovery-Sicht kann das Protokoll jedoch nicht
 kryptographisch beweisen, ob eine **ansonsten gültig writer-signierte**
@@ -2412,9 +2516,13 @@ Koordinationsdienst/eine neue Protokollversion.
 Normale v2→v2-Rotation übernimmt recovery_generation,
 recovery_urs_commitment, recovery_takeover_key_id und
 recovery_takeover_public_key aus dem **final verifizierten aktuellen
-Source-Recovery-State** unverändert in das Successor-Manifest und erzeugt für
-die neue Epoche ein neues RecoveryArtifactV6 mit neuem RK_epoch,
-Manifest-Fingerprint, erweiterter activation_lineage und finalem Successor-Anchor.
+Source-Recovery-State** unverändert in das Successor-Manifest. Das zugehörige
+Private-Key-Material wird ausschließlich aus dem mit dem erneut eingegebenen
+aktuellen URS verifizierten Source-RecoveryArtifact transient übernommen. Die
+neue Epoche erhält einen unabhängig erzeugten RK_epoch, der keinem historischen
+source_root_key der erweiterten activation_lineage entsprechen darf, sowie ein
+neues RecoveryArtifactV6 mit Manifest-Fingerprint, erweiterter
+activation_lineage und finalem Successor-Anchor.
 
 Recovery-Rekey ist eine **zwingend zweiphasige** Maintenance-Operation.
 Die same-epoch RecoveryAuthorityTransitionV2 ist nur der crash-sichere
@@ -2449,8 +2557,12 @@ Phase B – verpflichtende recovery_rekey-Epoch-Rotation:
    RecoveryRekeyOperationStateV2 mit
    operation_origin="remote_pending_rekey_adoption" erzeugen. Die
    verpflichtende Phase B bleibt dadurch vollständig fortsetzbar.
-10. Successor erhält einen **neuen 32-Byte RK_epoch**, übernimmt aber die in
-    Phase A bereits aktuelle Recovery-Generation/URS-/Takeover-Authority.
+10. Successor erhält einen **neuen unabhängig erzeugten 32-Byte RK_epoch**,
+    übernimmt aber die in Phase A bereits aktuelle
+    Recovery-Generation/URS-/Takeover-Authority. Der neue RK muss byteweise von
+    jedem source_root_key der resultierenden ActivationLineage verschieden sein;
+    dies wird bei Cross-Epoch-Aktivierung als successor_root_key_reuse
+    fail-closed geprüft.
 11. EpochMigrationV2, RotationAnnouncementV2 und RecoveryActivationProofV2
     binden dieselbe recovery_transition_id; alle normalen §17
     Migration-/Anchor-/Lineage-Gates gelten.
@@ -2539,6 +2651,11 @@ Für v2 gilt zusätzlich:
 - ein vorbereiteter Successor bleibt `remote_bound` (oder nach Backup-Restore
   `local_offline`/`offline_restored`) und `writer_status="read_only"`, solange
   seine kanonische Aktivierung nicht vollständig bewiesen ist;
+- `epoch_status="orphaned"` ist ausschließlich ein terminaler lokaler Status
+  für eine bereits erzeugte, aber **vor** durable Source-Announcement stale
+  gewordene Successor-Epoche. Orphaned ist immer read_only, darf nie wieder
+  `active`, Rotations-Successor oder Quelle normaler Remote-Mutationen werden
+  und wird bei einem neuen Versuch nicht wiederverwendet;
 - native v2-Genesis darf erst nach vollständigem Manifest-/Gen-1-/Remote-Verify
   `active` werden;
 - jede nicht-native v2-Epoche darf erst `active` werden, wenn die komplette
@@ -3075,6 +3192,7 @@ Crash-Regeln:
   source_anchor_before_announcement,
   successor_staging_anchor,
   successor_activation_anchor,
+  successor_creation_locator,
   successor_manifest_fingerprint,
   source_recovery_transition_id,
   activation_lineage_sha256,
@@ -3130,12 +3248,28 @@ successor_staging_anchor, die Writer-/Recovery-Authority oder der vorbereitete
 Successor anderweitig ungültig wurde.
 
 `cutover_race` darf ausschließlich **nach** durable Source-Announcement aus
-`announcement_durable` erreicht werden, wenn der aktuelle Successor-Prefix
-successor_staging_anchor nicht mehr exakt entspricht. Der Source-Seal wird
-niemals zurückgerollt; der Vorgang bleibt expliziter Support-/Recovery-Fall und
-darf weder activated Backup noch lokalen Switch erzeugen.
+`announcement_durable` oder `confirmation_unknown` erreicht werden, wenn
+der Successor den staging anchor erweitert und die **erste** neue physische Row
+nicht exakt die vorbereitete Confirmation ist bzw. diese nicht vollständig
+validiert. Ist die erste neue Row exakt die vorbereitete Confirmation, wird
+stattdessen nach `confirmation_durable` reconciliiert; ein danach gültiger
+post-activation Suffix ist kein Cutover-Race. Der Source-Seal wird niemals
+zurückgerollt; ein echter cutover_race bleibt expliziter Support-/Recovery-Fall
+und darf weder activated Backup noch lokalen Switch erzeugen.
 
 `switched`, `stale` und `cutover_race` sind terminal.
+
+Wird eine Rotation **vor** durable Source-Announcement `stale` und existiert
+bereits eine Successor-Ressource, wird deren lokaler EpochLocalSecurityStateV6
+irreversibel `epoch_status="orphaned"`, `writer_status="read_only"`. Dieser
+Successor, sein immutable RecoveryArtifact und seine vorbereiteten Control-Bytes
+dürfen für keinen späteren Rotationsversuch wiederverwendet werden. Ein neuer
+Versuch benötigt mindestens neue successor_epoch_id, key_id, RK_epoch,
+creation_locator, recovery_artifact_id sowie neue operation-/rotation-/
+migration-/confirmation-/envelope-IDs. Ein `cutover_race` **nach** durable
+Source-Announcement ist dagegen kein frei wiederholbarer Rotationsversuch: die
+Source ist bereits irreversibel versiegelt und der gebundene Successor bleibt
+ein expliziter Support-/Recovery-Fall.
 
 Feldinvarianten nach Stage:
 
@@ -3145,8 +3279,13 @@ Feldinvarianten nach Stage:
   copying->successor_verified exakt aus dem vollständig verifizierten
   Successor-Prefix nach der Migration-Control gesetzt und danach immutable;
 - successor_activation_anchor: bis confirmation_durable null; ab
-  confirmation_durable exakt aus dem Successor-Prefix nach der Confirmation
-  gesetzt und immutable;
+  confirmation_durable exakt als Prefix-Grenze durch die erste gültige
+  Confirmation-Row einschließlich unmittelbar anschließender byte-identischer
+  Confirmation-Retries gesetzt und immutable. Ein späterer post-activation
+  Suffix verändert diesen Anchor nicht;
+- successor_creation_locator: ab successor_planned non-null und immutable; er
+  muss exakt dem geschützten creation_locator des Successor-Manifests sowie dem
+  successor_creation_locator des vorbereiteten Announcements entsprechen;
 - successor_manifest_fingerprint: ab successor_bound non-null und immutable;
 - announcement_envelope + confirmation_envelope + activation_evidence_sha256:
   bis successor_verified null; ab announcement_prepared alle non-null und
@@ -3164,14 +3303,17 @@ zwingend, weil RecoveryActivationProofV2 bzw. ProfileUpgradeActivationEntryV2
 die **exakten one-shot Announcement-Envelope-Bytes** bereits im RecoveryArtifact
 binden.
 
-Nach `announcement_durable` ist das Source-Seal irreversibel. Vor
-Confirmation-Append muss canonical_full des Successors weiterhin exakt
-successor_staging_anchor ergeben. Erst `confirmation_durable` erzeugt den
+Nach `announcement_durable` ist das Source-Seal irreversibel. Vor einem
+Confirmation-Append muss canonical_full des Successors entweder weiterhin exakt
+successor_staging_anchor ergeben **oder** bereits als erste Suffix-Row exakt die
+vorbereitete Confirmation enthalten; im zweiten Fall wird nur reconciliiert und
+nicht erneut appended. Erst `confirmation_durable` erzeugt den festen
 successor_activation_anchor. Vor `switched` muss zwingend ein neuer activated
 SyncBackupV6 des Successors erzeugt, Test-Restore-verifiziert und als
 `activated_backup_verified` persistiert sein; dessen exportierter RemoteAnchor
-muss exakt successor_activation_anchor sein. Das frühere
-staged Backup genügt dafür nicht.
+muss dem aktuellen vollständig verifizierten Prefix entsprechen und
+successor_activation_anchor monoton erweitern. Das frühere staged Backup genügt
+dafür nicht.
 
 Alle Resume-Pfade beginnen mit Verifikation der beteiligten Remote-Epochen und
 Abgleich der gespeicherten Anchor/Envelope-/Evidence-Bytes. Für einen staged
@@ -3477,10 +3619,14 @@ Für die obligatorischen Cutover-Backups einer noch nicht lokal geswitchten
 nicht-nativen Epoche gilt zusätzlich:
 - activation_state="staged" => remote_anchor_at_export muss exakt
   successor_staging_anchor des Activation-Evidence entsprechen;
-- activation_state="activated" => remote_anchor_at_export muss exakt
+- activation_state="activated" => die ActivationLineage muss den exakten
   successor_activation_anchor nach der durablen SuccessorActivationConfirmation
-  entsprechen.
-Ein Cutover-Backup mit einem anderen Prefix ist ungültig.
+  reproduzieren; remote_anchor_at_export muss dem beim Export vollständig
+  verifizierten aktuellen Successor-Prefix entsprechen und diesen
+  successor_activation_anchor monoton erweitern. Ohne post-activation Suffix
+  sind beide Anchor identisch.
+Ein Cutover-Backup, dessen Prefix die Aktivierungsgrenze nicht exakt enthält oder
+nicht monoton erweitert, ist ungültig.
 
 - activation_state="staged" => ausschließlich local_offline/read_only Restore.
 - activation_state="activated" + strukturell/kryptographisch ungültiger,
@@ -3580,7 +3726,10 @@ Reihenfolge:
    Recovery-Takeover-Keypair erzeugen.
 6. epoch_start_authority_mode="genesis_grant_required" setzen und
    epoch_start_writer_grant_id + Writer-Authority planen.
-7. immutable ManifestV6 lokal erzeugen und Fingerprint bestimmen.
+7. neuen unabhängig erzeugten 32-Byte RK_epoch und creation_locator für die
+   v2-Epoche festlegen; der RK muss vom im ProfileUpgradeActivationEntryV2
+   gebundenen v1-source_root_key verschieden sein. Immutable ManifestV6 mit
+   genau diesem creation_locator lokal erzeugen und Fingerprint bestimmen.
 8. RecoveryTakeoverStagingV2 mit diesem Manifest-Fingerprint
    persistieren/readback-verifizieren; erst danach extrahierbaren temporären
    Recovery-Private-Key verwerfen und mutierendes Remote-I/O beginnen.
@@ -3596,8 +3745,10 @@ Reihenfolge:
     unmittelbar vor dieser Control-Row.
 12. Successor vollständig mit V2-Verifier verifizieren und §16a.1 gegen v1-Source
     und Successor erfolgreich ausführen. Den aktuellen Successor-RemoteAnchor als
-    successor_staging_anchor einfrieren; bis zum atomaren v2-Switch sind weitere
-    Successor-Appends verboten.
+    successor_staging_anchor einfrieren. Bis zur
+    SuccessorActivationConfirmation ist jede andere neue Row verboten; nach
+    exakt dieser Confirmation ist ein vollständig gültiger post-activation
+    Suffix zulässig.
 13. v1-Rotation-Announcement exakt one-shot vorbereiten. Aus genau diesen
     Announcement-Bytes die SuccessorActivationConfirmationV2 one-shot
     vorbereiten. Danach ProfileUpgradeActivationEntryV2 aus RK_v1, finalem
@@ -3615,24 +3766,32 @@ Reihenfolge:
 17. v1-Source **und Successor erneut vollständig lesen**. Der v1-RemoteAnchor
     muss exakt source_anchor_before_announcement und der Successor-RemoteAnchor
     exakt successor_staging_anchor entsprechen. Andernfalls Upgrade vor
-    Announcement abbrechen und v1 weiter als Source behandeln.
+    Announcement abbrechen und v1 weiter als Source behandeln. Existiert bereits
+    eine Successor-Ressource, wird sie dabei lokal `orphaned/read_only` und
+    darf für einen neuen Versuch nicht wiederverwendet werden; der neue Versuch
+    benötigt neue Epoch-/Root-/Creation-/Artifact-/Control-/Envelope-IDs.
 18. exakt vorbereitetes v1 Rotation Announcement durable machen und danach
     **beide** Remotes unmittelbar erneut lesen. Liegt das Announcement nicht
     unmittelbar nach dem gebundenen Source-Prefix, =>
-    profile_upgrade_source_race gemäß §21.1. Weicht der Successor jetzt von
-    successor_staging_anchor ab => profile_upgrade_successor_cutover_race.
-    In beiden Fällen bleibt der Successor staged/read_only.
-19. Exakt die im ProfileUpgradeActivationEntryV2 gebundenen
+    profile_upgrade_source_race gemäß §21.1. Beim Successor gilt:
+    exakt staging anchor => Confirmation fehlt noch; erste neue Row ist exakt die
+    vorbereitete Confirmation => bereits durable Confirmation reconciliieren;
+    jede andere erste neue Row => profile_upgrade_successor_cutover_race.
+19. Falls die Confirmation noch fehlt, exakt die im
+    ProfileUpgradeActivationEntryV2 gebundenen
     successor_confirmation_envelope-Bytes als unmittelbare nächste Successor-Row
-    appendieren + Full Readback. Bei Crash/Unknown Outcome darf nur dieselbe
-    vorbereitete Confirmation bei weiterhin exakt successor_staging_anchor
-    fertiggestellt werden.
-20. Den resultierenden Prefix als successor_activation_anchor persistieren und
-    vollständige activation_lineage-/Migration-/Confirmation-Prüfung ausführen.
-    Erst jetzt ist der Successor remote aktiviert.
+    appendieren + Full Readback. Bei Crash/Unknown Outcome werden ausschließlich
+    dieselben Bytes reconciliiert/retried.
+20. successor_activation_anchor als exakten Prefix durch die erste gültige
+    Confirmation einschließlich unmittelbar anschließender byte-identischer
+    Confirmation-Retries persistieren. Einen danach vorhandenen
+    post-activation Suffix vollständig per canonical_full verifizieren und
+    anschließend die vollständige activation_lineage-/Migration-/Confirmation-
+    Prüfung ausführen. Erst jetzt ist der Successor remote aktiviert.
 21. **obligatorisch** ein neues activation_state="activated" SyncBackupV6 des
-    Successors erzeugen und Test-Restore-verifizieren; dieses Cutover-Backup
-    muss exakt successor_activation_anchor exportieren.
+    Successors erzeugen und Test-Restore-verifizieren; remote_anchor_at_export
+    muss dem aktuellen vollständig verifizierten Prefix entsprechen und
+    successor_activation_anchor monoton erweitern.
 22. ActivationLineageCacheV2 persistieren/readback-verifizieren.
 23. erst danach atomar auf v2 umschalten; v1 retire und normale Successor-Writes
     freigeben.
@@ -3654,6 +3813,12 @@ rekey_rotation_required_rejected
 stale_after_seal_rejected
 ~~~
 
+Recoverbarer staged Verifierzustand, **nicht fatal**:
+
+~~~text
+activation_confirmation_missing
+~~~
+
 Fatal/security_blocked:
 
 ~~~text
@@ -3673,8 +3838,9 @@ profile_upgrade_source_race
 profile_upgrade_successor_cutover_race
 successor_staging_mismatch
 successor_cutover_race
-activation_confirmation_missing
 activation_confirmation_mismatch
+staged_pre_migration_control_forbidden
+successor_root_key_reuse
 protocol_id_collision
 recovery_takeover_key_reuse
 recovery_generation_mismatch
@@ -3756,8 +3922,9 @@ für mindestens:
 30. SyncBackupV6 staged/activated Manifest/hash binding einschließlich
     activation_lineage und Recovery-Transition-Proof.
 31. Identifier-Format/Decode-Längen für cache_id, rotation_id, migration_id,
-    transition_id und operation_id einschließlich Base64URL-Re-Encode; falsche
-    Byte-Länge und nicht-kanonische Base64URL-Form werden abgelehnt.
+    transition_id, confirmation_id und operation_id einschließlich
+    Base64URL-Re-Encode; falsche Byte-Länge und nicht-kanonische Base64URL-Form
+    werden abgelehnt.
 32. Gemeinsamer epochweiter Control-ID-Namespace für grant_id/rotation_id/
     migration_id/transition_id/confirmation_id: derselbe Bytewert in einem
     anderen Envelope **oder einem anderen Control-ID-Feld** (z.B.
@@ -3769,21 +3936,39 @@ für mindestens:
 34. successor_staging_anchor für v2→v2 und profile_upgrade: exakt direkt nach
     Migration-Control, keine semantische Suffix-Row; Proof/Announcement/Artifact
     und staged Cutover-Backup binden exakt diesen Anchor. Das activated
-    Cutover-Backup exportiert dagegen exakt den nach der Confirmation entstehenden
-    successor_activation_anchor und bindet den staging anchor transitiv über die
-    verifizierte ActivationLineage.
-35. Source-Seal durable, Successor weicht vor Confirmation vom staging anchor
-    ab => successor_cutover_race/profile_upgrade_successor_cutover_race, kein
-    Switch.
+    Cutover-Backup reproduziert die Confirmation als exakte
+    successor_activation_anchor-Grenze und exportiert den aktuellen vollständig
+    verifizierten Prefix, der diese Grenze ggf. um gültigen post-activation
+    Suffix erweitert.
+35. Source-Seal durable, Successor hat vor der Confirmation eine andere erste
+    Suffix-Row => successor_cutover_race/profile_upgrade_successor_cutover_race,
+    kein Switch. Exakt vorbereitete Confirmation als erste Row wird dagegen
+    crash-resumable reconciliiert.
 36. SuccessorActivationConfirmationV2: exakter Announcement-Hash, unmittelbarer
     staging-anchor-Prefix, one-shot Confirmation-Envelope, Recovery-Completion
-    nach Source-Seal und successor_activation_anchor nach durable Confirmation.
+    nach Source-Seal, successor_activation_anchor als feste Aktivierungsgrenze
+    und gültiger post-activation Suffix.
+37. Nicht-native Successor-Epoche mit RK_epoch gleich direktem oder historischem
+    source_root_key => successor_root_key_reuse / security_blocked.
+38. Staged Successor: WriterGrant/RecoveryAuthorityTransition/
+    RotationAnnouncement/SuccessorActivationConfirmation vor EpochMigrationV2
+    => staged_pre_migration_control_forbidden; Epoch-Start-Authority bleibt bis
+    zur Migration-Control unverändert.
+39. Normale Rotation ohne aktuellen URS/current RecoveryArtifact-Keypair-Check
+    => vor Successor-RecoveryArtifact-Erzeugung blockiert; verlorener aktueller
+    URS verlangt recovery_rekey.
+40. Rotation vor durable Source-Announcement stale => bereits erzeugter
+    Successor wird orphaned und darf in neuem Versuch nicht wiederverwendet
+    werden.
+41. Protected ManifestV6 bindet creation_locator; RotationAnnouncementV2 mit
+    successor_creation_locator != Successor-Manifest.creation_locator =>
+    security_blocked.
 
 Negative Vectors:
 
 - falsche Diary/Epoch;
-- cache_id/rotation_id/migration_id/transition_id/operation_id mit falscher
-  Decode-Länge oder nicht-kanonischem Base64URL;
+- cache_id/rotation_id/migration_id/transition_id/confirmation_id/operation_id
+  mit falscher Decode-Länge oder nicht-kanonischem Base64URL;
 - falscher writer_key_id;
 - manipuliertes Public Key Byte;
 - manipulierte Ed25519-Signatur;
@@ -3834,8 +4019,13 @@ Negative Vectors:
   gebundenen Prefix entspricht;
 - falscher source_root_key in einem ActivationLineageV2-Eintrag oder
   Source-Manifest-Fingerprint;
-- staged Successor darf weder Fachwrite noch Handoff noch Forced Takeover
-  ausführen;
+- Successor-RK entspricht direktem oder historischem source_root_key =>
+  successor_root_key_reuse;
+- staged Successor: WriterGrant/Handoff/Forced-Takeover,
+  RecoveryAuthorityTransition, RotationAnnouncement oder
+  SuccessorActivationConfirmation vor der Migration-Control =>
+  staged_pre_migration_control_forbidden; normale Fachrows ohne vollständige
+  Migration-Provenienz scheitern später an §16a.1;
 - Transferdescriptor ohne Private-Key-Possession;
 - Rollback vor bereits bekannten Grant;
 - stale Fachrow nach Handoff;
@@ -3860,12 +4050,20 @@ Negative Vectors:
 - ActivationProof/Announcement mit falschem successor_staging_anchor oder
   Successor-Row zwischen Migration-Control und staging anchor =>
   successor_staging_mismatch;
-- zusätzliche Successor-Row zwischen eingefrorenem staging anchor und
-  Confirmation => Cutover-Race; Confirmation darf nicht übersprungen werden;
+- andere zusätzliche Successor-Row als die exakt vorbereitete Confirmation
+  zwischen eingefrorenem staging anchor und Confirmation => Cutover-Race;
+- exakt vorbereitete Confirmation bereits als erste Suffix-Row => reconcile als
+  confirmation_durable; danach gültiger post-activation Suffix zulässig;
 - fehlende Confirmation bei ansonsten gültigem Source-Announcement =>
-  activation_confirmation_missing / Successor bleibt staged;
+  activation_confirmation_missing / Successor bleibt recoverbar staged;
 - Confirmation mit falschem Announcement-Hash, Source-/Successor-Binding oder
   staging anchor => activation_confirmation_mismatch / security_blocked;
+- RotationAnnouncement successor_creation_locator stimmt nicht mit geschütztem
+  Successor-Manifest.creation_locator überein => security_blocked;
+- normale Rotation ohne erneut eingegebenen aktuellen URS bzw. ohne
+  Source-RecoveryArtifact-/Keypair-Check => vor Remote-Cutover blockiert;
+- pre-announcement stale Rotation versucht denselben Successor/Artifact oder
+  dieselben vorbereiteten Control-Bytes wiederzuverwenden => security_blocked;
 - zusätzliche Successor-Row nach durabler Confirmation ist normaler
   post-activation Suffix und muss unabhängig durch Writer-Authority validieren.
 
