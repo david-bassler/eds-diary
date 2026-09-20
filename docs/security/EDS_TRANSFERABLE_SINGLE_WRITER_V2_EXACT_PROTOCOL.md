@@ -1233,6 +1233,12 @@ Fachwrites benötigen den Cache nicht.
 Der Cache enthält historische Root-Keys und ist deshalb vertrauliches Material;
 er darf weder in Logs noch in unverschlüsseltem Local State erscheinen.
 
+Kompromittierung von **RK_epoch plus lokalem ActivationLineageCacheV2** legt
+ebenfalls die darin enthaltenen historischen Source-RKs offen. Die
+Lineage-Verfügbarkeit wird hier bewusst höher priorisiert als kryptographische
+Löschung alter Epoch-Keys; dieselbe Tradeoff-Grenze gilt beim aktuellen URS und
+RecoveryArtifactV6.
+
 ---
 
 ## 11. RemoteAnchorV2
@@ -2033,9 +2039,8 @@ exakt zum **aktuellen** Recovery-State des Verifiers passen.
 stale_writer_pending_count und operation_generation sind nichtnegative
 Safe-Integer.
 
-rotation_state_ref, migration_state_ref, writer_operation_state_ref und
-recovery_operation_state_ref sind null oder verwenden exakt die geschlossene
-Operation-Referenzform:
+rotation_state_ref, writer_operation_state_ref und recovery_operation_state_ref
+sind null oder verwenden exakt die geschlossene Operation-Referenzform:
 
 ~~~text
 {
@@ -2044,6 +2049,20 @@ Operation-Referenzform:
   state_record_hash
 }
 ~~~
+
+Dabei gilt:
+- rotation_state_ref -> RotationOperationStateV2;
+- writer_operation_state_ref -> WriterGrantOperationStateV2;
+- recovery_operation_state_ref -> RecoveryRekeyOperationStateV2;
+- operation_id muss exakt dem referenzierten Objekt entsprechen;
+- state muss exakt dessen aktuellem `stage` entsprechen;
+- state_record_hash =
+  Base64URL(SHA-256(UTF8(JCS(referenced_operation_state)))).
+
+`migration_state_ref` ist in diesem eingefrorenen v2-Profil **zwingend null**.
+Profile-Upgrade verwendet RotationOperationStateV2 mit
+rotation_kind="profile_upgrade"; ein separates MigrationOperationStateV2 ist
+nicht definiert und darf nicht improvisiert werden.
 
 activation_lineage_cache_ref ist **kein Operation-State** und ist null oder
 exakt:
