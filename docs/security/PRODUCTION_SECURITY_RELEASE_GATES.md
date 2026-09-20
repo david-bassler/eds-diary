@@ -1,13 +1,13 @@
 # Production Security Release Gates
 
-Stand: 19.09.2026
+Stand: 20.09.2026
 
 EDS Diary ist **nicht** als „production secure“ freigegeben.
 
 | Gate | Status | Freigabekriterium |
 |---|---|---|
 | Interner Single-Writer-v1-Kern | **IMPLEMENTED / INTERN VALIDATED** | Kryptographischer Kern und produktive Integrationspfade sind fail-closed implementiert und automatisiert validiert. v1 setzt für Remote-Mutationen jedoch die Single-Remote-Writer-Betriebsannahme voraus und bietet noch kein geräteübergreifendes kryptographisches Fencing; dieses gehört zum separaten v2-Gate. |
-| Transferable Single Writer v2 | **ARCHITEKTUR + EXAKTES PROTOKOLL DEFINIERT / NICHT IMPLEMENTIERT** | Mehrere Geräte dürfen dasselbe Tagebuch lesen, aber nur eine remote verifizierte Writer-Key-Authority darf Fachcommits erzeugen. Das exakte v2 Wire-/Schema-/Signatur-/Recovery-Takeover-Profil ist in `EDS_TRANSFERABLE_SINGLE_WRITER_V2_EXACT_PROTOCOL.md` eingefroren. Vor produktiver Freigabe bleiben Implementierung, v1→v2-Migration, Join/Handoff/Fencing, Rotation-/Takeover-Tests und insbesondere das Live-Google-Konkurrenzgate abzuschließen. Ein generischer Browser-`CryptoKey` allein beweist nicht die Einzigartigkeit eines physischen Geräts. |
+| Transferable Single Writer v2 | **ARCHITEKTUR + EXAKTES PROTOKOLL DEFINIERT / NICHT IMPLEMENTIERT** | Mehrere Geräte dürfen dasselbe Tagebuch lesen, aber nur eine remote verifizierte Writer-Key-Authority darf Fachcommits erzeugen. Das exakte v2 Wire-/Schema-/Signatur-/Recovery-Takeover-Profil einschließlich `RecoveryActivationProofV2` ist in `EDS_TRANSFERABLE_SINGLE_WRITER_V2_EXACT_PROTOCOL.md` eingefroren. Vor produktiver Freigabe bleiben Implementierung, v1→v2-Migration, Join/Handoff/Fencing, Rotation-/Takeover-/Recovery-Aktivierungstests und insbesondere das Live-Google-Konkurrenzgate abzuschließen. Ein generischer Browser-`CryptoKey` allein beweist nicht die Einzigartigkeit eines physischen Geräts. |
 | Google Auth-Origin | Implementiert / Deployment **BLOCKED_EXTERNAL** | Separat baubares `/google-auth/`-Artefakt mit erlaubtem Return-Origin, einmaliger Action-Bindung, Popup→Auth-Bridge-Handoff, MessagePort-RPC und exakt begrenzten Drive-/Sheets-Endpunkten. Das Credential wird nicht an Diary-Code übergeben. Die GitHub-Pages-Testbereitstellung bleibt same-origin; Deployment auf einen zweiten Origin und echte Credentials bleiben extern. |
 | Live Google Contract | **BLOCKED_EXTERNAL** | Hostile-Grid-/Permission-/Unknown-Outcome-Suite gegen dediziertes Google-Testkonto. Zusätzlich ist der reale Mehrgerätefall ausdrücklich kein v1-Join-Pfad: ein zweites Gerät darf ein bestehendes Tagebuch erst mit v2 Join/Handoff verwenden; erneutes v1-`remote_enablement` ist dafür kein unterstützter Ersatz. |
 | WebAuthn PRF | **BLOCKED_EXTERNAL** | Der interne Browser-Adapter erzwingt `userVerification:"required"`, exakte Credential-ID und eine 32-Byte-Post-Enrollment-PRF-Assertion; vor Produktionsfreigabe bleibt die reale Authenticator-/Browsermatrix einschließlich Enrollment-, Unlock- und Recovery-Ceremony auf Zielgeräten zu validieren. |
