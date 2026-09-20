@@ -3592,15 +3592,20 @@ Reihenfolge:
     unmittelbar nach dem gebundenen Source-Prefix, =>
     profile_upgrade_source_race gemäß §21.1. Weicht der Successor jetzt von
     successor_staging_anchor ab => profile_upgrade_successor_cutover_race.
-    In beiden Fällen bleibt der Successor staged/read_only; kein activated
-    Backup/Switch.
-19. vollständige activation_lineage-Prüfung bestätigt jetzt den Successor an
-    exakt successor_staging_anchor als aktiviert.
-20. **obligatorisch** ein neues activation_state="activated" SyncBackupV6 des
-    Successors erzeugen und Test-Restore-verifizieren; auch dieses Cutover-
-    Backup muss exakt successor_staging_anchor exportieren.
-21. ActivationLineageCacheV2 persistieren/readback-verifizieren.
-22. erst danach atomar auf v2 umschalten; v1 retire und normale Successor-Writes
+    In beiden Fällen bleibt der Successor staged/read_only.
+19. Exakt die im ProfileUpgradeActivationEntryV2 gebundenen
+    successor_confirmation_envelope-Bytes als unmittelbare nächste Successor-Row
+    appendieren + Full Readback. Bei Crash/Unknown Outcome darf nur dieselbe
+    vorbereitete Confirmation bei weiterhin exakt successor_staging_anchor
+    fertiggestellt werden.
+20. Den resultierenden Prefix als successor_activation_anchor persistieren und
+    vollständige activation_lineage-/Migration-/Confirmation-Prüfung ausführen.
+    Erst jetzt ist der Successor remote aktiviert.
+21. **obligatorisch** ein neues activation_state="activated" SyncBackupV6 des
+    Successors erzeugen und Test-Restore-verifizieren; dieses Cutover-Backup
+    muss exakt successor_activation_anchor exportieren.
+22. ActivationLineageCacheV2 persistieren/readback-verifizieren.
+23. erst danach atomar auf v2 umschalten; v1 retire und normale Successor-Writes
     freigeben.
 
 Kein v1-Client darf eine v2-Epoche als v1 interpretieren.
