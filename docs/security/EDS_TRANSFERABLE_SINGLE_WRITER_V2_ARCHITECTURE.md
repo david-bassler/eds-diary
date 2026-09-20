@@ -181,8 +181,9 @@ Der exakte v2-Wire-Stand legt Ed25519 mit 32-Byte-Raw-Public-Key und 64-Byte-Sig
 - kein Ableiten aus Hardwaremerkmalen;
 - keine globale Wiederverwendung;
 - Public Key eindeutig an die `writer_device_id` gebunden;
-- Private Key nach Möglichkeit als nicht extrahierbarer Browser-`CryptoKey`
-  persistiert;
+- Private Key ausschließlich als nicht extrahierbarer Ed25519-`CryptoKey`
+  persistiert; kein Raw-/PKCS#8-Fallback für Writer-Keys; unterstützt die
+  Plattform dies nicht persistent, ist v2-Writerbetrieb dort nicht verfügbar;
 - lokaler Security-State bindet Device-ID und Key-ID per State-MAC;
 - Public Key darf im verschlüsselten Writer-Control-Payload liegen;
 - Private Key verlässt das Gerät nicht.
