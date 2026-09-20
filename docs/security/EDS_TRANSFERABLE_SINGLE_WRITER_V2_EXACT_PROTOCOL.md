@@ -1378,12 +1378,6 @@ Pro Row:
    - falls source_epoch_sealed=true: einen sonst vollständig wohlgeformten Grant
      als stale_after_seal_rejected behandeln; malformed/kryptographisch ungültige
      Rows bleiben security_blocked;
-   - falls recovery_rekey_rotation_required=true und reason!="forced_takeover":
-     einen ansonsten vollständig gültigen Grant als
-     rekey_rotation_required_rejected behandeln; er ändert keine Writer-
-     Authority. Forced Takeover bleibt zulässig, damit nach Geräteverlust wieder
-     ein Writer gewonnen werden kann, der die verpflichtende Rekey-Rotation
-     ausführt;
    - authority_anchor gegen den historischen Prefix sowie Writer-/Recovery-State
      an diesem Prefix prüfen;
    - Handoff gegen den am Anchor gültigen predecessor Writer-Key;
@@ -1391,7 +1385,13 @@ Pro Row:
      authority_anchor verifizierte Recovery-Takeover-Authority;
    - **nur** wenn authority_anchor exakt dem physischen Prefix unmittelbar vor
      dieser Grant-Row entspricht und predecessor/Recovery-State dort noch passen,
-     darf der gültige direkte Nachfolger Authority fortschreiben;
+     kann der Candidate current werden. Gilt an diesem unmittelbaren Prefix
+     recovery_rekey_rotation_required=true und reason!="forced_takeover", wird
+     der ansonsten vollständig gültige Grant stattdessen als
+     rekey_rotation_required_rejected behandelt und ändert keine Writer-
+     Authority. Forced Takeover bleibt zulässig, damit nach Geräteverlust wieder
+     ein Writer gewonnen werden kann, der die verpflichtende Rekey-Rotation
+     ausführt;
    - ist der Candidate relativ zu seinem historischen Anchor vollständig gültig,
      aber der Anchor inzwischen historisch, => stale_grant_rejected, auch wenn
      derselbe predecessor Writer noch current ist;
@@ -2095,6 +2095,8 @@ Exakt diese Top-Level-Properties, keine weiteren:
   manifest_fingerprint,
   recovery_generation,
   recovery_urs_commitment,
+  recovery_rekey_rotation_required,
+  recovery_rekey_transition_id,
   remote_binding,
   remote_anchor,
   epoch_status,
@@ -2225,6 +2227,18 @@ recovery_generation, recovery_urs_commitment und recovery_takeover_key_id
 beschreiben nach gebundenem Full Verify den **aktuellen** Recovery-State nach
 allen akzeptierten RecoveryAuthorityTransitionV2-Controls; sie sind nicht
 notwendig identisch mit den immutable Manifest-Startwerten.
+
+recovery_rekey_rotation_required und recovery_rekey_transition_id bilden den
+ebenfalls vollständig remote verifizierten Pending-Rekey-State ab:
+
+~~~text
+false <=> recovery_rekey_transition_id = null
+true  <=> recovery_rekey_transition_id = current_recovery_rekey_transition_id
+~~~
+
+Diese Felder sind nur ein lokal authentifizierter Cache des Remote-Verifier-
+Ergebnisses. Vor jeder Mutation muss canonical_full den Remote-State erneut
+bestätigen; ein lokaler false-Wert kann den Remote-Fence niemals aufheben.
 
 Der Writer-Private-CryptoKey liegt in einem getrennten lokalen Key-Store und wird
 über writer_signing_key_id referenziert. State und Referenz werden über
