@@ -1910,8 +1910,12 @@ Für **jede** v2→v2-Rotation ist die Reihenfolge verbindlich:
    Successor-Fachgraph unmittelbar vor dieser Migration-Control-Row.
 4. Successor vollständig verifizieren und die gesamte Migration-Integrität
    gemäß §16a.1 gegen Source und Successor prüfen.
-5. Das exakte Rotation-Announcement one-shot vorbereiten. Sein
-   source_anchor_before_announcement ist der unveränderte finale Source-Anchor.
+5. Source unmittelbar vor Announcement-Prepare erneut vollständig lesen.
+   Der aktuelle RemoteAnchorV2, Writer-State, Recovery-State und unsealed-Status
+   müssen **exakt** dem in Schritt 1 eingefrorenen Zustand entsprechen; sonst
+   stage=stale und kein Announcement wird vorbereitet. Erst danach das exakte
+   Rotation-Announcement one-shot vorbereiten. Sein
+   source_anchor_before_announcement ist dieser unveränderte finale Source-Anchor.
 6. RecoveryActivationProofV2 mit genau diesen Announcement-Bytes erzeugen und
    signieren; erst jetzt die verifizierte Source-Lineage um genau einen
    V2RotationActivationEntryV2 erweitern.
