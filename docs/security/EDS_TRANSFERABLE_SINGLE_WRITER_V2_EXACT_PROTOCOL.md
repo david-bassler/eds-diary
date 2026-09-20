@@ -2102,18 +2102,19 @@ byteidentisch remote vorhanden sind. stale_writer_pending_rows enthält
 ausschließlich quarantinierte ältere Writer-Envelopes und wird bei Restore
 niemals automatisch gepusht.
 
-RecoveryActivationProofV2 liegt **nicht** zusätzlich im öffentlichen
-Backup-Top-Level. Er wird erst aus dem verschlüsselten RecoveryArtifactV6
-gewonnen. Das verschlüsselte Backup-Manifest bindet dessen Hash.
+ActivationLineageV2 und RecoveryAuthorityTransitionProofV2 liegen **nicht**
+zusätzlich im öffentlichen Backup-Top-Level. Sie werden erst aus dem
+verschlüsselten RecoveryArtifactV6 gewonnen. Das verschlüsselte Backup-Manifest
+bindet ihre Hashes.
 
 activation_state im verschlüsselten Backup-Manifest ist exakt
 "staged" | "activated". "activated" ist **keine selbstbeglaubigende Aussage**.
 Restore muss die Aktivierung passend zum Epoch-Ursprung erneut beweisen:
-- native v2-Genesis: predecessor_epochs=[] + genesis-Grants vollständig prüfen;
-- v1→v2 profile_upgrade: mit derselben URS die v1-Source vollständig verifizieren
-  und ihr exaktes Rotation-Announcement auf diesen Successor bestätigen;
-- v2→v2: RecoveryActivationProofV2 gemäß §10b gegen die rohe Source-Historie
-  prüfen.
+- native v2-Genesis: predecessor_epochs=[] + genesis-Grant vollständig prüfen;
+- jede nicht-native v2-Epoche: activation_lineage gemäß §10c vollständig vom
+  Root bis zum aktuellen Leaf prüfen;
+- same-epoch recovery_rekey: zusätzlich recovery_authority_transition_proof
+  gemäß §16c prüfen bzw. crash-resumable abschließen.
 Ohne erfolgreiche Prüfung bleibt das Restore local_offline/read_only.
 
 backup_manifest_iv ist exakt 12 CSPRNG-Bytes.
@@ -2145,7 +2146,8 @@ Das verschlüsselte Backup-Manifest enthält exakt:
   writer_authority_at_export,
   recovery_generation,
   recovery_takeover_key_id,
-  recovery_activation_proof_sha256,
+  activation_lineage_sha256,
+  recovery_authority_transition_proof_sha256,
   activation_state,
   recovery_artifact_sha256,
   record_row_count,
@@ -2177,10 +2179,17 @@ writer_authority_at_export ist exakt:
 }
 ~~~
 
-recovery_activation_proof_sha256 ist null, wenn das entschlüsselte
-RecoveryArtifactV6 recovery_activation_proof=null enthält; ansonsten exakt
-Base64URL(SHA-256(UTF8(JCS(recovery_artifact.recovery_activation_proof)))).
-Der Hash muss beim Restore nach Artifact-Entschlüsselung reproduziert werden.
+activation_lineage_sha256 ist exakt
+Base64URL(SHA-256(UTF8(JCS(recovery_artifact.activation_lineage)))).
+
+recovery_authority_transition_proof_sha256 ist null, wenn
+recovery_artifact.recovery_authority_transition_proof=null; ansonsten exakt
+Base64URL(SHA-256(UTF8(JCS(
+  recovery_artifact.recovery_authority_transition_proof
+)))).
+
+Beide Hashes müssen beim Restore nach Artifact-Entschlüsselung reproduziert
+werden.
 
 recovery_artifact_sha256 ist Base64URL(SHA-256(UTF8(JCS(recovery_artifact)))).
 remote_anchor_at_export ist für ein exportierbares gebundenes v2-Profil
@@ -2207,11 +2216,18 @@ den produktiven TransferableSingleWriterV2Verifier verwenden.
   widersprüchlicher oder gegen vorhandene Source-Historie fehlschlagender
   Aktivierungsnachweis => security_blocked/fatal; niemals still auf staged
   herabstufen.
-- activation_state="activated", Aktivierungsbeweis intern gültig, aber die für
-  die externe Aktivierungsprüfung benötigte Google-Source ist momentan nicht
-  erreichbar => optional local_offline/read_only Restore; niemals remote-active,
-  bis die externe Prüfung erfolgreich nachgeholt wurde. Restore darf stale_writer_pending_rows nur als Quarantäne
-wiederherstellen.
+- activation_state="activated", interne Artifact-/Lineage-Struktur gültig, aber
+  mindestens eine für die transitive externe Aktivierungsprüfung benötigte
+  historische Source ist momentan nicht erreichbar => optional
+  local_offline/read_only Restore; niemals remote-active, bis die vollständige
+  Lineageprüfung erfolgreich nachgeholt wurde.
+- Ein **source-unabhängiger** Wiedergewinn von Writer-Authority aus einem Backup
+  ist in v2 ausdrücklich nicht garantiert. Der obligatorische activated Backup
+  garantiert Daten-/Schlüsselwiederherstellung; remote-active Writer-Recovery
+  benötigt die historische Aktivierungs-Source-Kette oder eine zukünftige neue
+  Protokollversion mit selbständigem Lineage-Checkpoint.
+
+Restore darf stale_writer_pending_rows nur als Quarantäne wiederherstellen.
 
 ---
 
