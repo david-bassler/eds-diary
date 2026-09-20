@@ -1013,6 +1013,11 @@ Exakt:
     iv,
     ciphertext
   },
+  successor_confirmation_envelope: {
+    envelope_id,
+    iv,
+    ciphertext
+  },
   activation_signature
 }
 ~~~
@@ -1045,6 +1050,12 @@ Rotation-Announcement selbst erhöht keine Recovery-Generation.
 `announcement_envelope` enthält die **exakt one-shot vorbereiteten und
 persistent reservierten** Rowbytes des signierten
 rotation-announcement-sw-v2. Diese Bytes dürfen bei Retry nie regeneriert werden.
+
+`successor_confirmation_envelope` enthält die ebenfalls one-shot vorbereiteten,
+writer-signierten Rowbytes der SuccessorActivationConfirmationV2. Ihr
+source_announcement_envelope_sha256 wird aus genau announcement_envelope gemäß
+§16a berechnet. Auch diese Bytes dürfen bei Retry/Recovery niemals regeneriert
+werden.
 
 Signatur-Core ist das Proof-Objekt ohne `activation_signature`.
 
@@ -1109,10 +1120,18 @@ Aktivierungsprüfung mit nur aktuellem URS + Google-Konto:
    andere Row zuerst oder ist die Row semantisch/signaturseitig ungültig, ist
    der Aktivierungsbeweis ungültig.
 10. Eine byte-identische Retry-Duplikatrow **nach** der ersten gültigen
-    Announcement-Row ändert die Aktivierungsentscheidung nicht.
-11. Die zugehörige EpochMigrationV2 muss zusätzlich die vollständige
+    Announcement-Row ändert die Source-Aktivierungsentscheidung nicht.
+11. Auf dem Successor muss die **unmittelbar nächste** physische Row nach
+    successor_staging_anchor byte-identisch successor_confirmation_envelope sein
+    und vollständig als SuccessorActivationConfirmationV2 validieren. Fehlt sie,
+    obwohl Schritt 8 das Source-Announcement durable bewiesen hat und der
+    Successor noch exakt am staging anchor steht, darf Recovery exakt die
+    vorbereiteten Confirmation-Bytes einmal appendieren und Full Readback
+    durchführen. Steht irgendeine andere Row zuerst => successor_cutover_race.
+12. Die zugehörige EpochMigrationV2 muss zusätzlich die vollständige
     Migration-Integritätsprüfung gemäß §16a.1 bestehen.
-12. Der Proof ist kein Ersatz für die normale Source-Verifikation im laufenden
+13. Erst nach erfolgreicher Confirmation gilt der Successor remote als aktiviert.
+14. Der Proof ist kein Ersatz für die normale Source-Verifikation im laufenden
     Writer-Betrieb. Er ist ausschließlich ein Recovery-/Backup-Aktivierungsbeweis
     für eine bereits geplante v2→v2-Rotation.
 
@@ -1149,6 +1168,11 @@ ProfileUpgradeActivationEntryV2 = {
   successor_manifest_fingerprint,
   successor_staging_anchor,
   announcement_envelope: {
+    envelope_id,
+    iv,
+    ciphertext
+  },
+  successor_confirmation_envelope: {
     envelope_id,
     iv,
     ciphertext
@@ -1197,7 +1221,13 @@ ProfileUpgrade-Prüfung:
 6. Die exakt eine EpochMigrationV2 des Successors muss an genau diesem
    successor_staging_anchor die profile_upgrade-Migration-Integritätsprüfung
    gemäß §16a.1 bestehen.
-7. Erst dann ist die erste v2-Epoche aktiviert.
+7. Die unmittelbar nächste Successor-Row muss byte-identisch
+   successor_confirmation_envelope sein und als gültige
+   SuccessorActivationConfirmationV2 exakt dieses v1-Announcement und denselben
+   staging anchor binden. Fehlt sie bei durable v1-Announcement und unverändertem
+   Successor-Prefix, darf Recovery die vorbereiteten Bytes exakt einmal
+   crash-resumable appendieren.
+8. Erst dann ist die erste v2-Epoche aktiviert.
 
 V2-Link-Prüfung:
 
