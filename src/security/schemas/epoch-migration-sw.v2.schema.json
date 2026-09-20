@@ -10,7 +10,8 @@
     "result_semantic_snapshot_hash",
     "active_head_count",
     "tombstone_head_count",
-    "source_writer_authority"
+    "source_writer_authority",
+    "source_recovery_transition_id"
   ],
   "properties": {
     "migration_id": {
@@ -132,6 +133,17 @@
               "pattern": "^[A-Za-z0-9_-]{43}$"
             }
           }
+        }
+      ]
+    },
+    "source_recovery_transition_id": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$"
         }
       ]
     }
