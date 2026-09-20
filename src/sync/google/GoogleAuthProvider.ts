@@ -1,4 +1,4 @@
-import type { AuthProvider, IdentityBinding } from '../core/contracts'
+import { GOOGLE_DRIVE_SHEETS_PROVIDER, type AuthProvider, type IdentityBinding } from '../core/contracts'
 import type { GoogleApiClient } from './GoogleSheetsSingleWriterTransport'
 
 const AUTHENTICATED_CLIENTS = new WeakSet<GoogleApiClient>()
@@ -235,7 +235,7 @@ export class GoogleAuthProvider implements AuthProvider {
 
     AUTHENTICATED_CLIENTS.add(client)
     this.client = client
-    this.binding = { providerId: 'google-sheets-single-writer-v1', subject: client.identity() }
+    this.binding = { providerId: GOOGLE_DRIVE_SHEETS_PROVIDER, subject: client.identity() }
     return this.binding
   }
 
