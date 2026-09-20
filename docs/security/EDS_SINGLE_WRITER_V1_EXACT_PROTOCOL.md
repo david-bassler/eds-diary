@@ -1,6 +1,6 @@
 # EDS Diary – Exaktes Protokollprofil Google Sheets Single-Writer v1
 
-Stand: 15.09.2026
+Stand: 20.09.2026
 
 Status: **NORMATIV.** Diese Datei schließt die Byte-/Wire-/State-Lücken der gekürzten Repo-Spezifikationen. Für die Implementierung von `google-sheets-single-writer-v1` hat sie bei konkreten Serialisierungs-, Krypto-, Persistenz- und Transportdetails Vorrang vor den allgemeineren Dateien.
 
