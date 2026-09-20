@@ -51,13 +51,17 @@ epoch_id                 16 CSPRNG bytes
 key_id                   16 CSPRNG bytes
 record_id                16 bytes
 writer_device_id         16 CSPRNG bytes
-activation_lineage_cache_id 16 CSPRNG bytes
+cache_id                 16 CSPRNG bytes
 recovery_artifact_id     16 CSPRNG bytes
 creation_locator         16 CSPRNG bytes
 
 envelope_id              32 CSPRNG bytes
 revision_id              32 CSPRNG bytes
 writer_grant_id          32 CSPRNG bytes
+rotation_id              32 CSPRNG bytes
+migration_id             32 CSPRNG bytes
+transition_id            32 CSPRNG bytes
+operation_id             32 CSPRNG bytes
 transfer_nonce           32 CSPRNG bytes
 backup_id                32 CSPRNG bytes
 
@@ -75,6 +79,14 @@ Base64URL(SHA-256(
   UTF8("eds-diary/writer-key-id/v2") || 0x00 || raw_ed25519_public_key
 ))
 ~~~
+
+Alle oben als CSPRNG markierten IDs werden unabhängig mit einem
+kryptographisch sicheren Zufallszahlengenerator erzeugt und als kanonisches
+Base64URL ohne "=" serialisiert. `operation_id` ist ausschließlich lokale
+Crash-/Resume-Identität, besitzt aber dieselbe 32-Byte-CSPRNG-Regel. Der Name
+`cache_id` ist der einzige normative Feldname für den
+ActivationLineageCacheV2-Identifier; `activation_lineage_cache_id` ist kein
+separates Protokollfeld.
 
 recovery_takeover_key_id analog:
 
