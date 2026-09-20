@@ -1371,11 +1371,13 @@ Pro Row:
      die to-Felder fortgeschrieben. Historisch überholte, sonst gültige
      Transition => stale_recovery_transition_rejected;
    - ein rotation-announcement-sw-v2 der current authority wird zusätzlich nach
-     §16a geprüft. Nur wenn source_anchor_before_announcement exakt dem
-     physischen Prefix unmittelbar vor der Row entspricht und alle
-     Successor-/Recovery-/Transition-Bindungen gültig sind, setzt es
-     source_epoch_sealed irreversibel auf true. Ein ansonsten gültiges
-     Announcement mit historisch gewordenem Anchor =>
+     den **source-lokal prüfbaren** Regeln aus §16a geprüft: Immediate-Prefix-
+     Anchor, from_epoch_id, non-self Successor, aktuelle Recovery-Generation
+     und gegebenenfalls die referenzierte bereits akzeptierte
+     RecoveryAuthorityTransitionV2. Nur dann setzt es source_epoch_sealed
+     irreversibel auf true. Successor-Manifest, ActivationProof und
+     EpochMigration werden separat bei der Cross-Epoch-Aktivierung geprüft.
+     Ein ansonsten gültiges Announcement mit historisch gewordenem Anchor =>
      stale_rotation_announcement_rejected und **kein Seal**;
    - ein gültiges epoch-migration-sw-v2 darf pro nicht-nativer Epoche exakt
      einmal auftreten. Ein zweites akzeptierbares Migration-Control ist fatal.
@@ -1556,8 +1558,10 @@ Zusätzlich gilt zwingend:
 - successor_epoch_id != from_epoch_id;
 - successor_recovery_generation == aktuell verifizierte
   Source-Recovery-Generation am source_anchor_before_announcement;
-- source_anchor_before_announcement == source_anchor_before_announcement des
-  zugehörigen RecoveryActivationProofV2.
+- bei der **Cross-Epoch-Aktivierungsprüfung** muss
+  source_anchor_before_announcement zusätzlich exakt dem gleichnamigen Feld des
+  zugehörigen RecoveryActivationProofV2 entsprechen. Der Source-local Verifier
+  muss dafür keine Successor-/Recovery-Ressource laden.
 
 rotation_kind="normal":
 - recovery_transition_id = null.
