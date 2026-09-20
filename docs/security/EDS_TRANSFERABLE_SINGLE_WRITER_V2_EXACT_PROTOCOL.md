@@ -2348,11 +2348,13 @@ current.
     "completed" |
     "stale",
   authority_anchor_before_transition,
+  transition_id,
   transition_envelope,
   recovery_artifact_id,
   recovery_artifact_locator,
   transition_proof_sha256,
   to_recovery_generation,
+  to_recovery_urs_commitment,
   to_recovery_takeover_key_id
 }
 ~~~
@@ -2360,6 +2362,12 @@ current.
 Dieser State enthält **niemals** URS, PKCS#8 oder plaintext Root-Keys.
 RecoveryTakeoverStagingV2 hält das private Takeover-Material separat
 URS-verschlüsselt.
+
+transition_id, to_recovery_generation, to_recovery_urs_commitment und
+to_recovery_takeover_key_id müssen exakt den to-Feldern des persistent
+vorbereiteten RecoveryAuthorityTransitionV2-Envelope und des
+RecoveryAuthorityTransitionProofV2 entsprechen und sind ab
+`new_material_staged` immutable.
 
 Crash-Regeln:
 
