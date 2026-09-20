@@ -702,6 +702,15 @@ Rotation-Announcement und andere autoritätsverändernde Control-Records sind
 damit sowohl an die Writer-/Recovery-Authority als auch an den exakten
 Entscheidungs-Prefix gebunden.
 
+Die semantischen v2-Control-IDs `grant_id`, `rotation_id`, `migration_id`,
+`transition_id` und `confirmation_id` teilen zusätzlich **einen gemeinsamen
+epochweiten Bytewert-Namespace**. Derselbe CSPRNG-ID-Wert darf in keinem anderen
+Envelope erneut als semantische Control-ID auftreten, auch nicht unter einem
+anderen Feldtyp. Byte-identische Envelope-Retries bleiben die einzige erlaubte
+Wiederholung; jede andere Wiederverwendung ist `protocol_id_collision` /
+security_blocked. Die manifestgebundene Epoch-Start-Grant-ID gilt von Beginn an
+als reserviert/belegt.
+
 Recovery-Rekey ändert den Writer nicht automatisch. Die neue
 Recovery-Authority wird zuerst auf der **noch aktiven, unsealed Source** durch
 einen writer-signierten `RecoveryAuthorityTransitionV2` aktiviert. Das neue
@@ -824,9 +833,11 @@ Jede Rotation besitzt einen persistenten Crash-Resume-State mit den exakten
 one-shot Announcement-/Grant-Bytes. Nach erfolgreicher Migration wird zusätzlich
 der **successor_staging_anchor** als exakter Successor-Prefix unmittelbar nach
 der Migration-Control eingefroren. Announcement, Activation-Evidence/Lineage,
-RecoveryArtifact sowie staged und obligatorisches activated Cutover-Backup
-binden exakt diesen Anchor. Bis zum lokalen Switch sind weitere Successor-Appends
-gesperrt.
+RecoveryArtifact und staged Cutover-Backup binden exakt diesen Anchor. Das
+obligatorische activated Cutover-Backup exportiert dagegen nach der
+SuccessorActivationConfirmation exakt den `successor_activation_anchor`; den
+staging anchor bindet es transitiv über die verifizierte ActivationLineage. Bis
+zum lokalen Switch sind weitere Successor-Appends gesperrt.
 
 Die Stage-Reihenfolge ist geschlossen:
 Successor verifizieren/staging anchor einfrieren -> Announcement one-shot
@@ -1123,14 +1134,16 @@ Mindestens:
 62. Recovery-Rekey versucht aktuellen oder früheren supersedierten
     Recovery-Takeover-Key derselben Epoche erneut als to-Key zu verwenden ->
     recovery_takeover_key_reuse / security_blocked.
-63. zweite Control-Row in anderem Envelope verwendet bereits belegte
-    grant_id/rotation_id/migration_id/transition_id ->
+63. zweite Control-Row in anderem Envelope verwendet einen bereits belegten
+    Control-ID-Bytewert erneut — auch cross-type zwischen
+    grant_id/rotation_id/migration_id/transition_id/confirmation_id ->
     protocol_id_collision; byte-identischer Envelope-Retry bleibt No-op.
 64. WriterGrant mit writer_key_id, das nicht aus writer_public_key gemäß §2
     ableitbar ist -> security_blocked.
-65. v2→v2 Cutover: successor_staging_anchor exakt nach Migration-Control,
-    Proof/Announcement/RecoveryArtifact/staged+activated Cutover-Backup binden
-    denselben Anchor.
+65. v2→v2 Cutover: successor_staging_anchor exakt nach Migration-Control;
+    Proof/Announcement/RecoveryArtifact/staged Cutover-Backup binden diesen
+    Anchor. Das activated Cutover-Backup bindet den daraus abgeleiteten
+    successor_activation_anchor und den staging anchor transitiv über Lineage.
 66. zusätzliche Successor-Row zwischen staging-anchor-Freeze und durable
     Source-Announcement bzw. dessen unmittelbarem Readback ->
     successor_cutover_race; Source-Seal nicht zurückrollen, kein Switch.
