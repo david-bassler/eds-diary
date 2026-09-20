@@ -2,11 +2,9 @@
 
 Status: **ARCHITEKTURRAHMEN DEFINIERT / EXAKTES v2-PROTOKOLL IN EDS_TRANSFERABLE_SINGLE_WRITER_V2_EXACT_PROTOCOL.md EINGEFROREN / NOCH NICHT IMPLEMENTIERT**
 
-Stand: 19.09.2026
+Stand: 20.09.2026
 
 Normative Konkretisierung: Byte-, Wire-, Signatur-, Recovery-Takeover- und State-Details sind in `EDS_TRANSFERABLE_SINGLE_WRITER_V2_EXACT_PROTOCOL.md` festgeschrieben. Wo dieses Architekturpapier noch alternative Konstruktionen oder eine spätere Festlegung erwähnt, gilt die Exact-Protocol-Datei.
-
-Stack-Hinweis: Die vorbereitende v1/v2-Entkopplung liegt in PR #36. Dieser Architektur-PR ist im Review-Stack darauf aufgebaut; Merge-Reihenfolge ist daher **PR #36 vor PR #35**. Vor einem späteren Merge von PR #35 nach `main` muss die Base nach dem Merge von #36 erneut auf `main` gesetzt und der kombinierte CI-Stand grün bestätigt werden.
 
 ## 1. Ziel
 
@@ -335,16 +333,20 @@ Regeln:
    Grant-Kontext tragen. Dessen Verifikationsauthority
    ist an Manifest und Recovery-Generation gebunden; Root-Key-Besitz allein
    reicht ausdrücklich nicht.
-7. Der erste physisch kanonisch lesbare Grant, der Vorgängerbindung, Anchor und
-   die jeweils erforderliche Signatur/Recovery-Authority erfüllt, wird neuer
-   Writer.
-8. Ein späterer konkurrierender Grant, der noch den vorherigen Grant referenziert,
-   ist stale und erhält keine Authority.
-9. Handoff-Signatur bzw. Recovery-Proof müssen mindestens
-   `diary_id`, `epoch_id`, `grant_id`, neue Writer-Generation,
-   Vorgänger-Grant/-Generation, aktuelle Recovery-Generation, Ziel-Device-ID,
-   Ziel-Public-Key, Reason und Authority-Anchor binden.
-10. Ein Grant mit Zukunftsgeneration, falscher Vorgängerbindung, unpassendem
+7. Ein Grant darf nur dann neue Authority erhalten, wenn sein Authority-Anchor
+   exakt dem physischen Prefix **unmittelbar vor seiner Row** entspricht und die
+   Vorgänger-/Recovery-Authority dort noch current ist.
+8. Ein bereits vorbereiteter Grant, dessen Anchor durch irgendeine weitere Row
+   historisch geworden ist, erhält später niemals mehr Authority; er wird stale.
+   Das gilt auch, wenn derselbe Vorgänger-Writer noch current ist.
+9. Bei parallelen g+1-Claims kann deshalb nur der zuerst linearisiert appended
+   Claim gewinnen; weitere gegen denselben alten Prefix vorbereitete Claims sind
+   stale.
+10. Handoff-Signatur bzw. Recovery-Proof müssen mindestens
+    `diary_id`, `epoch_id`, `grant_id`, neue Writer-Generation,
+    Vorgänger-Grant/-Generation, Recovery-Generation am Anchor,
+    Ziel-Device-ID, Ziel-Public-Key, Reason und Authority-Anchor binden.
+11. Ein Grant mit Zukunftsgeneration, falscher Vorgängerbindung, unpassendem
     Anchor oder ungültiger Autorisierung ist ein Security-/Conflict-Zustand; er
     wird nie automatisch „latest-wins“ ausgewählt.
 
@@ -364,8 +366,10 @@ Normative Architekturgrenze dafür:
   dazugehörige **Takeover-Signier-/Proof-Capability** freischalten;
 - diese Capability wird nicht als normaler lokaler Writer-State persistiert;
 - Root-Key allein darf sie nicht rekonstruieren;
-- Recovery-Rekey erzeugt/aktiviert neue Takeover-Authority und macht die alte
-  Generation für neue Epochen ungültig.
+- Recovery-Rekey aktiviert die neue Takeover-Authority zuerst auf der noch
+  aktiven Source-Epoche über RecoveryAuthorityTransitionV2; ab durable
+  Transition ist die alte Recovery-Generation auch innerhalb derselben Source
+  für neue Takeovers ungültig.
 
 Das exakte Profil legt hierfür pro Recovery-Generation ein separates Ed25519-Takeover-Schlüsselpaar fest: Public Key im geschützten Manifest, exportierter Private Key ausschließlich im URS-verschlüsselten RecoveryArtifactV6; Forced Takeover importiert ihn nur transient als nicht extrahierbaren Signing-Key. Eine bloße UI-Abfrage des Recovery-Keys genügt nicht.
 
