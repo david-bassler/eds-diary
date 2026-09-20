@@ -451,6 +451,13 @@ Regeln:
 - Der Gen-1-Grant ist nur gültig, wenn grant_id, Device-ID, Key-ID, Public Key,
   Generation und Recovery-Generation exakt den manifestgebundenen Initialwerten
   entsprechen.
+- Für **jeden** Grant muss writer_key_id aus writer_public_key exakt gemäß §2
+  reproduzierbar sein. Mismatch => security_blocked.
+- grant_id darf in derselben Epoche nicht bereits als Grant-ID verwendet worden
+  sein. Bei carried_from_predecessor gilt die manifestgebundene
+  epoch_start_writer_grant_id bereits als reserviert; bei
+  genesis_grant_required ist ausschließlich die einmalige manifestgebundene
+  Gen-1-Bestätigungsrow von dieser Vorreservierung ausgenommen.
 - Handoff: authorization.kind="writer_handoff";
   authorization.signer_key_id = predecessor writer_key_id; Signatur mit dessen
   Public Key.
@@ -1351,6 +1358,11 @@ accepted_epoch_migration
 migration_control_required
 authority_history_by_prefix
 recovery_history_by_prefix
+seen_grant_ids
+seen_rotation_ids
+seen_migration_ids
+seen_recovery_transition_ids
+seen_recovery_takeover_key_ids
 
 ~~~
 
@@ -1388,6 +1400,13 @@ Initialisierung:
   current_recovery_rekey_transition_id=null am Epoch-Start. Dieser Pending-
   Rekey-State wird **nicht** aus einer Source-Epoche in den Successor vererbt;
   eine erfolgreich aktivierte Successor-Epoche startet wieder ohne Pending-Rekey.
+- seen_grant_ids startet bei carried_from_predecessor mit
+  epoch_start_writer_grant_id; bei genesis_grant_required wird dieselbe
+  manifestgebundene Gen-1-ID als einmalig erwartete/reservierte ID geführt.
+- seen_rotation_ids, seen_migration_ids und seen_recovery_transition_ids starten
+  leer.
+- seen_recovery_takeover_key_ids startet mit dem manifestgebundenen
+  recovery_takeover_key_id.
 - genesis_grant_confirmation_required ist genau dann true, wenn
   epoch_start_authority_mode="genesis_grant_required".
 - migration_control_required ist genau dann true, wenn predecessor_epochs genau
@@ -1400,7 +1419,19 @@ Pro Row:
    Retry-Duplikate zählen physisch, sind aber semantische No-ops und springen
    direkt zu Schritt 6/7.
 2. Wrapper als exaktes RevisionV2 validieren.
-2a. Falls genesis_grant_confirmation_required=true, ist **ausschließlich** der
+2a. Für Control-IDs gilt nach Wrapper-/Schema-Validierung und **vor** semantischer
+    State-Mutation:
+    - grant_id, rotation_id, migration_id und transition_id sind jeweils in
+      ihrem Typ-Namespace epochweit eindeutig;
+    - byte-identische Retry-Duplikatrows wurden bereits in Schritt 1 als No-op
+      abgefangen und sind die einzige Wiederholung, die keinen ID-Collision-Fehler
+      erzeugt;
+    - dieselbe semantische ID in einem anderen Envelope/Revision-Objekt =>
+      protocol_id_collision / security_blocked, unabhängig davon, ob der neue
+      Claim später stale geworden wäre;
+    - bei Gen-1 ist die exakt manifestgebundene Bestätigungsrow die einmalige
+      erlaubte Realisierung der vorreservierten grant_id.
+2b. Falls genesis_grant_confirmation_required=true, ist **ausschließlich** der
     exakt manifestgebundene Gen-1-writer-grant-sw-v2 mit H0 zulässig. Jede
     andere semantische Row => security_blocked. Erst nach dessen erfolgreicher
     Validierung wird das Flag irreversibel gelöscht.
@@ -1449,8 +1480,14 @@ Pro Row:
      => security_blocked;
    - ein gültiges recovery-authority-transition-sw-v2 der current authority
      wird zusätzlich nach §16b geprüft; nur bei exakt aktuellem Recovery-from-
-     State und Anchor unmittelbar vor der Row wird der Recovery-State atomar auf
-     die to-Felder fortgeschrieben. Gleichzeitig werden
+     State, Anchor unmittelbar vor der Row und einem
+     to_recovery_takeover_key_id, der **nicht** in
+     seen_recovery_takeover_key_ids vorkommt, wird der Recovery-State atomar auf
+     die to-Felder fortgeschrieben. Wiederverwendung irgendeiner früheren
+     Recovery-Takeover-Key-ID derselben Epoche =>
+     recovery_takeover_key_reuse / security_blocked. Bei Annahme wird die neue
+     Key-ID zusätzlich in seen_recovery_takeover_key_ids aufgenommen.
+     Gleichzeitig werden
      recovery_rekey_rotation_required=true und
      current_recovery_rekey_transition_id=transition_id gesetzt. Eine weitere
      gültige RecoveryAuthorityTransitionV2 darf während dieses Pending-Rekey-
