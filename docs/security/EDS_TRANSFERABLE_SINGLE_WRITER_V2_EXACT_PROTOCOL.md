@@ -1998,31 +1998,35 @@ manifest_fingerprint
 remote_anchor
 google_account_binding
 recovery_generation
+recovery_urs_commitment
 recovery_takeover_key_id
 recovery_takeover_public_key
 recovery_takeover_private_key_pkcs8
-activation_source_root_key
-recovery_activation_proof
+activation_lineage
+recovery_authority_transition_proof
 created_at
 ~~~
 
-activation_source_root_key ist:
-- null bei nativer v2-Genesis;
-- exakt der 32-Byte-RK des **direkten Predecessors** bei v1→v2 sowie jeder
-  v2→v2-Rotation, Base64URL im verschlüsselten Payload.
+recovery_urs_commitment muss exakt aus dem eingegebenen URS, diary_id und
+recovery_generation gemäß §10 reproduzierbar sein und dem **aktuell
+verifizierten Recovery-State** der Epoche entsprechen.
 
-Dieser direkte Predecessor-RK ist ausschließlich Aktivierungs-
-Verifikationsmaterial. Nach erfolgreicher Aktivierungsprüfung darf er nicht als
-aktueller RootWrap/Writerzustand persistiert werden. Der Sicherheits-Tradeoff ist
-explizit: Kompromittierung des aktuellen URS offenbart dadurch zusätzlich den
-direkten Vorgänger-RK; dafür bleibt Recovery-Rekey ohne alten URS unabhängig
-verifizierbar.
+activation_lineage ist exakt ActivationLineageV2 (§10c). Sie enthält sämtliche
+für transitive Aktivierungsprüfung erforderlichen historischen Source-RKs nur
+innerhalb dieses verschlüsselten Payloads.
 
-recovery_activation_proof ist:
-- null bei nativer v2-Genesis;
-- null bei v1→v2 profile_upgrade; dort wird die v1-Source mit
-  activation_source_root_key vollständig verifiziert;
-- zwingend RecoveryActivationProofV2 bei v2→v2 normal/recovery_rekey.
+recovery_authority_transition_proof ist:
+- null, wenn die Artifact-Recovery-Generation bereits im immutable Manifest
+  startet oder keine same-epoch RecoveryAuthorityTransitionV2 für dieses Artifact
+  benötigt wird;
+- zwingend RecoveryAuthorityTransitionProofV2 (§16c), wenn das Artifact eine
+  neuere same-epoch Recovery-Generation als das Manifest repräsentiert.
+
+Nach erfolgreicher Aktivierungsprüfung dürfen historische source_root_key-Werte
+nicht als aktuelle RootWraps/Writerzustände persistiert werden. Der
+Sicherheits-Tradeoff ist explizit: Kompromittierung des aktuellen URS offenbart
+die in activation_lineage enthaltenen historischen Root-Keys; dafür ist die
+kanonische Aktivierungskette ohne alte Recovery-Keys selbständig prüfbar.
 
 recovery_takeover_private_key_pkcs8 ist Base64URL des exakt exportierten
 Ed25519-PKCS#8-Schlüssels. Beim Restore wird daraus ein non-extractable Private
@@ -2038,15 +2042,17 @@ key_check_input =
   raw_recovery_takeover_public_key
 
 signature = Ed25519.sign(imported_private_key, key_check_input)
-Ed25519.verify(recovery_takeover_public_key_from_ProtectedManifestV6,
+Ed25519.verify(current_verified_recovery_takeover_public_key,
                signature, key_check_input) == true
 ~~~
 
-Zusätzlich müssen recovery_takeover_key_id und Public Key aus dem Artifact exakt
-den manifestgebundenen Werten entsprechen.
+Zusätzlich müssen recovery_generation, recovery_urs_commitment,
+recovery_takeover_key_id und Public Key aus dem Artifact exakt dem durch
+Manifest + RecoveryAuthorityTransitionV2 vollständig verifizierten aktuellen
+Recovery-State entsprechen.
 
 salt ist exakt 32 Byte, wrap_iv exakt 12 Byte. wrapped_payload muss nach
-Base64URL-Decoding mindestens 16 und höchstens 65536 Byte enthalten.
+Base64URL-Decoding mindestens 16 und höchstens 1048576 Byte enthalten.
 
 ~~~text
 recovery_plaintext = UTF8(JCS(encrypted_payload))
