@@ -2236,6 +2236,22 @@ Für **jede** v2→v2-Rotation ist die Reihenfolge verbindlich:
 
 Ein staged Backup ersetzt das obligatorische activated Cutover-Backup niemals.
 
+**Cross-Resource-Causality-Grenze:** Source und Successor sind getrennte Google-
+Ressourcen ohne gemeinsame atomare Transaktion/Uhr. successor_staging_anchor
+beweist deshalb exakt den autorisierten Migrations-Basisprefix; der
+Rotation-Service friert ihn ein und prüft ihn unmittelbar vor und nach dem
+Source-Seal. Ein bei diesem Ablauf beobachteter Suffix ist ein Cutover-Race und
+blockiert Aktivierung/Switch.
+
+Aus einer späteren Recovery-Sicht kann das Protokoll jedoch nicht
+kryptographisch beweisen, ob eine **ansonsten gültig writer-signierte**
+Successor-Suffixrow Millisekunden vor oder nach dem Source-Announcement
+geschrieben wurde. Solche Rows gehören nie zum Migration-Snapshot; sie müssen
+einzeln durch die normale Writer-Authority validieren. Schutz gegen einen
+Angreifer, der bereits aktuellen Writer-Private-Key **und** RK_epoch kontrolliert,
+erfordert für echte Cross-Resource-Causality einen zusätzlichen
+Koordinationsdienst/eine neue Protokollversion.
+
 Normale v2→v2-Rotation übernimmt recovery_generation,
 recovery_urs_commitment, recovery_takeover_key_id und
 recovery_takeover_public_key aus dem **final verifizierten aktuellen
@@ -3357,12 +3373,14 @@ zulässig:
    kryptographische Cross-Device-CAS-Garantie. Das UI muss diese Restgrenze vor
    profile_upgrade ausdrücklich anzeigen.
 
-Wird nach dem Announcement beim finalen v1-Readback festgestellt, dass zwischen
-dem eingefrorenen Anchor und dem Announcement eine fremde/zusätzliche physische
-Row liegt, gilt:
+Wird nach dem Announcement beim finalen v1-/Successor-Readback festgestellt,
+dass entweder zwischen dem eingefrorenen v1-Anchor und dem Announcement eine
+fremde/zusätzliche physische Source-Row liegt **oder** der Successor seinen
+eingefrorenen successor_staging_anchor nicht mehr exakt trägt, gilt:
 
 ~~~text
 profile_upgrade_source_race
+profile_upgrade_successor_cutover_race
 ~~~
 
 - Successor bleibt staged/read_only und darf niemals aktiviert werden;
