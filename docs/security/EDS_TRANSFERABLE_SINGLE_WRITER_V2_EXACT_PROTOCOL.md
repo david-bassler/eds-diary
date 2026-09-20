@@ -36,6 +36,10 @@ wird durch dieses Dokument erweitert oder umgedeutet.
 12. Ein Fachwrite ist ohne frische vollständige Remote-Verifikation read-only.
 13. HTTP-Erfolg verleiht niemals Writer-Authority; Authority entsteht nur nach Full Readback.
 14. Physische Row-Reihenfolge ist nur für den Authority-Automaten relevant, niemals als fachliches latest-wins.
+15. Alle JSON-Protokollinteger sind ECMAScript-Safe-Integer im Bereich
+    0..9007199254740991; Felder mit semantischem Start bei 1 müssen zusätzlich
+    >=1 sein. Fließkommazahlen sind für Generationen, Counts und Row-Indizes
+    unzulässig.
 
 ---
 
