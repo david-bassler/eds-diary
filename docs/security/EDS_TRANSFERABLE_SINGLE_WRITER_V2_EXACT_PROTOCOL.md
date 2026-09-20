@@ -1456,10 +1456,13 @@ Pro Row:
      Announcement source_epoch_sealed irreversibel auf true. Successor-Manifest,
      ActivationProof und EpochMigration werden separat bei der Cross-Epoch-
      Aktivierung geprüft. Ein ansonsten gültiges Announcement mit historisch
-     gewordenem Anchor => stale_rotation_announcement_rejected und **kein Seal**;
-     ein kryptographisch gültiges Announcement, das lediglich gegen den aktiven
-     Pending-Rekey-Fence verstößt => rekey_rotation_required_rejected und kein
-     Seal;
+     gewordenem Anchor => stale_rotation_announcement_rejected und **kein Seal**.
+     Ein ansonsten gültiges rotation_kind="normal" während aktivem Pending-Rekey
+     => rekey_rotation_required_rejected und kein Seal. Ein
+     rotation_kind="recovery_rekey" mit fehlender/falscher
+     recovery_transition_id oder ein recovery_rekey-Announcement ohne aktiven
+     Pending-Rekey-Fence => recovery_transition_state_mismatch /
+     security_blocked;
    - ein gültiges epoch-migration-sw-v2 darf pro nicht-nativer Epoche exakt
      einmal auftreten. Ein zweites akzeptierbares Migration-Control ist fatal.
      Beim ersten wird der Successor-Fachgraph am Prefix unmittelbar vor der Row
