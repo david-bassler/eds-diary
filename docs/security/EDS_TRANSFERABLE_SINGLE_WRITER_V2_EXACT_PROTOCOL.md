@@ -1330,6 +1330,8 @@ current_recovery_generation
 current_recovery_urs_commitment
 current_recovery_takeover_key_id
 current_recovery_takeover_public_key
+recovery_rekey_rotation_required
+current_recovery_rekey_transition_id
 source_epoch_sealed
 genesis_grant_confirmation_required
 accepted_revision_graph
@@ -1352,6 +1354,10 @@ Initialisierung:
   starten exakt aus dem Manifest und dürfen innerhalb derselben Epoche
   ausschließlich durch eine gültige RecoveryAuthorityTransitionV2 atomar
   fortgeschrieben werden.
+- recovery_rekey_rotation_required=false und
+  current_recovery_rekey_transition_id=null am Epoch-Start. Dieser Pending-
+  Rekey-State wird **nicht** aus einer Source-Epoche in den Successor vererbt;
+  eine erfolgreich aktivierte Successor-Epoche startet wieder ohne Pending-Rekey.
 - genesis_grant_confirmation_required ist genau dann true, wenn
   epoch_start_authority_mode="genesis_grant_required".
 - migration_control_required ist genau dann true, wenn predecessor_epochs genau
@@ -1403,17 +1409,28 @@ Pro Row:
    - ein gültiges recovery-authority-transition-sw-v2 der current authority
      wird zusätzlich nach §16b geprüft; nur bei exakt aktuellem Recovery-from-
      State und Anchor unmittelbar vor der Row wird der Recovery-State atomar auf
-     die to-Felder fortgeschrieben. Historisch überholte, sonst gültige
-     Transition => stale_recovery_transition_rejected;
+     die to-Felder fortgeschrieben. Gleichzeitig werden
+     recovery_rekey_rotation_required=true und
+     current_recovery_rekey_transition_id=transition_id gesetzt. Eine weitere
+     gültige RecoveryAuthorityTransitionV2 darf während dieses Pending-Rekey-
+     Zustands die Recovery-Generation erneut erhöhen und die gespeicherte
+     Transition-ID atomar durch ihre eigene transition_id ersetzen. Historisch
+     überholte, sonst gültige Transition => stale_recovery_transition_rejected;
    - ein rotation-announcement-sw-v2 der current authority wird zusätzlich nach
      den **source-lokal prüfbaren** Regeln aus §16a geprüft: Immediate-Prefix-
-     Anchor, from_epoch_id, non-self Successor, aktuelle Recovery-Generation
-     und gegebenenfalls die referenzierte bereits akzeptierte
-     RecoveryAuthorityTransitionV2. Nur dann setzt es source_epoch_sealed
-     irreversibel auf true. Successor-Manifest, ActivationProof und
-     EpochMigration werden separat bei der Cross-Epoch-Aktivierung geprüft.
-     Ein ansonsten gültiges Announcement mit historisch gewordenem Anchor =>
-     stale_rotation_announcement_rejected und **kein Seal**;
+     Anchor, from_epoch_id, non-self Successor und aktuelle Recovery-Generation.
+     Falls recovery_rekey_rotation_required=false, ist ausschließlich
+     rotation_kind="normal" mit recovery_transition_id=null zulässig.
+     Falls recovery_rekey_rotation_required=true, ist ausschließlich
+     rotation_kind="recovery_rekey" zulässig und recovery_transition_id muss
+     exakt current_recovery_rekey_transition_id sein. Nur dann setzt das
+     Announcement source_epoch_sealed irreversibel auf true. Successor-Manifest,
+     ActivationProof und EpochMigration werden separat bei der Cross-Epoch-
+     Aktivierung geprüft. Ein ansonsten gültiges Announcement mit historisch
+     gewordenem Anchor => stale_rotation_announcement_rejected und **kein Seal**;
+     ein kryptographisch gültiges Announcement, das lediglich gegen den aktiven
+     Pending-Rekey-Fence verstößt => rekey_rotation_required_rejected und kein
+     Seal;
    - ein gültiges epoch-migration-sw-v2 darf pro nicht-nativer Epoche exakt
      einmal auftreten. Ein zweites akzeptierbares Migration-Control ist fatal.
      Beim ersten wird der Successor-Fachgraph am Prefix unmittelbar vor der Row
@@ -1424,8 +1441,9 @@ Pro Row:
 6. Jede physische Row geht unabhängig von semantischer Annahme in Prefix-Hash
    und Bounds ein.
 7. Nach jeder Row werden Writer-/Seal-State in authority_history_by_prefix und
-   Recovery-State in recovery_history_by_prefix für den neuen Prefix
-   festgehalten.
+   Recovery-State **einschließlich Pending-Rekey-Flag und jüngster
+   Recovery-Rekey-Transition-ID** in recovery_history_by_prefix für den neuen
+   Prefix festgehalten.
 8. EOF mit genesis_grant_confirmation_required=true => security_blocked /
    manifest_genesis_missing.
 9. EOF mit migration_control_required=true und accepted_epoch_migration=null:
