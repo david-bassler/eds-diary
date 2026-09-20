@@ -1383,9 +1383,11 @@ Für sowohl normale Rotation als auch recovery_rekey gilt:
    physische Anchor wird source_anchor_before im Activation Proof; sein
    successor_recovery_generation muss §16a erfüllen.
 6. Finales RecoveryArtifactV6 des Successors erzeugen. Sein
-   RecoveryActivationProofV2 enthält source_root_key, den in Schritt 1
-   verifizierten Source-Anchor und exakt die in Schritt 5 reservierten
-   Announcement-Envelope-Bytes. Artifact remote publishen und bytegenau
+   RecoveryActivationProofV2 enthält den in Schritt 5 verifizierten Source-Anchor
+   und exakt den reservierten Announcement-Envelope-Kern. Bei normaler Rotation
+   liegen Source-/Successor-RK als direct-Material unter derselben bereits
+   autorisierten URS. Bei recovery_rekey liegen **beide** Root-Keys ausschließlich
+   activation_wrapped gemäß §19.1 vor. Artifact remote publishen und bytegenau
    readback-verifizieren.
 7. Source unmittelbar vor Append erneut vollständig verifizieren. Nur wenn
    dieselbe Writer-Authority weiterhin current, Source weiterhin unsealed und
@@ -1934,16 +1936,22 @@ Aktivierungsprüfung nach Eingabe der Recovery-URS:
 Unknown Outcome:
 - RecoveryArtifact darf vor dem Announcement bereits durable existieren.
 - Bei Crash/Timeout wird kein neues Announcement erzeugt.
-- Ist die Source noch unsealed und dieselbe Writer-Authority current, werden
-  exakt dieselben vorbereiteten Announcement-Envelope-Bytes erneut appended.
-- Ist Authority/Seal-Zustand verändert, bleibt das RecoveryArtifact dauerhaft
-  unactivated/orphaned; kein automatischer Ersatzsuccessor unter derselben
-  Artifact-Identität.
+- Ist die Source noch unsealed, dieselbe Writer-Authority current und der
+  fachliche Snapshot unverändert, wird exakt dieselbe vorbereitete physische
+  Announcement-Row erneut appended: derselbe Envelope-Kern und bei
+  recovery_rekey derselbe bereits lokal persistierte activation_token.
+- Ist Authority/Seal-/Snapshot-Zustand verändert, bleibt das RecoveryArtifact
+  dauerhaft unactivated/orphaned; kein automatischer Ersatzsuccessor unter
+  derselben Artifact-Identität.
 
-Die Mitnahme des direkten source_root_key bedeutet bewusst, dass die neue
-Recovery-Authority auch den direkten Vorgänger entschlüsseln kann. Die alte
-Recovery-Authority erhält umgekehrt keinen Successor-RK und kann die neue Epoche
-nach recovery_rekey nicht aus dem alten Artifact ableiten.
+Bei recovery_rekey besitzt die neue URS **vor** der kanonisch akzeptierten
+Announcement-Row weder Source-RK noch Successor-RK im Klartext oder direkt unter
+K_recovery. Erst der atomar in dieser Row veröffentlichte activation_token
+schaltet beide Root-Keys frei. Ein abgebrochener vorgeschlagener neuer
+Recovery-Key erhält dadurch keinen Zugriff auf Gesundheitsdaten der Source oder
+des vorbereiteten Successors. Die alte Recovery-Authority erhält umgekehrt
+keinen Successor-RK und kann die neue Epoche nach erfolgreichem recovery_rekey
+nicht aus dem alten Artifact ableiten.
 
 ---
 
