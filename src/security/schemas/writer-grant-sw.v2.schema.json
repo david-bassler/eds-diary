@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "writer-grant-sw/v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["grant_id", "writer_generation", "writer_device_id", "writer_key_id", "writer_public_key", "previous_grant_id", "previous_writer_generation", "recovery_generation", "reason", "authority_anchor", "authorization"],
+  "properties": {
+    "grant_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{43}$"},
+    "writer_generation": {"type": "integer", "minimum": 1},
+    "writer_device_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{22}$"},
+    "writer_key_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{43}$"},
+    "writer_public_key": {"type": "string", "pattern": "^[A-Za-z0-9_-]{43}$"},
+    "previous_grant_id": {
+      "anyOf": [
+        {"type": "null"},
+        {"type": "string", "pattern": "^[A-Za-z0-9_-]{43}$"}
+      ]
+    },
+    "previous_writer_generation": {"type": "integer", "minimum": 0},
+    "recovery_generation": {"type": "integer", "minimum": 0},
+    "reason": {"enum": ["initial", "handoff", "forced_takeover"]},
+    "authority_anchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["anchor_profile", "covered_row_count", "prefix_hash"],
+      "properties": {
+        "anchor_profile": {"const": "google-sheets-transferable-single-writer-v2"},
+        "covered_row_count": {"type": "integer", "minimum": 0},
+        "prefix_hash": {"type": "string", "pattern": "^[A-Za-z0-9_-]{43}$"}
+      }
+    },
+    "authorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "signer_key_id", "signature"],
+      "properties": {
+        "kind": {"enum": ["manifest_genesis", "writer_handoff", "recovery_takeover"]},
+        "signer_key_id": {
+          "anyOf": [
+            {"type": "null"},
+            {"type": "string", "pattern": "^[A-Za-z0-9_-]{43}$"}
+          ]
+        },
+        "signature": {
+          "anyOf": [
+            {"type": "null"},
+            {"type": "string", "pattern": "^[A-Za-z0-9_-]{86}$"}
+          ]
+        }
+      }
+    }
+  }
+}
