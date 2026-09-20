@@ -37,7 +37,10 @@
       "pattern": "^[A-Za-z0-9_-]{43}$"
     },
     "rotation_kind": {
-      "const": "normal"
+      "enum": [
+        "normal",
+        "recovery_rekey"
+      ]
     },
     "source_writer_generation": {
       "type": "integer",
@@ -64,5 +67,46 @@
         }
       ]
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "rotation_kind": {
+            "const": "normal"
+          }
+        },
+        "required": [
+          "rotation_kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "recovery_activation_commitment": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "rotation_kind": {
+            "const": "recovery_rekey"
+          }
+        },
+        "required": [
+          "rotation_kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "recovery_activation_commitment": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{43}$"
+          }
+        }
+      }
+    }
+  ]
 }
