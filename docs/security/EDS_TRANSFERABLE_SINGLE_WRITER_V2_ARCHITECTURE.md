@@ -676,48 +676,61 @@ Rotation-Announcement und andere autoritätsverändernde Control-Records müssen
 deshalb im v2-Verifier ebenfalls an die zum jeweiligen Row-Zeitpunkt gültige
 Writer-/Recovery-Authority gebunden sein.
 
-Recovery-Rekey ändert den Writer nicht automatisch, muss aber die
-Recovery-Takeover-Authority zusammen mit der Recovery-Generation rotieren. Das
-neue Verifikationsmaterial wird in das Successor-Manifest gebunden; Material
-einer älteren Recovery-Generation darf in der neuen Epoche keinen Forced
-Takeover autorisieren.
+Recovery-Rekey ändert den Writer nicht automatisch. Die neue
+Recovery-Authority wird zuerst auf der **noch aktiven, unsealed Source** durch
+einen writer-signierten `RecoveryAuthorityTransitionV2` aktiviert. Das neue
+RecoveryArtifactV6 wird bereits davor unter dem neuen URS publiziert und bindet
+die exakt vorbereiteten Transition-Envelope-Bytes. Nach Crash darf Recovery diese
+Bytes nur fertig appendieren, wenn die Source noch exakt am gebundenen Anchor
+steht; jede intervenierende Row macht den vorbereiteten Rekey stale.
 
-Damit Recovery nach einem Rekey ohne alten Recovery-Key möglich bleibt, bindet
-das neue RecoveryArtifactV6 zusätzlich:
+Nach durable Transition ist die alte Recovery-Generation auch innerhalb
+derselben Source für neue Forced Takeovers ungültig. Ein obligatorisches
+activated Source-Backup muss erfolgreich getestet sein, bevor eine
+recovery_rekey-Epoch-Rotation beginnt. Der Successor übernimmt anschließend die
+bereits aktuelle Recovery-Generation; die Rotation erhöht sie nicht noch einmal.
 
-- den direkten Predecessor-RK ausschließlich als verschlüsseltes
-  Aktivierungs-Verifikationsmaterial; und
-- einen `RecoveryActivationProofV2` aus historisch verifiziertem Source-Prefix,
-  exakt vorbereiteten Rotation-Announcement-Envelope-Bytes,
-  Successor-Identität und Signatur der damaligen Source-Writer-Authority.
+Aktivierung über mehrere Epochen wird durch `ActivationLineageV2` transitiv
+bewiesen. Das aktuelle RecoveryArtifact trägt unter dem aktuellen URS die
+begrenzte, geordnete Kette der historischen Source-RKs und der dazugehörigen
+v1→v2-/v2→v2-Aktivierungsbeweise. Jeder Link wird vom Root nach vorn gegen die
+jeweilige echte Source-Historie geprüft; ein gültiger direkter Link heilt keinen
+älteren ungültigen oder fehlenden Link.
 
-Recovery entschlüsselt mit dem **aktuellen** URS den direkten Source-RK, verifiziert
-damit die Source selbst vollständig und stellt die dort am gebundenen Prefix
-kanonische Writer-Authority fest. Erst gegen **diesen aus der Source verifizierten
-Public Key** wird der Activation-Proof geprüft. Eine bloße Authority-Behauptung
-des Successor-Manifests reicht nicht. Landet vor dem geplanten Announcement ein
-Takeover-/anderer Row-Claim oder stammt der Proof von einem stale Writer-Key,
-schlägt die Aktivierung fail-closed fehl.
+Ein unter RK_epoch verschlüsselter `ActivationLineageCacheV2` hält diese
+Lineage lokal für Rotation/Rekey verfügbar, auch wenn der alte URS verloren ist.
+Kompromittierung des aktuellen URS offenbart dadurch bewusst auch die in der
+Lineage enthaltenen historischen Root-Keys.
 
-Der Tradeoff ist explizit: Kompromittierung des aktuellen URS offenbart dadurch
-auch den direkten Vorgänger-RK. Das ist die gewählte Grenze, um Recovery-Rekey
-ohne alten URS dennoch unabhängig gegen die Source-Historie verifizieren zu
-können.
+**Bewusste Recovery-Rekey-Grenze:** Weil der alte Recovery-Key gerade verloren
+sein darf, reicht zur Recovery-Authority-Transition die aktuell kanonische
+Writer-Authority zusammen mit RK_epoch und Google-Mutationszugriff. Ein
+Angreifer, der alle drei gleichzeitig kontrolliert, kann die Recovery-Authority
+auf eigenes Material umstellen. Ein stärkeres Modell benötigt einen zusätzlichen
+unabhängigen Recovery-Zweitfaktor und eine neue Protokollversion.
 
+Jede Rotation besitzt einen persistenten Crash-Resume-State mit den exakten
+one-shot Announcement-/Grant-Bytes. Vor dem finalen lokalen Switch ist neben dem
+staged Backup zwingend ein **activated SyncBackupV6** zu erzeugen und per
+Test-Restore zu prüfen. Ein Backup kann Daten/Schlüssel offline wiederherstellen;
+remote-active Writer-Recovery benötigt weiterhin die historische
+Activation-Lineage-Source-Kette.
 ## 18. Migration v1 -> v2
 
 Migration wird auf dem aktuell vertrauenswürdigen v1-Gerät gestartet:
 
-1. v1 Source full-verifizieren;
-2. lokale Writes wie bei Rotation einfrieren;
-3. neue v2-Successor-Epoche planen;
-4. initialen Writer Grant Generation 1 auf dieses Gerät festlegen;
-5. fachliche Heads kopieren;
-6. v2 Migration-Control schreiben;
-7. Successor full-verifizieren;
-8. RecoveryArtifact und Backup unter v2 erzeugen und testen;
-9. v1 Rotation Announcement durable machen;
-10. atomar auf v2 umschalten und v1 retire.
+1. v1 Source full-verifizieren und Writes einfrieren;
+2. neue v2-Successor-Epoche + initialen Writer Grant Generation 1 planen;
+3. fachliche Heads + v2 Migration-Control schreiben und Successor full-verifizieren;
+4. ProfileUpgrade-ActivationLineage-Eintrag mit v1-Source-RK und exakt
+   vorbereitetem v1-Rotation-Announcement erzeugen;
+5. RecoveryArtifactV6 publizieren und staged Recovery testen;
+6. staged SyncBackupV6 read-only Test-Restore;
+7. v1 Rotation Announcement durable machen;
+8. ActivationLineage vollständig prüfen;
+9. **obligatorisch** activated SyncBackupV6 erzeugen und Test-Restore;
+10. ActivationLineageCacheV2 persistieren/readback-verifizieren;
+11. erst danach atomar auf v2 umschalten und v1 retire.
 
 Alte v1-Geräte sehen das Announcement und dürfen die alte Epoche nicht weiter
 als aktiv behandeln.
