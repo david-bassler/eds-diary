@@ -897,6 +897,25 @@ Mindestens:
 38. Rotation-Switch ohne activated Successor-Backup -> blockiert.
 39. activated Backup bei fehlender historischer Source -> nur offline/read-only,
     niemals erfundene Writer-Authority.
+40. vorbereitete v2-Rotation, danach beliebige stale physische Source-Row,
+    danach altes Announcement -> stale_rotation_announcement_rejected und Source
+    bleibt unsealed.
+41. Rotation-Announcement mit falschem from_epoch_id, self-successor oder
+    falscher recovery_transition_id -> fail-closed.
+42. Successor mit fehlendem/zusätzlichem Fach-Head trotz gültigem
+    ActivationProof -> Migration-Integrität schlägt fehl, keine Aktivierung.
+43. manipulierte source_semantic/source_lineage_snapshot_hash oder
+    Result-Head-Counts -> fail-closed.
+44. gültiger direkter ActivationProof, aber fehlende/zweite EpochMigrationV2 ->
+    keine Aktivierung.
+45. ActivationLineageCacheV2 cache_id/ref/hash mismatch -> fail-closed; kein
+    Rotation/Rekey-Start.
+46. profile_upgrade/normal/recovery_rekey durch alle erlaubten
+    RotationOperationStateV2-Stages; übersprungene oder unmögliche
+    Null/non-null-Kombination -> security_blocked.
+47. Recovery-Rekey-Rotation bindet exakt die durable
+    RecoveryAuthorityTransitionV2.transition_id in Announcement, Proof und
+    Migration-Control.
 
 ## 22. Nicht-Ziele
 
