@@ -709,9 +709,28 @@ Bytes nur fertig appendieren, wenn die Source noch exakt am gebundenen Anchor
 steht; jede intervenierende Row macht den vorbereiteten Rekey stale.
 
 Nach durable Transition ist die alte Recovery-Generation auch innerhalb
-derselben Source für neue Forced Takeovers ungültig. Das ist aber **noch nicht**
-der vollständige Recovery-Key-Wechsel: das alte immutable RecoveryArtifact kann
-den bisherigen Source-RK weiterhin unter dem alten URS offenlegen.
+derselben Source für neue Forced Takeovers ungültig. Gleichzeitig setzt der
+Remote-Verifier einen **remote ableitbaren Pending-Rekey-Fence**:
+
+~~~text
+recovery_rekey_rotation_required = true
+current_recovery_rekey_transition_id = durable transition_id
+~~~
+
+Dieser Zustand hängt nicht von IndexedDB oder dem ursprünglichen Gerät ab.
+Solange er aktiv ist, sind Fachwrites, kooperativer Handoff und normale Rotation
+semantisch blockiert. Zulässig bleiben nur Forced Takeover zur
+Writer-Wiedergewinnung, eine weitere RecoveryAuthorityTransitionV2 zum
+Superseden eines erneut kompromittierten Recovery-Keys und die verpflichtende
+`recovery_rekey`-Rotation gegen die **jüngste** Transition-ID.
+
+Damit kann auch ein Ersatzgerät nach vollständigem Geräteverlust den
+unvollständigen Rekey erkennen, per neuem Recovery-Key/Forced Takeover einen
+maintenance-only Writer erhalten und Phase B fortsetzen.
+
+Das ist aber **noch nicht** der vollständige Recovery-Key-Wechsel: das alte
+immutable RecoveryArtifact kann den bisherigen Source-RK weiterhin unter dem
+alten URS offenlegen.
 
 Deshalb ist anschließend zwingend:
 
@@ -723,8 +742,25 @@ Deshalb ist anschließend zwingend:
    vollständig durchlaufen;
 5. erst nach dem atomaren Switch gilt der Recovery-Key-Wechsel als abgeschlossen.
 
+Ein Ersatzgerät ohne ursprünglichen RecoveryRekeyOperationStateV2 darf nach
+vollständiger Remote-Verifikation des Pending-Rekey-Fence einen neuen lokalen
+Operation-State aus der durablen Transition und dem aktuellen RecoveryArtifact
+**adoptieren** und ab `transition_durable` fortsetzen. Ein lokaler State ist
+damit Resume-Hilfe, nicht die Sicherheitsquelle für die Rotationspflicht.
+
+Soll während eines Pending-Rekey ein weiterer Recovery-Key-Wechsel die aktuelle
+Transition superseden, gilt lokal eine zweiphasige State-Supersession: Vor der
+neuen Remote-Transition wird ein readback-verifizierter neuer Rekey-State
+persistiert und der einzige aktive `recovery_operation_state_ref` atomar auf
+ihn umgebunden; der alte durable State bleibt suspendiert. Scheitert der neue
+Versuch vor seiner durablen Transition, wird der alte Remote-Fence wieder
+gebunden/adoptiert. Erst nachdem canonical_full die **neuere Transition durable**
+als remote-current beweist, wird der alte State atomar terminal
+`superseded` und mit der neuen transition_id verknüpft. Ein superseded State
+darf nie wieder Resume-/Locking-Authority erhalten.
+
 Der Successor übernimmt die bereits aktuelle Recovery-Generation; die Rotation
-erhöht sie nicht noch einmal. Der alte Recovery-Key kann danach den neuen
+erhöht sie nicht noch einmal und startet wieder ohne Pending-Rekey-Fence. Der alte Recovery-Key kann danach den neuen
 aktiven Successor-RK nicht ableiten. Historische Vertraulichkeit kann ein Rekey
 nicht rückwirkend herstellen, wenn das alte Artifact bereits kopiert oder
 kompromittiert wurde.
@@ -759,6 +795,13 @@ Angreifer, der alle drei gleichzeitig kontrolliert, kann die Recovery-Authority
 auf eigenes Material umstellen. Ein stärkeres Modell benötigt einen zusätzlichen
 unabhängigen Recovery-Zweitfaktor und eine neue Protokollversion.
 
+RecoveryRekeyOperationStateV2 bleibt während Phase B nicht-terminal. Deshalb
+sperrt er normale Rotation, erlaubt in stage="successor_rotation_required" aber
+exakt die zu seiner current transition_id passende
+`recovery_rekey`-Rotation. Ein Ersatzgerät gewinnt bei Geräteverlust zuerst
+per Forced Takeover einen maintenance-only Writer und legt **danach** einen
+adoptierten Rekey-Operation-State an.
+
 Jede Rotation besitzt einen persistenten Crash-Resume-State mit den exakten
 one-shot Announcement-/Grant-Bytes. Die Stage-Reihenfolge ist geschlossen:
 Successor verifizieren -> Announcement one-shot vorbereiten ->
@@ -772,7 +815,25 @@ remote-active Writer-Recovery benötigt weiterhin die historische
 Activation-Lineage-Source-Kette.
 ## 18. Migration v1 -> v2
 
-Migration wird auf dem aktuell vertrauenswürdigen v1-Gerät gestartet:
+Migration wird auf dem aktuell vertrauenswürdigen v1-Gerät gestartet.
+
+**Einmalige v1-Grenze:** Das eingefrorene v1-Announcement besitzt keinen
+Source-Anchor und v1 kennt keine Cross-Device-Writer-Fence. Deshalb kann das
+Profilupgrade eine zusätzliche v1-Row zwischen letztem Source-Read und
+Announcement-Append nicht kryptographisch per CAS ausschließen. Google Sheets
+v4 garantiert Atomizität innerhalb eines Batch-Requests, aber keinen solchen
+Compare-and-Swap gegen einen zuvor gelesenen Prefix. Das Upgrade setzt daher
+explizit voraus, dass während des Cutovers kein anderer v1-Client schreibt.
+
+Vor dem Upgrade müssen alle anderen v1-Geräte/Browserinstanzen geschlossen und
+alle lokalen Pending/Unknown-Outcomes reconciliiert sein. Direkt vor dem
+Announcement wird die v1-Source erneut gelesen und muss exakt den eingefrorenen
+Anchor besitzen. Wird beim Readback danach dennoch eine zusätzliche Row zwischen
+Anchor und Announcement erkannt, bleibt der v2-Successor staged/read-only und
+der Vorgang geht in `profile_upgrade_source_race`; kein zweites Announcement
+und kein automatisches Wegwerfen der v1-Daten.
+
+Ablauf:
 
 1. v1 Source full-verifizieren, finalen Source-Anchor und
    Semantic-/Lineage-Snapshots berechnen und Writes einfrieren;
@@ -787,12 +848,16 @@ Migration wird auf dem aktuell vertrauenswürdigen v1-Gerät gestartet:
    ProfileUpgrade-ActivationLineage-Eintrag erzeugen;
 6. RecoveryArtifactV6 publizieren und staged Recovery testen;
 7. staged SyncBackupV6 read-only Test-Restore;
-8. exakt das vorbereitete v1 Rotation Announcement durable machen;
-9. ActivationLineage **einschließlich Migration-Integrität** vollständig prüfen;
-10. **obligatorisch** activated SyncBackupV6 erzeugen und Test-Restore;
-11. ActivationLineageCacheV2 mit eigenem Cache-ID/Hash
+8. v1-Source unmittelbar vor Append erneut vollständig lesen; ihr Anchor muss
+   exakt dem eingefrorenen ProfileUpgrade-Anchor entsprechen;
+9. exakt das vorbereitete v1 Rotation Announcement durable machen und Source
+   sofort erneut lesen. Zusätzliche Row zwischen Anchor und Announcement =>
+   `profile_upgrade_source_race`, Successor bleibt staged/read-only;
+10. ActivationLineage **einschließlich Migration-Integrität** vollständig prüfen;
+11. **obligatorisch** activated SyncBackupV6 erzeugen und Test-Restore;
+12. ActivationLineageCacheV2 mit eigenem Cache-ID/Hash
     persistieren/readback-verifizieren;
-12. erst danach atomar auf v2 umschalten und v1 retire.
+13. erst danach atomar auf v2 umschalten und v1 retire.
 
 Alte v1-Geräte sehen das Announcement und dürfen die alte Epoche nicht weiter
 als aktiv behandeln.
@@ -834,6 +899,22 @@ Explizite Warnung mit Recovery-Key-Ceremony. Kein unscheinbarer
 ### Stale Pending
 
 Eigener Problemzustand; nicht als normaler Sync-Konflikt darstellen.
+
+### Recovery-Rekey muss abgeschlossen werden
+
+Wenn canonical_full `recovery_rekey_rotation_required=true` liefert, zeigt die
+App keinen normalen Writer-Zustand, auch wenn das Gerät per Forced Takeover die
+aktuelle Writer-Authority besitzt:
+
+```text
+Recovery-Key-Wechsel ist noch nicht abgeschlossen.
+Neue Einträge und Schreibzugriff-Übertragung sind gesperrt.
+[Recovery-Key-Wechsel abschließen]
+```
+
+Nach Geräteverlust darf ein neues Gerät mit dem aktuellen Recovery-Key diesen
+Maintenance-Zustand aus der Remote-Historie rekonstruieren und Phase B
+fortsetzen.
 
 ## 20. Provider-/API-Auswirkungen
 
@@ -952,6 +1033,28 @@ Mindestens:
     **neuem RK_epoch** -> security_blocked.
 52. nach abgeschlossenem Rekey kann altes URS den neuen aktiven Successor-RK
     nicht aus altem RecoveryArtifact ableiten.
+53. durable RecoveryAuthorityTransitionV2 + weiterhin derselbe Writer-Key +
+    Fachwrite -> remote rekey_rotation_required_rejected; Fachgraph unverändert.
+54. Pending-Rekey-Fence + Handoff -> abgewiesen; Forced Takeover bleibt
+    zulässig und erzeugt nur maintenance-only Writer.
+55. Geräteverlust nach durable Transition -> neues Gerät mit neuem URS erkennt
+    recovery_rekey_rotation_required aus Remote-Historie, übernimmt per Forced
+    Takeover und adoptiert Phase B ohne alten lokalen Operation-State.
+56. zweite RecoveryAuthorityTransitionV2 während Pending-Rekey -> jüngste
+    transition_id supersedet die ältere; nur sie darf die Rekey-Rotation binden.
+    Lokaler recovery_operation_state_ref wird vor Remote-I/O auf den neuen
+    readback-verifizierten State umgebunden; der alte durable State bleibt
+    suspendiert. Erst nach durable neuer Transition wird er atomar terminal
+    `superseded`; stale neuer Versuch fällt auf die weiterhin remote-current
+    ältere Transition zurück.
+57. Pending-Rekey + normal-Rotation -> kein Seal; ausschließlich
+    recovery_rekey-Rotation mit aktueller transition_id zulässig.
+58. v1→v2: zusätzliche v1-Row zwischen finalem Pre-Append-Read und Announcement
+    -> profile_upgrade_source_race; Successor bleibt staged/read-only, kein
+    zweites Announcement/kein stiller Datenverlust.
+59. RecoveryArtifactV6 mit to-State vor durabler Transition -> nur mit gültigem
+    RecoveryAuthorityTransitionProofV2 staged/read-only; niemals current Forced
+    Takeover-Authority.
 
 ## 22. Nicht-Ziele
 

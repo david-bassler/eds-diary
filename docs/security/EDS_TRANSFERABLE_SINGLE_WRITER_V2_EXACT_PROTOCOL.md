@@ -1330,6 +1330,8 @@ current_recovery_generation
 current_recovery_urs_commitment
 current_recovery_takeover_key_id
 current_recovery_takeover_public_key
+recovery_rekey_rotation_required
+current_recovery_rekey_transition_id
 source_epoch_sealed
 genesis_grant_confirmation_required
 accepted_revision_graph
@@ -1339,6 +1341,24 @@ authority_history_by_prefix
 recovery_history_by_prefix
 
 ~~~
+
+Recovery-State-Historieneintrag exakt:
+
+~~~text
+{
+  recovery_generation,
+  recovery_urs_commitment,
+  recovery_takeover_key_id,
+  recovery_takeover_public_key,
+  recovery_rekey_rotation_required,
+  recovery_rekey_transition_id
+}
+~~~
+
+Dabei gilt immer:
+- recovery_rekey_rotation_required=false <=> recovery_rekey_transition_id=null;
+- recovery_rekey_rotation_required=true <=> recovery_rekey_transition_id ist
+  exakt eine akzeptierte RecoveryAuthorityTransitionV2.transition_id.
 
 Initialisierung:
 
@@ -1352,6 +1372,10 @@ Initialisierung:
   starten exakt aus dem Manifest und dürfen innerhalb derselben Epoche
   ausschließlich durch eine gültige RecoveryAuthorityTransitionV2 atomar
   fortgeschrieben werden.
+- recovery_rekey_rotation_required=false und
+  current_recovery_rekey_transition_id=null am Epoch-Start. Dieser Pending-
+  Rekey-State wird **nicht** aus einer Source-Epoche in den Successor vererbt;
+  eine erfolgreich aktivierte Successor-Epoche startet wieder ohne Pending-Rekey.
 - genesis_grant_confirmation_required ist genau dann true, wenn
   epoch_start_authority_mode="genesis_grant_required".
 - migration_control_required ist genau dann true, wenn predecessor_epochs genau
@@ -1379,7 +1403,13 @@ Pro Row:
      authority_anchor verifizierte Recovery-Takeover-Authority;
    - **nur** wenn authority_anchor exakt dem physischen Prefix unmittelbar vor
      dieser Grant-Row entspricht und predecessor/Recovery-State dort noch passen,
-     darf der gültige direkte Nachfolger Authority fortschreiben;
+     kann der Candidate current werden. Gilt an diesem unmittelbaren Prefix
+     recovery_rekey_rotation_required=true und reason!="forced_takeover", wird
+     der ansonsten vollständig gültige Grant stattdessen als
+     rekey_rotation_required_rejected behandelt und ändert keine Writer-
+     Authority. Forced Takeover bleibt zulässig, damit nach Geräteverlust wieder
+     ein Writer gewonnen werden kann, der die verpflichtende Rekey-Rotation
+     ausführt;
    - ist der Candidate relativ zu seinem historischen Anchor vollständig gültig,
      aber der Anchor inzwischen historisch, => stale_grant_rejected, auch wenn
      derselbe predecessor Writer noch current ist;
@@ -1391,7 +1421,12 @@ Pro Row:
      gegen ihre historische Authority korrekt signierte Row als
      stale_after_seal_rejected behandeln;
    - entspricht writer_context exakt der current authority, Signatur gegen
-     current_writer_public_key prüfen und die Row normal auswerten;
+     current_writer_public_key prüfen. Falls recovery_rekey_rotation_required=true
+     und record_schema weder "recovery-authority-transition-sw-v2" noch
+     "rotation-announcement-sw-v2" ist, wird die ansonsten vollständig gültige
+     Row als rekey_rotation_required_rejected behandelt und semantisch **nicht**
+     angewendet. Damit sind insbesondere Fachwrites und zusätzliche
+     EpochMigration-Controls während des Pending-Rekey-Fence remote blockiert;
    - referenziert writer_context eine bereits verifizierte **ältere** Authority,
      deren Device-/Grant-/Key-Tupel exakt in der Authority-Historie existiert,
      Signatur gegen deren historischen Public Key prüfen und bei Erfolg
@@ -1403,17 +1438,31 @@ Pro Row:
    - ein gültiges recovery-authority-transition-sw-v2 der current authority
      wird zusätzlich nach §16b geprüft; nur bei exakt aktuellem Recovery-from-
      State und Anchor unmittelbar vor der Row wird der Recovery-State atomar auf
-     die to-Felder fortgeschrieben. Historisch überholte, sonst gültige
-     Transition => stale_recovery_transition_rejected;
+     die to-Felder fortgeschrieben. Gleichzeitig werden
+     recovery_rekey_rotation_required=true und
+     current_recovery_rekey_transition_id=transition_id gesetzt. Eine weitere
+     gültige RecoveryAuthorityTransitionV2 darf während dieses Pending-Rekey-
+     Zustands die Recovery-Generation erneut erhöhen und die gespeicherte
+     Transition-ID atomar durch ihre eigene transition_id ersetzen. Historisch
+     überholte, sonst gültige Transition => stale_recovery_transition_rejected;
    - ein rotation-announcement-sw-v2 der current authority wird zusätzlich nach
      den **source-lokal prüfbaren** Regeln aus §16a geprüft: Immediate-Prefix-
-     Anchor, from_epoch_id, non-self Successor, aktuelle Recovery-Generation
-     und gegebenenfalls die referenzierte bereits akzeptierte
-     RecoveryAuthorityTransitionV2. Nur dann setzt es source_epoch_sealed
-     irreversibel auf true. Successor-Manifest, ActivationProof und
-     EpochMigration werden separat bei der Cross-Epoch-Aktivierung geprüft.
-     Ein ansonsten gültiges Announcement mit historisch gewordenem Anchor =>
-     stale_rotation_announcement_rejected und **kein Seal**;
+     Anchor, from_epoch_id, non-self Successor und aktuelle Recovery-Generation.
+     Falls recovery_rekey_rotation_required=false, ist ausschließlich
+     rotation_kind="normal" mit recovery_transition_id=null zulässig.
+     Falls recovery_rekey_rotation_required=true, ist ausschließlich
+     rotation_kind="recovery_rekey" zulässig und recovery_transition_id muss
+     exakt current_recovery_rekey_transition_id sein. Nur dann setzt das
+     Announcement source_epoch_sealed irreversibel auf true. Successor-Manifest,
+     ActivationProof und EpochMigration werden separat bei der Cross-Epoch-
+     Aktivierung geprüft. Ein ansonsten gültiges Announcement mit historisch
+     gewordenem Anchor => stale_rotation_announcement_rejected und **kein Seal**.
+     Ein ansonsten gültiges rotation_kind="normal" während aktivem Pending-Rekey
+     => rekey_rotation_required_rejected und kein Seal. Ein
+     rotation_kind="recovery_rekey" mit fehlender/falscher
+     recovery_transition_id oder ein recovery_rekey-Announcement ohne aktiven
+     Pending-Rekey-Fence => recovery_transition_state_mismatch /
+     security_blocked;
    - ein gültiges epoch-migration-sw-v2 darf pro nicht-nativer Epoche exakt
      einmal auftreten. Ein zweites akzeptierbares Migration-Control ist fatal.
      Beim ersten wird der Successor-Fachgraph am Prefix unmittelbar vor der Row
@@ -1424,8 +1473,9 @@ Pro Row:
 6. Jede physische Row geht unabhängig von semantischer Annahme in Prefix-Hash
    und Bounds ein.
 7. Nach jeder Row werden Writer-/Seal-State in authority_history_by_prefix und
-   Recovery-State in recovery_history_by_prefix für den neuen Prefix
-   festgehalten.
+   Recovery-State **einschließlich Pending-Rekey-Flag und jüngster
+   Recovery-Rekey-Transition-ID** in recovery_history_by_prefix für den neuen
+   Prefix festgehalten.
 8. EOF mit genesis_grant_confirmation_required=true => security_blocked /
    manifest_genesis_missing.
 9. EOF mit migration_control_required=true und accepted_epoch_migration=null:
@@ -1444,8 +1494,8 @@ authentisieren.
 
 ## 13. Schreibfreigabe / Freshness
 
-Ein Gerät darf RevisionV2 erst persistent erzeugen, wenn innerhalb desselben
-Write-Vorgangs:
+Ein Gerät darf eine **normale Fachrevision oder einen kooperativen Handoff**
+erst persistent erzeugen, wenn innerhalb desselben Write-Vorgangs:
 
 1. der konfigurierte RootWrap-Modus erfolgreich entsperrt ist. `best-effort`
    ist dabei zulässig, bleibt aber ausdrücklich nur Best-Effort-At-rest-Schutz;
@@ -1457,11 +1507,16 @@ Write-Vorgangs:
 4. Remote vollständig neu gelesen und gegen den persistierten RemoteAnchorV2
    verifiziert wurde;
 5. source_epoch_sealed=false ist;
-6. verifizierte current authority exakt zum lokalen Device-Key passt;
-7. lokaler Status writer_active ist;
-8. kein nicht-terminaler rotation_state_ref, migration_state_ref,
+6. recovery_rekey_rotation_required=false ist;
+7. verifizierte current authority exakt zum lokalen Device-Key passt;
+8. lokaler Status writer_active ist;
+9. kein nicht-terminaler rotation_state_ref, migration_state_ref,
    writer_operation_state_ref oder recovery_operation_state_ref die konkrete
    Mutation sperrt.
+
+Forced Takeover, RecoveryAuthorityTransitionV2 und die bei aktivem Pending-Rekey-
+Fence zwingende recovery_rekey-Rotation verwenden ihre jeweils strengeren
+Service-Gates aus §§16-17; sie werden durch Punkt 6 nicht verboten.
 
 Es gibt im strikten v2 **kein zeitbasiertes Offline-Lease und kein
 Freshness-Intervall**.
@@ -1483,9 +1538,11 @@ Bei Timeout/unklarem Ergebnis:
 2. Remote vollständig lesen;
 3. gleiche envelope_id + gleiche Bytes => dieses konkrete Envelope existiert;
 4. gleiche envelope_id + andere Bytes => fatal;
-5. **Fachrevision:** fehlt das Envelope, current Writer-Authority ist unverändert
-   und source_epoch_sealed=false => exakt dieselben Bytes dürfen erneut appended
-   werden;
+5. **Fachrevision:** fehlt das Envelope, current Writer-Authority ist unverändert,
+   source_epoch_sealed=false und recovery_rekey_rotation_required=false =>
+   exakt dieselben Bytes dürfen erneut appended werden. Wird zwischen Prepare
+   und Retry ein Recovery-Rekey-Fence remote aktiv, wird die Fachrevision
+   quarantiniert und nicht erneut appended;
 6. **WriterGrantV2:** fehlt das Envelope => Retry nur, wenn der vollständig
    verifizierte aktuelle RemoteAnchorV2 **exakt** dem im Grant gespeicherten
    authority_anchor entspricht, predecessor/recovery-State noch passen und
@@ -1510,7 +1567,8 @@ Ein HTTP-200 ohne finalen Full Readback ist niemals durable.
 Voraussetzungen:
 
 - A ist auf einer kanonisch aktivierten Epoche (`epoch_status="active"`) nach
-  frischem Full Verify current writer und source_epoch_sealed=false.
+  frischem Full Verify current writer, source_epoch_sealed=false und
+  recovery_rekey_rotation_required=false.
 - B ist vollständig verifiziert read_only derselben Diary/Epoch.
 - A hat keine nicht-durablen eigenen Pending-Envelopes.
 - A verifiziert TransferdescriptorV2 von B.
@@ -1550,7 +1608,12 @@ Ein read-only Gerät muss URS erneut erhalten. Danach:
 7. Grant-Signing-Input mit Recovery-Takeover-Key signieren.
 8. Append + Full Readback.
 9. writer_active nur bei kanonisch akzeptiertem eigenen Grant.
-10. Recovery signing capability aus normalem Sitzungszustand verwerfen.
+10. Falls canonical_full recovery_rekey_rotation_required=true liefert, ist
+    dieser writer_active **maintenance-only**: normale Fachwrites, Handoff und
+    normale Rotation bleiben remote/protokollseitig gesperrt. Zulässig sind nur
+    eine weitere RecoveryAuthorityTransitionV2 oder die verpflichtende
+    recovery_rekey-Rotation gegen current_recovery_rekey_transition_id.
+11. Recovery signing capability aus normalem Sitzungszustand verwerfen.
 
 ---
 
@@ -1604,14 +1667,18 @@ Zusätzlich gilt zwingend:
   muss dafür keine Successor-/Recovery-Ressource laden.
 
 rotation_kind="normal":
-- recovery_transition_id = null.
+- recovery_transition_id = null;
+- recovery_rekey_rotation_required muss am
+  source_anchor_before_announcement=false sein.
 
 rotation_kind="recovery_rekey":
-- recovery_transition_id benennt exakt eine zuvor durable akzeptierte
-  RecoveryAuthorityTransitionV2 derselben Source-Epoche;
-- diese Transition muss die am finalen Source-Prefix aktuelle Recovery-Generation
-  erzeugt haben und die jüngste akzeptierte RecoveryAuthorityTransitionV2 vor
-  dem Announcement sein;
+- recovery_rekey_rotation_required muss am
+  source_anchor_before_announcement=true sein;
+- recovery_transition_id muss exakt
+  current_recovery_rekey_transition_id an diesem Prefix sein;
+- die referenzierte Transition muss die am finalen Source-Prefix aktuelle
+  Recovery-Generation erzeugt haben und damit die jüngste akzeptierte
+  RecoveryAuthorityTransitionV2 vor dem Announcement sein;
 - der Beweis lautet damit nur „dieser Successor trägt genau diese durable
   Recovery-Rekey-Transition weiter“. Eine nicht remote beweisbare Behauptung
   über denselben UI-/Prozesslauf wird nicht Teil des Wire-Protokolls.
@@ -1831,7 +1898,19 @@ Normen:
   Writer-Authority.
 - Bei Annahme ersetzt der Verifier current_recovery_generation,
   current_recovery_urs_commitment, current_recovery_takeover_key_id und
-  current_recovery_takeover_public_key atomar.
+  current_recovery_takeover_public_key atomar und setzt zusätzlich
+  recovery_rekey_rotation_required=true sowie
+  current_recovery_rekey_transition_id=transition_id.
+- Ist recovery_rekey_rotation_required bereits true, darf eine weitere gültige
+  Transition den aktuellen Recovery-State erneut um genau eine Generation
+  fortschreiben. Sie supersedet dabei die bisherige Pending-Rekey-Transition:
+  current_recovery_rekey_transition_id wird atomar auf ihre transition_id
+  ersetzt. Das erlaubt, einen gerade neu kompromittierten Recovery-Key noch vor
+  der Successor-Rotation erneut zu ersetzen.
+- Solange recovery_rekey_rotation_required=true ist, darf die Source nicht in
+  normalen Fachbetrieb zurückkehren. Der Zustand ist vollständig aus der
+  Remote-Historie rekonstruierbar und darf nicht von lokalem
+  RecoveryRekeyOperationStateV2 abhängen.
 - Eine strukturell/kryptographisch gültige, aber bereits überholte Transition
   gegen einen historischen Recovery-State ist
   `stale_recovery_transition_rejected`; sie ändert keinen State.
@@ -1904,7 +1983,16 @@ den vorbereiteten Rekey dennoch überholen; dann gilt Schritt 6 fail-closed.
 
 ## 17. Rotation und Recovery-Rekey
 
-Normale Epoch-Rotation setzt im Successor
+Eine **normale** Epoch-Rotation ist nur zulässig, wenn canonical_full auf der
+Source recovery_rekey_rotation_required=false liefert.
+
+Ist recovery_rekey_rotation_required=true, darf ausschließlich eine
+rotation_kind="recovery_rekey"-Rotation gegen die aktuell verifizierte
+current_recovery_rekey_transition_id gestartet werden. Diese Pflicht stammt aus
+der Remote-Historie und gilt unabhängig davon, ob auf dem ausführenden Gerät ein
+älterer RecoveryRekeyOperationStateV2 existiert.
+
+Die zulässige Rotation setzt im Successor
 epoch_start_authority_mode="carried_from_predecessor" und übernimmt die aktuelle
 Writer-Authority in den Successor-Manifest-Trust-Root:
 
@@ -2007,6 +2095,13 @@ Phase B – verpflichtende recovery_rekey-Epoch-Rotation:
 
 9. unmittelbar danach RotationOperationStateV2 mit
    rotation_kind="recovery_rekey" und exakt derselben transition_id starten.
+   Geht das ursprüngliche Gerät nach der durablen Transition verloren, muss ein
+   anderes Gerät mit dem neuen URS zunächst die aktuelle Recovery-Authority und
+   recovery_rekey_rotation_required=true remote verifizieren, bei Bedarf per
+   Forced Takeover Writer werden und anschließend gemäß §18.3 einen
+   RecoveryRekeyOperationStateV2 mit
+   operation_origin="remote_pending_rekey_adoption" erzeugen. Die
+   verpflichtende Phase B bleibt dadurch vollständig fortsetzbar.
 10. Successor erhält einen **neuen 32-Byte RK_epoch**, übernimmt aber die in
     Phase A bereits aktuelle Recovery-Generation/URS-/Takeover-Authority.
 11. EpochMigrationV2, RotationAnnouncementV2 und RecoveryActivationProofV2
@@ -2017,7 +2112,10 @@ Phase B – verpflichtende recovery_rekey-Epoch-Rotation:
     durchlaufen.
 13. Erst nach `RotationOperationStateV2.stage="switched"`,
     aktiviertem Successor-Backup und persistiertem Successor-Lineage-Cache darf
-    RecoveryRekeyOperationStateV2 `completed` werden.
+    RecoveryRekeyOperationStateV2 `completed` werden. Der Successor startet
+    aus seinem Manifest-Baseline-Recovery-State wieder mit
+    recovery_rekey_rotation_required=false und
+    current_recovery_rekey_transition_id=null.
 
 Altes Recovery-Takeover-Material darf ab der durable Transition keinen Grant
 mehr autorisieren. Der alte URS kann während Phase A weiterhin das alte
@@ -2044,6 +2142,8 @@ Exakt diese Top-Level-Properties, keine weiteren:
   manifest_fingerprint,
   recovery_generation,
   recovery_urs_commitment,
+  recovery_rekey_rotation_required,
+  recovery_rekey_transition_id,
   remote_binding,
   remote_anchor,
   epoch_status,
@@ -2174,6 +2274,18 @@ recovery_generation, recovery_urs_commitment und recovery_takeover_key_id
 beschreiben nach gebundenem Full Verify den **aktuellen** Recovery-State nach
 allen akzeptierten RecoveryAuthorityTransitionV2-Controls; sie sind nicht
 notwendig identisch mit den immutable Manifest-Startwerten.
+
+recovery_rekey_rotation_required und recovery_rekey_transition_id bilden den
+ebenfalls vollständig remote verifizierten Pending-Rekey-State ab:
+
+~~~text
+false <=> recovery_rekey_transition_id = null
+true  <=> recovery_rekey_transition_id = current_recovery_rekey_transition_id
+~~~
+
+Diese Felder sind nur ein lokal authentifizierter Cache des Remote-Verifier-
+Ergebnisses. Vor jeder Mutation muss canonical_full den Remote-State erneut
+bestätigen; ein lokaler false-Wert kann den Remote-Fence niemals aufheben.
 
 Der Writer-Private-CryptoKey liegt in einem getrennten lokalen Key-Store und wird
 über writer_signing_key_id referenziert. State und Referenz werden über
@@ -2403,6 +2515,9 @@ current.
   format: "recovery-rekey-operation-v2",
   version: 2,
   operation_id,
+  operation_origin: "local_rekey" | "remote_pending_rekey_adoption",
+  supersedes_transition_id,
+  superseded_by_transition_id,
   epoch_id,
   stage:
     "new_material_staged" |
@@ -2413,7 +2528,8 @@ current.
     "source_backup_verified" |
     "successor_rotation_required" |
     "completed" |
-    "stale",
+    "stale" |
+    "superseded",
   authority_anchor_before_transition,
   transition_id,
   transition_envelope,
@@ -2435,10 +2551,99 @@ URS-verschlüsselt.
 transition_id, to_recovery_generation, to_recovery_urs_commitment und
 to_recovery_takeover_key_id müssen exakt den to-Feldern des persistent
 vorbereiteten RecoveryAuthorityTransitionV2-Envelope und des
-RecoveryAuthorityTransitionProofV2 entsprechen und sind ab
-`new_material_staged` immutable.
+RecoveryAuthorityTransitionProofV2 entsprechen und sind ab der ersten
+persistierten Operation-State-Version immutable.
 
-Geschlossene Stage-Reihenfolge:
+operation_origin="local_rekey" startet ausschließlich in
+`new_material_staged`.
+
+Für operation_origin="local_rekey" gilt:
+- canonical_full recovery_rekey_rotation_required=false =>
+  supersedes_transition_id=null;
+- canonical_full recovery_rekey_rotation_required=true =>
+  supersedes_transition_id muss exakt current_recovery_rekey_transition_id sein.
+  Das ist ein ausdrücklich neuer Rekey-Versuch, der den noch ausstehenden
+  Recovery-Key erneut ersetzt.
+- superseded_by_transition_id startet immer null.
+
+### Lokale Supersession eines bereits durablen Pending-Rekey
+
+Existiert lokal bereits ein durch recovery_operation_state_ref referenzierter,
+nicht-terminaler RecoveryRekeyOperationStateV2 für die remote-current
+Pending-Transition und soll ein weiterer Recovery-Key-Wechsel ihn superseden,
+gilt exakt:
+
+1. canonical_full muss recovery_rekey_rotation_required=true liefern und die
+   transition_id des alten referenzierten States muss exakt
+   current_recovery_rekey_transition_id sein.
+2. Es darf kein nicht-terminaler RotationOperationStateV2 existieren.
+3. Der neue operation_origin="local_rekey"-State wird mit
+   supersedes_transition_id=alte transition_id und
+   superseded_by_transition_id=null vollständig persistent geschrieben und
+   readback-verifiziert.
+4. In **einer** lokalen atomaren, MAC-authentifizierten Transaktion wird
+   recovery_operation_state_ref vom alten auf den neuen operation_id umgebunden.
+   Der alte State bleibt unverändert persistent, ist aber solange **suspendiert**
+   und nimmt nicht an Operation-Locking/Resume teil, solange der Ref auf den
+   neuen State zeigt.
+5. Erst danach dürfen die neuen RecoveryArtifact-/Transition-Remote-Schritte
+   beginnen.
+6. Wird der neue Versuch vor durabler neuer Transition stale/abgebrochen, wird
+   sein State terminal `stale`. Danach muss canonical_full erneut ausgeführt
+   werden. Zeigt Remote weiterhin die alte transition_id, wird
+   recovery_operation_state_ref atomar wieder auf den alten suspendierten State
+   gebunden, sofern dessen Hash/Stage unverändert gültig ist; andernfalls wird
+   ein `remote_pending_rekey_adoption`-State für die alte Transition erzeugt.
+7. Wird die neue Transition durable, muss canonical_full beweisen:
+   current_recovery_rekey_transition_id == neue transition_id und
+   supersedes_transition_id == alte transition_id. Danach werden **in einer
+   lokalen atomaren Transaktion**:
+   - der alte State auf stage=`superseded` gesetzt;
+   - dessen superseded_by_transition_id=neue transition_id gesetzt;
+   - der neue State auf/bei stage=`transition_durable` belassen;
+   - recovery_operation_state_ref auf dem neuen operation_id bestätigt.
+8. `superseded` ist terminal und darf niemals wieder resumed oder als
+   Rotationspflicht interpretiert werden. Die remote-current Transition des
+   Verifiers bleibt allein maßgeblich.
+
+Damit existiert zu jedem Zeitpunkt höchstens **ein referenzierter aktiver**
+RecoveryRekeyOperationStateV2, während eine vor-durable Supersession bei Crash
+auf die weiterhin kanonische ältere Remote-Transition zurückfallen kann.
+
+Zusätzliche Stage-Invarianten:
+
+- stage!="superseded" => superseded_by_transition_id=null.
+- stage="superseded" => superseded_by_transition_id ist non-null, ungleich der
+  eigenen transition_id und canonical_full muss beweisen, dass genau diese ID
+  remote current ist oder bereits durch eine noch neuere Transition in derselben
+  nachweisbaren Supersession-Kette ersetzt wurde.
+- Aus `transition_durable`, `source_backup_verified` oder
+  `successor_rotation_required` ist der Übergang nach `superseded`
+  ausschließlich durch Schritt 7 der atomaren Supersession zulässig.
+- `completed`, `stale` und `superseded` sind terminal.
+
+operation_origin="remote_pending_rekey_adoption" hat
+supersedes_transition_id=null und darf ausschließlich neu
+erzeugt werden, wenn:
+
+1. canonical_full auf der Source
+   recovery_rekey_rotation_required=true und eine nicht-null
+   current_recovery_rekey_transition_id liefert;
+2. das unter dem **aktuellen** URS entschlüsselte RecoveryArtifactV6 exakt zu
+   aktuellem Recovery-State und derselben transition_id passt;
+3. RecoveryAuthorityTransitionProofV2 und die Transition-Row bereits durable
+   verifiziert sind;
+4. das Gerät nach §16 entweder bereits current Writer ist oder unmittelbar
+   vorher einen gültigen Forced Takeover abgeschlossen hat.
+
+Dieser Adoption-State wird lokal mit einem **neuen** operation_id direkt in
+stage=`transition_durable` angelegt. authority_anchor_before_transition,
+transition_envelope, recovery_artifact_id/-locator, transition_proof_sha256 und
+alle to-Felder werden aus dem verifizierten Artifact/Remotezustand übernommen.
+Damit hängt Phase B nach Geräteverlust nicht vom verlorenen ursprünglichen
+Operation-State ab.
+
+Geschlossene Stage-Reihenfolge für operation_origin="local_rekey":
 
 ~~~text
 new_material_staged -> recovery_artifact_published
@@ -2450,10 +2655,26 @@ source_backup_verified -> successor_rotation_required
 successor_rotation_required -> completed
 ~~~
 
-`stale` darf nur **vor** durable RecoveryAuthorityTransitionV2 erreicht werden,
-wenn der Transition-Anchor überholt wurde. Nach `transition_durable` ist die
-neue Recovery-Authority bereits kanonisch; der Rekey darf dann nicht abgebrochen
-oder auf die alte Generation zurückgesetzt werden.
+Für operation_origin="remote_pending_rekey_adoption" gilt
+supersedes_transition_id=null und superseded_by_transition_id=null.
+`transition_durable` ist der einzige zulässige Initialzustand; danach gilt exakt
+derselbe Suffix:
+
+~~~text
+transition_durable -> source_backup_verified
+source_backup_verified -> successor_rotation_required
+successor_rotation_required -> completed
+~~~
+
+`stale` darf nur **vor** der zu diesem Operation-State gehörenden durablen
+RecoveryAuthorityTransitionV2 erreicht werden, wenn der Transition-Anchor
+überholt wurde oder ein expliziter lokaler Abbruch nach canonical_full beweist,
+dass die vorbereitete Transition-Envelope nicht remote vorhanden ist und der
+Remote-Recovery-State noch nicht auf diese transition_id fortgeschritten ist. Nach `transition_durable` ist die neue Recovery-Authority
+bereits kanonisch; der Rekey darf dann nicht abgebrochen oder auf die alte
+Generation zurückgesetzt werden. Ein post-durable State darf ausschließlich
+durch eine **neuere durable RecoveryAuthorityTransitionV2** gemäß der obigen
+atomaren Supersession auf `superseded` wechseln.
 
 Crash-Regeln:
 
@@ -2590,8 +2811,21 @@ semantisch inkonsistente Feldkombination ist security_blocked; kein
 
 ### Operation-Locking
 
-- Während nicht-terminalem RecoveryRekeyOperationStateV2 sind Fachwrites,
-  Handoff, Forced Takeover und Rotation lokal gesperrt.
+- Während nicht-terminalem RecoveryRekeyOperationStateV2 sind Fachwrites und
+  Handoff lokal gesperrt.
+- Forced Takeover ist auf demselben Gerät gesperrt, solange ein lokaler
+  RecoveryRekeyOperationStateV2 existiert; bei Geräteverlust wird ein
+  maintenance-only Writer **vor** Anlage des
+  operation_origin="remote_pending_rekey_adoption"-States per Forced Takeover
+  gewonnen.
+- Rotation ist während RecoveryRekeyOperationStateV2 grundsätzlich gesperrt.
+  Einzige Ausnahme: stage="successor_rotation_required" erlaubt exakt eine
+  RotationOperationStateV2 mit rotation_kind="recovery_rekey",
+  source_epoch_id=RecoveryRekeyOperationStateV2.epoch_id und
+  source_recovery_transition_id=RecoveryRekeyOperationStateV2.transition_id.
+  Normale/profile_upgrade-Rotation bleibt gesperrt. Wird ein solcher
+  RotationOperationStateV2 stale, darf nach erneutem canonical_full ein neuer
+  matching Rekey-Rotationsversuch gestartet werden.
 - Während nicht-terminalem RotationOperationStateV2 sind normale Source-Writes
   ab dem dokumentierten Freeze gesperrt.
 - Handoff und Forced Takeover dürfen nicht parallel zu einem anderen
@@ -2640,8 +2874,16 @@ created_at
 ~~~
 
 recovery_urs_commitment muss exakt aus dem eingegebenen URS, diary_id und
-recovery_generation gemäß §10 reproduzierbar sein und dem **aktuell
-verifizierten Recovery-State** der Epoche entsprechen.
+recovery_generation gemäß §10 reproduzierbar sein.
+
+Im Normalfall müssen recovery_generation, recovery_urs_commitment,
+recovery_takeover_key_id und recovery_takeover_public_key exakt dem **aktuell
+verifizierten Recovery-State** der Epoche entsprechen. Einzige Ausnahme ist der
+explizite §16c-Staging-Fall **vor** durabler RecoveryAuthorityTransitionV2:
+Dann darf ein Artifact mit gültigem recovery_authority_transition_proof bereits
+den exakt gebundenen to-State repräsentieren, während Remote noch am
+Proof-from-State/Anchor steht. Dieses Artifact ist ausschließlich staged/read-
+only und darf nur die exakt vorbereitete Transition fertigstellen.
 
 activation_lineage ist exakt ActivationLineageV2 (§10c). Sie enthält sämtliche
 für transitive Aktivierungsprüfung erforderlichen historischen Source-RKs nur
@@ -2873,6 +3115,65 @@ Restore darf stale_writer_pending_rows nur als Quarantäne wiederherstellen.
 
 ## 21. v1 -> v2 Migration
 
+### 21.1 Unvermeidbare v1-TOCTOU-Sicherheitsgrenze
+
+Das eingefrorene `rotation-announcement-sw-v1` besitzt **keinen**
+Source-Anchor und v1 besitzt keine geräteübergreifend kryptographisch gefencete
+Writer-Authority. Google Sheets API v4 bietet für den hier verwendeten
+`spreadsheets.batchUpdate`-/Append-Pfad keinen protokollseitig gebundenen
+Compare-and-Swap gegen den zuvor gelesenen _r-Prefix.
+
+Daher kann v2 beim einmaligen profile_upgrade folgende Race nicht
+kryptographisch ausschließen:
+
+~~~text
+v1 Source bei Hn eingefroren/verifiziert
+-> anderer v1-Client appendet Row n+1
+-> vorbereitetes v1 Rotation Announcement landet als Row n+2
+~~~
+
+Der v1-Verifier kann das Announcement dann als Retirement sehen, während der
+ProfileUpgradeActivationEntryV2 es wegen fehlender unmittelbarer
+Anchor-Nachbarschaft korrekt **nicht** als Aktivierung des Successors akzeptiert.
+Das ist fail-closed, kann aber die Migration in einen Availability-/Support-
+Zustand bringen.
+
+Deshalb ist profile_upgrade nur unter folgender expliziter Sicherheitsprämisse
+zulässig:
+
+1. aktuelles Gerät ist der einzige tatsächlich schreibende v1-Client für dieses
+   Tagebuch;
+2. alle anderen Geräte, Browserprofile/PWA-Instanzen mit dieser v1-Epoche sind
+   geschlossen bzw. dürfen bis Abschluss des Upgrades nicht schreiben;
+3. alle eigenen v1-Pending-/Unknown-Outcome-Envelopes sind vor Freeze vollständig
+   reconciliiert;
+4. unmittelbar vor dem Announcement-Append wird die v1-Source erneut vollständig
+   gelesen und ihr RemoteAnchor muss **exakt** dem eingefrorenen
+   source_anchor_before_announcement entsprechen;
+5. zwischen diesem finalen Read und dem Append existiert dennoch keine
+   kryptographische Cross-Device-CAS-Garantie. Das UI muss diese Restgrenze vor
+   profile_upgrade ausdrücklich anzeigen.
+
+Wird nach dem Announcement beim finalen v1-Readback festgestellt, dass zwischen
+dem eingefrorenen Anchor und dem Announcement eine fremde/zusätzliche physische
+Row liegt, gilt:
+
+~~~text
+profile_upgrade_source_race
+~~~
+
+- Successor bleibt staged/read_only und darf niemals aktiviert werden;
+- kein zweites v1-Rotation-Announcement und kein automatisches „Reparieren“ der
+  Migration;
+- kein stilles Verwerfen der zusätzlichen v1-Row;
+- lokaler Zustand geht in einen expliziten Support-/Recovery-Status; Daten aus
+  v1 und staged Successor bleiben exportierbar;
+- produktiver Mehrgeräte-Cutover ist blockiert.
+
+Eine vollständig kryptographische Beseitigung dieser einmaligen Grenze würde
+das eingefrorene v1-Wireformat oder einen zusätzlichen Koordinationsdienst
+ändern und ist daher nicht Teil dieses v2-Profils.
+
 Migration ist Epoch-Rotation, keine In-place-Mutation.
 
 Reihenfolge:
@@ -2912,13 +3213,20 @@ Reihenfolge:
 15. staged SyncBackupV6 erzeugen und Test-Restore als local_offline/read_only
     durchführen.
 16. RecoveryTakeoverStagingV2 darf jetzt gelöscht werden.
-17. exakt vorbereitetes v1 Rotation Announcement durable machen.
-18. vollständige activation_lineage-Prüfung bestätigt jetzt den Successor als
+17. v1-Source **erneut vollständig lesen**; ihr aktueller RemoteAnchor muss exakt
+    dem in ProfileUpgradeActivationEntryV2 gebundenen
+    source_anchor_before_announcement entsprechen. Andernfalls Upgrade vor
+    Announcement abbrechen und v1 weiter als Source behandeln.
+18. exakt vorbereitetes v1 Rotation Announcement durable machen und v1-Source
+    unmittelbar danach erneut vollständig lesen. Liegt das Announcement nicht
+    unmittelbar nach dem gebundenen Source-Prefix, =>
+    profile_upgrade_source_race gemäß §21.1; Successor bleibt staged.
+19. vollständige activation_lineage-Prüfung bestätigt jetzt den Successor als
     aktiviert.
-19. **obligatorisch** ein neues activation_state="activated" SyncBackupV6 des
+20. **obligatorisch** ein neues activation_state="activated" SyncBackupV6 des
     Successors erzeugen und Test-Restore-verifizieren.
-20. ActivationLineageCacheV2 persistieren/readback-verifizieren.
-21. erst danach atomar auf v2 umschalten; v1 retire.
+21. ActivationLineageCacheV2 persistieren/readback-verifizieren.
+22. erst danach atomar auf v2 umschalten; v1 retire.
 
 Kein v1-Client darf eine v2-Epoche als v1 interpretieren.
 
@@ -2933,6 +3241,7 @@ stale_writer_rejected
 stale_grant_rejected
 stale_recovery_transition_rejected
 stale_rotation_announcement_rejected
+rekey_rotation_required_rejected
 stale_after_seal_rejected
 ~~~
 
@@ -2950,6 +3259,7 @@ migration_control_missing
 migration_snapshot_mismatch
 migration_head_count_mismatch
 migration_transition_mismatch
+profile_upgrade_source_race
 recovery_generation_mismatch
 recovery_key_mismatch
 recovery_transition_state_mismatch
@@ -3007,7 +3317,22 @@ für mindestens:
 24. Verifier-purpose canonical_full vs operation-gebundenes rotation_resume:
     fehlende Migration-Control nur in successor_bound|copying als
     staged_incomplete; niemals aktive Authority.
-25. SyncBackupV6 staged/activated Manifest/hash binding einschließlich
+25. Remote Pending-Rekey-Fence: Transition setzt
+    recovery_rekey_rotation_required/current_recovery_rekey_transition_id;
+    zweite Transition supersedet die ID; Forced Takeover bleibt möglich;
+    Fachwrite/Handoff/Normalrotation werden abgewiesen; passendes
+    recovery_rekey-Announcement versiegelt.
+26. RecoveryRekeyOperationStateV2 remote_pending_rekey_adoption nach
+    Geräteverlust: canonical_full + aktuelles RecoveryArtifact + Forced Takeover
+    -> Einstieg bei transition_durable -> verpflichtende Successor-Rotation.
+27. RecoveryRekeyOperationStateV2 atomare Supersession:
+    alter durable State suspendiert, neuer State referenziert; neuer Versuch
+    pre-durable stale -> alter State wieder gebunden; neue Transition durable ->
+    alter State terminal superseded + superseded_by_transition_id.
+28. v1→v2 Profile-Upgrade-Race: finaler Pre-Append-Anchor gleich vs.
+    zusätzliche Row zwischen finalem Read und v1-Announcement =>
+    profile_upgrade_source_race.
+29. SyncBackupV6 staged/activated Manifest/hash binding einschließlich
     activation_lineage und Recovery-Transition-Proof.
 
 Negative Vectors:
@@ -3029,6 +3354,16 @@ Negative Vectors:
   Source steht exakt am Anchor => Recovery appendet exakt vorbereitete Transition;
 - Recovery-Rekey: fremde Row vor vorbereiteter Transition => neuer Recovery-State
   bleibt staged/read-only;
+- durable RecoveryAuthorityTransitionV2, danach Fachrevision des weiterhin
+  aktuellen Writer-Keys => rekey_rotation_required_rejected, Fachgraph unverändert;
+- durable RecoveryAuthorityTransitionV2, danach Handoff-Grant gegen immediate
+  Prefix => rekey_rotation_required_rejected, Writer bleibt unverändert;
+- durable RecoveryAuthorityTransitionV2, danach normal-Rotation =>
+  rekey_rotation_required_rejected und kein Seal;
+- Geräteverlust nach durable Transition, neuer URS + Forced Takeover =>
+  Pending-Rekey-Fence bleibt remote true und normale Writes bleiben blockiert;
+- zweite gültige RecoveryAuthorityTransitionV2 vor Phase B => ältere
+  transition_id darf keine recovery_rekey-Rotation mehr autorisieren;
 - Recovery mit gültigem direkten ActivationProof, aber ungültigem älteren
   ActivationLineage-Eintrag => fatal/nicht aktiv;
 - Recovery-Rekey-Successor mit gültigem Announcement, aber nicht durable
@@ -3063,7 +3398,11 @@ Negative Vectors:
 - inkompatible bekannte Recovery-/Local-Anchor;
 - Crash nach Manifest-Erzeugung, aber vor finalem RecoveryArtifactV6: Resume nur
   über gültiges RecoveryTakeoverStagingV2 + URS;
-- manipuliertes oder manifestfremdes RecoveryTakeoverStagingV2.
+- manipuliertes oder manifestfremdes RecoveryTakeoverStagingV2;
+- v1 profile_upgrade: zusätzliche v1-Row zwischen finalem Pre-Append-Read und
+  Announcement => profile_upgrade_source_race, Successor bleibt staged;
+- RecoveryArtifactV6 mit to-State vor durabler Transition ohne gültigen
+  RecoveryAuthorityTransitionProofV2 => nicht current/kein Forced Takeover.
 
 ---
 
