@@ -1817,6 +1817,63 @@ result_semantic_snapshot_hash wird mit exakt derselben semantic_entry-Projektion
 active_head_count/tombstone_head_count zählen genau diese Heads nach
 record_status.
 
+### 16a.0 Exakte Cross-Epoch-Provenienz der Fach-Heads
+
+Eine v2-Migration kopiert **ausschließlich die am gebundenen Source-Prefix
+aktuellen nicht-Control-Heads**. Die interne Parent-Historie wird dabei bewusst
+nicht in die neue Epoche kopiert: Jeder kopierte Head wird eine neue
+Successor-Genesis-Revision.
+
+Für jeden Source-Head `S` muss am Successor-Prefix unmittelbar vor der
+Migration-Control-Row exakt ein Head `T` existieren, für den gilt:
+
+~~~text
+T.record_type   == S.record_type
+T.record_schema == S.record_schema
+T.record_id     == S.record_id
+T.record_status == S.record_status
+T.record_data   == S.record_data
+
+T.revision_id != S.revision_id
+T.parent_revision_ids == []
+
+T.migration_origin == {
+  sources: [
+    {
+      source_epoch_id: <exakt Source-epoch_id>,
+      source_record_id: S.record_id,
+      source_revision_ids: [S.revision_id]
+    }
+  ]
+}
+~~~
+
+Die Gleichheit von `record_data` ist JCS-semantische Gleichheit nach bereits
+erfolgreicher Schema-/I-JSON-Prüfung. `source_revision_ids` enthält für diesen
+unveränderten Single-Source-Copy **exakt eine** ID; mehrere Source-Heads
+desselben `record_id` werden als mehrere unabhängige Successor-Heads erhalten.
+
+Es gilt eine strikte Bijection:
+
+- jeder Source-Head besitzt genau einen solchen Successor-Head;
+- jeder Successor-Fach-Head vor der Migration-Control besitzt genau einen
+  Source-Head als Gegenstück;
+- zwei Successor-Heads dürfen nicht denselben Source-Head beanspruchen;
+- kein Successor-Head darf eine andere Source-Epoche, Record-ID oder
+  Source-Revision referenzieren;
+- ein `migration_origin=null`, eine leere/mehrdeutige Source-Liste oder
+  zusätzliche Source-Revisionen sind für diese Migration ungültig.
+
+Die neue Successor-`revision_id` wird unabhängig als 32 CSPRNG-Bytes erzeugt.
+`protocol_created_at` darf neu sein und ist weiterhin rein informativ.
+Writer-Context/-Signatur müssen die für die jeweilige Successor-Row aktuelle
+Writer-Authority verwenden.
+
+Diese Provenienzprüfung ist bewusst **zusätzlich** zu Semantic-Snapshot und
+Head-Counts. Der Source-Lineage-Snapshot beweist die tatsächlich kopierbaren
+Source-Heads; die Bijection beweist, dass genau diese Heads mit korrekter
+Cross-Epoch-Abstammung im Successor materialisiert wurden.
+
 ### 16a.1 Verbindliche Migration-Integritätsprüfung
 
 Jede nicht-native v2-Epoche enthält **exakt eine** akzeptierte
@@ -1845,18 +1902,22 @@ gegen die realen Graphen:
 6. Aus diesem Successor-Prefix werden result_semantic_snapshot_hash,
    active_head_count und tombstone_head_count neu berechnet und exakt gegen
    record_data geprüft.
-7. Für den unveränderten Ein-Source-Copy gilt zusätzlich zwingend:
+7. Source- und Successor-Fach-Heads müssen zusätzlich die vollständige
+   Cross-Epoch-Provenienz-Bijection aus §16a.0 erfüllen. Fehlende, zusätzliche,
+   doppelt beanspruchte oder falsch referenzierte `migration_origin`-Quellen
+   sind `migration_provenance_mismatch` / security_blocked.
+8. Für den unveränderten Ein-Source-Copy gilt zusätzlich zwingend:
    result_semantic_snapshot_hash == source_semantic_snapshot_hash.
-8. Bei migration_kind="recovery_rekey" müssen
+9. Bei migration_kind="recovery_rekey" müssen
    source_recovery_transition_id, Announcement recovery_transition_id und die
    zuletzt akzeptierte RecoveryAuthorityTransitionV2, welche die aktuelle
    Source-Recovery-Generation erzeugt hat, exakt dieselbe transition_id tragen.
-9. Erst wenn diese Migration-Integritätsprüfung **und** der jeweilige
+10. Erst wenn diese Migration-Integritätsprüfung **und** der jeweilige
    Aktivierungsbeweis erfolgreich sind, ist der Source→Successor-Link gültig.
 
 Damit kann ein kryptographisch korrekt aktivierter Successor mit fehlenden,
-zusätzlichen oder semantisch veränderten Fach-Heads nicht als gültige Migration
-akzeptiert werden.
+zusätzlichen, semantisch veränderten **oder provenance-seitig falsch
+zugeordneten** Fach-Heads nicht als gültige Migration akzeptiert werden.
 
 ## 16b. RecoveryAuthorityTransitionV2
 
