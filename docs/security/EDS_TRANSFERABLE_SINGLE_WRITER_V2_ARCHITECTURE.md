@@ -751,18 +751,25 @@ Activation-Lineage-Source-Kette.
 
 Migration wird auf dem aktuell vertrauenswürdigen v1-Gerät gestartet:
 
-1. v1 Source full-verifizieren und Writes einfrieren;
+1. v1 Source full-verifizieren, finalen Source-Anchor und
+   Semantic-/Lineage-Snapshots berechnen und Writes einfrieren;
 2. neue v2-Successor-Epoche + initialen Writer Grant Generation 1 planen;
-3. fachliche Heads + v2 Migration-Control schreiben und Successor full-verifizieren;
-4. ProfileUpgrade-ActivationLineage-Eintrag mit v1-Source-RK und exakt
-   vorbereitetem v1-Rotation-Announcement erzeugen;
-5. RecoveryArtifactV6 publizieren und staged Recovery testen;
-6. staged SyncBackupV6 read-only Test-Restore;
-7. v1 Rotation Announcement durable machen;
-8. ActivationLineage vollständig prüfen;
-9. **obligatorisch** activated SyncBackupV6 erzeugen und Test-Restore;
-10. ActivationLineageCacheV2 persistieren/readback-verifizieren;
-11. erst danach atomar auf v2 umschalten und v1 retire.
+3. Fach-Heads kopieren und exakt eine v2 Migration-Control schreiben. Deren
+   Source-Snapshot-Hashes müssen gegen den v1-Prefix und deren Result-Hash/Counts
+   gegen den Successor-Graph unmittelbar vor der Control-Row nachgerechnet
+   werden;
+4. Successor full-verifizieren und die Migration-Integritätsprüfung vollständig
+   bestehen;
+5. v1 Rotation Announcement exakt one-shot vorbereiten und daraus den
+   ProfileUpgrade-ActivationLineage-Eintrag erzeugen;
+6. RecoveryArtifactV6 publizieren und staged Recovery testen;
+7. staged SyncBackupV6 read-only Test-Restore;
+8. exakt das vorbereitete v1 Rotation Announcement durable machen;
+9. ActivationLineage **einschließlich Migration-Integrität** vollständig prüfen;
+10. **obligatorisch** activated SyncBackupV6 erzeugen und Test-Restore;
+11. ActivationLineageCacheV2 mit eigenem Cache-ID/Hash
+    persistieren/readback-verifizieren;
+12. erst danach atomar auf v2 umschalten und v1 retire.
 
 Alte v1-Geräte sehen das Announcement und dürfen die alte Epoche nicht weiter
 als aktiv behandeln.
