@@ -1274,6 +1274,8 @@ current_recovery_takeover_public_key
 source_epoch_sealed
 genesis_grant_confirmation_required
 accepted_revision_graph
+accepted_epoch_migration
+migration_control_required
 authority_history_by_prefix
 recovery_history_by_prefix
 
@@ -1293,6 +1295,8 @@ Initialisierung:
   fortgeschrieben werden.
 - genesis_grant_confirmation_required ist genau dann true, wenn
   epoch_start_authority_mode="genesis_grant_required".
+- migration_control_required ist genau dann true, wenn predecessor_epochs genau
+  einen Eintrag enthält; accepted_epoch_migration startet null.
 
 Pro Row:
 
@@ -1309,18 +1313,19 @@ Pro Row:
    - falls source_epoch_sealed=true: einen sonst vollständig wohlgeformten Grant
      als stale_after_seal_rejected behandeln; malformed/kryptographisch ungültige
      Rows bleiben security_blocked;
-   - authority_anchor gegen den historischen Prefix und die dortige
-     authority_history_by_prefix prüfen, nicht zwingend gegen rowIndex-1;
+   - authority_anchor gegen den historischen Prefix sowie Writer-/Recovery-State
+     an diesem Prefix prüfen;
    - Handoff gegen den am Anchor gültigen predecessor Writer-Key;
    - Forced Takeover gegen die in recovery_history_by_prefix am
      authority_anchor verifizierte Recovery-Takeover-Authority;
-   - ist der predecessor an der aktuellen Row weiterhin current, bei gültigem
-     direkten Nachfolger Authority fortschreiben;
+   - **nur** wenn authority_anchor exakt dem physischen Prefix unmittelbar vor
+     dieser Grant-Row entspricht und predecessor/Recovery-State dort noch passen,
+     darf der gültige direkte Nachfolger Authority fortschreiben;
    - ist der Candidate relativ zu seinem historischen Anchor vollständig gültig,
-     aber seine Generation inzwischen bereits durch einen anderen gültigen
-     Nachfolger erreicht/überschritten, => stale_grant_rejected;
-   - Zukunftsgeneration, falsche historische Vorgängerbindung, falscher Anchor
-     oder ungültige Autorisierung => security_blocked.
+     aber der Anchor inzwischen historisch, => stale_grant_rejected, auch wenn
+     derselbe predecessor Writer noch current ist;
+   - Zukunftsgeneration, falsche historische Vorgängerbindung, Zukunfts-/falscher
+     Anchor oder ungültige Autorisierung => security_blocked.
 4. Bei normaler Revision:
    - source_epoch_sealed wird **niemals** auf false zurückgesetzt;
    - falls source_epoch_sealed=true: eine sonst vollständig wohlgeformte und
@@ -1341,8 +1346,19 @@ Pro Row:
      State und Anchor unmittelbar vor der Row wird der Recovery-State atomar auf
      die to-Felder fortgeschrieben. Historisch überholte, sonst gültige
      Transition => stale_recovery_transition_rejected;
-   - ein gültiges rotation-announcement-sw-v2 der current authority setzt
-     source_epoch_sealed irreversibel auf true.
+   - ein rotation-announcement-sw-v2 der current authority wird zusätzlich nach
+     §16a geprüft. Nur wenn source_anchor_before_announcement exakt dem
+     physischen Prefix unmittelbar vor der Row entspricht und alle
+     Successor-/Recovery-/Transition-Bindungen gültig sind, setzt es
+     source_epoch_sealed irreversibel auf true. Ein ansonsten gültiges
+     Announcement mit historisch gewordenem Anchor =>
+     stale_rotation_announcement_rejected und **kein Seal**;
+   - ein gültiges epoch-migration-sw-v2 darf pro nicht-nativer Epoche exakt
+     einmal auftreten. Ein zweites akzeptierbares Migration-Control ist fatal.
+     Beim ersten wird der Successor-Fachgraph am Prefix unmittelbar vor der Row
+     gegen result_semantic_snapshot_hash und Head-Counts geprüft und
+     accepted_epoch_migration gesetzt; Source-seitige Snapshot-/Authority-
+     Bindungen werden bei der Cross-Epoch-Aktivierungsprüfung §16a.1 geprüft.
 5. Nur akzeptierte Fachrevisionen gehen in den fachlichen Graphen.
 6. Jede physische Row geht unabhängig von semantischer Annahme in Prefix-Hash
    und Bounds ein.
@@ -1351,6 +1367,8 @@ Pro Row:
    festgehalten.
 8. EOF mit genesis_grant_confirmation_required=true => security_blocked /
    manifest_genesis_missing.
+9. EOF mit migration_control_required=true und accepted_epoch_migration=null =>
+   security_blocked / migration_control_missing.
 
 Ein Root-Key-besitzendes stale Gerät kann neue Ciphertexte erzeugen, aber ohne
 aktuellen Writer-Key weder aktuelle Fachrevisionen noch einen Handoff-Grant
