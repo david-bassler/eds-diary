@@ -482,15 +482,28 @@ Key-Lifecycle:
    persistiert und readback-verifiziert werden.
 7. Plaintext-PKCS#8 und ein ggf. extrahierbarer temporärer Private Key danach aus
    dem normalen Sitzungszustand verwerfen.
-8. Nach finaler Successor-Verifikation wird aus dem Staging-Material das
-   endgültige RecoveryArtifactV6 erzeugt, mit dem final verifizierten
-   RemoteAnchorV2 gebunden, lokal und remote readback-verifiziert.
-9. Erst wenn RecoveryArtifactV6 sicher verfügbar und der Recovery-/Backup-Gate
-   bestanden ist, darf RecoveryTakeoverStagingV2 gelöscht werden.
-10. Ein späterer Forced Takeover decryptet ausschließlich RecoveryArtifactV6 nach
-    erneuter URS-Eingabe und importiert PKCS#8 für diese Ceremony als
-    extractable=false, usage=["sign"].
-11. Diese importierte Capability wird nach Readback/Abschluss verworfen.
+8. Nach finaler Successor-Verifikation wird der exakte Source-
+   Rotation-Announcement-Envelope one-shot vorbereitet und persistent
+   reserviert, aber noch nicht remote appended.
+9. Aus dem Staging-Material wird das endgültige RecoveryArtifactV6 erzeugt. Für
+   jede nicht-native Successor-Epoche enthält es zusätzlich den in §19.1
+   definierten RecoveryActivationProofV2 mit Source-RK, letztem verifizierten
+   Source-Anchor und exakt den vorbereiteten Announcement-Envelope-Bytes.
+10. RecoveryArtifactV6 wird lokal und remote bytegenau readback-verifiziert,
+    bevor das Source-Announcement appended werden darf.
+11. Danach werden genau die im Activation Proof gebundenen
+    Announcement-Envelope-Bytes appended und die Source vollständig
+    readback-verifiziert.
+12. Erst wenn dieses Announcement vom Source-Verifier als kanonisch gültiges
+    Rotation-Announcement auf genau den gebundenen Successor akzeptiert wurde,
+    ist das RecoveryArtifactV6 aktiviert.
+13. Danach wird ein kanonisches SyncBackupV6 erzeugt und per Test-Restore
+    einschließlich Activation Proof geprüft. Erst nach diesem Gate darf
+    RecoveryTakeoverStagingV2 gelöscht werden.
+14. Ein späterer Forced Takeover decryptet ausschließlich ein aktiviertes
+    RecoveryArtifactV6 nach erneuter URS-Eingabe und importiert PKCS#8 für diese
+    Ceremony als extractable=false, usage=["sign"].
+15. Diese importierte Capability wird nach Readback/Abschluss verworfen.
 
 Der normale lokale Writer-State enthält niemals recovery_takeover_private_key,
 PKCS#8 oder eine dauerhaft nutzbare Recovery-Takeover-Capability. Außerhalb des
@@ -911,17 +924,19 @@ Pro Row:
 1. Grid-/Bounds-/Base64URL-/Envelope-AEAD vollständig prüfen. Gleiche
    envelope_id + andere Bytes => security_blocked. Byte-identische spätere
    Retry-Duplikate zählen physisch, sind aber semantische No-ops und springen
-   direkt zu Schritt 6/7.
+   direkt zu Schritt 7/8.
 2. Wrapper als exaktes RevisionV2 validieren.
-3. Bei writer-grant-sw-v2:
+3. Vor jedem Typ-Dispatch: falls genesis_grant_confirmation_required=true, ist
+   ausschließlich der exakte manifestgebundene Gen-1-writer-grant-sw-v2 mit
+   authority_anchor=H0 und covered_row_count=0 zulässig. Jede andere erste
+   semantische Row => manifest_genesis_mismatch/security_blocked. Nach
+   erfolgreicher Bestätigung wird das Flag irreversibel gelöscht.
+4. Bei writer-grant-sw-v2:
    - falls source_epoch_sealed=true: einen sonst vollständig wohlgeformten Grant
      als stale_after_seal_rejected behandeln; malformed/kryptographisch ungültige
      Rows bleiben security_blocked;
    - authority_anchor gegen den historischen Prefix und die dortige
      authority_history_by_prefix prüfen, nicht zwingend gegen rowIndex-1;
-   - falls genesis_grant_confirmation_required=true: ausschließlich den exakten
-     manifestgebundenen Gen-1-Grant mit H0 akzeptieren, Flag danach irreversibel
-     löschen; jede andere vorherige semantische Row ist security_blocked;
    - Handoff gegen den am Anchor gültigen predecessor Writer-Key;
    - Forced Takeover gegen die manifestgebundene aktuelle
      Recovery-Takeover-Authority;
@@ -932,7 +947,7 @@ Pro Row:
      Nachfolger erreicht/überschritten, => stale_grant_rejected;
    - Zukunftsgeneration, falsche historische Vorgängerbindung, falscher Anchor
      oder ungültige Autorisierung => security_blocked.
-4. Bei normaler Revision:
+5. Bei normaler Revision:
    - source_epoch_sealed wird **niemals** auf false zurückgesetzt;
    - falls source_epoch_sealed=true: eine sonst vollständig wohlgeformte und
      gegen ihre historische Authority korrekt signierte Row als
@@ -949,11 +964,15 @@ Pro Row:
      => security_blocked;
    - ein gültiges rotation-announcement-sw-v2 der current authority setzt
      source_epoch_sealed irreversibel auf true.
-5. Nur akzeptierte Fachrevisionen gehen in den fachlichen Graphen.
-6. Jede physische Row geht unabhängig von semantischer Annahme in Prefix-Hash
+6. Nur akzeptierte Fachrevisionen gehen in den fachlichen Graphen.
+7. Jede physische Row geht unabhängig von semantischer Annahme in Prefix-Hash
    und Bounds ein.
-7. Nach jeder Row wird der kanonische Authority-/Seal-Zustand für den neuen
+8. Nach jeder Row wird der kanonische Authority-/Seal-Zustand für den neuen
    Prefix in authority_history_by_prefix festgehalten.
+
+EOF-Regel: genesis_grant_confirmation_required muss nach Verarbeitung aller Rows
+false sein. Ein leeres oder vor dem manifestgebundenen Gen-1-Grant endendes
+genesis_grant_required-Log ist manifest_genesis_mismatch/security_blocked.
 
 Ein Root-Key-besitzendes stale Gerät kann neue Ciphertexte erzeugen, aber ohne
 aktuellen Writer-Key weder aktuelle Fachrevisionen noch einen Handoff-Grant
