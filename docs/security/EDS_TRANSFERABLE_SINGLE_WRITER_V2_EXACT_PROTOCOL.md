@@ -1,6 +1,6 @@
 # EDS Diary – Exaktes Protokollprofil Transferable Single Writer v2
 
-Stand: 19.09.2026
+Stand: 20.09.2026
 
 Status: **NORMATIV / PROTOKOLL EINGEFROREN / NOCH NICHT IMPLEMENTIERT.**
 
@@ -48,6 +48,7 @@ key_id                   16 CSPRNG bytes
 record_id                16 bytes
 writer_device_id         16 CSPRNG bytes
 recovery_artifact_id     16 CSPRNG bytes
+creation_locator         16 CSPRNG bytes
 
 envelope_id              32 CSPRNG bytes
 revision_id              32 CSPRNG bytes
@@ -381,14 +382,27 @@ Regeln:
   unmittelbar vorher kanonischen Writer-Grants.
 - Forced Takeover: authorization.kind="recovery_takeover"; Signatur mit dem im
   Manifest für die aktuelle Recovery-Generation gebundenen Recovery-Takeover-Key.
-- authority_anchor muss exakt den vollständig verifizierten physischen Prefix
-  unmittelbar vor der Grant-Row beschreiben.
-- Jeder gültige Nachfolgegrant erhöht Generation exakt um 1 und referenziert
-  exakt den aktuellen Grant.
-- Ein zweiter Claim auf denselben predecessor, der physisch später erscheint,
-  ist stale_grant_rejected.
-- Zukunftsgeneration, falscher predecessor, falscher Anchor oder ungültige
-  Signatur sind security_blocked, nicht latest-wins.
+- authority_anchor beschreibt den vollständig verifizierten **Entscheidungs-Prefix**,
+  auf dessen Basis der Grant erzeugt wurde. covered_row_count darf deshalb kleiner
+  als die Position unmittelbar vor der Grant-Row sein.
+- Der Verifier muss authority_anchor exakt gegen Hcovered_row_count reproduzieren
+  und zusätzlich beweisen, dass an diesem historischen Prefix die in
+  previous_grant_id/previous_writer_generation referenzierte Authority kanonisch
+  aktiv und die Source noch nicht versiegelt war.
+- Ein Grant darf nur einen direkten Nachfolger dieser am Anchor gültigen Authority
+  beanspruchen: writer_generation = previous_writer_generation + 1.
+- Ist dieselbe predecessor-Authority an der Grant-Row weiterhin aktuell, kann der
+  Grant die Authority fortschreiben.
+- Ist inzwischen bereits ein anderer gültiger Nachfolgegrant kanonisch geworden,
+  bleibt ein ansonsten vollständig gültiger, gegen denselben oder einen älteren
+  passenden historischen Entscheidungs-Prefix erzeugter Claim
+  stale_grant_rejected. Genau dadurch sind parallele g+1-Claims nicht fatal.
+- Ist current_writer_generation bereits größer als die Candidate-Generation und
+  der Candidate war relativ zu seinem historischen Anchor vollständig gültig,
+  ist er ebenfalls stale_grant_rejected.
+- Ein Anchor, der den behaupteten predecessor an seiner eigenen Prefix-Grenze
+  nicht trägt, eine Zukunftsgeneration, eine nicht direkte Generationserhöhung
+  oder eine ungültige Autorisierung ist security_blocked, nicht latest-wins.
 
 ---
 
@@ -449,6 +463,7 @@ record_schema_allowlist
 record_schema_registry_hash
 protocol_limits
 
+epoch_start_authority_mode
 epoch_start_writer_generation
 epoch_start_writer_grant_id
 epoch_start_writer_device_id
@@ -459,7 +474,40 @@ recovery_takeover_key_id
 recovery_takeover_public_key
 ~~~
 
-Für eine neu migrierte v1→v2-Epoche ist epoch_start_writer_generation exakt 1 und ein Gen-1-Grant wird vor Manifest-Verschlüsselung vollständig geplant; deshalb ist epoch_start_writer_grant_id bereits im immutable Manifest gebunden. Bei einer späteren v2→v2-Rotation übernimmt der Successor dagegen die bereits kanonische Generation und Grant-ID unverändert als Epoch-Start-Trust-Root; dafür wird kein künstlicher neuer Writer-Grant erzeugt.
+epoch_start_authority_mode ist exakt:
+
+~~~text
+"genesis_grant_required" | "carried_from_predecessor"
+~~~
+
+Für v1→v2 gilt "genesis_grant_required", epoch_start_writer_generation = 1.
+Der Gen-1-Grant wird vor Manifest-Verschlüsselung vollständig geplant; deshalb
+sind Grant-ID, Device-ID, Key-ID und Public Key bereits im immutable Manifest
+gebunden. Vor diesem Grant darf keine andere _r-Protokollrow stehen. Sein
+authority_anchor ist exakt H0 mit covered_row_count=0. Der Verifier startet aus
+dem Manifest-Trust-Root, verlangt diese Row als einmalige
+manifest_genesis-Bestätigung und ändert durch sie die bereits manifestgebundene
+Authority nicht noch einmal.
+
+Für v2→v2-Rotation gilt "carried_from_predecessor". Der Successor übernimmt
+Generation, Grant-ID, Device-ID, Key-ID und Public Key unverändert als
+Epoch-Start-Trust-Root. Es wird **kein** künstlicher Genesis-/Duplikatgrant
+geschrieben; der erste spätere WriterGrant muss ein normaler direkter Nachfolger
+dieser übernommenen Authority sein.
+
+protocol_limits ist exakt:
+
+~~~text
+{
+  max_payload_bytes: 16380,
+  padding_buckets: [1024,2048,4096,8192,16384],
+  max_unique_envelopes: 100000,
+  max_unique_canonical_bytes: 134217728,
+  max_remote_physical_rows: 100000,
+  max_remote_physical_canonical_bytes: 134217728,
+  max_canonical_row_bytes: 21936
+}
+~~~
 
 Recovery-Commitment v6:
 
@@ -481,6 +529,73 @@ Manifest-AAD:
   "diary_id": "<diary>",
   "epoch_id": "<epoch>"
 }
+~~~
+
+---
+## 10a. Google Storage Profile v2 – exakt
+
+Der Storage-Provider-Identifier ist unabhängig vom Syncprofil:
+
+~~~text
+storage_provider_id = "google-drive-sheets-v1"
+sync_profile        = "google-sheets-transferable-single-writer-v2"
+~~~
+
+Nach jedem neuen Access Token wird wie in v1 die aktuelle
+drive.about.user.permissionId ermittelt. Die v2-Bindung ist:
+
+~~~text
+google_account_binding = Base64URL(SHA-256(
+  UTF8("eds-diary/google-account/v6") || 0x00 ||
+  diary_id_bytes || 0x00 || UTF8(permissionId)
+))
+~~~
+
+Epoch-Locator:
+
+~~~text
+epoch_locator = Base64URL(first16(SHA-256(
+  UTF8("sync-v6/epoch-locator") || 0x00 ||
+  diary_id_bytes || epoch_id_bytes
+)))
+~~~
+
+Vor Create:
+
+~~~text
+creation_locator = 16 CSPRNG bytes, Base64URL
+filename = "sync-" + creation_locator
+~~~
+
+Nach Manifest-Readback sind die Protokoll-appProperties exakt:
+
+~~~text
+app_format    = "sync-v6"
+epoch_locator = <oben definierter Wert>
+~~~
+
+Keine weiteren Protokoll-appProperties sind zulässig.
+
+Die Epoch-Ressource verwendet dieselbe strikte Zwei-Tab-Google-Grid-Struktur und
+dieselben owner-only/permission/Drive-Invarianten wie v1: exakt "_m" und "_r",
+keine Merges, ausschließlich String-Zellen, produktive Row-Writes ausschließlich
+über AppendCellsRequest. Der v1-Wire-Identifier "sync-v5" und dessen Locator-
+Domain dürfen in v2 niemals verwendet werden.
+
+Recovery-Artifact-Locator:
+
+~~~text
+recovery_artifact_locator = Base64URL(first16(SHA-256(
+  UTF8("eds-diary/recovery-artifact-locator/v6") || 0x00 || URS
+)))
+~~~
+
+Die private owner-only Recovery-Ressource verwendet:
+
+~~~text
+filename = "eds-diary-recovery-" + recovery_artifact_locator
+app_format = "sync-recovery-v6"
+recovery_locator = recovery_artifact_locator
 ~~~
 
 ---
@@ -539,7 +654,10 @@ current_writer_public_key
 current_recovery_generation
 current_recovery_takeover_key_id
 source_epoch_sealed
+genesis_grant_confirmation_required
 accepted_revision_graph
+authority_history_by_prefix
+
 ~~~
 
 Pro Row:
@@ -547,22 +665,40 @@ Pro Row:
 1. Grid-/Bounds-/Base64URL-/Envelope-AEAD vollständig prüfen.
 2. Wrapper als exaktes RevisionV2 validieren.
 3. Bei writer-grant-sw-v2:
-   - authority_anchor muss dem Prefix vor dieser Row entsprechen;
-   - Initialgrant nur gemäß Manifest;
-   - Handoff gegen aktuellen Writer-Key;
-   - Forced Takeover gegen aktuelle Recovery-Takeover-Authority;
-   - bei gültigem direkten Nachfolger Authority fortschreiben;
-   - konkurrierender späterer Claim auf alten predecessor => stale_grant_rejected;
-   - strukturell unmöglicher/future/falsch signierter Grant => security_blocked.
+   - falls source_epoch_sealed=true: einen sonst vollständig wohlgeformten Grant
+     als stale_after_seal_rejected behandeln; malformed/kryptographisch ungültige
+     Rows bleiben security_blocked;
+   - authority_anchor gegen den historischen Prefix und die dortige
+     authority_history_by_prefix prüfen, nicht zwingend gegen rowIndex-1;
+   - falls genesis_grant_confirmation_required=true: ausschließlich den exakten
+     manifestgebundenen Gen-1-Grant mit H0 akzeptieren, Flag danach irreversibel
+     löschen; jede andere vorherige semantische Row ist security_blocked;
+   - Handoff gegen den am Anchor gültigen predecessor Writer-Key;
+   - Forced Takeover gegen die manifestgebundene aktuelle
+     Recovery-Takeover-Authority;
+   - ist der predecessor an der aktuellen Row weiterhin current, bei gültigem
+     direkten Nachfolger Authority fortschreiben;
+   - ist der Candidate relativ zu seinem historischen Anchor vollständig gültig,
+     aber seine Generation inzwischen bereits durch einen anderen gültigen
+     Nachfolger erreicht/überschritten, => stale_grant_rejected;
+   - Zukunftsgeneration, falsche historische Vorgängerbindung, falscher Anchor
+     oder ungültige Autorisierung => security_blocked.
 4. Bei normaler Revision:
-   - source_epoch_sealed=false;
-   - writer_context muss exakt current authority sein;
+   - source_epoch_sealed wird **niemals** auf false zurückgesetzt;
+   - falls source_epoch_sealed=true: eine sonst vollständig wohlgeformte und
+     korrekt signierte Row als stale_after_seal_rejected behandeln;
+   - andernfalls writer_context muss exakt current authority sein;
    - writer_signature muss über §6 gültig sein;
    - ältere Authority => stale_writer_rejected;
    - gleiche Generation mit anderer Grant-/Key-/Device-ID => security_blocked;
-   - zukünftige Authority ohne Grant => security_blocked.
+   - zukünftige Authority ohne Grant => security_blocked;
+   - ein gültiges rotation-announcement-sw-v2 setzt source_epoch_sealed
+     irreversibel auf true.
 5. Nur akzeptierte Fachrevisionen gehen in den fachlichen Graphen.
-6. Jede physische Row geht in Prefix-Hash und Bounds ein.
+6. Jede physische Row geht unabhängig von semantischer Annahme in Prefix-Hash
+   und Bounds ein.
+7. Nach jeder Row wird der kanonische Authority-/Seal-Zustand für den neuen
+   Prefix in authority_history_by_prefix festgehalten.
 
 Ein Root-Key-besitzendes stale Gerät kann neue Ciphertexte erzeugen, aber ohne
 aktuellen Writer-Key weder aktuelle Fachrevisionen noch einen Handoff-Grant
@@ -703,13 +839,14 @@ writer_key_id
 ~~~
 
 migration_kind ist exakt "normal" | "local_rotation" | "remote_enablement" |
-"emergency". Bei unveränderter Ein-Source-Migration muss
+"recovery_rekey" | "emergency". Bei unveränderter Ein-Source-Migration muss
 result_semantic_snapshot_hash == source_semantic_snapshot_hash gelten.
 
 ## 17. Rotation und Recovery-Rekey
 
-Normale Epoch-Rotation übernimmt die aktuelle Writer-Authority in den
-Successor-Manifest-Trust-Root:
+Normale Epoch-Rotation setzt im Successor
+epoch_start_authority_mode="carried_from_predecessor" und übernimmt die aktuelle
+Writer-Authority in den Successor-Manifest-Trust-Root:
 
 ~~~text
 epoch_start_writer_generation = aktuelle Generation
@@ -747,49 +884,72 @@ Altes Recovery-Takeover-Material darf in der neuen Epoche keinen Grant signieren
 
 Exakt versioniertes neues State-Schema; V5 bleibt unverändert.
 
-EpochLocalSecurityStateV6 besitzt exakt folgende Top-Level-Properties:
+Exakt diese Top-Level-Properties, keine weiteren:
 
 ~~~text
-local_state_version = 6
-diary_id
-epoch_id
-key_id
-manifest_fingerprint
-recovery_generation
-recovery_urs_commitment
-remote_binding
-remote_anchor
-epoch_status
-operation_generation
-rotation_state_ref
-migration_state_ref
-local_journal_count
-local_journal_hash
-
-remote_binding.storage_provider_id
-remote_binding.sync_profile
-remote_binding.remote_resource_id
-remote_binding.remote_identity_binding
-
-remote_anchor: RemoteAnchorV2|null
-
-writer_status = "writer_active"|"read_only"
-writer_device_id
-writer_signing_key_id
-writer_generation
-writer_grant_id
-
-verified_writer_device_id
-verified_writer_key_id
-verified_writer_generation
-verified_writer_grant_id
-
-recovery_generation
-recovery_takeover_key_id
-
-stale_writer_pending_count
-operation_generation
+{
+  local_state_version: 6,
+  diary_id,
+  epoch_id,
+  key_id,
+  manifest_fingerprint,
+  recovery_generation,
+  recovery_urs_commitment,
+  remote_binding,
+  remote_anchor,
+  epoch_status,
+  operation_generation,
+  rotation_state_ref,
+  migration_state_ref,
+  local_journal_count,
+  local_journal_hash,
+  writer_status,
+  writer_device_id,
+  writer_signing_key_id,
+  writer_generation,
+  writer_grant_id,
+  verified_writer_device_id,
+  verified_writer_key_id,
+  verified_writer_generation,
+  verified_writer_grant_id,
+  recovery_takeover_key_id,
+  stale_writer_pending_count
+}
 ~~~
+
+remote_binding ist exakt null oder:
+
+~~~text
+{
+  storage_provider_id: "google-drive-sheets-v1",
+  sync_profile: "google-sheets-transferable-single-writer-v2",
+  remote_resource_id,
+  remote_identity_binding
+}
+~~~
+
+remote_anchor ist null oder RemoteAnchorV2.
+
+epoch_status ist exakt:
+
+~~~text
+local_offline | remote_bound | active | offline_restored | retired | orphaned
+~~~
+
+writer_status ist exakt "writer_active" | "read_only".
+
+writer_device_id und writer_signing_key_id bezeichnen die **lokale** Device-
+Identität und deren lokalen Writer-Key. writer_generation/writer_grant_id sind
+nur bei writer_active nicht-null und müssen dann exakt
+verified_writer_generation/verified_writer_grant_id entsprechen. Bei read_only
+sind writer_generation=null und writer_grant_id=null.
+
+verified_writer_* beschreibt immer die zuletzt vollständig remote verifizierte
+kanonische Authority und ist nach erfolgreichem gebundenem Full Verify nicht
+null.
+
+rotation_state_ref und migration_state_ref verwenden dieselbe geschlossene
+{operation_id,state,state_record_hash}-Form wie v1.
 
 Der Writer-Private-CryptoKey liegt in einem getrennten lokalen Key-Store und wird
 über writer_signing_key_id referenziert. State und Referenz werden über
@@ -834,9 +994,35 @@ recovery_takeover_private_key_pkcs8
 created_at
 ~~~
 
-recovery_takeover_private_key_pkcs8 ist Base64URL des exakt exportierten Ed25519-PKCS#8-Schlüssels. Beim Restore wird daraus ein non-extractable Private Key importiert und ein fester domainspezifischer Challenge-String signiert; diese Signatur muss mit recovery_takeover_public_key aus dem Manifest verifizierbar sein. So wird das Keypair ohne erneuten Private-Key-Export gebunden.
+recovery_takeover_private_key_pkcs8 ist Base64URL des exakt exportierten
+Ed25519-PKCS#8-Schlüssels. Beim Restore wird daraus ein non-extractable Private
+Key importiert.
 
-Artifact-AAD ist JCS des Headers ohne wrapped_payload.
+Exakter Keypair-Check:
+
+~~~text
+key_check_input =
+  UTF8("eds-diary/recovery-takeover-key-check/v2") || 0x00 ||
+  diary_id_bytes || epoch_id_bytes ||
+  uint64_be(recovery_generation) ||
+  raw_recovery_takeover_public_key
+
+signature = Ed25519.sign(imported_private_key, key_check_input)
+Ed25519.verify(manifest_public_key, signature, key_check_input) == true
+~~~
+
+Zusätzlich müssen recovery_takeover_key_id und Public Key aus dem Artifact exakt
+den manifestgebundenen Werten entsprechen.
+
+Artifact-AAD ist UTF8(JCS(header_ohne_wrapped_payload)).
+
+Der im Artifact enthaltene remote_anchor ist ein **Freshness-Floor**, niemals
+eine Aufforderung zum Downgrade. Bei Restore/Forced-Takeover muss der aktuell
+gelesene Remotezustand jeden verfügbaren vertrauenswürdigen Anchor erweitern:
+mindestens den Artifact-Anchor und, falls auf diesem Gerät vorhanden, den
+neueren lokal persistierten RemoteAnchorV2. Sind zwei bekannte Anchor nicht
+monoton miteinander vereinbar, gilt security_blocked. Ein älterer Artifact-
+Anchor darf einen neueren lokalen Anchor niemals ersetzen.
 
 ---
 
@@ -844,20 +1030,99 @@ Artifact-AAD ist JCS des Headers ohne wrapped_payload.
 
 Neues geschlossenes Format "sync-backup-v6", niemals optionale Erweiterung von v5.
 
-BackupV6 bindet mindestens:
+Top-Level exakt:
 
-- v2 Manifest Public Header;
-- RemoteAnchorV2;
-- vollständig verifizierte Writer-Authority am Exportpunkt;
-- Recovery-Generation;
-- recovery_takeover_key_id;
-- verschlüsseltes RecoveryArtifactV6 als opakes gebundenes Artefakt;
-- Remote Rows;
-- lokale Pending Rows einschließlich stale_writer_pending in separater,
-  nicht automatisch pushbarer Kategorie;
-- Hashes/Counts/Bounds analog zum v5-Backup unter v6-Domains.
+~~~text
+{
+  format: "sync-backup-v6",
+  backup_format_version: 6,
+  backup_id,
+  backup_manifest_iv,
+  backup_manifest_ciphertext,
+  epoch_manifest_public,
+  recovery_artifact,
+  record_rows,
+  pending_outbox_rows,
+  stale_writer_pending_rows
+}
+~~~
 
-Test-Restore muss den produktiven TransferableSingleWriterV2Verifier verwenden.
+epoch_manifest_public sind exakt die vier persistierten ManifestV6-Zellen.
+recovery_artifact ist ein vollständiges RecoveryArtifactV6-Objekt; dessen
+Ciphertext wird nicht für den Backup-Export neu erzeugt.
+
+record_rows enthält die exakte physische Remote-Reihenfolge.
+pending_outbox_rows enthält lokale aktuelle-Authority-Envelopes, die noch nicht
+byteidentisch remote vorhanden sind. stale_writer_pending_rows enthält
+ausschließlich quarantinierte ältere Writer-Envelopes und wird bei Restore
+niemals automatisch gepusht.
+
+Backup-AAD exakt:
+
+~~~text
+UTF8(JCS({
+  format: "sync-backup-v6",
+  backup_format_version: 6,
+  backup_id
+}))
+~~~
+
+Das verschlüsselte Backup-Manifest enthält exakt:
+
+~~~text
+{
+  backup_id,
+  diary_id,
+  epoch_id,
+  key_id,
+  manifest_fingerprint,
+  remote_anchor_at_export,
+  writer_authority_at_export,
+  recovery_generation,
+  recovery_takeover_key_id,
+  recovery_artifact_sha256,
+  record_row_count,
+  record_rows_canonical_bytes,
+  record_prefix_hash,
+  epoch_manifest_public_sha256,
+  record_rows_jcs_sha256,
+  pending_outbox_count,
+  pending_outbox_rows_canonical_bytes,
+  pending_outbox_rows_jcs_sha256,
+  stale_writer_pending_count,
+  stale_writer_pending_rows_canonical_bytes,
+  stale_writer_pending_rows_jcs_sha256,
+  unique_union_count,
+  unique_union_canonical_bytes,
+  created_at
+}
+~~~
+
+writer_authority_at_export ist exakt:
+
+~~~text
+{
+  writer_generation,
+  writer_grant_id,
+  writer_device_id,
+  writer_key_id,
+  writer_public_key
+}
+~~~
+
+recovery_artifact_sha256 ist Base64URL(SHA-256(UTF8(JCS(recovery_artifact)))).
+record_prefix_hash muss RemoteAnchorV2.prefix_hash entsprechen. Counts, JCS-
+Hashes und Bytegrenzen werden für jede Kategorie separat und für die eindeutige
+Union aller Envelope-IDs geprüft. Gleiche envelope_id mit anderen Bytes ist fatal.
+
+Die v5-Grenzen bleiben für v6 unverändert: maximal 256 MiB Backup-Dokument,
+100000 eindeutige Envelopes und 134217728 kanonische Bytes für die eindeutige
+Union.
+
+Test-Restore muss Manifest, RecoveryArtifactV6-Bindung, sämtliche Hashes/Counts,
+RemoteAnchorV2, Writer-Authority und jede Row vollständig prüfen und anschließend
+den produktiven TransferableSingleWriterV2Verifier verwenden. Restore darf
+stale_writer_pending_rows nur als Quarantäne wiederherstellen.
 
 ---
 
@@ -871,9 +1136,10 @@ Reihenfolge:
 2. Source lokal einfrieren.
 3. neues Writer-Ed25519-Keypair erzeugen.
 4. neues Recovery-Takeover-Keypair erzeugen.
-5. epoch_start_writer_grant_id und Writer-Authority planen.
+5. epoch_start_authority_mode="genesis_grant_required" setzen und
+   epoch_start_writer_grant_id + Writer-Authority planen.
 6. immutable ManifestV6 erzeugen.
-7. Gen-1-Grant schreiben.
+7. Gen-1-Grant als erste _r-Row mit authority_anchor=H0 schreiben.
 8. fachliche Heads als RevisionV2 unter Gen-1-Authority schreiben/signieren.
 9. Migration-Control schreiben.
 10. Successor vollständig mit V2-Verifier verifizieren.
@@ -932,9 +1198,12 @@ für mindestens:
 8. Handoff WriterGrantV2 + Signatur.
 9. Forced-Takeover WriterGrantV2 + Recovery-Signatur.
 10. Remote Prefix H0/H1/Hn + RemoteAnchorV2.
-11. ManifestV6 Plaintext/AAD/Fingerprint.
-12. RecoveryArtifactV6 AAD/Payload roundtrip.
-13. SyncBackupV6 manifest/hash binding.
+11. historischer Grant-Anchor bei zwei konkurrierenden g+1-Claims.
+12. ManifestV6 Plaintext/AAD/Fingerprint einschließlich
+    epoch_start_authority_mode und protocol_limits.
+13. v6 Google Account Binding + epoch_locator + recovery_artifact_locator.
+14. RecoveryArtifactV6 AAD/Payload/Keypair-Check roundtrip.
+15. SyncBackupV6 vollständiges Manifest/hash binding.
 
 Negative Vectors:
 
@@ -950,7 +1219,12 @@ Negative Vectors:
 - Transferdescriptor ohne Private-Key-Possession;
 - Rollback vor bereits bekannten Grant;
 - stale Fachrow nach Handoff;
-- konkurrierende g+1-Claims.
+- konkurrierende g+1-Claims;
+- Grant mit Anchor, an dessen historischem Prefix der behauptete predecessor
+  nicht current war;
+- Rotation-Announcement gefolgt von Fachwrite/Grant auf versiegelter Source;
+- RecoveryArtifact mit älterem Anchor als lokal bereits verifiziert;
+- inkompatible bekannte Recovery-/Local-Anchor.
 
 ---
 
