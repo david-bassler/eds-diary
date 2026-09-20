@@ -1671,14 +1671,15 @@ Pro Row:
      => security_blocked;
    - ein gültiges recovery-authority-transition-sw-v2 der current authority
      wird zusätzlich nach §16b geprüft; nur bei exakt aktuellem Recovery-from-
-     State, Anchor unmittelbar vor der Row und einem
-     to_recovery_takeover_key_id, der **nicht** in
-     seen_recovery_takeover_key_ids vorkommt, wird der Recovery-State atomar auf
-     die to-Felder fortgeschrieben. Wiederverwendung irgendeiner früheren
-     Recovery-Takeover-Key-ID derselben Epoche =>
-     recovery_takeover_key_reuse / security_blocked. Bei Annahme wird die neue
-     Key-ID zusätzlich in seen_recovery_takeover_key_ids aufgenommen.
-     Gleichzeitig werden
+     State, Anchor unmittelbar vor der Row und **beiden** frischen
+     to_recovery_urs_id/to_recovery_takeover_key_id-Werten wird der Recovery-
+     State atomar auf die to-Felder fortgeschrieben. Die seen-Sets werden aus
+     der manifestgebundenen, über v2-Epoch-Grenzen fortgetragenen
+     recovery_credential_history initialisiert. Wiederverwendung eines seit der
+     ersten v2-Aktivierung bereits bekannten URS oder Takeover-Keys =>
+     recovery_credential_reuse / security_blocked. Bei Annahme werden beide
+     neuen IDs und der neue History-Eintrag atomar aufgenommen. Gleichzeitig
+     werden
      recovery_rekey_rotation_required=true und
      current_recovery_rekey_transition_id=transition_id gesetzt. Eine weitere
      gültige RecoveryAuthorityTransitionV2 darf während dieses Pending-Rekey-
@@ -3476,6 +3477,8 @@ remote_anchor
 google_account_binding
 recovery_generation
 recovery_urs_commitment
+recovery_urs_id
+recovery_credential_history
 recovery_takeover_key_id
 recovery_takeover_public_key
 recovery_takeover_private_key_pkcs8
@@ -3485,11 +3488,13 @@ created_at
 ~~~
 
 recovery_urs_commitment muss exakt aus dem eingegebenen URS, diary_id und
-recovery_generation gemäß §10 reproduzierbar sein.
+recovery_generation gemäß §10 reproduzierbar sein. recovery_urs_id muss aus
+demselben eingegebenen URS gemäß §2 reproduzierbar sein.
 
 Im Normalfall müssen recovery_generation, recovery_urs_commitment,
-recovery_takeover_key_id und recovery_takeover_public_key exakt dem **aktuell
-verifizierten Recovery-State** der Epoche entsprechen. Einzige Ausnahme ist der
+recovery_urs_id, recovery_credential_history, recovery_takeover_key_id und
+recovery_takeover_public_key exakt dem **aktuell verifizierten Recovery-State**
+der Epoche entsprechen. Einzige Ausnahme ist der
 explizite §16c-Staging-Fall **vor** durabler RecoveryAuthorityTransitionV2:
 Dann darf ein Artifact mit gültigem recovery_authority_transition_proof bereits
 den exakt gebundenen to-State repräsentieren, während Remote noch am
@@ -3535,8 +3540,9 @@ recovery_takeover_key_id muss aus recovery_takeover_public_key des Artifacts
 gemäß §2 reproduzierbar sein.
 
 - Ohne recovery_authority_transition_proof müssen recovery_generation,
-  recovery_urs_commitment, Key-ID und Public Key exakt dem vollständig
-  verifizierten aktuellen Recovery-State entsprechen.
+  recovery_urs_commitment, recovery_urs_id, recovery_credential_history,
+  Takeover-Key-ID und Public Key exakt dem vollständig verifizierten aktuellen
+  Recovery-State entsprechen.
 - Mit recovery_authority_transition_proof darf das Artifact vor durable
   Transition zunächst den **to-State** repräsentieren, während Remote noch exakt
   am Proof-from-State/Anchor steht. In diesem Zustand ist es staged/read-only und
@@ -3938,7 +3944,7 @@ activation_confirmation_mismatch
 staged_pre_migration_control_forbidden
 successor_root_key_reuse
 protocol_id_collision
-recovery_takeover_key_reuse
+recovery_credential_reuse
 recovery_generation_mismatch
 recovery_key_mismatch
 recovery_transition_state_mismatch
@@ -4026,9 +4032,11 @@ für mindestens:
     anderen Envelope **oder einem anderen Control-ID-Feld** (z.B.
     transition_id == frühere rotation_id) => protocol_id_collision;
     byte-identischer Envelope-Retry bleibt No-op.
-33. RecoveryAuthorityTransitionV2 mit frischem Takeover-Key sowie Versuch,
-    Manifest-/früheren supersedierten Takeover-Key wiederzuverwenden =>
-    recovery_takeover_key_reuse.
+33. RecoveryAuthorityTransitionV2 mit frischem URS + Takeover-Key sowie
+    Wiederverwendungsversuche über **mehrere v2-Epochen**: historischer URS
+    oder historischer/supersedierter Takeover-Key =>
+    recovery_credential_reuse. v1→v2 dokumentiert separat, dass vor-v2
+    Credentials mangels historischer IDs nicht rückwirkend erkennbar sind.
 34. successor_staging_anchor für v2→v2 und profile_upgrade: exakt direkt nach
     Migration-Control, keine semantische Suffix-Row; Proof/Announcement/Artifact
     und staged Cutover-Backup binden exakt diesen Anchor. Das activated
@@ -4138,8 +4146,9 @@ Negative Vectors:
   Announcement => profile_upgrade_source_race, Successor bleibt staged;
 - RecoveryArtifactV6 mit to-State vor durabler Transition ohne gültigen
   RecoveryAuthorityTransitionProofV2 => nicht current/kein Forced Takeover.
-- RecoveryAuthorityTransitionV2 verwendet current oder früheren
-  recovery_takeover_key_id erneut => recovery_takeover_key_reuse;
+- RecoveryAuthorityTransitionV2 verwendet seit erster v2-Aktivierung bereits
+  bekannten recovery_urs_id oder recovery_takeover_key_id erneut — auch aus
+  einer Vorgänger-Epoche => recovery_credential_reuse;
 - neuer Envelope verwendet einen bereits belegten Control-ID-Bytewert erneut,
   auch cross-type zwischen grant_id/rotation_id/migration_id/transition_id/
   confirmation_id => protocol_id_collision;
