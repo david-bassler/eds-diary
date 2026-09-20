@@ -2725,3 +2725,15 @@ aktuelle Writer-Revision erzeugen.
 
 Ein kopierter aktueller Writer-Private-Key ist protokollseitig dieselbe
 Writer-Authority. Echte Hardware-/Anti-Cloning-Bindung ist nicht Teil von v2.
+
+ActivationLineageV2 priorisiert unabhängig prüfbare Recovery-Kanonizität über
+historische Key-Erasure: das aktuelle URS schützt auch die in der Lineage
+mitgeführten historischen Source-RKs. Kompromittierung des aktuellen URS kann
+deshalb zusätzlich historisch verschlüsselte Epochen offenlegen, soweit deren
+Provider-Ressourcen/Backups noch vorhanden sind. Wer stattdessen kryptographische
+Löschung alter Epoch-Keys als Primärziel benötigt, braucht ein anderes
+Lineage-/Checkpoint-Profil.
+
+Ein activated SyncBackupV6 garantiert ohne erreichbare historische
+Activation-Lineage-Source-Kette **keine** Wiedergewinnung von remote-active
+Writer-Authority; ein solcher Restore bleibt sicher read-only/offline.
