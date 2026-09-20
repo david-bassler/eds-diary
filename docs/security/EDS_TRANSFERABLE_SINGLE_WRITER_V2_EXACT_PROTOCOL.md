@@ -215,9 +215,10 @@ rotation_announcement     -> rotation-announcement-sw-v2
 epoch_migration           -> epoch-migration-sw-v2
 ~~~
 
-Für alle neun Schema-IDs müssen vor dem ersten v2-Implementierungsmerge immutable
-maschinenlesbare Schema-Definitionen committed werden. Die produktive Registry
-wird ausschließlich daraus gebildet:
+Für alle neun Schema-IDs sind immutable maschinenlesbare Schema-Definitionen
+gebunden; die drei neuen v2-Control-Schemas liegen als
+`src/security/schemas/*-sw.v2.schema.json` im Repo. Die produktive Registry wird
+ausschließlich aus diesen versionierten Schemaobjekten gebildet:
 
 ~~~text
 schema_registry_entries = [
@@ -455,20 +456,28 @@ Regeln:
 
 ## 9. Recovery-Takeover-AuthorityV2
 
-Für jede Recovery-Generation existiert ein eigenes Ed25519-Schlüsselpaar.
+Für jede Recovery-Generation existiert genau ein Ed25519-Takeover-Schlüsselpaar.
 
-Bei Erzeugung einer v2-Epoche oder recovery_rekey:
+Key-Lifecycle:
 
-1. Ed25519-Keypair transient erzeugen.
-2. Public Key roh als 32 Byte exportieren.
-3. Private Key einmalig als PKCS#8 exportieren.
-4. recovery_takeover_key_id aus Public Key ableiten.
-5. Public Key + Key-ID im geschützten Manifest binden.
-6. Vor jedem Remote-Create/Manifest-Publish muss PKCS#8 crash-resumable als
-   RecoveryTakeoverStagingV2 (§9.1) URS-verschlüsselt persistiert und
-   readback-verifiziert werden.
-7. Plaintext-PKCS#8 und extrahierbaren temporären Private Key danach aus dem
-   normalen Sitzungszustand verwerfen.
+1. Bei **v1→v2** wird ein neues Ed25519-Keypair transient erzeugt.
+2. Bei **recovery_rekey** wird recovery_generation exakt um 1 erhöht und ebenfalls
+   ein neues Ed25519-Keypair erzeugt.
+3. Bei normaler **v2→v2-Rotation** bleiben recovery_generation,
+   recovery_takeover_key_id und dasselbe Takeover-Keypair unverändert. Die
+   aktuelle URS wird erneut eingegeben; das Source-RecoveryArtifactV6 wird
+   entschlüsselt und dessen Keypair gegen das Source-Manifest geprüft.
+4. Für ein neu erzeugtes Paar: Public Key roh als 32 Byte exportieren, Private
+   Key einmalig als PKCS#8 exportieren und recovery_takeover_key_id aus dem
+   Public Key ableiten. Für ein fortgeführtes Paar werden dieselben Werte aus dem
+   verifizierten Source-Artefakt übernommen.
+5. Public Key + Key-ID der Ziel-Recovery-Generation im geschützten
+   Successor-Manifest binden.
+6. Vor jedem mutierenden Remote-Create/Manifest-Publish muss PKCS#8
+   crash-resumable als RecoveryTakeoverStagingV2 (§9.1) URS-verschlüsselt
+   persistiert und readback-verifiziert werden.
+7. Plaintext-PKCS#8 und ein ggf. extrahierbarer temporärer Private Key danach aus
+   dem normalen Sitzungszustand verwerfen.
 8. Nach finaler Successor-Verifikation wird aus dem Staging-Material das
    endgültige RecoveryArtifactV6 erzeugt, mit dem final verifizierten
    RemoteAnchorV2 gebunden, lokal und remote readback-verifiziert.
@@ -545,8 +554,11 @@ Verschlüsselung:
 AES-256-GCM(K_recovery_stage, iv, UTF8(JCS(plaintext)), AAD)
 ~~~
 
-Vor Verlassen der Key-Generation-Phase muss das vollständige Staging-Objekt
-persistent geschrieben und byte-/AEAD-readback-verifiziert sein. Resume verlangt
+Vor dem ersten **mutierenden** Remote-Schritt der Successor-Erzeugung muss das
+vollständige Staging-Objekt persistent geschrieben und byte-/AEAD-readback-
+verifiziert sein. Authentifizierung und das Lesen der Account-Bindung dürfen
+vorher erfolgen, weil sie zum Erzeugen des geschützten Manifests benötigt werden.
+Resume verlangt
 erneute URS-Eingabe und den §19-Keypair-Check. Staging-Material einer anderen
 Diary/Epoch/Manifest-Fingerprint/Recovery-Generation ist unbrauchbar und fatal
 für diesen Resume-Versuch.
@@ -1074,6 +1086,11 @@ Remote-Reihenfolge auf der Source entscheidet:
   spätere Fachwrites und Writer-Grants auf Source sind semantisch verworfen;
   weitere Takeover-Aktionen müssen gegen den kanonischen Successor erfolgen.
 
+Normale v2→v2-Rotation erhält recovery_generation und das aktuelle
+Recovery-Takeover-Keypair unverändert, erzeugt aber für die neue Epoche ein neues
+RecoveryArtifactV6 mit neuem RK_epoch, Manifest-Fingerprint und finalem
+Successor-Anchor.
+
 Recovery-Rekey erzeugt zwingend:
 
 - recovery_generation + 1;
@@ -1082,7 +1099,8 @@ Recovery-Rekey erzeugt zwingend:
 - neues RecoveryArtifactV6;
 - Manifestbindung im Successor.
 
-Altes Recovery-Takeover-Material darf in der neuen Epoche keinen Grant signieren.
+Altes Recovery-Takeover-Material darf in der neuen Recovery-Generation keinen
+Grant signieren.
 
 ---
 
@@ -1508,7 +1526,7 @@ Reihenfolge:
 6. immutable ManifestV6 lokal erzeugen und Fingerprint bestimmen.
 7. RecoveryTakeoverStagingV2 mit diesem Manifest-Fingerprint
    persistieren/readback-verifizieren; erst danach extrahierbaren temporären
-   Recovery-Private-Key verwerfen und Remote-I/O beginnen.
+   Recovery-Private-Key verwerfen und mutierendes Remote-I/O beginnen.
 8. Gen-1-Grant als erste _r-Row mit authority_anchor=H0 schreiben.
 9. fachliche Heads als RevisionV2 unter Gen-1-Authority schreiben/signieren.
 10. Migration-Control schreiben.
