@@ -1895,21 +1895,37 @@ Remote-Reihenfolge auf der Source entscheidet:
   verworfen; weitere Takeover-Aktionen müssen gegen den kanonischen Successor
   erfolgen.
 
-Für **jede** v2→v2-Rotation ist die Backup-/Aktivierungsreihenfolge verbindlich:
+Für **jede** v2→v2-Rotation ist die Reihenfolge verbindlich:
 
-1. activation_lineage der aktiven Source vollständig validieren.
-2. Successor erzeugen/verifizieren und Lineage um genau einen v2_rotation-Eintrag
-   erweitern.
-3. Successor-RecoveryArtifactV6 publizieren/readback-verifizieren.
-4. activation_state="staged" SyncBackupV6 erzeugen und read-only Test-Restore.
-5. exaktes one-shot Rotation-Announcement appendieren + Full Readback.
-6. erweiterte activation_lineage vollständig bis zum neuen Successor prüfen.
-7. **obligatorisch** neues activation_state="activated" SyncBackupV6 erzeugen
-   und Test-Restore-verifizieren.
-8. ActivationLineageCacheV2 des Successors persistent/readback-verifizieren.
-9. erst danach lokaler atomarer Switch/Retire.
+1. activation_lineage der aktiven Source vollständig validieren und finalen
+   Source-Anchor/Writer-/Recovery-State einfrieren.
+2. Successor erzeugen, Fach-Heads kopieren/signieren.
+3. Exakt eine EpochMigrationV2 schreiben. source.source_anchor ist der finale
+   Source-Anchor; source_writer_authority ist die dortige Authority;
+   source_recovery_transition_id ist bei normal null und bei recovery_rekey die
+   gebundene Transition-ID. Result-Hash/Counts beziehen sich auf den
+   Successor-Fachgraph unmittelbar vor dieser Migration-Control-Row.
+4. Successor vollständig verifizieren und die gesamte Migration-Integrität
+   gemäß §16a.1 gegen Source und Successor prüfen.
+5. Das exakte Rotation-Announcement one-shot vorbereiten. Sein
+   source_anchor_before_announcement ist der unveränderte finale Source-Anchor.
+6. RecoveryActivationProofV2 mit genau diesen Announcement-Bytes erzeugen und
+   signieren; erst jetzt die verifizierte Source-Lineage um genau einen
+   V2RotationActivationEntryV2 erweitern.
+7. Successor-RecoveryArtifactV6 mit dieser erweiterten Lineage
+   publizieren/readback-verifizieren.
+8. activation_state="staged" SyncBackupV6 erzeugen und read-only Test-Restore.
+9. exakt die vorbereiteten Rotation-Announcement-Bytes appendieren + Full
+   Readback. Jede intervenierende physische Source-Row macht den vorbereiteten
+   Anchor historisch; das Announcement darf dann nicht versiegeln.
+10. erweiterte activation_lineage einschließlich §16a.1 vollständig bis zum
+    Successor prüfen.
+11. **obligatorisch** neues activation_state="activated" SyncBackupV6 erzeugen
+    und Test-Restore-verifizieren.
+12. ActivationLineageCacheV2 des Successors persistent/readback-verifizieren.
+13. erst danach lokaler atomarer Switch/Retire.
 
-Ein staged Backup ersetzt Schritt 7 niemals.
+Ein staged Backup ersetzt Schritt 11 niemals.
 
 Normale v2→v2-Rotation übernimmt recovery_generation,
 recovery_urs_commitment, recovery_takeover_key_id und
@@ -2778,8 +2794,9 @@ Reihenfolge:
     unmittelbar vor dieser Control-Row.
 12. Successor vollständig mit V2-Verifier verifizieren und §16a.1 gegen v1-Source
     und Successor erfolgreich ausführen.
-13. ProfileUpgradeActivationEntryV2 aus RK_v1, finalem v1-Source-Anchor
-    und den exakt one-shot vorbereiteten v1-Rotation-Announcement-Bytes erzeugen;
+13. v1-Rotation-Announcement exakt one-shot vorbereiten. Danach
+    ProfileUpgradeActivationEntryV2 aus RK_v1, finalem v1-Source-Anchor und
+    genau diesen Announcement-Bytes erzeugen;
     activation_lineage=[dieser Eintrag].
 14. aus RecoveryTakeoverStagingV2 das finale RecoveryArtifactV6 mit finalem
     Successor-Anchor, activation_lineage und
