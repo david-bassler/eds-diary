@@ -200,11 +200,11 @@ Jedes v2-Manifest erlaubt für den ersten Implementierungsstand exakt:
 activity-entry/v1
 activity-type-settings/v1
 epoch-migration-sw-v2
-recovery-authority-transition-sw-v2
 medication-entry/v1
 medication-prescription/v1
 pain-entry/v1
 pain-type-settings/v1
+recovery-authority-transition-sw-v2
 rotation-announcement-sw-v2
 writer-grant-sw-v2
 ~~~
@@ -2534,9 +2534,14 @@ für mindestens:
     epoch-spezifischer recovery_artifact_locator.
 14. RecoveryTakeoverStagingV2 KDF/AAD/Crash-Resume + falsche URS.
 15. RecoveryArtifactV6 AAD/Payload/Keypair-Check roundtrip.
-16. RecoveryActivationProofV2 Signatur + rohe Source-Prefix-/Next-Row-Prüfung
-    für normal und recovery_rekey.
-17. SyncBackupV6 staged/activated Manifest/hash binding.
+16. RecoveryActivationProofV2 Signatur + Source-Prefix-/Next-Row-Prüfung.
+17. ActivationLineageV2 für native Genesis, profile_upgrade und mindestens zwei
+    aufeinanderfolgende v2→v2-Rotationen.
+18. RecoveryAuthorityTransitionV2 + RecoveryAuthorityTransitionProofV2:
+    staged, exact completion, durable und überholter Anchor.
+19. ActivationLineageCacheV2 AEAD/Readback.
+20. SyncBackupV6 staged/activated Manifest/hash binding einschließlich
+    activation_lineage und Recovery-Transition-Proof.
 
 Negative Vectors:
 
@@ -2553,13 +2558,19 @@ Negative Vectors:
 - zwei plausible Recovery-Ressourcen desselben epoch-spezifischen Locators;
 - vorbereiteter Successor ohne Source-Announcement darf bei Recovery nicht aktiv
   werden;
-- Recovery-Rekey-Recovery mit nur neuem URS + gültigem Aktivierungsproof;
-- Recovery-Rekey-Recovery mit nur neuem URS, aber Takeover-Row vor geplantem
-  Announcement => Successor staged/nicht aktiv;
+- Recovery-Rekey: neues URS + staged same-epoch Artifact, Transition fehlt und
+  Source steht exakt am Anchor => Recovery appendet exakt vorbereitete Transition;
+- Recovery-Rekey: fremde Row vor vorbereiteter Transition => neuer Recovery-State
+  bleibt staged/read-only;
+- Recovery mit gültigem direkten ActivationProof, aber ungültigem älteren
+  ActivationLineage-Eintrag => fatal/nicht aktiv;
+- Recovery-Rekey-Successor mit gültigem Announcement, aber nicht durable
+  Source-RecoveryAuthorityTransitionV2 => nicht aktiv;
 - manipulierte announcement_envelope-Bytes oder activation_signature;
 - Proof mit stale Writer-Key, der nicht der kanonischen Source-Authority am
   gebundenen Prefix entspricht;
-- falscher activation_source_root_key oder Source-Manifest-Fingerprint;
+- falscher source_root_key in einem ActivationLineageV2-Eintrag oder
+  Source-Manifest-Fingerprint;
 - staged Successor darf weder Fachwrite noch Handoff noch Forced Takeover
   ausführen;
 - Transferdescriptor ohne Private-Key-Possession;
