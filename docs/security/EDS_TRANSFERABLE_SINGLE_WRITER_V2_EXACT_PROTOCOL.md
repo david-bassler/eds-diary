@@ -1532,8 +1532,14 @@ recovery_generation
 recovery_takeover_key_id
 recovery_takeover_public_key
 recovery_takeover_private_key_pkcs8
+activation_proof
 created_at
 ~~~
+
+activation_proof ist:
+- bei echter nativer v2-Genesis mit predecessor_epochs=[] exakt null;
+- bei v1→v2 sowie jeder v2→v2-Rotation/recovery_rekey exakt ein
+  RecoveryActivationProofV2 gemäß §19.1.
 
 recovery_takeover_private_key_pkcs8 ist Base64URL des exakt exportierten
 Ed25519-PKCS#8-Schlüssels. Beim Restore wird daraus ein non-extractable Private
@@ -1573,6 +1579,90 @@ mindestens den Artifact-Anchor und, falls auf diesem Gerät vorhanden, den
 neueren lokal persistierten RemoteAnchorV2. Sind zwei bekannte Anchor nicht
 monoton miteinander vereinbar, gilt security_blocked. Ein älterer Artifact-
 Anchor darf einen neueren lokalen Anchor niemals ersetzen.
+
+### 19.1 RecoveryActivationProofV2
+
+Zweck: Ein unter einer neuen URS bereits vor dem Source-Announcement publiziertes
+Successor-RecoveryArtifact darf erst dann Recovery-Trust-Root werden, wenn genau
+der vorbereitete Source→Successor-Übergang tatsächlich remote kanonisch wurde.
+Das löst insbesondere recovery_rekey ohne späteren Besitz der alten URS.
+
+Exakt:
+
+~~~text
+{
+  version: 2,
+  source_sync_profile,
+  source_epoch_id,
+  source_manifest_fingerprint,
+  source_root_key,
+  source_anchor_before,
+  expected_announcement_envelope: {
+    envelope_id,
+    iv,
+    ciphertext
+  },
+  successor_epoch_id,
+  successor_manifest_fingerprint
+}
+~~~
+
+Regeln:
+
+- source_sync_profile ist exakt
+  "google-sheets-single-writer-v1" oder
+  "google-sheets-transferable-single-writer-v2".
+- source_epoch_id/source_manifest_fingerprint müssen exakt dem einzigen
+  predecessor_epochs-Eintrag des Successor-Manifests entsprechen.
+- source_root_key ist Base64URL von exakt 32 Byte und liegt nur innerhalb des
+  URS-verschlüsselten RecoveryArtifactV6/Backups. Es ist keine
+  Writer-/Takeover-Signierauthority.
+- source_anchor_before ist RemoteAnchorV1 bzw. RemoteAnchorV2 passend zum
+  source_sync_profile und muss der unmittelbar vor Vorbereitung des
+  Announcement-Envelopes vollständig verifizierte Source-Anchor sein.
+- expected_announcement_envelope enthält exakt die one-shot reservierten
+  [envelope_id,iv,ciphertext]-Bytes des vorbereiteten Rotation-Announcements.
+- successor_epoch_id und successor_manifest_fingerprint müssen exakt zum
+  entschlüsselten RecoveryArtifact/ProtectedManifestV6 passen.
+
+Aktivierungsprüfung nach Eingabe der neuen URS:
+
+1. RecoveryArtifactV6 AEAD, Manifestbindung, Account-Binding und Keypair-Check
+   vollständig prüfen.
+2. Source anhand source_sync_profile + diary_id + source_epoch_id über den
+   jeweiligen v5/v6 Epoch-Locator authentifiziert discovern.
+3. Source-Manifest mit source_root_key decrypten; Diary-ID, Epoch-ID,
+   Manifest-Fingerprint, Google-Account-Binding und Profil müssen exakt passen.
+4. Den zum source_sync_profile gehörenden produktiven Full Verifier verwenden.
+   source_anchor_before ist dabei ein verpflichtender Freshness-Floor.
+5. Der vollständig gelesene Source-Prefix muss source_anchor_before erweitern.
+6. expected_announcement_envelope muss byteidentisch in einer physischen Row
+   nach source_anchor_before vorkommen.
+7. Diese konkrete Row muss vom Source-Verifier als der kanonisch gültige
+   Rotation-Announcement-Control akzeptiert werden; bloße physische Existenz,
+   stale_writer_rejected, stale_after_seal_rejected oder ein konkurrierendes
+   Announcement genügen nicht.
+8. Das entschlüsselte Announcement muss exakt successor_epoch_id,
+   successor_manifest_fingerprint und successor_recovery_generation des
+   RecoveryArtifacts/Successor-Manifests binden.
+9. Nur dann ist das RecoveryArtifactV6 aktiviert. Fehlt die Row, gewann vorher
+   eine andere Authority/Rotation oder wurde die Source zurückgerollt, bleibt das
+   Artifact unactivated und darf weder als aktueller Diary-Trust-Root noch für
+   Forced Takeover verwendet werden.
+
+Unknown Outcome:
+- RecoveryArtifact darf vor dem Announcement bereits durable existieren.
+- Bei Crash/Timeout wird kein neues Announcement erzeugt.
+- Ist die Source noch unsealed und dieselbe Writer-Authority current, werden
+  exakt dieselben vorbereiteten Announcement-Envelope-Bytes erneut appended.
+- Ist Authority/Seal-Zustand verändert, bleibt das RecoveryArtifact dauerhaft
+  unactivated/orphaned; kein automatischer Ersatzsuccessor unter derselben
+  Artifact-Identität.
+
+Die Mitnahme des direkten source_root_key bedeutet bewusst, dass die neue
+Recovery-Authority auch den direkten Vorgänger entschlüsseln kann. Die alte
+Recovery-Authority erhält umgekehrt keinen Successor-RK und kann die neue Epoche
+nach recovery_rekey nicht aus dem alten Artifact ableiten.
 
 ---
 
