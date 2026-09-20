@@ -3656,6 +3656,8 @@ profile_upgrade_source_race
 profile_upgrade_successor_cutover_race
 successor_staging_mismatch
 successor_cutover_race
+activation_confirmation_missing
+activation_confirmation_mismatch
 protocol_id_collision
 recovery_takeover_key_reuse
 recovery_generation_mismatch
@@ -3748,9 +3750,12 @@ für mindestens:
 34. successor_staging_anchor für v2→v2 und profile_upgrade: exakt direkt nach
     Migration-Control, keine semantische Suffix-Row; Proof/Announcement/Artifact/
     staged+activated Cutover-Backup binden denselben Anchor.
-35. Source-Seal durable, Successor weicht vor Switch vom staging anchor ab =>
-    successor_cutover_race/profile_upgrade_successor_cutover_race, kein
-    activated Cutover-Backup und kein Switch.
+35. Source-Seal durable, Successor weicht vor Confirmation vom staging anchor
+    ab => successor_cutover_race/profile_upgrade_successor_cutover_race, kein
+    Switch.
+36. SuccessorActivationConfirmationV2: exakter Announcement-Hash, unmittelbarer
+    staging-anchor-Prefix, one-shot Confirmation-Envelope, Recovery-Completion
+    nach Source-Seal und successor_activation_anchor nach durable Confirmation.
 
 Negative Vectors:
 
@@ -3832,8 +3837,14 @@ Negative Vectors:
 - ActivationProof/Announcement mit falschem successor_staging_anchor oder
   Successor-Row zwischen Migration-Control und staging anchor =>
   successor_staging_mismatch;
-- zusätzliche Successor-Row nach eingefrorenem staging anchor vor lokalem Switch
-  => Cutover-Race, niemals still in activated Backup übernehmen.
+- zusätzliche Successor-Row zwischen eingefrorenem staging anchor und
+  Confirmation => Cutover-Race; Confirmation darf nicht übersprungen werden;
+- fehlende Confirmation bei ansonsten gültigem Source-Announcement =>
+  activation_confirmation_missing / Successor bleibt staged;
+- Confirmation mit falschem Announcement-Hash, Source-/Successor-Binding oder
+  staging anchor => activation_confirmation_mismatch / security_blocked;
+- zusätzliche Successor-Row nach durabler Confirmation ist normaler
+  post-activation Suffix und muss unabhängig durch Writer-Authority validieren.
 
 ---
 
