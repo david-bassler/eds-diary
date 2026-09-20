@@ -442,10 +442,13 @@ Regeln:
   authorization.signer_key_id = predecessor writer_key_id; Signatur mit dessen
   Public Key.
 - Forced Takeover: authorization.kind="recovery_takeover";
-  authorization.signer_key_id = recovery_takeover_key_id; Signatur mit dem im
-  Manifest für die aktuelle Recovery-Generation gebundenen Recovery-Takeover-Key.
-- Für jeden Grant muss record_data.recovery_generation exakt der
-  manifestgebundenen Recovery-Generation dieser Epoche entsprechen.
+  authorization.signer_key_id = **aktuell verifizierter**
+  recovery_takeover_key_id; Signatur mit demjenigen Recovery-Takeover-Key, den
+  der Verifier an dieser Row-Position aus Manifest plus gültigen
+  RecoveryAuthorityTransitionV2-Controls als current bestimmt.
+- Für jeden Grant muss record_data.recovery_generation exakt der **aktuell
+  verifizierten** Recovery-Generation an dieser Row-Position entsprechen; sie
+  kann innerhalb einer Epoche durch RecoveryAuthorityTransitionV2 steigen.
 - authority_anchor beschreibt den vollständig verifizierten **Entscheidungs-Prefix**,
   auf dessen Basis der Grant erzeugt wurde. covered_row_count darf deshalb kleiner
   als die Position unmittelbar vor der Grant-Row sein.
@@ -486,33 +489,35 @@ Für jede Recovery-Generation existiert genau ein Ed25519-Takeover-Schlüsselpaa
 
 Key-Lifecycle:
 
-1. Bei **v1→v2** wird ein neues Ed25519-Keypair transient erzeugt.
-2. Bei **recovery_rekey** wird recovery_generation exakt um 1 erhöht und ebenfalls
-   ein neues Ed25519-Keypair erzeugt.
-3. Bei normaler **v2→v2-Rotation** bleiben recovery_generation,
-   recovery_takeover_key_id und dasselbe Takeover-Keypair unverändert. Die
-   aktuelle URS wird erneut eingegeben; das Source-RecoveryArtifactV6 wird
-   entschlüsselt und dessen Keypair gegen das Source-Manifest geprüft.
-4. Für ein neu erzeugtes Paar: Public Key roh als 32 Byte exportieren, Private
+1. Bei **v1→v2** wird für die übernommene Recovery-Generation das erste
+   Ed25519-Takeover-Keypair transient erzeugt.
+2. Eine spätere **recovery_rekey** ändert die Recovery-Authority zuerst auf der
+   noch aktiven Source durch RecoveryAuthorityTransitionV2 (§16b). Erst nach
+   durable Readback dieser Transition darf eine Successor-Epoche für den Rekey
+   erzeugt werden.
+3. RecoveryAuthorityTransitionV2 erhöht recovery_generation exakt um 1,
+   bindet neues recovery_urs_commitment und ein neues Ed25519-Takeover-Keypair.
+4. Bei normaler v2→v2-Rotation werden die am final verifizierten Source-Prefix
+   **aktuell gültigen** Recovery-Felder unverändert in das Successor-Manifest
+   übernommen. Das gilt auch für eine Rotation, die direkt auf einen
+   Recovery-Rekey folgt.
+5. Für ein neu erzeugtes Paar: Public Key roh als 32 Byte exportieren, Private
    Key einmalig als PKCS#8 exportieren und recovery_takeover_key_id aus dem
-   Public Key ableiten. Für ein fortgeführtes Paar werden dieselben Werte aus dem
-   verifizierten Source-Artefakt übernommen.
-5. Public Key + Key-ID der Ziel-Recovery-Generation im geschützten
-   Successor-Manifest binden.
-6. Vor jedem mutierenden Remote-Create/Manifest-Publish muss PKCS#8
-   crash-resumable als RecoveryTakeoverStagingV2 (§9.1) URS-verschlüsselt
-   persistiert und readback-verifiziert werden.
-7. Plaintext-PKCS#8 und ein ggf. extrahierbarer temporärer Private Key danach aus
-   dem normalen Sitzungszustand verwerfen.
-8. Nach finaler Successor-Verifikation wird aus dem Staging-Material das
-   endgültige RecoveryArtifactV6 erzeugt, mit dem final verifizierten
-   RemoteAnchorV2 gebunden, lokal und remote readback-verifiziert.
-9. Erst wenn RecoveryArtifactV6 sicher verfügbar und der Recovery-/Backup-Gate
-   bestanden ist, darf RecoveryTakeoverStagingV2 gelöscht werden.
-10. Ein späterer Forced Takeover decryptet ausschließlich RecoveryArtifactV6 nach
-    erneuter URS-Eingabe und importiert PKCS#8 für diese Ceremony als
-    extractable=false, usage=["sign"].
-11. Diese importierte Capability wird nach Readback/Abschluss verworfen.
+   Public Key ableiten.
+6. Vor mutierendem Remote-I/O wird PKCS#8 crash-resumable als
+   RecoveryTakeoverStagingV2 (§9.1) unter dem **neuen** URS persistiert und
+   readback-verifiziert.
+7. Für einen Recovery-Rekey wird zusätzlich das exakte, bereits
+   writer-signierte RecoveryAuthorityTransitionV2-Envelope one-shot vorbereitet
+   und im neuen RecoveryArtifactV6 als RecoveryAuthorityTransitionProofV2
+   gebunden, bevor die Transition appended wird.
+8. Plaintext-PKCS#8 und ein ggf. extrahierbarer temporärer Private Key werden
+   danach aus dem normalen Sitzungszustand verworfen.
+9. Ein späterer Forced Takeover decryptet ausschließlich ein RecoveryArtifactV6,
+   dessen Recovery-Generation/Key/Commitment gegen den **vollständig
+   verifizierten aktuellen Recovery-State** der Epoche matchen, und importiert
+   PKCS#8 für diese Ceremony als extractable=false, usage=["sign"].
+10. Diese importierte Capability wird nach Readback/Abschluss verworfen.
 
 Der normale lokale Writer-State enthält niemals recovery_takeover_private_key,
 PKCS#8 oder eine dauerhaft nutzbare Recovery-Takeover-Capability. Außerhalb des
@@ -520,8 +525,16 @@ finalen RecoveryArtifactV6 darf PKCS#8 nur im nachfolgend exakt definierten,
 URS-verschlüsselten und operationsgebundenen Crash-Resume-Staging vorkommen.
 
 Ist URS bzw. das aktuelle RecoveryArtifactV6 kompromittiert, ist Forced Takeover
-für diese Recovery-Generation kompromittiert. recovery_rekey muss daher ein neues
-Takeover-Keypair erzeugen.
+für diese Recovery-Generation kompromittiert. recovery_rekey erzeugt daher neue
+URS-Bindung und neues Takeover-Keypair.
+
+**Bewusste Threat-Boundary:** recovery_rekey wird von der **aktuell kanonischen
+Writer-Authority** autorisiert; der alte Recovery-Key muss nicht nachgewiesen
+werden. Ein Angreifer mit gleichzeitig aktuellem Writer-Private-Key, RK_epoch
+und Google-Mutationszugriff kann deshalb die Recovery-Authority auf eigenes
+Material umstellen. Das ist die gewählte Wiederherstellbarkeitsgrenze für den
+Fall „alter Recovery-Key verloren“. Ein zukünftiges Profil mit zusätzlichem
+Recovery-Zweitfaktor müsste eine neue Protokollversion verwenden.
 
 ### 9.1 RecoveryTakeoverStagingV2 – nur lokaler Operation-State
 
