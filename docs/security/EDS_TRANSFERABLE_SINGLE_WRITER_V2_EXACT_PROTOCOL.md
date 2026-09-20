@@ -2607,6 +2607,18 @@ Damit existiert zu jedem Zeitpunkt höchstens **ein referenzierter aktiver**
 RecoveryRekeyOperationStateV2, während eine vor-durable Supersession bei Crash
 auf die weiterhin kanonische ältere Remote-Transition zurückfallen kann.
 
+Zusätzliche Stage-Invarianten:
+
+- stage!="superseded" => superseded_by_transition_id=null.
+- stage="superseded" => superseded_by_transition_id ist non-null, ungleich der
+  eigenen transition_id und canonical_full muss beweisen, dass genau diese ID
+  remote current ist oder bereits durch eine noch neuere Transition in derselben
+  nachweisbaren Supersession-Kette ersetzt wurde.
+- Aus `transition_durable`, `source_backup_verified` oder
+  `successor_rotation_required` ist der Übergang nach `superseded`
+  ausschließlich durch Schritt 7 der atomaren Supersession zulässig.
+- `completed`, `stale` und `superseded` sind terminal.
+
 operation_origin="remote_pending_rekey_adoption" hat
 supersedes_transition_id=null und darf ausschließlich neu
 erzeugt werden, wenn:
@@ -2653,7 +2665,9 @@ successor_rotation_required -> completed
 
 `stale` darf nur **vor** der zu diesem Operation-State gehörenden durablen
 RecoveryAuthorityTransitionV2 erreicht werden, wenn der Transition-Anchor
-überholt wurde. Nach `transition_durable` ist die neue Recovery-Authority
+überholt wurde oder ein expliziter lokaler Abbruch nach canonical_full beweist,
+dass die vorbereitete Transition-Envelope nicht remote vorhanden ist und der
+Remote-Recovery-State noch nicht auf diese transition_id fortgeschritten ist. Nach `transition_durable` ist die neue Recovery-Authority
 bereits kanonisch; der Rekey darf dann nicht abgebrochen oder auf die alte
 Generation zurückgesetzt werden. Ein post-durable State darf ausschließlich
 durch eine **neuere durable RecoveryAuthorityTransitionV2** gemäß der obigen
