@@ -222,8 +222,9 @@ Dies ist nicht implizit durch WebCrypto `extractable:false` erfüllt.
 
 ## 6. Writer-Authority
 
-Der vollständige lokale Security-State wird um mindestens folgende Felder
-erweitert:
+Der exakte persistierte V6-State ist in
+`EDS_TRANSFERABLE_SINGLE_WRITER_V2_EXACT_PROTOCOL.md` geschlossen definiert.
+Architektonisch relevant sind insbesondere:
 
 ```text
 writer_device_id
@@ -231,7 +232,8 @@ writer_signing_key_id
 writer_status
 writer_generation
 writer_grant_id
-writer_verified_anchor: RemoteAnchorV2
+remote_anchor: RemoteAnchorV2
+verified_writer_*
 ```
 
 Zusätzlich darf v2 die historische v1-Namensunschärfe
@@ -251,21 +253,20 @@ Google-Provider-Identifier und
 `google-sheets-transferable-single-writer-v2` sind unterschiedliche
 Begriffe, auch wenn v1 sie historisch in einem Feld vermischt.
 
-`writer_status`:
+`writer_status` ist im exakten persistierten V6-State bewusst nur:
 
 ```text
 read_only
-writer_candidate
 writer_active
-writer_stale
-writer_conflict
 ```
 
-Nur `writer_active` darf Fachrevisionen erzeugen.
+`writer_candidate`, `writer_stale` und `writer_conflict` sind
+Ablauf-/Fehlerklassifikationen, keine zusätzlichen persistierten
+Authority-Werte. Nur `writer_active` darf Fachrevisionen erzeugen.
 
 `writer_active` ist kein UI-Flag. Der Status darf nur nach vollständiger
-Remote-Verifikation und exakter Übereinstimmung von lokaler Device-ID,
-Generation, Grant-ID und Anchor gesetzt werden.
+Remote-Verifikation, unsealed Source und exakter Übereinstimmung von lokaler
+Device-ID, Generation, Grant-ID und Anchor gesetzt werden.
 
 
 ### 6.1 RemoteAnchorV2
@@ -409,11 +410,13 @@ Für jede Row:
 2. Bei `writer-grant-sw-v2` Vorgänger, Generation und Authority-Anchor prüfen.
 3. Aktuelle kanonische Writer-Authority fortschreiben, falls Grant gültig.
 4. Bei Fachrevision:
-   - `writer_context == current authority` **und** Writer-Signatur gegen den
-     im Grant gebundenen Public Key gültig -> akzeptiert;
-   - ältere Generation bzw. alter Grant -> `stale_writer_rejected`;
+   - bei exakt aktueller Authority Signatur gegen den aktuellen Writer-Public-Key
+     gültig -> akzeptiert;
+   - bei exakt historisch verifizierter älterer Authority Signatur gegen deren
+     historischen Public Key gültig -> `stale_writer_rejected`;
    - gleiche Generation mit anderer Grant-/Device-/Key-ID -> fatal;
-   - ungültige oder fehlende Writer-Signatur -> fatal;
+   - unbekannte/falsche historische Authority oder ungültige/fehlende Signatur
+     -> fatal;
    - zukünftige Generation ohne gültigen vorherigen Grant -> fatal.
 5. Nur akzeptierte Revisionen gehen in den fachlichen Revision-Graph ein.
 
@@ -535,7 +538,7 @@ Crash-Sicherheit:
 Ein read-only Gerät darf eine erzwungene Übernahme nur nach besonders deutlicher
 Ceremony starten:
 
-1. starkes lokales Unlock;
+1. erfolgreiches lokales Unlock gemäß konfiguriertem RootWrap-Modus;
 2. Google Account Binding;
 3. Recovery-Key erneut eingeben;
 4. aktuelles Remote vollständig verifizieren;
@@ -583,17 +586,21 @@ Koordinationsdienst **nicht freigabefähig**.
 
 Vor jedem neuen Fachcommit:
 
-1. lokales starkes Unlock prüfen;
+1. lokales Unlock gemäß konfiguriertem RootWrap-Modus prüfen;
 2. Google-Session vorhanden;
 3. Writer-Authority remote gegen aktuellen Anchor verifizieren;
-4. lokale `writer_device_id`, Generation und Grant-ID müssen exakt matchen;
-5. erst dann Revision mit `writer_context` erzeugen, kanonisch mit dem
+4. Source muss unsealed sein;
+5. lokale `writer_device_id`, Generation und Grant-ID müssen exakt matchen;
+6. erst dann Revision mit `writer_context` erzeugen, kanonisch mit dem
    aktuellen Geräte-Private-Key signieren und als Envelope lokal persistent
    vorbereiten;
-6. signiertes Envelope pushen;
-7. Readback;
-8. Writer-Authority und gesamten Remote-Zustand erneut full-verifizieren;
-9. nur bei unveränderter Authority als durable/committed markieren.
+7. unmittelbar vor Push Authority und unsealed-Zustand erneut prüfen;
+8. signiertes Envelope pushen;
+9. Readback;
+10. Writer-Authority, Seal-Zustand und gesamten Remote-Zustand erneut
+    full-verifizieren;
+11. nur bei unveränderter Authority und semantischer Annahme als
+    durable/committed markieren.
 
 Wenn zwischen Schritt 3 und dem Remote-Append ein anderer Grant gewinnt, wird
 die alte Revision beim Readback als stale erkannt und **nicht** als fachlicher
@@ -670,6 +677,20 @@ neue Verifikationsmaterial wird in das Successor-Manifest gebunden; Material
 einer älteren Recovery-Generation darf in der neuen Epoche keinen Forced
 Takeover autorisieren.
 
+Jede nicht-native Successor-Epoche besitzt zusätzlich einen
+`RecoveryActivationProofV2` im neuen RecoveryArtifact. Der Proof enthält
+verschlüsselt unter der neuen URS den direkten Source-RK, den letzten
+verifizierten Source-Anchor vor dem vorbereiteten Announcement und exakt die
+one-shot vorbereiteten Announcement-Envelope-Bytes. Das Artifact darf bereits
+vor dem Announcement durable gespeichert werden, wird aber erst Recovery-
+Trust-Root, wenn die Source mit diesem Source-RK vollständig verifiziert wurde
+und genau diese Row vom jeweiligen v1/v2-Source-Verifier als kanonisches
+Announcement auf den Successor akzeptiert wird.
+
+Damit funktioniert insbesondere `recovery_rekey` später mit neuem Recovery-Key
+ohne alten Recovery-Key, während ein nur vorbereiteter oder durch einen
+konkurrierenden Takeover überholter Successor nicht aktiviert wird.
+
 ## 18. Migration v1 -> v2
 
 Migration wird auf dem aktuell vertrauenswürdigen v1-Gerät gestartet:
@@ -681,9 +702,16 @@ Migration wird auf dem aktuell vertrauenswürdigen v1-Gerät gestartet:
 5. fachliche Heads kopieren;
 6. v2 Migration-Control schreiben;
 7. Successor full-verifizieren;
-8. RecoveryArtifact und Backup unter v2 erzeugen und testen;
-9. v1 Rotation Announcement durable machen;
-10. atomar auf v2 umschalten und v1 retire.
+8. exaktes v1 Rotation-Announcement one-shot vorbereiten, aber noch nicht
+   appendieren;
+9. RecoveryArtifactV6 inklusive RecoveryActivationProofV2 unter der aktuellen
+   URS durable/readback-verifiziert speichern;
+10. exakt das vorbereitete v1 Announcement appendieren und Source vollständig
+    readback-verifizieren;
+11. RecoveryActivationProofV2 muss den Successor als aktiviert bestätigen;
+12. erst danach kanonisches SyncBackupV6 einschließlich Activation-Source-
+    Snapshot erzeugen und Test-Restore durchführen;
+13. atomar auf v2 umschalten und v1 retire.
 
 Alte v1-Geräte sehen das Announcement und dürfen die alte Epoche nicht weiter
 als aktiv behandeln.
@@ -778,11 +806,18 @@ Mindestens:
     kanonischer Fortsetzungszustand.
 23. Recovery-Rekey vs. Forced-Takeover -> alte Recovery-Generation kann keinen
     neuen Takeover autorisieren.
-24. Transferdescriptor-Key stimmt nicht mit Zielgerät überein -> kein Promote.
-25. Transferdescriptor mit falschem Profil/Diary/Epoch -> Handoff wird vor Grant-Erzeugung abgelehnt.
-26. Transferdescriptor ohne gültigen Proof-of-Possession des Ziel-Private-Keys -> Handoff wird abgelehnt.
-27. Provider-Rollback vor einen dem Gerät bereits bekannten Writer-Grant -> fail-closed gegen den neueren Anchor.
-28. Vollständiger Verlust aller neueren Freshness-Belege -> als explizite nicht lösbare globale Freshness-Grenze dokumentiert; kein erfundener "latest"-Zustand.
+24. Recovery-Rekey nach Geräteverlust: nur neuer Recovery-Key + Google-Konto
+    verifizieren über RecoveryActivationProofV2 den durable Successor; alter
+    Recovery-Key ist nicht erforderlich.
+25. Vorbereitetes RecoveryArtifactV6 ohne durable kanonische Announcement-Row
+    bleibt unactivated; physisch vorhandene stale Announcement-Row genügt nicht.
+26. Gen-1-Grant fehlt / kommt nach einer Fachrow / EOF davor -> fail-closed.
+27. Retry, Handoff und Forced Takeover nach Source-Seal -> kein Append.
+28. Transferdescriptor-Key stimmt nicht mit Zielgerät überein -> kein Promote.
+29. Transferdescriptor mit falschem Profil/Diary/Epoch -> Handoff wird vor Grant-Erzeugung abgelehnt.
+30. Transferdescriptor ohne gültigen Proof-of-Possession des Ziel-Private-Keys -> Handoff wird abgelehnt.
+31. Provider-Rollback vor einen dem Gerät bereits bekannten Writer-Grant -> fail-closed gegen den neueren Anchor.
+32. Vollständiger Verlust aller neueren Freshness-Belege -> als explizite nicht lösbare globale Freshness-Grenze dokumentiert; kein erfundener "latest"-Zustand.
 
 ## 22. Nicht-Ziele
 
@@ -1004,6 +1039,7 @@ RemoteAnchorV2
 WriterDeviceKeyV2
 WriterSignatureV2
 RecoveryTakeoverAuthorityV2
+RecoveryActivationProofV2
 SyncBackupV6
 RecoveryArtifactV6
 WriterGrantV2
