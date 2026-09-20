@@ -1117,19 +1117,22 @@ Generation erzeugt.
 
 ## 14. Unknown Outcome – Grant und Fachwrite
 
-Vor jedem Remote-Append werden exakte Envelope-Bytes persistent gespeichert.
+Vor jedem Remote-Append wird der exakte PreparedRemoteRowV2 einschließlich
+activation_token persistent/readback-verifiziert gespeichert.
 
 Bei Timeout/unklarem Ergebnis:
 
-1. niemals semantisch neuen Grant oder neue Revision erzeugen;
+1. niemals semantisch neuen Grant oder neue Revision erzeugen und niemals einen
+   neuen activation_token erzeugen;
 2. Remote vollständig lesen;
-3. gleiche envelope_id + gleiche Bytes => dieses konkrete Envelope existiert;
-4. gleiche envelope_id + andere Bytes => fatal;
-5. fehlt das Envelope und Authority ist unverändert und
-   source_epoch_sealed=false => exakt dieselben Bytes erneut appendieren;
-6. fehlt das Envelope und Authority sich geändert hat oder
-   source_epoch_sealed=true => nicht erneut appendieren; als
-   stale_writer_pending bzw. stale_grant_attempt quarantinieren.
+3. gleiche envelope_id + exakt dieselben vier Row-Strings => genau diese
+   PreparedRemoteRowV2 existiert;
+4. gleiche envelope_id + andere vollständige Rowbytes => fatal;
+5. fehlt die Row und Authority ist unverändert und source_epoch_sealed=false =>
+   exakt dieselben vier persistierten Strings erneut appendieren;
+6. fehlt die Row und Authority sich geändert hat oder source_epoch_sealed=true =>
+   nicht erneut appendieren; als stale_writer_pending bzw.
+   stale_grant_attempt quarantinieren.
 
 Ein HTTP-200 ohne finalen Full Readback ist niemals durable.
 
@@ -1145,7 +1148,8 @@ Voraussetzungen:
 - A verifiziert TransferdescriptorV2 von B.
 
 A full-verifiziert, erzeugt und signiert danach exakt einen Grant g+1,
-verschlüsselt ihn one-shot und persistiert die exakten Envelope-Bytes.
+verschlüsselt ihn one-shot und persistiert den vollständigen PreparedRemoteRowV2
+mit activation_token="".
 Unmittelbar vor Append erfolgt erneut ein Full Verify; nur wenn dieselbe
 predecessor-Authority weiterhin current und source_epoch_sealed=false ist,
 appendet A exakt diese bereits persistierten Bytes und liest vollständig zurück.
@@ -1176,7 +1180,8 @@ Ein read-only Gerät muss URS erneut erhalten. Danach:
 6. Grant g+1 reason="forced_takeover" gegen genau diesen frisch verifizierten
    Entscheidungs-Prefix erzeugen.
 7. Grant-Signing-Input mit Recovery-Takeover-Key signieren, one-shot
-   verschlüsseln und exakte Envelope-Bytes persistent vorbereiten.
+   verschlüsseln und den vollständigen PreparedRemoteRowV2 mit
+   activation_token="" persistent vorbereiten.
 8. Unmittelbar vor Append erneut Full Verify: predecessor-Authority muss
    unverändert current und Source unsealed sein. Sonst kein Append und
    stale_grant_attempt.
@@ -2160,9 +2165,10 @@ Reihenfolge:
     reservieren, aber noch nicht appendieren; der aktuelle Source-Anchor wird
     source_anchor_before im RecoveryActivationProofV2.
 14. aus RecoveryTakeoverStagingV2 das finale RecoveryArtifactV6 erzeugen; sein
-    RecoveryActivationProofV2 enthält den v1-Source-RK, den final verifizierten
-    Source-Anchor vor Announcement und exakt die in Schritt 13 reservierten
-    Announcement-Envelope-Bytes. Artifact lokal/remote readback-verifizieren.
+    RecoveryActivationProofV2 enthält source_key_material im direct-Modus mit
+    dem v1-Source-RK, den final verifizierten Source-Anchor vor Announcement und
+    exakt den in Schritt 13 reservierten Announcement-Envelope-Kern. Artifact
+    lokal/remote readback-verifizieren.
 15. unmittelbar vor Append v1 Source noch einmal vollständig verifizieren; der
     fachliche Semantic-Snapshot muss weiterhin unverändert sein. Nur dann genau
     diese v1 Rotation-Announcement-Bytes appendieren und Source vollständig
@@ -2231,7 +2237,9 @@ für mindestens:
 14. RecoveryTakeoverStagingV2 KDF/AAD/Crash-Resume + falsche URS.
 15. RecoveryArtifactV6 AAD/Payload/Keypair-Check roundtrip.
 16. RecoveryActivationProofV2 für v1→v2, normale v2-Rotation und
-    recovery_rekey einschließlich exakter Announcement-Envelope-Bytes.
+    recovery_rekey einschließlich exaktem Announcement-Envelope-Kern,
+    activation_commitment, activation_token und activation-wrapped
+    Source-/Successor-RKs.
 17. SyncBackupV6 vollständiges Manifest/hash binding einschließlich
     activation_source_snapshot.
 
