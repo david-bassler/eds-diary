@@ -647,6 +647,12 @@ recovery_takeover_key_id
 recovery_takeover_public_key
 ~~~
 
+Die vier Recovery-Felder `recovery_generation`,
+`recovery_urs_commitment`, `recovery_takeover_key_id` und
+`recovery_takeover_public_key` sind der **Recovery-Startzustand dieser
+Epoche**. Sie bleiben als Manifestbytes immutable, können aber im laufenden
+Verifier-State durch RecoveryAuthorityTransitionV2 fortgeschrieben werden.
+
 epoch_start_authority_mode ist exakt:
 
 ~~~text
@@ -1074,7 +1080,10 @@ Aktivierungskette bis zur aktuellen v2-Epoche.
 
 Maximal `protocol_limits.max_activation_lineage_entries = 128` Einträge. Eine
 129. Rotation ist in diesem Profil nicht zulässig; Lineage-Compaction benötigt
-eine neue Protokollversion.
+eine neue Protokollversion. Zusätzlich gilt unabhängig davon der
+RecoveryArtifact-Ciphertext-Bound von 1048576 Byte: würde eine weitere Lineage-
+Erweiterung diesen Bound überschreiten, ist die Rotation bereits früher
+blockiert.
 
 Eintrag Union exakt:
 
