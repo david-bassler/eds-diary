@@ -832,7 +832,8 @@ Die Stage-Reihenfolge ist geschlossen:
 Successor verifizieren/staging anchor einfrieren -> Announcement one-shot
 vorbereiten -> Activation-Evidence/Lineage bilden -> RecoveryArtifact -> staged
 Backup -> Announcement append/readback -> Successor-anchor erneut exakt prüfen ->
-activated Backup -> Switch. Das Announcement muss **vor**
+SuccessorActivationConfirmation one-shot append/readback -> activated Backup ->
+Switch. Das Announcement muss **vor**
 RecoveryArtifact/Backup vorbereitet sein, weil diese seine exakten Bytes
 kryptographisch binden. Weicht der Successor nach durable Source-Seal vom
 staging anchor ab, endet der Vorgang terminal als `cutover_race`; die Source
@@ -1136,6 +1137,14 @@ Mindestens:
 67. v1→v2 analog: Successor verändert sich zwischen eingefrorenem
     successor_staging_anchor und finalem Cutover ->
     profile_upgrade_successor_cutover_race; kein activated Backup/Switch.
+68. Source-Announcement durable, Crash vor Successor-Confirmation -> Recovery
+    darf exakt die vorbereiteten Confirmation-Bytes nur bei unverändertem
+    staging anchor fertig appendieren.
+69. SuccessorActivationConfirmation mit falschem Announcement-Hash, falscher
+    Source-/Successor-Bindung oder nicht unmittelbarem staging anchor ->
+    activation_confirmation_mismatch / keine Aktivierung.
+70. normale Fachrow nach durabler Confirmation -> post-activation-Suffix und
+    nur bei gültiger aktueller Writer-Authority akzeptiert.
 
 ## 22. Nicht-Ziele
 
@@ -1363,6 +1372,7 @@ RecoveryAuthorityTransitionV2
 RecoveryAuthorityTransitionProofV2
 RecoveryActivationProofV2
 RotationAnnouncementV2
+SuccessorActivationConfirmationV2
 EpochMigrationV2
 MigrationIntegrityV2
 ActivationLineageV2
