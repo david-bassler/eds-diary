@@ -2715,8 +2715,21 @@ semantisch inkonsistente Feldkombination ist security_blocked; kein
 
 ### Operation-Locking
 
-- Während nicht-terminalem RecoveryRekeyOperationStateV2 sind Fachwrites,
-  Handoff, Forced Takeover und Rotation lokal gesperrt.
+- Während nicht-terminalem RecoveryRekeyOperationStateV2 sind Fachwrites und
+  Handoff lokal gesperrt.
+- Forced Takeover ist auf demselben Gerät gesperrt, solange ein lokaler
+  RecoveryRekeyOperationStateV2 existiert; bei Geräteverlust wird ein
+  maintenance-only Writer **vor** Anlage des
+  operation_origin="remote_pending_rekey_adoption"-States per Forced Takeover
+  gewonnen.
+- Rotation ist während RecoveryRekeyOperationStateV2 grundsätzlich gesperrt.
+  Einzige Ausnahme: stage="successor_rotation_required" erlaubt exakt eine
+  RotationOperationStateV2 mit rotation_kind="recovery_rekey",
+  source_epoch_id=RecoveryRekeyOperationStateV2.epoch_id und
+  source_recovery_transition_id=RecoveryRekeyOperationStateV2.transition_id.
+  Normale/profile_upgrade-Rotation bleibt gesperrt. Wird ein solcher
+  RotationOperationStateV2 stale, darf nach erneutem canonical_full ein neuer
+  matching Rekey-Rotationsversuch gestartet werden.
 - Während nicht-terminalem RotationOperationStateV2 sind normale Source-Writes
   ab dem dokumentierten Freeze gesperrt.
 - Handoff und Forced Takeover dürfen nicht parallel zu einem anderen
