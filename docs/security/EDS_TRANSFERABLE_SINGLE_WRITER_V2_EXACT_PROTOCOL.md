@@ -2103,7 +2103,10 @@ Für **jede** v2→v2-Rotation ist die Reihenfolge verbindlich:
 
 1. activation_lineage der aktiven Source vollständig validieren und finalen
    Source-Anchor/Writer-/Recovery-State einfrieren.
-2. Successor erzeugen, Fach-Heads kopieren/signieren.
+2. Successor erzeugen. Jeden am eingefrorenen Source-Prefix aktuellen
+   nicht-Control-Head exakt nach §16a.0 als neue Successor-Genesis-Revision
+   kopieren/signieren: gleiche Fachsemantik, leere Parents und
+   `migration_origin` exakt auf die eine kopierte Source-Revision.
 3. Exakt eine EpochMigrationV2 schreiben. source.source_anchor ist der finale
    Source-Anchor; source_writer_authority ist die dortige Authority;
    source_recovery_transition_id ist bei normal null und bei recovery_rekey die
@@ -3267,7 +3270,10 @@ Reihenfolge:
    persistieren/readback-verifizieren; erst danach extrahierbaren temporären
    Recovery-Private-Key verwerfen und mutierendes Remote-I/O beginnen.
 9. Gen-1-Grant als erste _r-Row mit authority_anchor=H0 schreiben.
-10. fachliche Heads als RevisionV2 unter Gen-1-Authority schreiben/signieren.
+10. jeden am eingefrorenen v1-Source-Prefix aktuellen fachlichen Head exakt nach
+    §16a.0 als RevisionV2 unter Gen-1-Authority schreiben/signieren: gleiche
+    Fachsemantik, neue revision_id, leere Parents und `migration_origin` mit
+    exakt dieser v1-Source-Epoche/record_id/revision_id.
 11. Migration-Control mit migration_kind="profile_upgrade",
     source_writer_authority=null und source_recovery_transition_id=null
     schreiben. Source-Snapshot-Hashes werden aus dem final verifizierten
@@ -3331,6 +3337,7 @@ manifest_genesis_missing
 migration_control_missing
 migration_snapshot_mismatch
 migration_head_count_mismatch
+migration_provenance_mismatch
 migration_transition_mismatch
 profile_upgrade_source_race
 recovery_generation_mismatch
@@ -3379,33 +3386,37 @@ für mindestens:
 19. EpochMigrationV2: Source-Semantic-/Lineage-Snapshot, Successor-Result-Hash
     und Head-Counts gegen echte Prefix-Graphen für profile_upgrade, normal und
     recovery_rekey.
-20. ActivationLineageV2 für native Genesis, profile_upgrade und mindestens zwei
+20. Cross-Epoch-Provenienz-Bijection: jeder Source-Head wird genau eine
+    Successor-Genesis-Revision mit leerem Parent-Array und exakt singleton
+    `migration_origin` auf seine Source-Epoche/Record-/Revision-ID; mehrere
+    Konflikt-Heads desselben Records bleiben getrennte Heads.
+21. ActivationLineageV2 für native Genesis, profile_upgrade und mindestens zwei
     aufeinanderfolgende v2→v2-Rotationen einschließlich Migration-Integrität.
-21. RecoveryAuthorityTransitionV2 + RecoveryAuthorityTransitionProofV2:
+22. RecoveryAuthorityTransitionV2 + RecoveryAuthorityTransitionProofV2:
     staged, exact completion, durable und überholter Anchor.
-22. ActivationLineageCacheV2 AEAD/Readback einschließlich cache_id und
+23. ActivationLineageCacheV2 AEAD/Readback einschließlich cache_id und
     Cache-Ref-Hash.
-23. RotationOperationStateV2 für profile_upgrade/normal/recovery_rekey mit allen
+24. RotationOperationStateV2 für profile_upgrade/normal/recovery_rekey mit allen
     erlaubten Stage-Transitions und Null/non-null-Invarianten.
-24. Verifier-purpose canonical_full vs operation-gebundenes rotation_resume:
+25. Verifier-purpose canonical_full vs operation-gebundenes rotation_resume:
     fehlende Migration-Control nur in successor_bound|copying als
     staged_incomplete; niemals aktive Authority.
-25. Remote Pending-Rekey-Fence: Transition setzt
+26. Remote Pending-Rekey-Fence: Transition setzt
     recovery_rekey_rotation_required/current_recovery_rekey_transition_id;
     zweite Transition supersedet die ID; Forced Takeover bleibt möglich;
     Fachwrite/Handoff/Normalrotation werden abgewiesen; passendes
     recovery_rekey-Announcement versiegelt.
-26. RecoveryRekeyOperationStateV2 remote_pending_rekey_adoption nach
+27. RecoveryRekeyOperationStateV2 remote_pending_rekey_adoption nach
     Geräteverlust: canonical_full + aktuelles RecoveryArtifact + Forced Takeover
     -> Einstieg bei transition_durable -> verpflichtende Successor-Rotation.
-27. RecoveryRekeyOperationStateV2 atomare Supersession:
+28. RecoveryRekeyOperationStateV2 atomare Supersession:
     alter durable State suspendiert, neuer State referenziert; neuer Versuch
     pre-durable stale -> alter State wieder gebunden; neue Transition durable ->
     alter State terminal superseded + superseded_by_transition_id.
-28. v1→v2 Profile-Upgrade-Race: finaler Pre-Append-Anchor gleich vs.
+29. v1→v2 Profile-Upgrade-Race: finaler Pre-Append-Anchor gleich vs.
     zusätzliche Row zwischen finalem Read und v1-Announcement =>
     profile_upgrade_source_race.
-29. SyncBackupV6 staged/activated Manifest/hash binding einschließlich
+30. SyncBackupV6 staged/activated Manifest/hash binding einschließlich
     activation_lineage und Recovery-Transition-Proof.
 
 Negative Vectors:
@@ -3448,6 +3459,9 @@ Negative Vectors:
   recovery_transition_id;
 - EpochMigrationV2 mit fehlendem Fach-Head, zusätzlichem Head, falschem
   source_lineage_snapshot_hash oder falschen Head-Counts;
+- Successor-Head mit korrektem Fachwert, aber migration_origin=null, falscher
+  source_epoch_id/source_record_id/source_revision_id, mehreren Source-Revisionen
+  oder doppelt beanspruchter Source-Revision => migration_provenance_mismatch;
 - direkte Aktivierungsproofs gültig, aber EpochMigrationV2 inkonsistent =>
   Successor nicht aktiv;
 - canonical_full auf nicht-native Epoche ohne Migration-Control =>
