@@ -1517,9 +1517,11 @@ Bei Timeout/unklarem Ergebnis:
 2. Remote vollständig lesen;
 3. gleiche envelope_id + gleiche Bytes => dieses konkrete Envelope existiert;
 4. gleiche envelope_id + andere Bytes => fatal;
-5. **Fachrevision:** fehlt das Envelope, current Writer-Authority ist unverändert
-   und source_epoch_sealed=false => exakt dieselben Bytes dürfen erneut appended
-   werden;
+5. **Fachrevision:** fehlt das Envelope, current Writer-Authority ist unverändert,
+   source_epoch_sealed=false und recovery_rekey_rotation_required=false =>
+   exakt dieselben Bytes dürfen erneut appended werden. Wird zwischen Prepare
+   und Retry ein Recovery-Rekey-Fence remote aktiv, wird die Fachrevision
+   quarantiniert und nicht erneut appended;
 6. **WriterGrantV2:** fehlt das Envelope => Retry nur, wenn der vollständig
    verifizierte aktuelle RemoteAnchorV2 **exakt** dem im Grant gespeicherten
    authority_anchor entspricht, predecessor/recovery-State noch passen und
@@ -1585,7 +1587,12 @@ Ein read-only Gerät muss URS erneut erhalten. Danach:
 7. Grant-Signing-Input mit Recovery-Takeover-Key signieren.
 8. Append + Full Readback.
 9. writer_active nur bei kanonisch akzeptiertem eigenen Grant.
-10. Recovery signing capability aus normalem Sitzungszustand verwerfen.
+10. Falls canonical_full recovery_rekey_rotation_required=true liefert, ist
+    dieser writer_active **maintenance-only**: normale Fachwrites, Handoff und
+    normale Rotation bleiben remote/protokollseitig gesperrt. Zulässig sind nur
+    eine weitere RecoveryAuthorityTransitionV2 oder die verpflichtende
+    recovery_rekey-Rotation gegen current_recovery_rekey_transition_id.
+11. Recovery signing capability aus normalem Sitzungszustand verwerfen.
 
 ---
 
@@ -2468,6 +2475,7 @@ current.
   format: "recovery-rekey-operation-v2",
   version: 2,
   operation_id,
+  operation_origin: "local_rekey" | "remote_pending_rekey_adoption",
   epoch_id,
   stage:
     "new_material_staged" |
@@ -2500,16 +2508,49 @@ URS-verschlüsselt.
 transition_id, to_recovery_generation, to_recovery_urs_commitment und
 to_recovery_takeover_key_id müssen exakt den to-Feldern des persistent
 vorbereiteten RecoveryAuthorityTransitionV2-Envelope und des
-RecoveryAuthorityTransitionProofV2 entsprechen und sind ab
-`new_material_staged` immutable.
+RecoveryAuthorityTransitionProofV2 entsprechen und sind ab der ersten
+persistierten Operation-State-Version immutable.
 
-Geschlossene Stage-Reihenfolge:
+operation_origin="local_rekey" startet ausschließlich in
+`new_material_staged`.
+
+operation_origin="remote_pending_rekey_adoption" darf ausschließlich neu
+erzeugt werden, wenn:
+
+1. canonical_full auf der Source
+   recovery_rekey_rotation_required=true und eine nicht-null
+   current_recovery_rekey_transition_id liefert;
+2. das unter dem **aktuellen** URS entschlüsselte RecoveryArtifactV6 exakt zu
+   aktuellem Recovery-State und derselben transition_id passt;
+3. RecoveryAuthorityTransitionProofV2 und die Transition-Row bereits durable
+   verifiziert sind;
+4. das Gerät nach §16 entweder bereits current Writer ist oder unmittelbar
+   vorher einen gültigen Forced Takeover abgeschlossen hat.
+
+Dieser Adoption-State wird lokal mit einem **neuen** operation_id direkt in
+stage=`transition_durable` angelegt. authority_anchor_before_transition,
+transition_envelope, recovery_artifact_id/-locator, transition_proof_sha256 und
+alle to-Felder werden aus dem verifizierten Artifact/Remotezustand übernommen.
+Damit hängt Phase B nach Geräteverlust nicht vom verlorenen ursprünglichen
+Operation-State ab.
+
+Geschlossene Stage-Reihenfolge für operation_origin="local_rekey":
 
 ~~~text
 new_material_staged -> recovery_artifact_published
 recovery_artifact_published -> transition_pending
 transition_pending -> transition_unknown | transition_durable
 transition_unknown -> transition_durable | stale
+transition_durable -> source_backup_verified
+source_backup_verified -> successor_rotation_required
+successor_rotation_required -> completed
+~~~
+
+Für operation_origin="remote_pending_rekey_adoption" ist
+`transition_durable` der einzige zulässige Initialzustand; danach gilt exakt
+derselbe Suffix:
+
+~~~text
 transition_durable -> source_backup_verified
 source_backup_verified -> successor_rotation_required
 successor_rotation_required -> completed
