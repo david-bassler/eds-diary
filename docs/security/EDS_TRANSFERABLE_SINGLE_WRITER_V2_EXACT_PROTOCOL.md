@@ -1087,7 +1087,7 @@ source_writer_authority ist exakt null oder:
 migration_kind ist exakt:
 
 ~~~text
-"profile_upgrade" | "normal" | "recovery_rekey" | "emergency"
+"profile_upgrade" | "normal" | "recovery_rekey"
 ~~~
 
 Regeln:
@@ -1098,10 +1098,50 @@ Regeln:
 - normal/recovery_rekey sind v2→v2:
   source_writer_authority ist nicht-null, entspricht exakt der final
   verifizierten Source-Authority und source_anchor ist RemoteAnchorV2.
-- emergency darf nur ein separat dokumentiertes Recoveryverfahren verwenden;
-  solange dafür kein eigener Ablauf implementiert ist, fail-closed.
+- Ein späteres Emergency-Verfahren benötigt eine neue explizite
+  Schema-/Protokollentscheidung; es wird in diesem eingefrorenen v2-Profil nicht
+  vorweggenommen.
 - Bei unveränderter Ein-Source-Migration muss
   result_semantic_snapshot_hash == source_semantic_snapshot_hash gelten.
+
+Snapshot-Hashes sind exakt und provider-/locale-unabhängig. Zuerst werden alle
+aktuellen **nicht-Control-Heads** des Quellgraphen bestimmt.
+
+Für jeden Head:
+
+~~~text
+semantic_entry = {
+  record_type,
+  record_schema,
+  record_id,
+  record_status,
+  record_data
+}
+
+lineage_entry = {
+  record_id,
+  revision_id,
+  parent_revision_ids
+}
+~~~
+
+semantic_entries werden lexikographisch nach ihren UTF8(JCS(entry))-Bytes
+sortiert. lineage_entries werden nach den **dekodierten revision_id-Bytes**
+lexikographisch unsigned sortiert. parent_revision_ids sind ebenfalls nach
+dekodierten ID-Bytes sortiert.
+
+~~~text
+source_semantic_snapshot_hash =
+  Base64URL(SHA-256(UTF8(JCS(semantic_entries))))
+
+source_lineage_snapshot_hash =
+  Base64URL(SHA-256(UTF8(JCS(lineage_entries))))
+~~~
+
+result_semantic_snapshot_hash wird mit exakt derselben semantic_entry-Projektion
+über die aktuellen nicht-Control-Heads des Successors berechnet.
+active_head_count/tombstone_head_count zählen genau diese Heads nach
+record_status.
 
 ## 17. Rotation und Recovery-Rekey
 
