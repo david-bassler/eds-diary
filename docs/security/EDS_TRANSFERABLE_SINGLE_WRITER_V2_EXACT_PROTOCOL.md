@@ -1290,8 +1290,13 @@ Für sowohl normale Rotation als auch recovery_rekey gilt:
    Successor-Remote erstellen.
 4. Fach-Heads und epoch-migration-sw-v2 unter der fortgeführten Writer-Authority
    schreiben; Successor vollständig verifizieren.
-5. Exakten rotation-announcement-sw-v2-Envelope auf der Source one-shot
-   vorbereiten und persistent reservieren, aber noch nicht appendieren. Sein
+5. Source erneut vollständig verifizieren. Der fachliche
+   source_semantic_snapshot_hash und die kanonische Source-Writer-Authority
+   müssen exakt dem bereits im Successor akzeptierten
+   epoch-migration-sw-v2 entsprechen. Nur dann den exakten
+   rotation-announcement-sw-v2-Envelope one-shot vorbereiten und persistent
+   reservieren, aber noch nicht appendieren. Der zu diesem Zeitpunkt verifizierte
+   physische Anchor wird source_anchor_before im Activation Proof; sein
    successor_recovery_generation muss §16a erfüllen.
 6. Finales RecoveryArtifactV6 des Successors erzeugen. Sein
    RecoveryActivationProofV2 enthält source_root_key, den in Schritt 1
@@ -1299,9 +1304,13 @@ Für sowohl normale Rotation als auch recovery_rekey gilt:
    Announcement-Envelope-Bytes. Artifact remote publishen und bytegenau
    readback-verifizieren.
 7. Source unmittelbar vor Append erneut vollständig verifizieren. Nur wenn
-   dieselbe Writer-Authority weiterhin current und Source weiterhin unsealed ist,
-   exakt die reservierten Announcement-Bytes appendieren; sonst Artifact/
-   Successor unactivated/orphaned lassen und nicht automatisch neu erzeugen.
+   dieselbe Writer-Authority weiterhin current, Source weiterhin unsealed und
+   der fachliche source_semantic_snapshot_hash weiterhin exakt dem
+   Successor-Migration-Control entspricht, exakt die reservierten
+   Announcement-Bytes appendieren. Zusätzliche physische Rows sind nur zulässig,
+   wenn sie semantisch stale/no-op sind und diesen Snapshot nicht verändern.
+   Andernfalls Artifact/Successor unactivated/orphaned lassen und nicht
+   automatisch neu erzeugen.
 8. Source vollständig readback-verifizieren. Die konkrete Announcement-Row muss
    kanonisch akzeptiert sein und §19.1 muss RecoveryArtifactV6 als activated
    bestätigen.
@@ -1696,11 +1705,17 @@ Aktivierungsprüfung nach Eingabe der neuen URS:
 5. Der vollständig gelesene Source-Prefix muss source_anchor_before erweitern.
 6. expected_announcement_envelope muss byteidentisch in einer physischen Row
    nach source_anchor_before vorkommen.
-7. Diese konkrete Row muss vom Source-Verifier als der kanonisch gültige
+7. Unmittelbar vor dieser konkreten Row muss der vom Source-Verifier berechnete
+   fachliche Semantic-Snapshot-Hash exakt dem source_semantic_snapshot_hash des
+   im Successor akzeptierten epoch-migration-sw-v2 entsprechen. Bei v2-Source
+   muss außerdem die zu diesem Zeitpunkt current Writer-Authority exakt
+   source_writer_authority dieses Migration-Controls entsprechen. Dadurch kann
+   keine nach dem Kopieren hinzugekommene gültige Fachrevision verloren gehen.
+8. Diese konkrete Row muss vom Source-Verifier als der kanonisch gültige
    Rotation-Announcement-Control akzeptiert werden; bloße physische Existenz,
    stale_writer_rejected, stale_after_seal_rejected oder ein konkurrierendes
    Announcement genügen nicht.
-8. Das entschlüsselte Announcement muss exakt successor_epoch_id und
+9. Das entschlüsselte Announcement muss exakt successor_epoch_id und
    successor_manifest_fingerprint des RecoveryArtifacts/Successor-Manifests
    binden. Bei source_sync_profile =
    "google-sheets-transferable-single-writer-v2" muss zusätzlich
@@ -1708,10 +1723,11 @@ Aktivierungsprüfung nach Eingabe der neuen URS:
    Successor-Manifests entsprechen. Beim eingefrorenen v1-Announcement existiert
    dieses Feld nicht; dort wird die übernommene Generation separat über
    v1-Recovery-Commitment und Successor-Manifest gebunden.
-9. Nur dann ist das RecoveryArtifactV6 aktiviert. Fehlt die Row, gewann vorher
-   eine andere Authority/Rotation oder wurde die Source zurückgerollt, bleibt das
-   Artifact unactivated und darf weder als aktueller Diary-Trust-Root noch für
-   Forced Takeover verwendet werden.
+10. Nur dann ist das RecoveryArtifactV6 aktiviert. Fehlt die Row, änderte sich
+   der fachliche Source-Snapshot, gewann vorher eine andere Authority/Rotation
+   oder wurde die Source zurückgerollt, bleibt das Artifact unactivated und darf
+   weder als aktueller Diary-Trust-Root noch für Forced Takeover verwendet
+   werden.
 
 Unknown Outcome:
 - RecoveryArtifact darf vor dem Announcement bereits durable existieren.
@@ -1892,14 +1908,19 @@ Reihenfolge:
 11. Migration-Control mit migration_kind="profile_upgrade" und
     source_writer_authority=null schreiben.
 12. Successor vollständig mit V2-Verifier verifizieren.
-13. den exakten v1 Rotation-Announcement-Envelope one-shot gegen den in Schritt 2
-    verifizierten Source-Zustand vorbereiten und persistent reservieren, aber noch
-    nicht appendieren.
+13. v1 Source erneut vollständig verifizieren. Der fachliche
+    source_semantic_snapshot_hash muss weiterhin exakt dem im Successor
+    akzeptierten profile_upgrade-Migration-Control entsprechen. Erst dann den
+    exakten v1 Rotation-Announcement-Envelope one-shot vorbereiten und persistent
+    reservieren, aber noch nicht appendieren; der aktuelle Source-Anchor wird
+    source_anchor_before im RecoveryActivationProofV2.
 14. aus RecoveryTakeoverStagingV2 das finale RecoveryArtifactV6 erzeugen; sein
     RecoveryActivationProofV2 enthält den v1-Source-RK, den final verifizierten
     Source-Anchor vor Announcement und exakt die in Schritt 13 reservierten
     Announcement-Envelope-Bytes. Artifact lokal/remote readback-verifizieren.
-15. genau diese v1 Rotation-Announcement-Bytes appendieren und Source vollständig
+15. unmittelbar vor Append v1 Source noch einmal vollständig verifizieren; der
+    fachliche Semantic-Snapshot muss weiterhin unverändert sein. Nur dann genau
+    diese v1 Rotation-Announcement-Bytes appendieren und Source vollständig
     readback-verifizieren; §19.1 muss aktiviert ergeben.
 16. erst jetzt SyncBackupV6 einschließlich activation_source_snapshot erzeugen
     und Test-Restore durchführen.
@@ -1988,6 +2009,9 @@ Negative Vectors:
   Announcement-Row;
 - RecoveryActivationProof mit falschem Source-RK, Source-Manifest-Fingerprint,
   Source-Anchor oder anderen Announcement-Bytes;
+- gültige Fachrevision zwischen Successor-Kopie und Source-Announcement =>
+  Successor bleibt unactivated; stale/no-op physische Row darf den fachlichen
+  Snapshot dagegen nicht verändern;
 - recovery_rekey: Recovery nur mit neuer URS und ohne alte URS muss nach
   durablem Announcement funktionieren; vor Announcement muss dieselbe neue URS
   den Successor als unactivated ablehnen;
