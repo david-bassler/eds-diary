@@ -2442,8 +2442,12 @@ Das aktuelle Source-RecoveryArtifactV6 wird eindeutig discovered, entschlüsselt
 gegen den vollständig verifizierten aktuellen Recovery-State geprüft und der
 §19-Keypair-Check ausgeführt. Nur daraus darf das aktuelle
 recovery_takeover_private_key_pkcs8 transient für das neue Successor-Artifact
-übernommen werden. Historische URSs werden dank ActivationLineageCacheV2 nicht
-benötigt. Ist bei einer normalen Rotation der aktuelle URS verloren, ist die
+übernommen werden. Vor dem ersten mutierenden Successor-Remote-Schritt wird
+dieses **carried** Private-Key-Material für genau die neue Successor-Epoche
+erneut als RecoveryTakeoverStagingV2 unter dem aktuellen URS persistent
+geschrieben und byte-/AEAD-readback-verifiziert; §9.1 gilt damit ausdrücklich
+auch dann, wenn kein neues Takeover-Keypair erzeugt wurde. Historische URSs
+werden dank ActivationLineageCacheV2 nicht benötigt. Ist bei einer normalen Rotation der aktuelle URS verloren, ist die
 Rotation blockiert; der aktuelle Writer muss stattdessen zuerst recovery_rekey
 mit einem neuen URS durchführen. Es gibt kein zusätzliches lokales
 Takeover-Private-Key-Escrow.
@@ -2502,8 +2506,10 @@ Für **jede** v2→v2-Rotation ist die Reihenfolge verbindlich:
 4. Successor vollständig verifizieren und die gesamte Migration-Integrität
    gemäß §16a.1 gegen Source und Successor prüfen. Der daraus resultierende
    aktuelle RemoteAnchorV2 wird als **successor_staging_anchor** eingefroren.
-   Ab diesem Moment sind bis zum lokalen Switch **alle** weiteren
-   Successor-Appends gesperrt.
+   Bis zur gebundenen SuccessorActivationConfirmation darf keine andere neue
+   Successor-Row erscheinen. Nach exakt dieser Confirmation ist ein gültiger
+   post-activation Suffix zulässig; **das initiierende Gerät** bleibt jedoch
+   bis zum lokalen Switch für normale Successor-Writes gesperrt.
 5. Source **und Successor** unmittelbar vor Announcement-Prepare erneut
    vollständig lesen. Source-Anchor, Writer-/Recovery-State und unsealed-Status
    müssen exakt Schritt 1 entsprechen; der Successor-Anchor muss exakt
@@ -2583,9 +2589,10 @@ erfordert für echte Cross-Resource-Causality einen zusätzlichen
 Koordinationsdienst/eine neue Protokollversion.
 
 Normale v2→v2-Rotation übernimmt recovery_generation,
-recovery_urs_commitment, recovery_takeover_key_id und
-recovery_takeover_public_key aus dem **final verifizierten aktuellen
-Source-Recovery-State** unverändert in das Successor-Manifest. Das zugehörige
+recovery_urs_commitment, recovery_urs_id, recovery_takeover_key_id,
+recovery_takeover_public_key **und die vollständige
+recovery_credential_history** aus dem final verifizierten aktuellen
+Source-Recovery-State unverändert in das Successor-Manifest. Das zugehörige
 Private-Key-Material wird ausschließlich aus dem mit dem erneut eingegebenen
 aktuellen URS verifizierten Source-RecoveryArtifact transient übernommen. Die
 neue Epoche erhält einen unabhängig erzeugten RK_epoch, der keinem historischen
@@ -2601,13 +2608,18 @@ Successor-Epoch mit neuem RK_epoch abgeschlossen.
 Phase A – Recovery-Authority auf der noch aktiven Source:
 
 1. aktive Source vollständig verifizieren und lokal einfrieren;
-2. neuen URS + neues Recovery-Takeover-Keypair erzeugen;
+2. neuen URS + neues Recovery-Takeover-Keypair erzeugen; recovery_urs_id und
+   takeover_key_id müssen gegen die vollständige v2-Recovery-Credential-
+   Historie frisch sein;
 3. RecoveryAuthorityTransitionV2 one-shot gegen den finalen Source-Anchor
    vorbereiten;
 4. neues **same-epoch** RecoveryArtifactV6 unter dem neuen URS publizieren. Es
    enthält denselben RK_epoch, dieselbe vollständig verifizierte
-   activation_lineage, den neuen Recovery-Key-State und
-   RecoveryAuthorityTransitionProofV2;
+   activation_lineage, die um den to-State fortgeschriebene
+   recovery_credential_history, den neuen Recovery-Key-State und
+   RecoveryAuthorityTransitionProofV2. **Ab erfolgreichem Publish/Readback ist
+   diese vorbereitete Transition lokal nicht mehr frei abbrechbar**, solange
+   ihr authority_anchor remote unverändert ist;
 5. Recovery des staged Artifacts testen;
 6. exakte Transition-Envelope-Bytes appendieren + Full Readback;
 7. neues Artifact jetzt gegen den aktuellen Source-Recovery-State prüfen und
@@ -2670,6 +2682,7 @@ Exakt diese Top-Level-Properties, keine weiteren:
   manifest_fingerprint,
   recovery_generation,
   recovery_urs_commitment,
+  recovery_urs_id,
   recovery_rekey_rotation_required,
   recovery_rekey_transition_id,
   remote_binding,
@@ -2693,6 +2706,7 @@ Exakt diese Top-Level-Properties, keine weiteren:
   verified_writer_generation,
   verified_writer_grant_id,
   recovery_takeover_key_id,
+  recovery_credential_history_sha256,
   stale_writer_pending_count
 }
 ~~~
@@ -2752,8 +2766,12 @@ null (noch kein gebundener Full Verify) oder gemeinsam gesetzt. Nach erfolgreich
 gebundenem Full Verify beschreiben sie exakt die zuletzt vollständig remote
 verifizierte kanonische Authority.
 
-recovery_takeover_key_id ist nach gebundenem Full Verify nicht-null und muss
-exakt zum **aktuellen** Recovery-State des Verifiers passen.
+recovery_urs_id und recovery_takeover_key_id sind nach gebundenem Full Verify
+nicht-null und müssen exakt zum **aktuellen** Recovery-State des Verifiers
+passen. recovery_credential_history_sha256 ist exakt
+Base64URL(SHA-256(UTF8(JCS(verifier.recovery_credential_history)))) und bindet
+den lokal gecachten epochübergreifenden Freshness-Stand, ohne die komplette
+Historie doppelt im normalen State zu persistieren.
 stale_writer_pending_count und operation_generation sind nichtnegative
 Safe-Integer.
 
@@ -3071,6 +3089,7 @@ current.
   transition_proof_sha256,
   to_recovery_generation,
   to_recovery_urs_commitment,
+  to_recovery_urs_id,
   to_recovery_takeover_key_id,
   completed_successor_epoch_id,
   completed_successor_manifest_fingerprint
@@ -3081,8 +3100,9 @@ Dieser State enthält **niemals** URS, PKCS#8 oder plaintext Root-Keys.
 RecoveryTakeoverStagingV2 hält das private Takeover-Material separat
 URS-verschlüsselt.
 
-transition_id, to_recovery_generation, to_recovery_urs_commitment und
-to_recovery_takeover_key_id müssen exakt den to-Feldern des persistent
+transition_id, to_recovery_generation, to_recovery_urs_commitment,
+to_recovery_urs_id und to_recovery_takeover_key_id müssen exakt den to-Feldern
+des persistent
 vorbereiteten RecoveryAuthorityTransitionV2-Envelope und des
 RecoveryAuthorityTransitionProofV2 entsprechen und sind ab der ersten
 persistierten Operation-State-Version immutable.
@@ -3121,12 +3141,16 @@ gilt exakt:
    neuen State zeigt.
 5. Erst danach dürfen die neuen RecoveryArtifact-/Transition-Remote-Schritte
    beginnen.
-6. Wird der neue Versuch vor durabler neuer Transition stale/abgebrochen, wird
-   sein State terminal `stale`. Danach muss canonical_full erneut ausgeführt
-   werden. Zeigt Remote weiterhin die alte transition_id, wird
-   recovery_operation_state_ref atomar wieder auf den alten suspendierten State
-   gebunden, sofern dessen Hash/Stage unverändert gültig ist; andernfalls wird
-   ein `remote_pending_rekey_adoption`-State für die alte Transition erzeugt.
+6. Wird der neue Versuch **vor erfolgreichem Publish/Readback seines neuen
+   RecoveryArtifactV6** lokal abgebrochen oder stale, wird sein State terminal
+   `stale`. Ist das neue Artifact bereits publiziert, ist ein rein lokaler
+   Abbruch verboten: Solange Remote noch exakt am authority_anchor steht, muss
+   die vorbereitete Transition fertiggestellt/reconciliiert werden. `stale` ist
+   nach Artifact-Publish nur zulässig, wenn canonical_full beweist, dass eine
+   andere physische Row den Anchor bereits irreversibel überholt hat und die
+   vorbereitete Transition deshalb nach §16c nicht mehr appendbar ist. Erst
+   danach wird der alte suspendierte State wieder gebunden/adoptiert, falls
+   dessen Remote-Transition weiterhin current ist.
 7. Wird die neue Transition durable, muss canonical_full beweisen:
    current_recovery_rekey_transition_id == neue transition_id und
    supersedes_transition_id == alte transition_id. Danach werden **in einer
@@ -3199,11 +3223,14 @@ source_backup_verified -> successor_rotation_required
 successor_rotation_required -> completed
 ~~~
 
-`stale` darf nur **vor** der zu diesem Operation-State gehörenden durablen
-RecoveryAuthorityTransitionV2 erreicht werden, wenn der Transition-Anchor
-überholt wurde oder ein expliziter lokaler Abbruch nach canonical_full beweist,
-dass die vorbereitete Transition-Envelope nicht remote vorhanden ist und der
-Remote-Recovery-State noch nicht auf diese transition_id fortgeschritten ist. Nach `transition_durable` ist die neue Recovery-Authority
+`stale` darf vor `recovery_artifact_published` bei lokalem Abbruch oder
+überholtem Transition-Anchor erreicht werden. **Ab** erfolgreichem
+`recovery_artifact_published` ist ein lokaler Abbruch allein nicht mehr
+zulässig, weil das immutable Artifact eine vom damaligen Writer bereits
+signierte bedingte Remote-Capability enthält. Bis `transition_durable` ist
+`stale` dann nur zulässig, wenn canonical_full einen anderen ersten physischen
+Suffix nach authority_anchor beweist und §16c dadurch die vorbereitete
+Transition endgültig nicht mehr appendieren darf. Nach `transition_durable` ist die neue Recovery-Authority
 bereits kanonisch; der Rekey darf dann nicht abgebrochen oder auf die alte
 Generation zurückgesetzt werden. Ein post-durable State darf ausschließlich
 durch eine **neuere durable RecoveryAuthorityTransitionV2** gemäß der obigen
