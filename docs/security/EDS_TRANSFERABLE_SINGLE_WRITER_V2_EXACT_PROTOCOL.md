@@ -2191,30 +2191,48 @@ Für **jede** v2→v2-Rotation ist die Reihenfolge verbindlich:
    gebundene Transition-ID. Result-Hash/Counts beziehen sich auf den
    Successor-Fachgraph unmittelbar vor dieser Migration-Control-Row.
 4. Successor vollständig verifizieren und die gesamte Migration-Integrität
-   gemäß §16a.1 gegen Source und Successor prüfen.
-5. Source unmittelbar vor Announcement-Prepare erneut vollständig lesen.
-   Der aktuelle RemoteAnchorV2, Writer-State, Recovery-State und unsealed-Status
-   müssen **exakt** dem in Schritt 1 eingefrorenen Zustand entsprechen; sonst
-   stage=stale und kein Announcement wird vorbereitet. Erst danach das exakte
-   Rotation-Announcement one-shot vorbereiten. Sein
-   source_anchor_before_announcement ist dieser unveränderte finale Source-Anchor.
-6. RecoveryActivationProofV2 mit genau diesen Announcement-Bytes erzeugen und
-   signieren; erst jetzt die verifizierte Source-Lineage um genau einen
-   V2RotationActivationEntryV2 erweitern.
+   gemäß §16a.1 gegen Source und Successor prüfen. Der daraus resultierende
+   aktuelle RemoteAnchorV2 wird als **successor_staging_anchor** eingefroren.
+   Ab diesem Moment sind bis zum lokalen Switch **alle** weiteren
+   Successor-Appends gesperrt.
+5. Source **und Successor** unmittelbar vor Announcement-Prepare erneut
+   vollständig lesen. Source-Anchor, Writer-/Recovery-State und unsealed-Status
+   müssen exakt Schritt 1 entsprechen; der Successor-Anchor muss exakt
+   successor_staging_anchor entsprechen. Andernfalls stage=stale und kein
+   Announcement wird vorbereitet. Erst danach das exakte Rotation-Announcement
+   one-shot vorbereiten. Es bindet source_anchor_before_announcement **und**
+   successor_staging_anchor.
+6. RecoveryActivationProofV2 mit genau diesen Announcement-Bytes und demselben
+   successor_staging_anchor erzeugen und signieren; erst jetzt die verifizierte
+   Source-Lineage um genau einen V2RotationActivationEntryV2 erweitern.
 7. Successor-RecoveryArtifactV6 mit dieser erweiterten Lineage
-   publizieren/readback-verifizieren.
+   publizieren/readback-verifizieren. Für diesen staged Successor muss
+   recovery_artifact.remote_anchor exakt successor_staging_anchor sein.
 8. activation_state="staged" SyncBackupV6 erzeugen und read-only Test-Restore.
-9. exakt die vorbereiteten Rotation-Announcement-Bytes appendieren + Full
-   Readback. Jede intervenierende physische Source-Row macht den vorbereiteten
-   Anchor historisch; das Announcement darf dann nicht versiegeln.
-10. erweiterte activation_lineage einschließlich §16a.1 vollständig bis zum
-    Successor prüfen.
-11. **obligatorisch** neues activation_state="activated" SyncBackupV6 erzeugen
-    und Test-Restore-verifizieren.
-12. ActivationLineageCacheV2 des Successors persistent/readback-verifizieren.
-13. erst danach lokaler atomarer Switch/Retire.
+   record_rows/remote_anchor_at_export müssen exakt successor_staging_anchor
+   reproduzieren.
+9. Unmittelbar vor dem Source-Append Successor nochmals vollständig lesen und
+   exakt successor_staging_anchor verlangen. Danach exakt die vorbereiteten
+   Rotation-Announcement-Bytes appendieren + Source-Full-Readback. Jede
+   intervenierende physische Source-Row macht den vorbereiteten Source-Anchor
+   historisch; das Announcement darf dann nicht versiegeln.
+10. **Sofort nach durable Source-Announcement** den Successor erneut vollständig
+    lesen. Sein RemoteAnchor muss weiterhin exakt successor_staging_anchor sein.
+    Jede zusätzliche Successor-Row => successor_cutover_race; Source-Seal bleibt
+    irreversibel, aber der Successor wird lokal **nicht** aktiviert, kein
+    activated Backup/Switch wird ausgeführt und der Vorgang geht in expliziten
+    Support-/Recovery-Zustand.
+11. erweiterte activation_lineage einschließlich §16a.1 vollständig bis zum
+    Successor und exakt seinem successor_staging_anchor prüfen.
+12. **obligatorisch** neues activation_state="activated" SyncBackupV6 erzeugen
+    und Test-Restore-verifizieren. Auch dieses Cutover-Backup muss vor dem
+    lokalen Switch exakt successor_staging_anchor als record_rows/
+    remote_anchor_at_export tragen.
+13. ActivationLineageCacheV2 des Successors persistent/readback-verifizieren.
+14. erst danach lokaler atomarer Switch/Retire; erst ab diesem Switch dürfen
+    normale Successor-Writes beginnen.
 
-Ein staged Backup ersetzt Schritt 11 niemals.
+Ein staged Backup ersetzt das obligatorische activated Cutover-Backup niemals.
 
 Normale v2→v2-Rotation übernimmt recovery_generation,
 recovery_urs_commitment, recovery_takeover_key_id und
