@@ -3132,6 +3132,7 @@ stale_writer_rejected
 stale_grant_rejected
 stale_recovery_transition_rejected
 stale_rotation_announcement_rejected
+rekey_rotation_required_rejected
 stale_after_seal_rejected
 ~~~
 
@@ -3149,6 +3150,7 @@ migration_control_missing
 migration_snapshot_mismatch
 migration_head_count_mismatch
 migration_transition_mismatch
+profile_upgrade_source_race
 recovery_generation_mismatch
 recovery_key_mismatch
 recovery_transition_state_mismatch
@@ -3206,7 +3208,18 @@ für mindestens:
 24. Verifier-purpose canonical_full vs operation-gebundenes rotation_resume:
     fehlende Migration-Control nur in successor_bound|copying als
     staged_incomplete; niemals aktive Authority.
-25. SyncBackupV6 staged/activated Manifest/hash binding einschließlich
+25. Remote Pending-Rekey-Fence: Transition setzt
+    recovery_rekey_rotation_required/current_recovery_rekey_transition_id;
+    zweite Transition supersedet die ID; Forced Takeover bleibt möglich;
+    Fachwrite/Handoff/Normalrotation werden abgewiesen; passendes
+    recovery_rekey-Announcement versiegelt.
+26. RecoveryRekeyOperationStateV2 remote_pending_rekey_adoption nach
+    Geräteverlust: canonical_full + aktuelles RecoveryArtifact + Forced Takeover
+    -> Einstieg bei transition_durable -> verpflichtende Successor-Rotation.
+27. v1→v2 Profile-Upgrade-Race: finaler Pre-Append-Anchor gleich vs.
+    zusätzliche Row zwischen finalem Read und v1-Announcement =>
+    profile_upgrade_source_race.
+28. SyncBackupV6 staged/activated Manifest/hash binding einschließlich
     activation_lineage und Recovery-Transition-Proof.
 
 Negative Vectors:
@@ -3228,6 +3241,16 @@ Negative Vectors:
   Source steht exakt am Anchor => Recovery appendet exakt vorbereitete Transition;
 - Recovery-Rekey: fremde Row vor vorbereiteter Transition => neuer Recovery-State
   bleibt staged/read-only;
+- durable RecoveryAuthorityTransitionV2, danach Fachrevision des weiterhin
+  aktuellen Writer-Keys => rekey_rotation_required_rejected, Fachgraph unverändert;
+- durable RecoveryAuthorityTransitionV2, danach Handoff-Grant gegen immediate
+  Prefix => rekey_rotation_required_rejected, Writer bleibt unverändert;
+- durable RecoveryAuthorityTransitionV2, danach normal-Rotation =>
+  rekey_rotation_required_rejected und kein Seal;
+- Geräteverlust nach durable Transition, neuer URS + Forced Takeover =>
+  Pending-Rekey-Fence bleibt remote true und normale Writes bleiben blockiert;
+- zweite gültige RecoveryAuthorityTransitionV2 vor Phase B => ältere
+  transition_id darf keine recovery_rekey-Rotation mehr autorisieren;
 - Recovery mit gültigem direkten ActivationProof, aber ungültigem älteren
   ActivationLineage-Eintrag => fatal/nicht aktiv;
 - Recovery-Rekey-Successor mit gültigem Announcement, aber nicht durable
@@ -3262,7 +3285,11 @@ Negative Vectors:
 - inkompatible bekannte Recovery-/Local-Anchor;
 - Crash nach Manifest-Erzeugung, aber vor finalem RecoveryArtifactV6: Resume nur
   über gültiges RecoveryTakeoverStagingV2 + URS;
-- manipuliertes oder manifestfremdes RecoveryTakeoverStagingV2.
+- manipuliertes oder manifestfremdes RecoveryTakeoverStagingV2;
+- v1 profile_upgrade: zusätzliche v1-Row zwischen finalem Pre-Append-Read und
+  Announcement => profile_upgrade_source_race, Successor bleibt staged;
+- RecoveryArtifactV6 mit to-State vor durabler Transition ohne gültigen
+  RecoveryAuthorityTransitionProofV2 => nicht current/kein Forced Takeover.
 
 ---
 
