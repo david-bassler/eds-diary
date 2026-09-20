@@ -1388,6 +1388,129 @@ result_semantic_snapshot_hash wird mit exakt derselben semantic_entry-Projektion
 active_head_count/tombstone_head_count zählen genau diese Heads nach
 record_status.
 
+## 16b. RecoveryAuthorityTransitionV2
+
+Recovery-Rekey ändert die Recovery-Authority **innerhalb der noch aktiven,
+unsealed Source-Epoche**, bevor eine Successor-Rotation beginnt.
+
+Wrapper zusätzlich zu §5 exakt:
+
+~~~text
+record_type = "recovery_authority_transition"
+record_schema = "recovery-authority-transition-sw-v2"
+record_status = "control"
+parent_revision_ids = []
+migration_origin = null
+~~~
+
+Die Row ist eine normale writer-autorisierte RevisionV2; writer_context und
+writer_signature müssen die an der Row-Position current Writer-Authority
+verwenden.
+
+record_data exakt:
+
+~~~text
+{
+  transition_id,
+  transition_kind: "recovery_rekey",
+  from_recovery_generation,
+  from_recovery_takeover_key_id,
+  to_recovery_generation,
+  to_recovery_urs_commitment,
+  to_recovery_takeover_key_id,
+  to_recovery_takeover_public_key,
+  authority_anchor
+}
+~~~
+
+Normen:
+
+- transition_id dekodiert zu 32 CSPRNG-Bytes.
+- authority_anchor ist RemoteAnchorV2 und muss **exakt** dem physischen Prefix
+  unmittelbar vor der Transition-Row entsprechen.
+- source_epoch_sealed muss false sein.
+- from_recovery_generation und from_recovery_takeover_key_id müssen exakt dem
+  aktuell verifizierten Recovery-State an diesem Prefix entsprechen.
+- to_recovery_generation = from_recovery_generation + 1.
+- to_recovery_takeover_public_key dekodiert zu exakt 32 Ed25519-Bytes.
+- to_recovery_takeover_key_id muss daraus gemäß §2 reproduzierbar sein.
+- to_recovery_urs_commitment ist exakt das §10-Recovery-Commitment des neuen
+  32-Byte-URS für to_recovery_generation.
+- Der normale RevisionV2-Signing-Input bindet alle diese Felder an die aktuelle
+  Writer-Authority.
+- Bei Annahme ersetzt der Verifier current_recovery_generation,
+  current_recovery_urs_commitment, current_recovery_takeover_key_id und
+  current_recovery_takeover_public_key atomar.
+- Eine strukturell/kryptographisch gültige, aber bereits überholte Transition
+  gegen einen historischen Recovery-State ist
+  `stale_recovery_transition_rejected`; sie ändert keinen State.
+- Eine Transition mit falschem from-State, Generation-Sprung, falschem Key-ID
+  oder historischem Anchor darf niemals current werden.
+
+### 16c. RecoveryAuthorityTransitionProofV2
+
+Damit ein Recovery-Rekey auch einen Crash/Geräteverlust **zwischen** Publikation
+des neuen RecoveryArtifactV6 und Append der Transition übersteht, bindet das
+neue Artifact die exakt vorbereitete Transition-Row.
+
+Exakt:
+
+~~~text
+{
+  format: "recovery-authority-transition-proof-v2",
+  version: 2,
+  source_epoch_id,
+  source_manifest_fingerprint,
+  authority_anchor_before_transition,
+  from_recovery_generation,
+  from_recovery_takeover_key_id,
+  to_recovery_generation,
+  to_recovery_urs_commitment,
+  to_recovery_takeover_key_id,
+  to_recovery_takeover_public_key,
+  transition_envelope: {
+    envelope_id,
+    iv,
+    ciphertext
+  }
+}
+~~~
+
+transition_envelope ist das **one-shot vorbereitete**, bereits durch
+writer_signature autorisierte RecoveryAuthorityTransitionV2-Envelope. Es wird
+vor der ersten Remote-Publikation persistent reserviert und bei Retry niemals
+regeneriert.
+
+Recovery mit dem neuen URS:
+
+1. RecoveryArtifactV6 decrypten, RK_epoch und neues Takeover-Keypair prüfen.
+2. activation_lineage vollständig gemäß §10c prüfen; die Source muss kanonisch
+   aktiv sein.
+3. Source mit RK_epoch bis authority_anchor_before_transition vollständig
+   verifizieren. Current Writer- und Recovery-State müssen exakt den
+   Proof-from-Feldern entsprechen; Source muss unsealed sein.
+4. Ist die **unmittelbar nächste** physische Row byte-identisch
+   transition_envelope, diese Row decrypten und vollständig als gültige
+   RecoveryAuthorityTransitionV2 verifizieren. Danach muss der current
+   Recovery-State exakt den Proof-to-Feldern und dem Artifact entsprechen.
+5. Existiert **noch keine Row nach dem Anchor**, darf Recovery die bereits
+   vorbereiteten transition_envelope-Bytes exakt einmal appendieren und danach
+   Full Readback durchführen. Dadurch kann der neue Recovery-Key einen
+   unterbrochenen, vom damaligen Writer bereits autorisierten Rekey fertigstellen,
+   ohne dessen Private Writer-Key zu besitzen.
+6. Steht irgendeine andere physische Row zuerst, wird die vorbereitete Transition
+   **nicht** nachträglich appended. Das Artifact bleibt für diesen Source-State
+   staged/read-only; kein Forced Takeover mit der neuen Authority.
+7. Gleiche envelope_id + andere Bytes oder ein semantisch/signaturseitig
+   ungültiges Transition-Envelope => security_blocked.
+
+Während eines Recovery-Rekeys friert der initiierende Client normale Fachwrites,
+Handoff, Forced Takeover und Rotation vom finalen Anchor bis zum durable
+Transition-Readback ein. Ein konkurrierender legitimer/staler Remote-Claim kann
+den vorbereiteten Rekey dennoch überholen; dann gilt Schritt 6 fail-closed.
+
+---
+
 ## 17. Rotation und Recovery-Rekey
 
 Normale Epoch-Rotation setzt im Successor
