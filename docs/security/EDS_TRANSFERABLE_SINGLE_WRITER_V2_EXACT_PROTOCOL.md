@@ -3133,6 +3133,13 @@ AES-256-GCM(K_recovery, wrap_iv, recovery_plaintext, Artifact-AAD)
 
 Artifact-AAD ist UTF8(JCS(header_ohne_wrapped_payload)).
 
+Für ein RecoveryArtifactV6, das während einer noch nicht lokal geswitchten
+profile_upgrade-/normal-/recovery_rekey-Successor-Rotation erzeugt wird, muss
+remote_anchor exakt dem im zugehörigen Activation-Evidence gebundenen
+successor_staging_anchor entsprechen. Same-epoch Recovery-Rekey-Artefakte aus
+§16c folgen stattdessen ihrem authority_anchor_before_transition/aktuellen
+Source-State.
+
 Der im Artifact enthaltene remote_anchor ist ein **Freshness-Floor**, niemals
 eine Aufforderung zum Downgrade. Bei Restore/Forced-Takeover muss der aktuell
 gelesene Remotezustand jeden verfügbaren vertrauenswürdigen Anchor erweitern:
@@ -3282,6 +3289,12 @@ Union.
 Test-Restore muss Manifest, RecoveryArtifactV6-Bindung, sämtliche Hashes/Counts,
 RemoteAnchorV2, Writer-Authority und jede Row vollständig prüfen und anschließend
 den produktiven TransferableSingleWriterV2Verifier verwenden.
+
+Für das obligatorische staged **und** activated Cutover-Backup einer noch nicht
+lokal geswitchten nicht-nativen Epoche gilt zusätzlich:
+remote_anchor_at_export muss exakt successor_staging_anchor des zugehörigen
+Activation-Evidence entsprechen. Ein Cutover-Backup mit erweitertem oder
+abweichendem Successor-Prefix ist ungültig.
 
 - activation_state="staged" => ausschließlich local_offline/read_only Restore.
 - activation_state="activated" + strukturell/kryptographisch ungültiger,
@@ -3462,6 +3475,11 @@ migration_head_count_mismatch
 migration_provenance_mismatch
 migration_transition_mismatch
 profile_upgrade_source_race
+profile_upgrade_successor_cutover_race
+successor_staging_mismatch
+successor_cutover_race
+protocol_id_collision
+recovery_takeover_key_reuse
 recovery_generation_mismatch
 recovery_key_mismatch
 recovery_transition_state_mismatch
@@ -3543,6 +3561,18 @@ für mindestens:
 31. Identifier-Format/Decode-Längen für cache_id, rotation_id, migration_id,
     transition_id und operation_id einschließlich Base64URL-Re-Encode; falsche
     Byte-Länge und nicht-kanonische Base64URL-Form werden abgelehnt.
+32. Epochweite Control-ID-Eindeutigkeit für grant_id/rotation_id/migration_id/
+    transition_id: gleiche semantische ID in anderem Envelope =>
+    protocol_id_collision; byte-identischer Envelope-Retry bleibt No-op.
+33. RecoveryAuthorityTransitionV2 mit frischem Takeover-Key sowie Versuch,
+    Manifest-/früheren supersedierten Takeover-Key wiederzuverwenden =>
+    recovery_takeover_key_reuse.
+34. successor_staging_anchor für v2→v2 und profile_upgrade: exakt direkt nach
+    Migration-Control, keine semantische Suffix-Row; Proof/Announcement/Artifact/
+    staged+activated Cutover-Backup binden denselben Anchor.
+35. Source-Seal durable, Successor weicht vor Switch vom staging anchor ab =>
+    successor_cutover_race/profile_upgrade_successor_cutover_race, kein
+    activated Cutover-Backup und kein Switch.
 
 Negative Vectors:
 
@@ -3617,6 +3647,15 @@ Negative Vectors:
   Announcement => profile_upgrade_source_race, Successor bleibt staged;
 - RecoveryArtifactV6 mit to-State vor durabler Transition ohne gültigen
   RecoveryAuthorityTransitionProofV2 => nicht current/kein Forced Takeover.
+- RecoveryAuthorityTransitionV2 verwendet current oder früheren
+  recovery_takeover_key_id erneut => recovery_takeover_key_reuse;
+- neuer Envelope mit bereits belegter grant_id/rotation_id/migration_id/
+  transition_id => protocol_id_collision;
+- ActivationProof/Announcement mit falschem successor_staging_anchor oder
+  Successor-Row zwischen Migration-Control und staging anchor =>
+  successor_staging_mismatch;
+- zusätzliche Successor-Row nach eingefrorenem staging anchor vor lokalem Switch
+  => Cutover-Race, niemals still in activated Backup übernehmen.
 
 ---
 
