@@ -2513,6 +2513,7 @@ current.
   version: 2,
   operation_id,
   operation_origin: "local_rekey" | "remote_pending_rekey_adoption",
+  supersedes_transition_id,
   epoch_id,
   stage:
     "new_material_staged" |
@@ -2551,7 +2552,31 @@ persistierten Operation-State-Version immutable.
 operation_origin="local_rekey" startet ausschließlich in
 `new_material_staged`.
 
-operation_origin="remote_pending_rekey_adoption" darf ausschließlich neu
+Für operation_origin="local_rekey" gilt:
+- canonical_full recovery_rekey_rotation_required=false =>
+  supersedes_transition_id=null;
+- canonical_full recovery_rekey_rotation_required=true =>
+  supersedes_transition_id muss exakt current_recovery_rekey_transition_id sein.
+  Das ist ein ausdrücklich neuer Rekey-Versuch, der den noch ausstehenden
+  Recovery-Key erneut ersetzt.
+
+Existiert lokal bereits ein nicht-terminaler RecoveryRekeyOperationStateV2 und
+soll ein solcher supersedierender Rekey gestartet werden, ist das nur erlaubt,
+wenn kein nicht-terminaler RotationOperationStateV2 existiert. Der neue
+RecoveryRekeyOperationStateV2 wird vollständig persistiert/readback-verifiziert
+und anschließend wird recovery_operation_state_ref atomar auf dessen operation_id
+umgebunden. Der ältere Operation-State bleibt als nicht-autoritatives Audit-
+Objekt erhalten; die Sicherheitsquelle für die noch ausstehende Rotation ist
+weiterhin canonical_full Remote-Historie.
+
+Wird der neue supersedierende Versuch **vor** durabler neuer Transition stale
+oder abgebrochen, bleibt die ältere Remote-Pending-Transition kanonisch. Bevor
+irgendeine andere Mutation erfolgen darf, muss der Client dafür einen
+operation_origin="remote_pending_rekey_adoption"-State neu anlegen oder einen
+noch passenden lokalen State wieder vollständig gegen canonical_full binden.
+
+operation_origin="remote_pending_rekey_adoption" hat
+supersedes_transition_id=null und darf ausschließlich neu
 erzeugt werden, wenn:
 
 1. canonical_full auf der Source
