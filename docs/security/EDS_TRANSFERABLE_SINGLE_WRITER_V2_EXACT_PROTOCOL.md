@@ -982,6 +982,7 @@ Exakt:
   successor_manifest_fingerprint,
   successor_recovery_generation,
   rotation_kind,
+  recovery_transition_id,
   announcement_envelope: {
     envelope_id,
     iv,
@@ -995,6 +996,10 @@ Exakt:
 verifizierten Source-Prefix unmittelbar vor dem geplanten Announcement.
 
 `rotation_kind` ist exakt `"normal" | "recovery_rekey"`.
+
+- normal: recovery_transition_id=null.
+- recovery_rekey: recovery_transition_id ist exakt die gebundene
+  RecoveryAuthorityTransitionV2.transition_id aus §16a.
 
 `successor_recovery_generation` muss exakt der Recovery-Generation des
 Successor-Manifests **und** der am finalen Source-Prefix aktuell verifizierten
@@ -1056,15 +1061,19 @@ Aktivierungsprüfung mit nur aktuellem URS + Google-Konto:
    `[envelope_id,iv,ciphertext]` aus announcement_envelope sein. Diese Row mit
    source_root_key öffnen und als gültiges
    rotation-announcement-sw-v2 der bei Schritt 5 current Source-Authority
-   vollständig verifizieren. Ihre Successor-ID, Manifest-Fingerprint,
-   rotation_kind und successor_recovery_generation müssen exakt dem Proof und
-   Successor entsprechen.
+   vollständig verifizieren. Ihr source_anchor_before_announcement muss exakt
+   dem Proof-Anchor und dem Prefix unmittelbar vor dieser Row entsprechen.
+   Successor-ID, Manifest-Fingerprint, rotation_kind,
+   successor_recovery_generation und recovery_transition_id müssen exakt dem
+   Proof und Successor entsprechen.
 9. Fehlt diese Row, ist der Successor staged/nicht aktiviert. Steht irgendeine
    andere Row zuerst oder ist die Row semantisch/signaturseitig ungültig, ist
    der Aktivierungsbeweis ungültig.
 10. Eine byte-identische Retry-Duplikatrow **nach** der ersten gültigen
     Announcement-Row ändert die Aktivierungsentscheidung nicht.
-11. Der Proof ist kein Ersatz für die normale Source-Verifikation im laufenden
+11. Die zugehörige EpochMigrationV2 muss zusätzlich die vollständige
+    Migration-Integritätsprüfung gemäß §16a.1 bestehen.
+12. Der Proof ist kein Ersatz für die normale Source-Verifikation im laufenden
     Writer-Betrieb. Er ist ausschließlich ein Recovery-/Backup-Aktivierungsbeweis
     für eine bereits geplante v2→v2-Rotation.
 
@@ -1142,7 +1151,9 @@ ProfileUpgrade-Prüfung:
 4. Diese Row mit source_root_key öffnen und als gültiges
    rotation-announcement-sw-v1 auf successor_epoch_id +
    successor_manifest_fingerprint prüfen.
-5. Erst dann ist die erste v2-Epoche aktiviert.
+5. Die exakt eine EpochMigrationV2 des Successors muss die
+   profile_upgrade-Migration-Integritätsprüfung gemäß §16a.1 bestehen.
+6. Erst dann ist die erste v2-Epoche aktiviert.
 
 V2-Link-Prüfung:
 
@@ -1151,6 +1162,9 @@ V2-Link-Prüfung:
   aktivierten Lineage-Leaf entsprechen.
 - successor_epoch_id/fingerprint des Proofs müssen dem nächsten Leaf bzw. beim
   letzten Eintrag der RecoveryArtifactV6-Epoche entsprechen.
+- die exakt eine EpochMigrationV2 des Successors muss §16a.1 vollständig
+  bestehen; bei recovery_rekey müssen Proof, Announcement und Migration-Control
+  dieselbe recovery_transition_id binden.
 
 Recovery validiert Einträge **vom Root nach vorn**. Ein späterer gültiger Link
 kann einen früheren fehlenden/ungültigen Link niemals heilen.
@@ -1185,6 +1199,7 @@ AAD exakt:
 UTF8(JCS({
   format,
   version,
+  cache_id,
   diary_id,
   epoch_id,
   manifest_fingerprint,
