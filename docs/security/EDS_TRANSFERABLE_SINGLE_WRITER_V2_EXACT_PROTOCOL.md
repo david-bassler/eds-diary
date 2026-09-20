@@ -3322,10 +3322,14 @@ für mindestens:
 26. RecoveryRekeyOperationStateV2 remote_pending_rekey_adoption nach
     Geräteverlust: canonical_full + aktuelles RecoveryArtifact + Forced Takeover
     -> Einstieg bei transition_durable -> verpflichtende Successor-Rotation.
-27. v1→v2 Profile-Upgrade-Race: finaler Pre-Append-Anchor gleich vs.
+27. RecoveryRekeyOperationStateV2 atomare Supersession:
+    alter durable State suspendiert, neuer State referenziert; neuer Versuch
+    pre-durable stale -> alter State wieder gebunden; neue Transition durable ->
+    alter State terminal superseded + superseded_by_transition_id.
+28. v1→v2 Profile-Upgrade-Race: finaler Pre-Append-Anchor gleich vs.
     zusätzliche Row zwischen finalem Read und v1-Announcement =>
     profile_upgrade_source_race.
-28. SyncBackupV6 staged/activated Manifest/hash binding einschließlich
+29. SyncBackupV6 staged/activated Manifest/hash binding einschließlich
     activation_lineage und Recovery-Transition-Proof.
 
 Negative Vectors:
