@@ -14,3 +14,45 @@ it('does not let local persistence invent a provider profile binding',async()=>{
 describe('v1 anchor boundary',()=>{it('freezes the persisted remote anchor as v1',async()=>{const prefix=await readFile('src/sync/core/prefix.ts','utf8'),state=await readFile('src/security/localState.ts','utf8');expect(prefix).toMatch(/interface RemoteAnchorV1/);expect(prefix).toMatch(/anchor_profile: 'google-sheets-single-writer-v1'/);expect(state).toMatch(/remote_anchor:RemoteAnchorV1\|null/)})})
 
 describe('profile-neutral coordinator boundaries',()=>{it('delegates anchor semantics to the profile codec rather than importing v1 prefix helpers',async()=>{const coordinator=await readFile('src/sync/core/coordinator.ts','utf8'),contracts=await readFile('src/sync/core/contracts.ts','utf8'),codec=await readFile('src/sync/google/GoogleSheetsSingleWriterProfileCodec.ts','utf8');expect(coordinator).not.toMatch(/from '.\/prefix'/);expect(coordinator).not.toMatch(/singleWriterV1WriteAuthority/);expect(coordinator).toMatch(/codec\.assertExtendsAnchor/);expect(coordinator).toMatch(/codec\.createAnchor/);expect(contracts).toMatch(/interface RemoteAnchorState/);expect(contracts).toMatch(/createAnchor\(diaryId:string,epochId:string/);expect(contracts).toMatch(/assertExtendsAnchor\(anchor:RemoteAnchorState\|null/);expect(codec).toMatch(/createAnchorV1/);expect(codec).toMatch(/assertExtendsAnchorV1/)})})
+
+
+describe('v2 pre-implementation hardening boundaries',()=>{
+  it('keeps security rationale in an explicit anti-churn decision ledger',async()=>{
+    const ledger=await readFile('docs/security/EDS_TRANSFERABLE_SINGLE_WRITER_V2_DECISIONS.md','utf8')
+    for(const id of ['D-001','D-002','D-003','D-004','D-005','D-006','D-007','D-008'])expect(ledger).toContain(id)
+    expect(ledger).toMatch(/Rejected alternative/)
+    expect(ledger).toMatch(/Revisit only if/)
+  })
+  it('requires semantic envelope dispositions instead of physical-row durability inference',async()=>{
+    const contracts=await readFile('src/sync/core/contracts.ts','utf8')
+    const coordinator=await readFile('src/sync/core/coordinator.ts','utf8')
+    const local=await readFile('src/data/localDatabase.ts','utf8')
+    expect(contracts).toMatch(/acceptedEnvelopeIds/)
+    expect(contracts).toMatch(/staleWriterEnvelopeIds/)
+    expect(coordinator).toMatch(/commitVerifiedPull\(finalVerified/)
+    expect(coordinator).toMatch(/staleWriterEnvelopeIds\.has\(envelope\.envelopeId\)/)
+    expect(local).toMatch(/Physically present envelope is not semantically accepted/)
+  })
+  it('full-verifies before an unknown-outcome retry and binds the exact envelope to the authority decision',async()=>{
+    const coordinator=await readFile('src/sync/core/coordinator.ts','utf8')
+    const contracts=await readFile('src/sync/core/contracts.ts','utf8')
+    const verifyIndex=coordinator.indexOf('const retryVerified=await this.codec.verifyRemote(snapshot)')
+    const retryIndex=coordinator.indexOf("verifyBeforePush(envelope,retryVerified,'unknown_outcome_retry')")
+    const appendIndex=coordinator.indexOf('await this.transport.append(this.remoteId, row)',retryIndex)
+    expect(verifyIndex).toBeGreaterThan(-1)
+    expect(retryIndex).toBeGreaterThan(verifyIndex)
+    expect(appendIndex).toBeGreaterThan(retryIndex)
+    expect(contracts).toMatch(/canPrepareDomainWrite/)
+    expect(contracts).toMatch(/quarantine_stale_writer/)
+  })
+  it('separates storage-provider identity from sync-profile identity',async()=>{
+    const contracts=await readFile('src/sync/core/contracts.ts','utf8')
+    const transport=await readFile('src/sync/google/GoogleSheetsSingleWriterTransport.ts','utf8')
+    const provider=await readFile('src/sync/google/GoogleSingleWriterProvider.ts','utf8')
+    expect(contracts).toMatch(/GOOGLE_DRIVE_SHEETS_PROVIDER = 'google-drive-sheets-v1'/)
+    expect(transport).toMatch(/providerId = GOOGLE_DRIVE_SHEETS_PROVIDER/)
+    expect(transport).toMatch(/profileId = SINGLE_WRITER_V1_PROFILE/)
+    expect(provider).toMatch(/providerId = GOOGLE_DRIVE_SHEETS_PROVIDER/)
+    expect(provider).toMatch(/profileId = SINGLE_WRITER_V1_PROFILE/)
+  })
+})
