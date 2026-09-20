@@ -1381,6 +1381,7 @@ source_epoch_sealed
 genesis_grant_confirmation_required
 accepted_revision_graph
 accepted_epoch_migration
+accepted_activation_confirmation
 migration_control_required
 authority_history_by_prefix
 recovery_history_by_prefix
@@ -1437,7 +1438,8 @@ Initialisierung:
 - genesis_grant_confirmation_required ist genau dann true, wenn
   epoch_start_authority_mode="genesis_grant_required".
 - migration_control_required ist genau dann true, wenn predecessor_epochs genau
-  einen Eintrag enthält; accepted_epoch_migration startet null.
+  einen Eintrag enthält; accepted_epoch_migration und
+  accepted_activation_confirmation starten null.
 
 Pro Row:
 
@@ -1548,7 +1550,16 @@ Pro Row:
      Beim ersten wird der Successor-Fachgraph am Prefix unmittelbar vor der Row
      gegen result_semantic_snapshot_hash und Head-Counts geprüft und
      accepted_epoch_migration gesetzt; Source-seitige Snapshot-/Authority-
-     Bindungen werden bei der Cross-Epoch-Aktivierungsprüfung §16a.1 geprüft.
+     Bindungen werden bei der Cross-Epoch-Aktivierungsprüfung §16a.1 geprüft;
+   - ein gültiges successor-activation-confirmation-sw-v2 darf pro nicht-nativer
+     Epoche exakt einmal akzeptiert werden. successor_staging_anchor muss exakt
+     dem Prefix unmittelbar vor der Row entsprechen; source/successor IDs,
+     Fingerprints und Announcement-Hash werden strukturell geprüft.
+     accepted_activation_confirmation wird gesetzt. Eine zweite unterschiedliche
+     Confirmation => security_blocked. Ob das referenzierte Source-Announcement
+     tatsächlich durable/kanonisch ist, entscheidet ausschließlich die
+     Cross-Epoch-Aktivierungsprüfung; die lokale Successor-Row allein verleiht
+     noch keine Aktivierung.
 5. Nur akzeptierte Fachrevisionen gehen in den fachlichen Graphen.
 6. Jede physische Row geht unabhängig von semantischer Annahme in Prefix-Hash
    und Bounds ein.
