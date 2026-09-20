@@ -709,9 +709,28 @@ Bytes nur fertig appendieren, wenn die Source noch exakt am gebundenen Anchor
 steht; jede intervenierende Row macht den vorbereiteten Rekey stale.
 
 Nach durable Transition ist die alte Recovery-Generation auch innerhalb
-derselben Source für neue Forced Takeovers ungültig. Das ist aber **noch nicht**
-der vollständige Recovery-Key-Wechsel: das alte immutable RecoveryArtifact kann
-den bisherigen Source-RK weiterhin unter dem alten URS offenlegen.
+derselben Source für neue Forced Takeovers ungültig. Gleichzeitig setzt der
+Remote-Verifier einen **remote ableitbaren Pending-Rekey-Fence**:
+
+~~~text
+recovery_rekey_rotation_required = true
+current_recovery_rekey_transition_id = durable transition_id
+~~~
+
+Dieser Zustand hängt nicht von IndexedDB oder dem ursprünglichen Gerät ab.
+Solange er aktiv ist, sind Fachwrites, kooperativer Handoff und normale Rotation
+semantisch blockiert. Zulässig bleiben nur Forced Takeover zur
+Writer-Wiedergewinnung, eine weitere RecoveryAuthorityTransitionV2 zum
+Superseden eines erneut kompromittierten Recovery-Keys und die verpflichtende
+`recovery_rekey`-Rotation gegen die **jüngste** Transition-ID.
+
+Damit kann auch ein Ersatzgerät nach vollständigem Geräteverlust den
+unvollständigen Rekey erkennen, per neuem Recovery-Key/Forced Takeover einen
+maintenance-only Writer erhalten und Phase B fortsetzen.
+
+Das ist aber **noch nicht** der vollständige Recovery-Key-Wechsel: das alte
+immutable RecoveryArtifact kann den bisherigen Source-RK weiterhin unter dem
+alten URS offenlegen.
 
 Deshalb ist anschließend zwingend:
 
@@ -723,8 +742,14 @@ Deshalb ist anschließend zwingend:
    vollständig durchlaufen;
 5. erst nach dem atomaren Switch gilt der Recovery-Key-Wechsel als abgeschlossen.
 
+Ein Ersatzgerät ohne ursprünglichen RecoveryRekeyOperationStateV2 darf nach
+vollständiger Remote-Verifikation des Pending-Rekey-Fence einen neuen lokalen
+Operation-State aus der durablen Transition und dem aktuellen RecoveryArtifact
+**adoptieren** und ab `transition_durable` fortsetzen. Ein lokaler State ist
+damit Resume-Hilfe, nicht die Sicherheitsquelle für die Rotationspflicht.
+
 Der Successor übernimmt die bereits aktuelle Recovery-Generation; die Rotation
-erhöht sie nicht noch einmal. Der alte Recovery-Key kann danach den neuen
+erhöht sie nicht noch einmal und startet wieder ohne Pending-Rekey-Fence. Der alte Recovery-Key kann danach den neuen
 aktiven Successor-RK nicht ableiten. Historische Vertraulichkeit kann ein Rekey
 nicht rückwirkend herstellen, wenn das alte Artifact bereits kopiert oder
 kompromittiert wurde.
@@ -772,7 +797,25 @@ remote-active Writer-Recovery benötigt weiterhin die historische
 Activation-Lineage-Source-Kette.
 ## 18. Migration v1 -> v2
 
-Migration wird auf dem aktuell vertrauenswürdigen v1-Gerät gestartet:
+Migration wird auf dem aktuell vertrauenswürdigen v1-Gerät gestartet.
+
+**Einmalige v1-Grenze:** Das eingefrorene v1-Announcement besitzt keinen
+Source-Anchor und v1 kennt keine Cross-Device-Writer-Fence. Deshalb kann das
+Profilupgrade eine zusätzliche v1-Row zwischen letztem Source-Read und
+Announcement-Append nicht kryptographisch per CAS ausschließen. Google Sheets
+v4 garantiert Atomizität innerhalb eines Batch-Requests, aber keinen solchen
+Compare-and-Swap gegen einen zuvor gelesenen Prefix. Das Upgrade setzt daher
+explizit voraus, dass während des Cutovers kein anderer v1-Client schreibt.
+
+Vor dem Upgrade müssen alle anderen v1-Geräte/Browserinstanzen geschlossen und
+alle lokalen Pending/Unknown-Outcomes reconciliiert sein. Direkt vor dem
+Announcement wird die v1-Source erneut gelesen und muss exakt den eingefrorenen
+Anchor besitzen. Wird beim Readback danach dennoch eine zusätzliche Row zwischen
+Anchor und Announcement erkannt, bleibt der v2-Successor staged/read-only und
+der Vorgang geht in `profile_upgrade_source_race`; kein zweites Announcement
+und kein automatisches Wegwerfen der v1-Daten.
+
+Ablauf:
 
 1. v1 Source full-verifizieren, finalen Source-Anchor und
    Semantic-/Lineage-Snapshots berechnen und Writes einfrieren;
@@ -787,12 +830,16 @@ Migration wird auf dem aktuell vertrauenswürdigen v1-Gerät gestartet:
    ProfileUpgrade-ActivationLineage-Eintrag erzeugen;
 6. RecoveryArtifactV6 publizieren und staged Recovery testen;
 7. staged SyncBackupV6 read-only Test-Restore;
-8. exakt das vorbereitete v1 Rotation Announcement durable machen;
-9. ActivationLineage **einschließlich Migration-Integrität** vollständig prüfen;
-10. **obligatorisch** activated SyncBackupV6 erzeugen und Test-Restore;
-11. ActivationLineageCacheV2 mit eigenem Cache-ID/Hash
+8. v1-Source unmittelbar vor Append erneut vollständig lesen; ihr Anchor muss
+   exakt dem eingefrorenen ProfileUpgrade-Anchor entsprechen;
+9. exakt das vorbereitete v1 Rotation Announcement durable machen und Source
+   sofort erneut lesen. Zusätzliche Row zwischen Anchor und Announcement =>
+   `profile_upgrade_source_race`, Successor bleibt staged/read-only;
+10. ActivationLineage **einschließlich Migration-Integrität** vollständig prüfen;
+11. **obligatorisch** activated SyncBackupV6 erzeugen und Test-Restore;
+12. ActivationLineageCacheV2 mit eigenem Cache-ID/Hash
     persistieren/readback-verifizieren;
-12. erst danach atomar auf v2 umschalten und v1 retire.
+13. erst danach atomar auf v2 umschalten und v1 retire.
 
 Alte v1-Geräte sehen das Announcement und dürfen die alte Epoche nicht weiter
 als aktiv behandeln.
