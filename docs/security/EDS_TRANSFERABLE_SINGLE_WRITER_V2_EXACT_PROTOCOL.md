@@ -2651,6 +2651,11 @@ Für v2 gilt zusätzlich:
 - ein vorbereiteter Successor bleibt `remote_bound` (oder nach Backup-Restore
   `local_offline`/`offline_restored`) und `writer_status="read_only"`, solange
   seine kanonische Aktivierung nicht vollständig bewiesen ist;
+- `epoch_status="orphaned"` ist ausschließlich ein terminaler lokaler Status
+  für eine bereits erzeugte, aber **vor** durable Source-Announcement stale
+  gewordene Successor-Epoche. Orphaned ist immer read_only, darf nie wieder
+  `active`, Rotations-Successor oder Quelle normaler Remote-Mutationen werden
+  und wird bei einem neuen Versuch nicht wiederverwendet;
 - native v2-Genesis darf erst nach vollständigem Manifest-/Gen-1-/Remote-Verify
   `active` werden;
 - jede nicht-native v2-Epoche darf erst `active` werden, wenn die komplette
