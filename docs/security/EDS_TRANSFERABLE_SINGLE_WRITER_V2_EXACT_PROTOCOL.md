@@ -31,7 +31,7 @@ wird durch dieses Dokument erweitert oder umgedeutet.
 7. Writer- und Recovery-Takeover-Signaturen: Ed25519.
 8. Ed25519 Public Key: exakt 32 rohe Bytes, Base64URL.
 9. Ed25519 Signatur: exakt 64 rohe Bytes, Base64URL.
-10. Private Writer-Keys werden als nicht extrahierbare CryptoKeys persistiert, soweit die Plattform dies unterstützt; dies ist keine Hardware-/Anti-Cloning-Garantie.
+10. Private Writer-Keys werden ausschließlich als nicht extrahierbare Ed25519-`CryptoKey`-Objekte persistiert. Es gibt keinen Raw-/PKCS#8-Fallback für Writer-Keys. Kann die Zielplattform diesen Key nicht erzeugen und persistent structured-clonen, ist v2-Writerbetrieb auf dieser Plattform nicht unterstützt. Dies ist trotzdem keine Hardware-/Anti-Cloning-Garantie.
 11. Recovery-Takeover-Private-Key wird nicht als normaler lokaler Security-State persistiert.
 12. Ein Fachwrite ist ohne frische vollständige Remote-Verifikation read-only.
 13. HTTP-Erfolg verleiht niemals Writer-Authority; Authority entsteht nur nach Full Readback.
@@ -1606,6 +1606,21 @@ local_state_tag = Base64URL(HMAC-SHA-256(
 ~~~
 
 ### 18.2 WriterDeviceKeyV2 Local Store
+
+Erzeugung exakt:
+
+~~~text
+crypto.subtle.generateKey(
+  {name:"Ed25519"},
+  false,                 # Private Key non-extractable; Public Key exportierbar
+  ["sign","verify"]
+)
+~~~
+
+Der Public Key wird unmittelbar einmal als `raw` exportiert und gemäß §2 an
+writer_signing_key_id gebunden. Der Private Key darf nie exportiert werden.
+Fehlschlag bei Erzeugung/Persistenz => v2-Writerbetrieb nicht verfügbar; kein
+exportierbarer Fallback.
 
 Separater IndexedDB-Key-Store-Eintrag exakt:
 
