@@ -69,7 +69,7 @@ EDS Diary ist **nicht** als „production secure“ freigegeben.
 - Konflikt-Merges mit 2, 8, 9 und 17 Heads einschließlich vollständiger
   Vorfahrenabdeckung.
 - Recovery-/Backup-/Fresh-Profile-Bootstrap einschließlich RootWrap-, State-MAC-,
-  Journal- und Envelope-Readback sowie Recovery-Key-Rekey und remote
+  Journal- und Envelope-Readback sowie **v1**-Recovery-Key-Rekey und remote
   Recovery-Artefakt-Readback.
 - Regressionen für Legacy-Pretty-JSON-Import bei weiterem Duplicate-Key-Reject,
   Backup-Restore als erneut remote-aktivierbares Profil und dauerhaften
