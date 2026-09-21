@@ -125,11 +125,27 @@ export class SingleWriterCoordinator {
         }
         if(await this.store.generation()!==expectedGeneration){this.state='security_blocked';throw new Error('Local security generation changed after unknown-outcome retry authorization.')}
 
-        await this.transport.append(this.remoteId, row)
+        let retryUnknownOutcome=false
+        try { await this.transport.append(this.remoteId, row) } catch(error) {
+          if (!(error instanceof TransportError) || error.code !== 'unknown_outcome') { this.state='error'; throw error }
+          retryUnknownOutcome=true
+        }
         snapshot = await this.transport.read(this.remoteId)
         this.codec.validate(snapshot)
         matching = snapshot.rows.filter((remoteRow) => remoteRow[0] === row[0])
         if (matching.some((remoteRow) => remoteRow.length !== 3 || remoteRow.some((cell, index) => cell !== row[index]))) { this.state = 'security_blocked'; throw new Error('Envelope ID exists with different bytes.') }
+        if(retryUnknownOutcome&&!matching.length){
+          await this.codec.assertExtendsAnchor(await this.store.readAnchor(),this.diaryId,this.epochId,snapshot.rows)
+          const unresolvedVerified=await this.codec.verifyRemote(snapshot)
+          this.assertVerifiedProfile(unresolvedVerified)
+          if(await this.store.generation()!==expectedGeneration){this.state='security_blocked';throw new Error('Local security generation changed while reconciling repeated unknown outcome.')}
+          const unresolvedAnchor=await this.codec.createAnchor(this.diaryId,this.epochId,snapshot.rows)
+          expectedGeneration=await this.store.commitVerifiedPull(unresolvedVerified,unresolvedAnchor,expectedGeneration)
+          this.verifiedGeneration=expectedGeneration
+          this.verifiedRemote=unresolvedVerified
+          this.state='remote_verified'
+          throw new TransportError('unknown_outcome','Authorized retry outcome remains unresolved after full readback; the envelope stays pending for a later freshly verified attempt.')
+        }
       }
 
       if (!matching.some((remoteRow) => remoteRow.length === 3 && remoteRow.every((cell, index) => cell === row[index]))) { this.state = 'error'; throw new Error('Append could not be reconciled.') }
