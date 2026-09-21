@@ -1,6 +1,6 @@
 # Transferable Single Writer v2 – Security Decision Ledger
 
-Stand: 20.09.2026
+Stand: 21.09.2026
 
 Status: **NORMATIVE RATIONALE / ANTI-CHURN COMPANION** to
 `EDS_TRANSFERABLE_SINGLE_WRITER_V2_EXACT_PROTOCOL.md`.
