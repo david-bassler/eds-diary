@@ -27,9 +27,11 @@ describe('v1 production hardening boundaries',()=>{
   it('keeps staged v1 recovery local until the source announcement is durable',async()=>{
     const rotation=await readFile('src/data/productiveRotationService.ts','utf8')
     const staged=rotation.indexOf("if(state.migrationKind==='remote_enablement')await this.session.publishRecoveryArtifact")
+    const prepared=rotation.indexOf("else await this.session.prepareRecoveryArtifactSlot(this.urs)")
     const announcement=rotation.indexOf("await this.session.publishRecoveryArtifact(this.urs,recovery)")
     expect(staged).toBeGreaterThan(-1)
-    expect(announcement).toBeGreaterThan(staged)
+    expect(prepared).toBeGreaterThan(staged)
+    expect(announcement).toBeGreaterThan(prepared)
     expect(rotation).toMatch(/Source changed around the rotation announcement/)
     expect(rotation).toMatch(/verifySourceStillAtAnnouncement/)
   })
