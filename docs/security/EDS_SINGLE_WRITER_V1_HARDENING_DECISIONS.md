@@ -119,11 +119,14 @@ phase="cutover", verified=true and then:
    stores, and the historical plaintext revisions store if present;
 5. reopens and verifies that the plaintext stores are absent.
 
-The production database opener is version-agnostic above a security floor, but
-every current database is forced to at least IndexedDB version 9. Version 8 was
-the last pre-fence application schema. The opener repairs only the secure schema
-and never recreates deleted legacy stores. A fresh installation therefore also
-starts above legacy clients rather than at browser-default version 1.
+The production database opener recognizes only the schema versions owned by
+this app release: IndexedDB version 9 is the secure floor and version 10 is the
+post-legacy-destruction schema. Version 8 was the last pre-fence application
+schema. Versions above 10 are rejected as belonging to a newer app rather than
+being opened optimistically. The opener repairs only within the supported
+version range and never recreates deleted legacy stores. A fresh installation
+therefore starts above legacy clients rather than at browser-default version 1
+without sacrificing downgrade safety.
 
 If another open tab blocks the version change, migration is **not** considered
 ready for product use. The user must close the old tab and retry. On retry the
@@ -139,8 +142,10 @@ plaintext data.
 IndexedDB version advancement provides the browser-native compatibility fence:
 an old client that requests its fixed version 8 receives a VersionError once the
 current opener has established the version-9 floor. After an actual plaintext
-legacy migration, the destruction step advances the version again while
-deleting the old stores.
+legacy migration, the destruction step advances to version 10 while deleting
+the old stores. Conversely, this app rejects a database above version 10 so a
+future incompatible schema cannot be silently consumed after an application
+rollback.
 
 **Rejected alternatives.**
 - Leave legacy rows in place because the new UI no longer reads them: rejected
@@ -250,6 +255,7 @@ A future change touching these paths must preserve all of the following:
 - verified legacy cutover leaves no plaintext legacy object store or legacy
   activity-type localStorage value;
 - an old open client may block the schema fence but may not be silently ignored;
+- only IndexedDB versions 9 and 10 are accepted after the legacy boundary; future versions fail closed on application rollback;
 - normal current-backup export rejects retired epochs;
 - normal backup recovery rejects retired epochs;
 - same-generation normal rotation derives RecoveryArtifact created_at monotonically from the authenticated current remote artifact rather than trusting wall-clock monotonicity;
