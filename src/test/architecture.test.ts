@@ -35,6 +35,8 @@ describe('v1 production hardening boundaries',()=>{
   })
   it('destroys and schema-fences plaintext legacy stores only after verified cutover',async()=>{
     const local=await readFile('src/data/localDatabase.ts','utf8')
+    expect(local).toMatch(/SECURE_DATABASE_VERSION_FLOOR = 9/)
+    expect(local).toMatch(/Math\.max\(current\.version\+1,SECURE_DATABASE_VERSION_FLOOR\)/)
     expect(local).toMatch(/sealLegacyPlaintextStorage/)
     expect(local).toMatch(/phase:'cutover',verified:true.*sealLegacyPlaintextStorage/s)
     expect(local).toMatch(/deleteObjectStore/)
