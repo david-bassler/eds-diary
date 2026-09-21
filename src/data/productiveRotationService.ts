@@ -171,8 +171,8 @@ export class ProductiveRotationService {
   private async successorSemantic(state:ConcreteRotationState,envelopes:readonly PreparedEnvelope[]):Promise<string>{const context=await this.context(state),root=await this.repository.successorRoot(state.newEpochId,state.newWrapId),salt=await deriveEpochSalt(fromBase64Url(context.diaryId),fromBase64Url(state.newEpochId)),revisions:RevisionV1[]=[];for(const envelope of envelopes){const revision=await openEnvelope(root,salt,{diaryId:context.diaryId,epochId:state.newEpochId},envelope);if(revision.record_status!=='control')revisions.push(revision)}return(await snapshots(revisions)).semantic}
   private async prepareAnnouncement(state:ConcreteRotationState):Promise<void>{const source=this.source??await this.repository.verifiedActiveEpoch(),context=await this.context(state),revision:RevisionV1={record_type:'rotation_announcement',record_schema:'rotation-announcement-sw-v1',record_id:await deterministicId(['rotation-announcement-record-v1',state.rotationId],16),revision_id:await deterministicId(['rotation-announcement-revision-v1',state.rotationId]),parent_revision_ids:[],record_status:'control',record_data:{rotation_id:state.rotationId,from_epoch_id:source.context.epochId,successor_epoch_id:state.newEpochId,successor_creation_locator:state.creationLocator,successor_manifest_fingerprint:context.manifestFingerprint,rotation_kind:'normal'},migration_origin:null,protocol_created_at:state.createdAt};const envelope=await this.repository.prepareRotationEnvelope(`${state.rotationId}:announcement`,source.context,revision);await this.repository.putArtifact(`${state.rotationId}:announcement`,envelope);await this.hit('after-announcement-envelope')}
   private async publishAnnouncement(state:ConcreteRotationState):Promise<void>{
-    const source=this.source??await this.repository.verifiedActiveEpoch(),material=await this.repository.verifiedEpoch(source.context),remote=material.state.remote_binding,frozen=state.sourceAnchor as RemoteAnchorV1|undefined,announcement=await this.repository.artifact<PreparedEnvelope>(`${state.rotationId}:announcement`)
-    if(!remote||!frozen||!announcement||material.state.epoch_status==='retired')throw new Error('Rotation announcement prerequisites are incomplete or retired.')
+    const source=this.source??await this.repository.verifiedActiveEpoch(),material=await this.repository.verifiedEpoch(source.context),remote=material.state.remote_binding,frozen=state.sourceAnchor as RemoteAnchorV1|undefined,announcement=await this.repository.artifact<PreparedEnvelope>(`${state.rotationId}:announcement`),recovery=await this.repository.artifact<RecoveryArtifact>(`${state.rotationId}:recovery`)
+    if(!remote||!frozen||!announcement||!recovery||material.state.epoch_status==='retired')throw new Error('Rotation announcement prerequisites are incomplete or retired.')
     const row=envelopeRow(announcement),sameRow=(candidate:readonly string[])=>candidate.length===3&&candidate.every((cell,index)=>cell===row[index]),store=new IndexedDbCoordinatorStore(material.context.epochId,material.context.wrapId),verifier=this.sourceVerifier(material,frozen)
     let snapshot=await this.transport.read(remote.remote_resource_id)
     if(snapshot.rows.length===frozen.covered_row_count){
@@ -182,6 +182,7 @@ export class ProductiveRotationService {
       if(JSON.stringify(beforeAnchor)!==JSON.stringify(frozen))throw new Error('Source prefix changed after the rotation freeze.')
       const pending=await store.pending(beforeVerified)
       if(pending.length!==1||pending[0]?.envelopeId!==announcement.envelopeId)throw new Error('Frozen source contains unexpected pending envelopes before its announcement.')
+      await this.session.prepareRecoveryArtifactSlot(this.urs,recovery)
       try{await this.transport.append(remote.remote_resource_id,row)}catch(error){if(!(error instanceof TransportError)||error.code!=='unknown_outcome')throw error}
       snapshot=await this.transport.read(remote.remote_resource_id)
       if(snapshot.rows.length===frozen.covered_row_count)throw new TransportError('unknown_outcome','Rotation announcement outcome remains unresolved; retry only after a fresh read.')
@@ -194,8 +195,6 @@ export class ProductiveRotationService {
     const anchor=await createAnchorV1(material.context.diaryId,material.context.epochId,snapshot.rows)
     await store.commitVerifiedPull(verified,anchor,await store.generation())
     this.source=await this.repository.verifiedEpoch(source.context)
-    const recovery=await this.repository.artifact<RecoveryArtifact>(`${state.rotationId}:recovery`)
-    if(!recovery)throw new Error('Verified staged recovery artifact is missing after announcement.')
     await this.session.publishRecoveryArtifact(this.urs,recovery)
     await this.hit('after-announcement-durable')
   }
