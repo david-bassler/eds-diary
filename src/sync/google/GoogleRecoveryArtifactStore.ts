@@ -98,6 +98,21 @@ export class GoogleRecoveryArtifactStore {
     return candidates[0].id
   }
 
+  async prepare(secret:Uint8Array):Promise<void>{
+    const locator=await recoveryArtifactLocator(secret)
+    let candidates=await this.candidates(locator)
+    if(candidates.length>1)throw new Error('Recovery artifact discovery is ambiguous.')
+    const remoteId=candidates[0]?.id??await this.create(locator)
+    await this.verifyFile(remoteId,locator,true)
+    const properties=await this.api.request<DriveFile>(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(remoteId)}?fields=appProperties`)
+    if(!sameProperties(properties.appProperties??{},expectedProperties(locator))){
+      await this.api.request(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(remoteId)}?fields=id,appProperties`,{method:'PATCH',body:JSON.stringify({appProperties:expectedProperties(locator)})})
+    }
+    await this.verifyFile(remoteId,locator)
+    candidates=await this.candidates(locator)
+    if(candidates.length!==1||candidates[0]?.id!==remoteId)throw new Error('Recovery artifact resource is no longer unique.')
+  }
+
   async publish(secret:Uint8Array,artifact:RecoveryArtifact):Promise<void>{
     const locator=await recoveryArtifactLocator(secret),encoded=canonicalJson(artifact as never)
     if(encoded.length>MAX_ARTIFACT_CHARS)throw new Error('Recovery artifact exceeds the remote cell bound.')
