@@ -71,11 +71,12 @@ EDS Diary ist **nicht** als „production secure“ freigegeben.
   kryptographischen Vergleiche verwenden weiterhin kanonische JCS-Bytes.
 - Nach verifiziertem Legacy-Cutover werden die ursprünglichen Klartext-Fachstores
   readback-verifiziert geleert, der Legacy-localStorage-Wert entfernt und die
-  IndexedDB-Version als Schema-Fence erhöht; aktuelle Profile liegen mindestens
-  auf Version 9 (oberhalb des letzten Legacy-Clients mit Version 8), die
-  Klartext-Stores werden gelöscht und vom aktuellen Schema nicht wieder
-  angelegt. Ein alter offener Tab darf diesen Fence blockieren, aber nicht still
-  umgangen werden.
+  IndexedDB-Version als Schema-Fence erhöht. Diese App akzeptiert Version 9
+  (Secure Floor) und Version 10 (post-Legacy-Destruction); Version 8 war der
+  letzte Legacy-Client, Versionen >10 werden als zukünftiges inkompatibles
+  Schema fail-closed abgelehnt. Die Klartext-Stores werden gelöscht und vom
+  aktuellen Schema nicht wieder angelegt. Ein alter offener Tab darf den Fence
+  blockieren, aber nicht still umgangen werden.
 - Aktuelle Remote-Backups werden vor Export vollständig verifiziert, enthalten
   lokale pending Envelopes und werden nicht aus einer bereits retired Epoche
   erzeugt. Der normale Backup-Recovery-Pfad lehnt retired Epochen ebenfalls ab;
@@ -101,8 +102,9 @@ EDS Diary ist **nicht** als „production secure“ freigegeben.
 - Zweite normale v1-Rotation bei rückwärts gesetzter Geräteuhr => RecoveryArtifact
   bleibt same-generation rollback-geschützt und erhält dennoch einen strikt
   monotonen created_at-Wert.
-- Recovery-Profil-Opener auf einer bereits höher versionierten Produktions-DB =>
-  kein VersionError und keine Neuerzeugung von Legacy-Klartext-Stores.
+- Recovery-Profil-Opener auf einer unterstützten höher versionierten Produktions-DB
+  (9/10) => kein VersionError und keine Neuerzeugung von Legacy-Klartext-Stores;
+  Version 11+ => fail-closed als zukünftiges Schema.
 - Legacy-Migration mit konkurrierendem Legacy-Write => Catch-up bis stabil,
   anschließend Entfernung der Klartext-Stores und Schema-Fence.
 - Kryptographisch gültiges Backup einer per Rotation retired Epoche => normales
