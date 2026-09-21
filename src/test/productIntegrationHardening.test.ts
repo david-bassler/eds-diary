@@ -31,6 +31,17 @@ describe('product integration hardening',()=>{
     expect(()=>assertAllowedGoogleApiRequest(new URL('https://sheets.googleapis.com/v4/spreadsheets/abc'),'POST')).toThrow('nicht erlaubt')
   })
 
+  it('rejects historical plaintext revisions without deleting them during recovery inspection',async()=>{
+    const databaseName=`eds-diary-recovery-nondestructive-${base64Url(randomBytes(8))}`
+    const db=await requestResult(indexedDB.open(databaseName,8))
+    db.close()
+    await new Promise<void>((resolve,reject)=>{const request=indexedDB.open(databaseName,9);request.onupgradeneeded=()=>{if(!request.result.objectStoreNames.contains('revisions'))request.result.createObjectStore('revisions',{keyPath:'id'});request.transaction!.objectStore('revisions').put({id:'legacy-revision',record_data:{note:'must survive rejected recovery'}})};request.onsuccess=()=>{request.result.close();resolve()};request.onerror=()=>reject(request.error)})
+    await expect(storedRecoveredRecoveryArtifact(databaseName)).rejects.toThrow('historical plaintext revisions are present')
+    const check=await requestResult(indexedDB.open(databaseName)),tx=check.transaction('revisions','readonly'),stored=await requestResult<{id:string;record_data:{note:string}}|undefined>(tx.objectStore('revisions').get('legacy-revision'));await transactionDone(tx);check.close()
+    expect(stored?.record_data.note).toBe('must survive rejected recovery')
+    await new Promise<void>((resolve,reject)=>{const request=indexedDB.deleteDatabase(databaseName);request.onsuccess=()=>resolve();request.onerror=()=>reject(request.error)})
+  })
+
   it('rejects recovery databases created by a future incompatible app schema',async()=>{
     const databaseName=`eds-diary-future-schema-${base64Url(randomBytes(8))}`
     const db=await requestResult(indexedDB.open(databaseName,11));db.close()
