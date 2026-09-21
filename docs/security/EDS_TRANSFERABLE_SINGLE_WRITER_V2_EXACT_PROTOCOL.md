@@ -4191,6 +4191,11 @@ für mindestens:
     Crash danach darf keinen lokalen Abort erzeugen. Exact Artifact-Readback =>
     recovery_artifact_published und Transition completion-pflichtig; anderer
     physischer Source-Suffix am authority_anchor => stale.
+43. Post-activation Lifecycle-Suffix: reine Fachrows/WriterGrants werden in
+    finalen Verify/Backup integriert. Akzeptierte RecoveryAuthorityTransition
+    oder ein den Successor versiegelndes RotationAnnouncement vor lokalem
+    Cutover => post_activation_superseded; kein activated Backup mit historischem
+    RecoveryArtifact und kein automatischer Switch.
 
 Negative Vectors:
 
@@ -4305,7 +4310,13 @@ Negative Vectors:
 - pre-announcement stale Rotation versucht denselben Successor/Artifact oder
   dieselben vorbereiteten Control-Bytes wiederzuverwenden => security_blocked;
 - zusätzliche Successor-Row nach durabler Confirmation ist normaler
-  post-activation Suffix und muss unabhängig durch Writer-Authority validieren.
+  post-activation Suffix und muss unabhängig durch Writer-Authority validieren;
+- post-activation RecoveryAuthorityTransition macht das staged RecoveryArtifact
+  historisch, lokaler Cutover versucht trotzdem activated Backup/Switch =>
+  security/assurance failure; erwartet post_activation_superseded;
+- post-activation gültiges RotationAnnouncement versiegelt den Successor erneut,
+  alter Cutover schaltet trotzdem lokal auf diesen Epoch => security/assurance
+  failure; erwartet post_activation_superseded.
 
 ---
 
