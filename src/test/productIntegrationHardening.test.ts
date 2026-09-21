@@ -37,7 +37,7 @@ describe('product integration hardening',()=>{
     const bootstrap={source:'verified-backup',verified:{profileId:'google-sheets-single-writer-v1',profileState:null,snapshot:{manifest:[],rows:[]},manifestFingerprint:fingerprint,retired:false,verifiedEnvelopeIds:new Set<string>(),acceptedEnvelopeIds:new Set<string>(),staleWriterEnvelopeIds:new Set<string>()},remoteBinding:null} as VerifiedRecoveryBootstrap
     const artifact:RecoveryArtifact={format:'sync-recovery-v5',version:5,recovery_artifact_id:candidate.payload.recovery_artifact_id,kdf_profile_id:'recovery-hkdf-v5-1',salt:b(9,32),wrap_iv:b(10,12),wrapped_payload:b(11,16)}
     await persistRecoveredProfile(candidate,bootstrap,{}, {databaseName,recoveryArtifact:artifact})
-    const db=await requestResult(indexedDB.open(databaseName,8)),tx=db.transaction('epochSecurityState','readonly'),stored=await requestResult<{state:EpochLocalSecurityState}|undefined>(tx.objectStore('epochSecurityState').get(epoch));await transactionDone(tx);db.close()
+    const db=await requestResult(indexedDB.open(databaseName)),tx=db.transaction('epochSecurityState','readonly'),stored=await requestResult<{state:EpochLocalSecurityState}|undefined>(tx.objectStore('epochSecurityState').get(epoch));await transactionDone(tx);expect(db.version).toBeGreaterThanOrEqual(9);db.close()
     expect(stored?.state.epoch_status).toBe('local_offline')
     expect(stored?.state.remote_binding).toBeNull()
     expect(await storedRecoveredRecoveryArtifact(databaseName)).toEqual(artifact)
