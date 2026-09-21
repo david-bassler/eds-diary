@@ -1007,10 +1007,21 @@ Publish ist exakt fail-closed und crash-konvergent:
    appProperties ausschließlich vollständig leer oder bereits exakt die drei
    erwarteten v6-Properties sein. Jede andere nicht-leere Property-Menge ist
    conflicting/security_blocked.
-2. Vor **jedem** Create oder Create-Retry muss der persistierte
-   `artifact_publish_attempted`-Intent bereits true/readback-verifiziert sein
-   und eine neutrale Discovery stattfinden. Ein verlorener Create-Response darf
-   niemals allein einen zweiten blinden Create auslösen.
+2. Das logische RecoveryArtifactV6 wird **one-shot** vollständig erzeugt, bevor
+   irgendein mutierender Remote-Request dafür erfolgt. Exakt
+   `UTF8(JCS(RecoveryArtifactV6))` wird lokal persistent/readback-verifiziert;
+   `recovery_artifact_id`, recovery_artifact_locator und
+   `recovery_artifact_sha256 =
+   Base64URL(SHA-256(UTF8(JCS(RecoveryArtifactV6))))` werden im zugehörigen
+   MAC-/State-Hash-authentifizierten Operation-State gebunden und danach
+   immutable. Jeder Create-/Write-Retry verwendet ausschließlich diese
+   persistierten Bytes; Salt, wrap_iv, ID oder Ciphertext werden nie
+   regeneriert. Beim same-epoch recovery_rekey muss **zusätzlich** unmittelbar
+   vor dem ersten mutierenden Request
+   `RecoveryRekeyOperationStateV2.artifact_publish_attempted=true`
+   persistent/readback-verifiziert sein. Vor jedem Create oder Create-Retry
+   findet neutrale Discovery statt; ein verlorener Create-Response darf niemals
+   allein einen zweiten blinden Create auslösen.
 3. Mehrere Kandidaten dürfen nur dann automatisch konvergiert werden, wenn jeder
    vollständig verifizierte Kandidat entweder noch leer/uninitialisiert ist oder
    exakt dieselben erwarteten kanonischen RecoveryArtifactV6-Bytes enthält.
@@ -3177,6 +3188,7 @@ current.
   transition_envelope,
   recovery_artifact_id,
   recovery_artifact_locator,
+  recovery_artifact_sha256,
   artifact_publish_attempted,
   transition_proof_sha256,
   to_recovery_generation,
@@ -3197,6 +3209,10 @@ to_recovery_urs_id und to_recovery_takeover_key_id müssen exakt den to-Feldern
 des persistent vorbereiteten RecoveryAuthorityTransitionV2-Envelope und des
 RecoveryAuthorityTransitionProofV2 entsprechen und sind ab der ersten
 persistierten Operation-State-Version immutable.
+recovery_artifact_id, recovery_artifact_locator und recovery_artifact_sha256
+müssen exakt das nach §10a one-shot persistierte RecoveryArtifactV6 binden und
+vor artifact_publish_attempted=true non-null/readback-verifiziert sein; danach
+sind sie immutable.
 
 `artifact_publish_attempted` startet false. Unmittelbar **vor dem ersten
 mutierenden Remote-Request**, der das staged RecoveryArtifactV6 erzeugen oder
@@ -3418,6 +3434,8 @@ Crash-Regeln:
   confirmation_envelope,
   activation_evidence_sha256,
   recovery_artifact_id,
+  recovery_artifact_locator,
+  recovery_artifact_sha256,
   staged_backup_id,
   activated_backup_id
 }
@@ -3520,9 +3538,14 @@ Feldinvarianten nach Stage:
 - announcement_envelope + confirmation_envelope + activation_evidence_sha256:
   bis successor_verified null; ab announcement_prepared alle non-null und
   immutable;
-- activation_lineage_sha256 + recovery_artifact_id:
-  bis announcement_prepared null; ab recovery_artifact_verified non-null und
-  immutable;
+- activation_lineage_sha256, recovery_artifact_id,
+  recovery_artifact_locator und recovery_artifact_sha256: bis
+  successor_verified null; beim Übergang zu announcement_prepared werden
+  Activation-Evidence/Lineage und das daraus erzeugte **exakte one-shot
+  RecoveryArtifactV6** lokal persistent/readback-verifiziert; alle vier Felder
+  sind ab announcement_prepared non-null und immutable.
+  recovery_artifact_sha256 muss exakt
+  Base64URL(SHA-256(UTF8(JCS(RecoveryArtifactV6)))) entsprechen;
 - staged_backup_id: bis recovery_artifact_verified null; ab
   staged_backup_verified non-null und immutable;
 - activated_backup_id: bis announcement_durable null; ab
