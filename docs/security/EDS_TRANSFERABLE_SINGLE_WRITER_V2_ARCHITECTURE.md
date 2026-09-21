@@ -1274,6 +1274,15 @@ Mindestens:
     vor Persistenz.
 82. operation_generation ändert sich während der asynchronen
     unknown-outcome-retry-Authority-Prüfung -> kein zweiter Append; fail-closed.
+83. post-activation Suffix enthält nur Fachrows/WriterGrants -> finalen Prefix
+    vollständig verifizieren, End-Writer-Authority ins Backup binden, Cutover
+    ggf. read_only fortsetzen.
+84. post-activation Suffix akzeptiert RecoveryAuthorityTransition -> staged
+    RecoveryArtifact ist historisch; lokaler Operation-State wird
+    post_activation_superseded, kein stale activated Backup/kein Auto-Switch.
+85. post-activation Suffix akzeptiert RotationAnnouncement auf dem Successor ->
+    Successor bereits erneut sealed; alter Cutover post_activation_superseded,
+    kein Auto-Switch.
 
 ## 22. Nicht-Ziele
 
