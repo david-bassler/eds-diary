@@ -3733,7 +3733,13 @@ Das verschlüsselte Backup-Manifest enthält exakt:
   remote_anchor_at_export,
   writer_authority_at_export,
   recovery_generation,
+  recovery_urs_commitment,
+  recovery_urs_id,
   recovery_takeover_key_id,
+  recovery_takeover_public_key,
+  recovery_credential_history_sha256,
+  recovery_rekey_rotation_required,
+  recovery_rekey_transition_id,
   activation_lineage_sha256,
   recovery_authority_transition_proof_sha256,
   activation_state,
@@ -3766,6 +3772,20 @@ writer_authority_at_export ist exakt:
   writer_public_key
 }
 ~~~
+
+recovery_credential_history_sha256 ist exakt
+Base64URL(SHA-256(UTF8(JCS(recovery_artifact.recovery_credential_history)))).
+
+recovery_generation, recovery_urs_commitment, recovery_urs_id,
+recovery_takeover_key_id, recovery_takeover_public_key,
+recovery_credential_history_sha256, recovery_rekey_rotation_required und
+recovery_rekey_transition_id müssen exakt dem durch `record_rows`
+vollständig verifizierten **End-Recovery-State** entsprechen. Das entschlüsselte
+`recovery_artifact` muss denselben aktuellen Recovery-State und dieselbe
+Credential-History repräsentieren; ein historisches Artifact ist für ein
+activated Backup unzulässig. Es gilt zusätzlich:
+`recovery_rekey_rotation_required=false` genau dann, wenn
+`recovery_rekey_transition_id=null`.
 
 activation_lineage_sha256 ist exakt
 Base64URL(SHA-256(UTF8(JCS(recovery_artifact.activation_lineage)))).
@@ -4110,7 +4130,10 @@ für mindestens:
     zusätzliche Row zwischen finalem Read und v1-Announcement =>
     profile_upgrade_source_race.
 30. SyncBackupV6 staged/activated Manifest/hash binding einschließlich
-    activation_lineage und Recovery-Transition-Proof.
+    activation_lineage, Recovery-Transition-Proof und finalem Recovery-State:
+    URS-Commitment/ID, Takeover-Key/Public-Key, Credential-History-Hash und
+    Pending-Rekey-Fence müssen exakt dem verifizierten record_rows-Endzustand
+    und dem entschlüsselten RecoveryArtifact entsprechen.
 31. Identifier-Format/Decode-Längen für cache_id, rotation_id, migration_id,
     transition_id, confirmation_id und operation_id einschließlich
     Base64URL-Re-Encode; falsche Byte-Länge und nicht-kanonische Base64URL-Form
