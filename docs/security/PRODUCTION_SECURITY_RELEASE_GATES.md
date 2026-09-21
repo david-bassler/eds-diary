@@ -43,20 +43,22 @@ EDS Diary ist **nicht** als „production secure“ freigegeben.
   ausgewiesenen Transferable-Single-Writer-v2-Gates.
 - Das verschlüsselte Recovery-Artefakt wird bei normaler v1-Rotation und
   recovery_rekey zunächst one-shot lokal persistiert und bootstrap-verifiziert.
-  Erst nach durablem, race-geprüftem Source-Announcement wird exakt dieses
-  Artefakt in der privaten owner-only Google-Ressource veröffentlicht und per
-  Readback verifiziert. Remote-Enablement ist die ausdrückliche Ausnahme ohne
-  vorherige Remote-Source. Google-Recovery benötigt für aktivierte Epochen dadurch
-  weiterhin nur Konto + Recovery-Key, ohne einen staged Successor vorzeitig zum
-  aktuellen Recovery-Ziel zu machen.
+  Vor dem Source-Announcement darf die secret-derived owner-only Recovery-
+  Ressource bereits leer und eindeutig vorgebunden werden; staged Successor-
+  Artifact-Bytes werden dort noch nicht gespeichert. Erst nach durablem,
+  race-geprüftem Source-Announcement wird exakt das lokale Artefakt hineingeschrieben
+  und per Readback verifiziert. Remote-Enablement ist die ausdrückliche Ausnahme
+  ohne vorherige Remote-Source. Dadurch liegt Create-/Discovery-Ambiguität vor dem
+  Cutover-Point-of-no-return, ohne einen staged Successor vorzeitig recoverbar zu
+  machen.
 - Bei normaler v1-Rotation mit unveränderter Recovery-Generation bleibt die
   bestehende Same-Generation-Rollback-Sperre des Google-Recovery-Stores erhalten.
   Das neue RecoveryArtifact übernimmt einen monotonen Zeit-Floor aus dem
   kryptographisch geöffneten und exakt an die aktive Source gebundenen bisherigen
   Remote-Artefakt; eine rückwärts laufende Geräteuhr kann die legitime Rotation
   dadurch nicht mehr blockieren.
-- Recovery-Persistenz und normaler Datenlayer verwenden denselben sicheren
-  IndexedDB-Versionsfloor (mindestens 9). Der Recovery-Pfad erzeugt keine
+- Recovery-Persistenz und normaler Datenlayer verwenden denselben unterstützten
+  IndexedDB-Bereich (Version 9/10; >10 fail-closed). Der Recovery-Pfad erzeugt keine
   Legacy-Klartext-Stores mehr; vorhandene Legacy-Stores bleiben jedoch Teil der
   Fresh-Profile-Prüfung und verhindern eine Wiederherstellung in ein nicht
   frisches Profil.
