@@ -38,6 +38,7 @@ import { validateRevisionV1 } from '../security/revisions'
 
 const DATABASE_NAME = 'eds-diary'
 const SECURE_DATABASE_VERSION_FLOOR = 9
+const SECURE_DATABASE_VERSION_CEILING = 10
 
 export const LOCAL_STORES = {
   painEntries: 'painEntries', medicationEntries: 'medicationEntries',
@@ -102,8 +103,11 @@ function openDatabase():Promise<IDBDatabase>{
     request.addEventListener('error',()=>fail(request.error??new Error('Database open failed.')),{once:true})
     request.addEventListener('success',()=>{
       const current=request.result
+      if(current.version>SECURE_DATABASE_VERSION_CEILING){current.close();fail(new Error('Local database was created by a newer app version and cannot be opened safely.'));return}
       if(current.version>=SECURE_DATABASE_VERSION_FLOOR&&secureSchemaReady(current)){resolve(trackDatabase(current));return}
-      const nextVersion=Math.max(current.version+1,SECURE_DATABASE_VERSION_FLOOR);current.close()
+      const nextVersion=Math.max(current.version+1,SECURE_DATABASE_VERSION_FLOOR)
+      if(nextVersion>SECURE_DATABASE_VERSION_CEILING){current.close();fail(new Error('Local database schema cannot be repaired within this app version.'));return}
+      current.close()
       const upgrade=indexedDB.open(DATABASE_NAME,nextVersion)
       upgrade.addEventListener('upgradeneeded',()=>applyCurrentSchema(upgrade.result,upgrade.transaction))
       upgrade.addEventListener('success',()=>resolve(trackDatabase(upgrade.result)),{once:true})
@@ -195,6 +199,7 @@ async function sealLegacyPlaintextStorage(db:IDBDatabase):Promise<void>{
   if(!legacyStores.length&&!hadLocalStorage)return
 
   const nextVersion=db.version+1
+  if(nextVersion>SECURE_DATABASE_VERSION_CEILING)throw new Error('Legacy plaintext schema cannot be sealed by this app version.')
   databasePromise=null
   db.close()
   await new Promise<void>((resolve,reject)=>{
