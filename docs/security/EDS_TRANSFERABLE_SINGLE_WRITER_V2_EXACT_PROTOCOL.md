@@ -998,26 +998,46 @@ recovery_artifact_locator = recovery_artifact_locator
 Diese drei appProperties sind die einzigen Protokoll-properties der Recovery-
 Ressource.
 
-Publish ist exakt fail-closed:
+Publish ist exakt fail-closed und crash-konvergent:
 
 1. Für das konkrete (diary_id,epoch_id) Discovery über exakten Dateinamen und
-   recovery_artifact_locator. Mehr als eine plausible Ressource =>
-   ambiguous/security stop.
-2. Existiert noch keine Ressource, GRID mit exakter Form erzeugen und danach
-   wieder per Discovery eindeutig binden.
-3. Header + alle Chunks werden in **einem** Sheets-batchUpdate geschrieben.
-4. Existiert dieselbe Ressource bereits, darf die rekonstruierte logische
+   recovery_artifact_locator. Jeder Kandidat wird zuerst vollständig gegen
+   owner-only/Permission-, Grid- und Locator-Invarianten geprüft.
+2. Vor **jedem** Create oder Create-Retry muss der persistierte
+   `artifact_publish_attempted`-Intent bereits true/readback-verifiziert sein
+   und eine neutrale Discovery stattfinden. Ein verlorener Create-Response darf
+   niemals allein einen zweiten blinden Create auslösen.
+3. Mehrere Kandidaten dürfen nur dann automatisch konvergiert werden, wenn jeder
+   vollständig verifizierte Kandidat entweder noch leer/uninitialisiert ist oder
+   exakt dieselben erwarteten kanonischen RecoveryArtifactV6-Bytes enthält.
+   Bevorzugt wird ein Kandidat mit bereits exakten Artifact-Bytes, sonst der
+   lexikographisch kleinste verifizierte Remote-ID-Kandidat; alle übrigen
+   gleichwertigen Kandidaten werden als operation-eigene Duplikate orphaned/
+   getrasht. Danach erneute Discovery: bleibt mehr als der gewählte Kandidat
+   sichtbar, => ambiguous/security stop.
+4. Enthält irgendein Kandidat andere nicht-leere Artifact-Bytes, ist die
+   Situation **immer** ambiguous/security_blocked; kein Orphaning nach
+   „best effort“, kein Replacement.
+5. Existiert nach neutraler Discovery kein Kandidat, genau **einen** Create-
+   Versuch mit der exakten Recovery-Grid-Form ausführen und anschließend wieder
+   ausschließlich durch Discovery/Readback entscheiden. Unknown Outcome kehrt
+   zu Schritt 1 zurück.
+6. Header + alle Chunks werden in **einem** Sheets-batchUpdate geschrieben.
+7. Existiert die gewählte Ressource bereits, darf die rekonstruierte logische
    RecoveryArtifactV6-Struktur entweder noch vollständig leer/uninitialisiert
    sein oder exakt dieselben kanonischen logischen Artifact-Bytes ergeben.
-   Andere bereits vorhandene Artifact-Bytes unter demselben epoch-spezifischen
-   Locator => security stop; kein semantisches Replacement.
-5. Schreiben/Timeout wird ausschließlich durch vollständigen Grid-Readback,
+   Andere bereits vorhandene Artifact-Bytes => security stop; kein semantisches
+   Replacement.
+8. Schreiben/Timeout wird ausschließlich durch vollständigen Grid-Readback,
    Chunk-Rekonstruktion und bytegenauen Vergleich des logischen Artifacts
    entschieden.
-6. Nach Write erneut Discovery: exakt dieselbe eine epoch-spezifische Ressource
-   muss kanonisch übrig sein.
-7. Historische Source-Artefakte werden bei Rotation **nicht** gelöscht oder
-   überschrieben. Garbage Collection ist nicht Teil des v2-Sicherheitsprotokolls.
+9. Nach Write erneut Discovery/Convergence: exakt dieselbe eine epoch-spezifische
+   Ressource muss kanonisch übrig sein.
+10. Historische Source-Artefakte **anderer Locator/Epochen** werden bei Rotation
+    niemals gelöscht oder überschrieben. Das obige Orphaning betrifft
+    ausschließlich verifizierte operation-eigene Duplikate desselben
+    recovery_artifact_locator; allgemeine Garbage Collection ist nicht Teil des
+    v2-Sicherheitsprotokolls.
 
 Account+URS-Recovery:
 
@@ -4249,7 +4269,11 @@ Negative Vectors:
 - alte Recovery-Generation;
 - falscher Recovery-Takeover-Key;
 - Versuch, ein epoch-spezifisches RecoveryArtifact mit anderen Bytes zu ersetzen;
-- zwei plausible Recovery-Ressourcen desselben epoch-spezifischen Locators;
+- zwei Recovery-Ressourcen desselben epoch-spezifischen Locators mit
+  widersprüchlichen nicht-leeren Artifact-Bytes => ambiguous/security_blocked;
+- verlorener Recovery-Create-Response erzeugt zwei vollständig verifizierte
+  leere/byte-identische operation-eigene Kandidaten => deterministische
+  Convergence/Orphaning auf genau einen Kandidaten, danach eindeutiger Readback;
 - vorbereiteter Successor ohne Source-Announcement darf bei Recovery nicht aktiv
   werden;
 - Recovery-Rekey: neues URS + staged same-epoch Artifact, Transition fehlt und
