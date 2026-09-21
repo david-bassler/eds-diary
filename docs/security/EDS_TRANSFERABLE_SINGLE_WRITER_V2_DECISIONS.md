@@ -150,6 +150,13 @@ immutable RevisionV2 must not even be persisted as an ordinary writable commit
 without fresh authority, and a previously prepared envelope can become stale
 before retry/readback.
 
+**Race boundary.** These gates are not a provider-side compare-and-swap. A
+different legitimate writer may still advance remote authority after the latest
+verify and before this client's append. In that unavoidable window the physical
+ciphertext may land, but final full readback must classify it
+`stale_writer_rejected` and quarantine it. Eliminating that race would require
+the external coordination/lease primitive deliberately excluded by D-006.
+
 **Rejected alternative.** Parameterless `assertBeforePush()`. It cannot bind
 the decision to a specific envelope, writer_context, verified prefix or retry
 phase.
