@@ -230,8 +230,6 @@ legacy v1 binding with explicit compatibility rules.
 
 ---
 
----
-
 ## D-009 – rotation_resume is not a shared VerifiedRemoteState
 
 **Decision.** The shared `RemoteProfileVerifier.verify()` /
@@ -329,7 +327,7 @@ already complete.
 
 The repeated reviews are expected to find **new adversarial facts**. They should
 not cause oscillation between already-considered alternatives. When a future
-finding touches D-001…D-008, the review should state one of:
+finding touches D-001…D-010, the review should state one of:
 
 - **new assumption/evidence:** name it, then update this decision;
 - **implementation mismatch:** fix implementation without changing the decision;
