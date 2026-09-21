@@ -50,6 +50,7 @@ class GoogleSingleWriterProviderSession implements SingleWriterProviderSession {
   }
 
   publishRecoveryArtifact(secret:Uint8Array,artifact:RecoveryArtifact):Promise<void>{return new GoogleRecoveryArtifactStore(this.api).publish(secret,artifact)}
+  findRecoveryArtifact(secret:Uint8Array):Promise<RecoveryArtifact|null>{return new GoogleRecoveryArtifactStore(this.api).find(secret)}
   loadRecoveryArtifact(secret:Uint8Array):Promise<RecoveryArtifact>{return new GoogleRecoveryArtifactStore(this.api).load(secret)}
 
   disconnect():Promise<void>{return this.closeSession()}
