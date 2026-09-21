@@ -138,8 +138,9 @@ describe('ProductiveRotationService',()=>{
     expect(result.recovery.recovery_artifact_id).toBeTruthy()
     expect(result.backup.backup_id).toBeTruthy()
 
-    const firstSuccessorRows=structuredClone(successor.rows),secondTransport=await session.transportForEpoch(active.context.diaryId,active.context.epochId),second=await new ProductiveRotationService(session,secondTransport,urs,()=> '2026-09-16T13:00:00.000Z').rotate(),active2=await repository.verifiedActiveEpoch(),secondSuccessors=[...google.remotes.values()].filter(item=>item.id!=='source'&&item.id!==successor.id&&!item.trashed&&item.name.startsWith('sync-'))
+    const firstRecoveryCandidate=await recoverRootKeyCandidate(result.recovery,urs),firstSuccessorRows=structuredClone(successor.rows),secondTransport=await session.transportForEpoch(active.context.diaryId,active.context.epochId),second=await new ProductiveRotationService(session,secondTransport,urs,()=> '2026-09-16T11:00:00.000Z').rotate(),secondRecoveryCandidate=await recoverRootKeyCandidate(second.recovery,urs),active2=await repository.verifiedActiveEpoch(),secondSuccessors=[...google.remotes.values()].filter(item=>item.id!=='source'&&item.id!==successor.id&&!item.trashed&&item.name.startsWith('sync-'))
     expect(second.state.step).toBe('switched')
+    expect(secondRecoveryCandidate.payload.created_at>firstRecoveryCandidate.payload.created_at).toBe(true)
     expect(second.state.rotationId).not.toBe(result.state.rotationId)
     expect(google.creates).toBe(2)
     expect(active2.context.epochId).not.toBe(active.context.epochId)
