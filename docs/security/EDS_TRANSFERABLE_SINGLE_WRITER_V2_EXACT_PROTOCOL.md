@@ -2577,13 +2577,29 @@ Für **jede** v2→v2-Rotation ist die Reihenfolge verbindlich:
     monoton erweitern.
 13. erweiterte activation_lineage einschließlich §16a.1 und Confirmation
     vollständig bis zum Successor prüfen. Hat ein gültiger post-activation
-    Suffix die Writer-Authority geändert, wird der lokale writer_status beim
-    späteren Switch aus dieser **final verifizierten** Authority abgeleitet und
-    ggf. read_only.
-14. **obligatorisch** neues activation_state="activated" SyncBackupV6 erzeugen
-    und Test-Restore-verifizieren. Dessen remote_anchor_at_export muss dem
-    vollständig verifizierten aktuellen Successor-Prefix entsprechen und
-    successor_activation_anchor monoton erweitern; ohne Suffix sind beide
+    Suffix nur Fachrows und/oder WriterGrants hinzugefügt, bleibt der lokale
+    Cutover fortsetzbar; writer_status beim späteren Switch wird aus der **final
+    verifizierten** Authority abgeleitet und ggf. read_only.
+    Hat der post-activation Suffix dagegen
+    - eine RecoveryAuthorityTransitionV2 kanonisch akzeptiert, sodass der
+      aktuelle Recovery-State nicht mehr exakt dem in Schritt 7 publizierten
+      staged RecoveryArtifactV6 entspricht, **oder**
+    - ein gültiges RotationAnnouncementV2 akzeptiert und damit diesen Successor
+      bereits wieder versiegelt,
+    dann ist die Remote-Fortschreibung gültig, aber dieser lokale Cutover ist
+    terminal `post_activation_superseded`. Kein stale RecoveryArtifact darf in
+    ein activated Backup geschrieben und kein automatischer lokaler Switch auf
+    diese inzwischen überholte Lifecycle-Sicht durchgeführt werden. Source-Seal
+    und Remote-Aktivierung bleiben gültig; das Gerät bleibt read_only und muss
+    die aktuelle kanonische Recovery-/Successor-Kette über den dafür
+    autorisierten aktuellen Pfad neu übernehmen.
+14. Nur wenn Schritt 13 **nicht** post_activation_superseded ergibt:
+    obligatorisch neues activation_state="activated" SyncBackupV6 erzeugen und
+    Test-Restore-verifizieren. Dessen remote_anchor_at_export muss dem
+    vollständig verifizierten aktuellen Successor-Prefix entsprechen,
+    successor_activation_anchor monoton erweitern und das enthaltene
+    RecoveryArtifactV6 muss exakt dem final verifizierten Recovery-State dieses
+    Prefixes entsprechen; ohne Suffix sind staging/activation Recovery-State
     identisch.
 15. ActivationLineageCacheV2 des Successors persistent/readback-verifizieren.
 16. erst danach lokaler atomarer Switch/Retire; erst ab diesem Switch darf
@@ -3340,7 +3356,8 @@ Crash-Regeln:
     "activated_backup_verified" |
     "switched" |
     "stale" |
-    "cutover_race",
+    "cutover_race" |
+    "post_activation_superseded",
   source_anchor_before_announcement,
   successor_staging_anchor,
   successor_activation_anchor,
@@ -3390,7 +3407,7 @@ staged_backup_verified -> announcement_unknown | announcement_durable
 announcement_unknown -> announcement_durable | stale
 announcement_durable -> confirmation_unknown | confirmation_durable | cutover_race
 confirmation_unknown -> confirmation_durable | cutover_race
-confirmation_durable -> activated_backup_verified
+confirmation_durable -> activated_backup_verified | post_activation_superseded
 activated_backup_verified -> switched
 ~~~
 
@@ -3409,7 +3426,16 @@ post-activation Suffix ist kein Cutover-Race. Der Source-Seal wird niemals
 zurückgerollt; ein echter cutover_race bleibt expliziter Support-/Recovery-Fall
 und darf weder activated Backup noch lokalen Switch erzeugen.
 
-`switched`, `stale` und `cutover_race` sind terminal.
+`switched`, `stale`, `cutover_race` und
+`post_activation_superseded` sind terminal.
+
+`post_activation_superseded` ist ausschließlich nach
+`confirmation_durable` zulässig, wenn canonical_full beweist, dass ein
+gültiger post-activation Suffix entweder den Recovery-State gegenüber dem
+staged RecoveryArtifact fortgeschrieben oder den Successor bereits wieder
+versiegelt hat. Dieser Zustand ist **kein** Cutover-Race und macht die gültige
+Remote-Historie nicht rückgängig. Er verbietet lediglich activated Backup und
+automatischen lokalen Switch dieses überholten Operation-State.
 
 Wird eine Rotation **vor** durable Source-Announcement `stale` und existiert
 bereits eine Successor-Ressource, wird deren lokaler EpochLocalSecurityStateV6
@@ -3448,7 +3474,8 @@ Feldinvarianten nach Stage:
 - staged_backup_id: bis recovery_artifact_verified null; ab
   staged_backup_verified non-null und immutable;
 - activated_backup_id: bis announcement_durable null; ab
-  activated_backup_verified non-null und immutable.
+  activated_backup_verified non-null und immutable;
+  in post_activation_superseded bleibt es null.
 
 Die Reihenfolge `announcement_prepared -> recovery_artifact_verified` ist
 zwingend, weil RecoveryActivationProofV2 bzw. ProfileUpgradeActivationEntryV2
