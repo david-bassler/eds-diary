@@ -36,6 +36,8 @@ describe('v1 production hardening boundaries',()=>{
   it('destroys and schema-fences plaintext legacy stores only after verified cutover',async()=>{
     const local=await readFile('src/data/localDatabase.ts','utf8')
     expect(local).toMatch(/SECURE_DATABASE_VERSION_FLOOR = 9/)
+    expect(local).toMatch(/SECURE_DATABASE_VERSION_CEILING = 10/)
+    expect(local).toMatch(/created by a newer app version and cannot be opened safely/)
     expect(local).toMatch(/Math\.max\(current\.version\+1,SECURE_DATABASE_VERSION_FLOOR\)/)
     expect(local).toMatch(/sealLegacyPlaintextStorage/)
     expect(local).toMatch(/phase:'cutover',verified:true.*sealLegacyPlaintextStorage/s)
@@ -51,6 +53,8 @@ describe('v1 production hardening boundaries',()=>{
   it('uses the secure database floor in recovery persistence without recreating legacy plaintext stores',async()=>{
     const recovery=await readFile('src/data/recoveryProfile.ts','utf8')
     expect(recovery).toMatch(/SECURE_DATABASE_VERSION_FLOOR = 9/)
+    expect(recovery).toMatch(/SECURE_DATABASE_VERSION_CEILING = 10/)
+    expect(recovery).toMatch(/created by a newer app version and cannot be opened safely/)
     expect(recovery).not.toMatch(/for\(const store of LEGACY_PLAINTEXT_STORES\).*createObjectStore/s)
     expect(recovery).toMatch(/LEGACY_PLAINTEXT_STORES\.filter\(name=>db\.objectStoreNames\.contains\(name\)\)/)
   })
