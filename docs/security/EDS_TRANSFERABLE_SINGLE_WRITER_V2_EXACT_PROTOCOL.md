@@ -2338,7 +2338,14 @@ Normen:
 - to_recovery_generation = from_recovery_generation + 1.
 - to_recovery_urs_id muss exakt gemäß §2 aus dem neuen 32-Byte-URS abgeleitet
   sein; to_recovery_urs_commitment ist exakt das §10-Recovery-Commitment
-  desselben URS für to_recovery_generation.
+  desselben URS für to_recovery_generation. Der secret-freie kanonische
+  Remote-Log-Verifier kann diese Ableitung naturgemäß nicht selbst ausführen:
+  er prüft Signatur, Form, History-Freshness und die gebundenen Werte.
+  **Vor dem Transition-Append** muss deshalb die secret-aware
+  RecoveryArtifact-Erzeugung/Test-Recovery mit dem eingegebenen URS beide Werte
+  neu berechnen und exakt matchen. §19 wiederholt dieselbe Prüfung bei jeder
+  späteren Artifact-Nutzung; ein Mismatch ist security_blocked und die
+  vorbereitete Transition darf nicht appended werden.
 - to_recovery_takeover_public_key dekodiert zu exakt 32 Ed25519-Bytes.
 - to_recovery_takeover_key_id muss daraus gemäß §2 reproduzierbar sein.
 - Weder to_recovery_urs_id noch to_recovery_takeover_key_id darf bereits in
