@@ -37,6 +37,7 @@ import rotationAnnouncementSchema from '../security/schemas/rotation-announcemen
 import { validateRevisionV1 } from '../security/revisions'
 
 const DATABASE_NAME = 'eds-diary'
+const SECURE_DATABASE_VERSION_FLOOR = 9
 
 export const LOCAL_STORES = {
   painEntries: 'painEntries', medicationEntries: 'medicationEntries',
@@ -101,8 +102,8 @@ function openDatabase():Promise<IDBDatabase>{
     request.addEventListener('error',()=>fail(request.error??new Error('Database open failed.')),{once:true})
     request.addEventListener('success',()=>{
       const current=request.result
-      if(secureSchemaReady(current)){resolve(trackDatabase(current));return}
-      const nextVersion=current.version+1;current.close()
+      if(current.version>=SECURE_DATABASE_VERSION_FLOOR&&secureSchemaReady(current)){resolve(trackDatabase(current));return}
+      const nextVersion=Math.max(current.version+1,SECURE_DATABASE_VERSION_FLOOR);current.close()
       const upgrade=indexedDB.open(DATABASE_NAME,nextVersion)
       upgrade.addEventListener('upgradeneeded',()=>applyCurrentSchema(upgrade.result,upgrade.transaction))
       upgrade.addEventListener('success',()=>resolve(trackDatabase(upgrade.result)),{once:true})
