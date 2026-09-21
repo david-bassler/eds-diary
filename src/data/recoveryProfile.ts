@@ -26,7 +26,6 @@ function requestResult<T>(request:IDBRequest<T>):Promise<T>{return new Promise((
 function transactionDone(tx:IDBTransaction):Promise<void>{return new Promise((resolve,reject)=>{tx.addEventListener('complete',()=>resolve(),{once:true});tx.addEventListener('abort',()=>reject(tx.error??new Error('IndexedDB transaction aborted.')),{once:true});tx.addEventListener('error',()=>reject(tx.error??new Error('IndexedDB transaction failed.')),{once:true})})}
 
 function applyRecoverySchema(db:IDBDatabase):void{
-  if(db.objectStoreNames.contains('revisions'))db.deleteObjectStore('revisions')
   for(const name of Object.values(STORES))if(!db.objectStoreNames.contains(name)){const store=db.createObjectStore(name,{keyPath:'id'});if(name===STORES.envelopes||name===STORES.outbox)store.createIndex('byEpoch','epochId')}
 }
 function recoverySchemaReady(db:IDBDatabase):boolean{return Object.values(STORES).every(name=>db.objectStoreNames.contains(name))&&!db.objectStoreNames.contains('revisions')}
@@ -37,6 +36,7 @@ function openRecoveryDatabase(name:string):Promise<IDBDatabase>{return new Promi
   request.addEventListener('error',()=>fail(request.error??new Error('Recovery database open failed.')),{once:true})
   request.addEventListener('success',()=>{
     const current=request.result
+    if(current.objectStoreNames.contains('revisions')){current.close();fail(new Error('Recovery activation requires a fresh local profile; historical plaintext revisions are present.'));return}
     if(current.version>SECURE_DATABASE_VERSION_CEILING){current.close();fail(new Error('Recovery database was created by a newer app version and cannot be opened safely.'));return}
     if(current.version>=SECURE_DATABASE_VERSION_FLOOR&&recoverySchemaReady(current)){resolve(current);return}
     const version=Math.max(current.version+1,SECURE_DATABASE_VERSION_FLOOR)
