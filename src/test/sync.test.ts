@@ -73,6 +73,20 @@ describe('single writer coordinator',()=>{
     expect(prepared.transport.appendAttempts).toHaveLength(1)
     expect(prepared.coordinator.state).toBe('security_blocked')
   })
+  it('readback-reconciles a second unknown outcome and leaves the envelope pending for a later fresh attempt',async()=>{
+    const prepared=setup(envelope)
+    prepared.transport.loseAppendBeforeCommitCount=2
+    prepared.coordinator.connected();await prepared.coordinator.pullVerify()
+    await expect(prepared.coordinator.pushPending()).rejects.toMatchObject({code:'unknown_outcome'})
+    expect(prepared.transport.appendAttempts).toHaveLength(2)
+    expect(prepared.getDurable()).toBe('')
+    expect(prepared.coordinator.state).toBe('remote_verified')
+
+    prepared.coordinator.connected();await prepared.coordinator.pullVerify();await prepared.coordinator.pushPending()
+    expect(prepared.transport.appendAttempts).toHaveLength(3)
+    expect(prepared.getDurable()).toBe(envelope.envelopeId)
+    expect(prepared.coordinator.state).toBe('synced')
+  })
   it('rejects inconsistent semantic envelope dispositions before persistence',async()=>{
     const transport=new InMemoryTransport(),remoteId='invalid-dispositions'
     transport.remotes.set(remoteId,{manifest,rows:[[envelope.envelopeId,envelope.iv,envelope.ciphertext]]})
