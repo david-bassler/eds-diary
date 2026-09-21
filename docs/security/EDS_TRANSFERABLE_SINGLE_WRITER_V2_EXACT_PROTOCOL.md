@@ -1001,8 +1001,12 @@ Ressource.
 Publish ist exakt fail-closed und crash-konvergent:
 
 1. Für das konkrete (diary_id,epoch_id) Discovery über exakten Dateinamen und
-   recovery_artifact_locator. Jeder Kandidat wird zuerst vollständig gegen
-   owner-only/Permission-, Grid- und Locator-Invarianten geprüft.
+   recovery_artifact_locator. Jeder Kandidat wird zuerst gegen owner-only/
+   Permission- und exakte Recovery-Grid-Invarianten geprüft. Für einen noch
+   **pre-bound** Kandidaten mit exakt passendem Dateinamen dürfen die
+   appProperties ausschließlich vollständig leer oder bereits exakt die drei
+   erwarteten v6-Properties sein. Jede andere nicht-leere Property-Menge ist
+   conflicting/security_blocked.
 2. Vor **jedem** Create oder Create-Retry muss der persistierte
    `artifact_publish_attempted`-Intent bereits true/readback-verifiziert sein
    und eine neutrale Discovery stattfinden. Ein verlorener Create-Response darf
@@ -1022,7 +1026,11 @@ Publish ist exakt fail-closed und crash-konvergent:
    Versuch mit der exakten Recovery-Grid-Form ausführen und anschließend wieder
    ausschließlich durch Discovery/Readback entscheiden. Unknown Outcome kehrt
    zu Schritt 1 zurück.
-6. Header + alle Chunks werden in **einem** Sheets-batchUpdate geschrieben.
+6. Für den gewählten Kandidaten werden vor dem Artifact-Write exakt
+   `app_format="sync-recovery-v6"`, recovery_family_locator und
+   recovery_artifact_locator gesetzt, anschließend Drive-/Permission-/
+   Property-Invarianten erneut vollständig readback-verifiziert. Erst danach
+   werden Header + alle Chunks in **einem** Sheets-batchUpdate geschrieben.
 7. Existiert die gewählte Ressource bereits, darf die rekonstruierte logische
    RecoveryArtifactV6-Struktur entweder noch vollständig leer/uninitialisiert
    sein oder exakt dieselben kanonischen logischen Artifact-Bytes ergeben.
