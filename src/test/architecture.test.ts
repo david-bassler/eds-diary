@@ -19,7 +19,7 @@ describe('profile-neutral coordinator boundaries',()=>{it('delegates anchor sema
 describe('v2 pre-implementation hardening boundaries',()=>{
   it('keeps security rationale in an explicit anti-churn decision ledger',async()=>{
     const ledger=await readFile('docs/security/EDS_TRANSFERABLE_SINGLE_WRITER_V2_DECISIONS.md','utf8')
-    for(const id of ['D-001','D-002','D-003','D-004','D-005','D-006','D-007','D-008'])expect(ledger).toContain(id)
+    for(const id of ['D-001','D-002','D-003','D-004','D-005','D-006','D-007','D-008','D-009'])expect(ledger).toContain(id)
     expect(ledger).toMatch(/Rejected alternative/)
     expect(ledger).toMatch(/Revisit only if/)
     expect(ledger).toMatch(/Implementation status at this review/)
@@ -62,5 +62,12 @@ describe('v2 pre-implementation hardening boundaries',()=>{
     expect(transport).toMatch(/profileId = SINGLE_WRITER_V1_PROFILE/)
     expect(provider).toMatch(/providerId = GOOGLE_DRIVE_SHEETS_PROVIDER/)
     expect(provider).toMatch(/profileId = SINGLE_WRITER_V1_PROFILE/)
+  })
+  it('keeps non-canonical rotation resume outside the shared verified-state contract',async()=>{
+    const contracts=await readFile('src/sync/core/contracts.ts','utf8')
+    const protocol=await readFile('docs/security/EDS_TRANSFERABLE_SINGLE_WRITER_V2_EXACT_PROTOCOL.md','utf8')
+    expect(contracts).toMatch(/canonical-full only/)
+    expect(contracts).toMatch(/must never manufacture VerifiedRemoteState/)
+    expect(protocol).toMatch(/staged_incomplete, \*\*kein\*\* kanonischer\s+VerifiedRemoteState/)
   })
 })
