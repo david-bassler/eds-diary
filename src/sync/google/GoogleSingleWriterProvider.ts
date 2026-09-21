@@ -49,7 +49,7 @@ class GoogleSingleWriterProviderSession implements SingleWriterProviderSession {
     return IndependentBootstrapAuthority.fromAuthenticatedRemoteDiscovery(transport,locator,remoteResourceId,await transport.authenticatedAccountBinding())
   }
 
-  prepareRecoveryArtifactSlot(secret:Uint8Array):Promise<void>{return new GoogleRecoveryArtifactStore(this.api).prepare(secret)}
+  prepareRecoveryArtifactSlot(secret:Uint8Array,artifact:RecoveryArtifact):Promise<void>{return new GoogleRecoveryArtifactStore(this.api).prepare(secret,artifact)}
   publishRecoveryArtifact(secret:Uint8Array,artifact:RecoveryArtifact):Promise<void>{return new GoogleRecoveryArtifactStore(this.api).publish(secret,artifact)}
   findRecoveryArtifact(secret:Uint8Array):Promise<RecoveryArtifact|null>{return new GoogleRecoveryArtifactStore(this.api).find(secret)}
   loadRecoveryArtifact(secret:Uint8Array):Promise<RecoveryArtifact>{return new GoogleRecoveryArtifactStore(this.api).load(secret)}
