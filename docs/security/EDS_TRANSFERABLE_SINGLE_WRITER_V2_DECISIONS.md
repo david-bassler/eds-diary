@@ -230,6 +230,36 @@ legacy v1 binding with explicit compatibility rules.
 
 ---
 
+---
+
+## D-009 – rotation_resume is not a shared VerifiedRemoteState
+
+**Decision.** The shared `RemoteProfileVerifier.verify()` /
+`TransportProfileCodec.verifyRemote()` path is reserved for
+`canonical_full`. v2 `rotation_resume` uses a separate profile-internal API
+and a distinct staged-result type. It must never manufacture or return a normal
+`VerifiedRemoteState`, and its result must never be passed to
+`CoordinatorStore` or `WriteAuthority`.
+
+**Why.** `rotation_resume` intentionally accepts a non-native Successor whose
+required Migration-Control may still be missing. The exact protocol permits
+that only to resume the bound rotation operation and explicitly denies active
+epoch/writer/recovery authority. Reusing the shared verified-state type would
+make it too easy for a later caller to confuse “cryptographically checked
+staging prefix” with “canonical remote authority”.
+
+**Rejected alternative.** Encode `staged_incomplete` inside the generic
+`profileState` of a normal `VerifiedRemoteState`. Rejected because the
+generic Coordinator and persistence layer are designed to consume canonical
+states and should not need to remember a profile-specific exception that grants
+no authority.
+
+**Revisit only if.** The shared verifier contract itself becomes a typed
+discriminated union whose non-canonical branch is statically impossible to pass
+to CoordinatorStore/WriteAuthority.
+
+---
+
 ## Implementation status at this review
 
 This ledger separates **decision stability** from **implementation status**.
@@ -245,6 +275,7 @@ A recorded decision may be normative before its v2 runtime exists.
 | D-006 | Protocol/architecture specified; v2 rotation runtime pending. |
 | D-007 | Protocol/architecture specified; v2 recovery/rotation runtime pending. |
 | D-008 | Provider/profile identity split implemented in shared contracts and v1 adapters; v2 adapter pending. |
+| D-009 | Shared canonical-only verifier boundary documented in contracts; separate v2 rotation-resume API/result type still pending with the v2 verifier implementation. |
 
 A future review should not report an item in the “pending” column as a newly
 discovered protocol flaw unless the implementation stack claims that item is
