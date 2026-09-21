@@ -1304,10 +1304,12 @@ Mindestens:
     canonical_full verifizieren, Envelope pending lassen und aktuellen Versuch
     beenden; kein blinder dritter Append.
 88. RecoveryArtifact-Create verliert Response und später erscheinen mehrere
-    Kandidaten desselben Locators: nur vollständig verifizierte leere oder
-    byte-identisch erwartete operation-eigene Duplikate dürfen deterministisch
-    konvergiert/orphaned werden; widersprüchliche nicht-leere Artifact-Bytes
-    bleiben ambiguous/security_blocked.
+    Kandidaten desselben Locators: nur owner-only/Grid-verifizierte,
+    pre-bound leere oder byte-identisch erwartete operation-eigene Duplikate
+    dürfen deterministisch konvergiert/orphaned werden. Pre-bound appProperties
+    sind nur vollständig leer oder bereits exakt v6; vor Artifact-Write müssen
+    die exakten drei v6-Properties readback-verifiziert sein. Widersprüchliche
+    nicht-leere Artifact-Bytes/Properties bleiben ambiguous/security_blocked.
 
 ## 22. Nicht-Ziele
 
