@@ -1303,6 +1303,11 @@ Mindestens:
     erneut in unknown_outcome und das Envelope fehlt weiter -> Readback erneut
     canonical_full verifizieren, Envelope pending lassen und aktuellen Versuch
     beenden; kein blinder dritter Append.
+88. RecoveryArtifact-Create verliert Response und später erscheinen mehrere
+    Kandidaten desselben Locators: nur vollständig verifizierte leere oder
+    byte-identisch erwartete operation-eigene Duplikate dürfen deterministisch
+    konvergiert/orphaned werden; widersprüchliche nicht-leere Artifact-Bytes
+    bleiben ambiguous/security_blocked.
 
 ## 22. Nicht-Ziele
 
