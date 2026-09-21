@@ -1249,6 +1249,16 @@ Mindestens:
     stale_writer_pending statt in einem zweiten Append.
 79. physisch vorhandene stale_writer_rejected-Row -> niemals allein wegen
     Prefix-Coverage als lokaler durable Commit markieren.
+80. RecoveryArtifact-Publish mutating request wurde versucht und endet in
+    Crash/unknown_outcome -> artifact_publish_attempted bleibt durable true;
+    lokaler Abort ist verboten, bis Remote-Reconciliation bzw. ein echter
+    Anchor-Overtake den Zustand entscheidet.
+81. VerifiedRemoteState meldet eine Envelope-ID zugleich accepted und
+    stale_writer_rejected oder meldet accepted/stale IDs außerhalb des
+    verifizierten physischen Sets -> gemeinsamer Coordinator security_blocked
+    vor Persistenz.
+82. operation_generation ändert sich während der asynchronen
+    unknown-outcome-retry-Authority-Prüfung -> kein zweiter Append; fail-closed.
 
 ## 22. Nicht-Ziele
 
