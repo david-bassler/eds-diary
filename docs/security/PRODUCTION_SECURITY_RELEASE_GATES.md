@@ -45,12 +45,15 @@ EDS Diary ist **nicht** als „production secure“ freigegeben.
   recovery_rekey zunächst one-shot lokal persistiert und bootstrap-verifiziert.
   Vor dem Source-Announcement darf die secret-derived owner-only Recovery-
   Ressource bereits leer und eindeutig vorgebunden werden; staged Successor-
-  Artifact-Bytes werden dort noch nicht gespeichert. Erst nach durablem,
+  Artifact-Bytes werden dort noch nicht gespeichert. Die Zulässigkeit exakt
+  dieses staged Artifacts gegen einen eventuell bereits belegten Slot wird vorab
+  mit denselben Diary-/Generation-/Ordering-Regeln wie beim Publish geprüft und
+  unmittelbar vor dem Source-Append erneut verifiziert. Erst nach durablem,
   race-geprüftem Source-Announcement wird exakt das lokale Artefakt hineingeschrieben
   und per Readback verifiziert. Remote-Enablement ist die ausdrückliche Ausnahme
-  ohne vorherige Remote-Source. Dadurch liegt Create-/Discovery-Ambiguität vor dem
-  Cutover-Point-of-no-return, ohne einen staged Successor vorzeitig recoverbar zu
-  machen.
+  ohne vorherige Remote-Source. Dadurch liegen Create-/Discovery-/Replacement-
+  Fehler soweit ohne CAS möglich vor dem Cutover-Point-of-no-return, ohne einen
+  staged Successor vorzeitig recoverbar zu machen.
 - Bei normaler v1-Rotation mit unveränderter Recovery-Generation bleibt die
   bestehende Same-Generation-Rollback-Sperre des Google-Recovery-Stores erhalten.
   Das neue RecoveryArtifact übernimmt einen monotonen Zeit-Floor aus dem
@@ -61,7 +64,8 @@ EDS Diary ist **nicht** als „production secure“ freigegeben.
   IndexedDB-Bereich (Version 9/10; >10 fail-closed). Der Recovery-Pfad erzeugt keine
   Legacy-Klartext-Stores mehr; vorhandene Legacy-Stores bleiben jedoch Teil der
   Fresh-Profile-Prüfung und verhindern eine Wiederherstellung in ein nicht
-  frisches Profil.
+  frisches Profil. Taucht nach dem v10-Schema-Fence nur der alte localStorage-Key
+  erneut auf, wird er entfernt, ohne dafür eine unzulässige Version 11 zu erzeugen.
 - Der Browser-Persistenzstatus wird über die Storage API angefordert und angezeigt;
   die Zahl ausschließlich lokal vorhandener Änderungen wird aus der persistenten
   Envelope-Outbox statt aus flüchtigem UI-Zustand ermittelt.
@@ -99,8 +103,10 @@ EDS Diary ist **nicht** als „production secure“ freigegeben.
   Journal- und Envelope-Readback sowie **v1**-Recovery-Key-Rekey und remote
   Recovery-Artefakt-Readback.
 - v1-Rotation mit zusätzlicher physischer Source-Row zwischen Freeze und
-  Announcement => Fail-Stop; staged RecoveryArtifact bleibt bis zum durablen
-  Announcement ausschließlich lokal.
+  Announcement => Fail-Stop; staged RecoveryArtifact-Bytes bleiben bis zum
+  durablen Announcement unveröffentlicht. Ein nach frühem Slot-Prebind
+  manipulierter/belegter Recovery-Slot wird unmittelbar vor dem Source-Append
+  erneut geprüft und blockiert den Append.
 - Zweite normale v1-Rotation bei rückwärts gesetzter Geräteuhr => RecoveryArtifact
   bleibt same-generation rollback-geschützt und erhält dennoch einen strikt
   monotonen created_at-Wert.
