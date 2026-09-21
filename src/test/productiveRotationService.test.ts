@@ -89,13 +89,20 @@ describe('ProductiveRotationService',()=>{
     expect([...google.appendCounts.values()].every(count=>count===1)).toBe(true)
 
     await runFault('after-recovery-verified')
+    expect([...google.remotes.values()].filter(item=>!item.trashed&&item.properties.app_format==='sync-recovery-v5')).toHaveLength(0)
     await runFault('after-backup-verified')
     await runFault('after-announcement-envelope')
+
+    sourceRemote.rows.push([...sourceRemote.rows[0]!])
+    await expect(new ProductiveRotationService(session,transport,urs,()=>createdAt).rotate()).rejects.toThrow(/Source changed around the rotation announcement|no longer immediately extends/)
+    expect([...google.remotes.values()].filter(item=>!item.trashed&&item.properties.app_format==='sync-recovery-v5')).toHaveLength(0)
+    sourceRemote.rows.pop()
 
     google.crashAfterAppend='source'
     await expect(new ProductiveRotationService(session,transport,urs,()=>createdAt).rotate()).rejects.toThrow('simulated crash after source append')
     expect(google.crashAfterAppend).toBeNull()
     await runFault('after-announcement-durable')
+    expect([...google.remotes.values()].filter(item=>!item.trashed&&item.properties.app_format==='sync-recovery-v5')).toHaveLength(1)
     expect([...google.appendCounts.values()].every(count=>count===1)).toBe(true)
 
     await runFault('before-atomic-switch')
