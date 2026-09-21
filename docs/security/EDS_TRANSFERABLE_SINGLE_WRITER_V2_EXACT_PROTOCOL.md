@@ -1839,6 +1839,13 @@ Bei Timeout/unklarem Ergebnis:
 9. Ist Source inzwischen sealed oder Writer-/Recovery-Authority anderweitig
    fortgeschritten => nicht erneut appendieren; Fachrevision quarantinieren bzw.
    Operation-State auf stale setzen.
+10. Liefert auch ein nach frischem Full Verify autorisierter Retry erneut
+    `unknown_outcome`, wird **kein** weiterer Append in derselben Retry-Kette
+    blind ausgeführt. Zuerst wieder vollständiger Readback. Ist das Envelope
+    vorhanden, normal final verifizieren; fehlt es weiterhin, den neuen Snapshot
+    canonical_full verifizieren, den Write pending lassen und den laufenden
+    Versuch beenden. Ein späterer neuer Versuch beginnt wieder mit frischem
+    Full Verify/Authority-Check.
 
 Ein HTTP-200 ohne finalen Full Readback ist niemals durable.
 
@@ -4318,6 +4325,9 @@ Negative Vectors:
   zuerst Discovery/Grid-Readback-Reconciliation;
 - Unknown-Outcome-Retry ohne erneutes canonical_full des aktuellen Prefixes =>
   Implementierungs-/Assurance-Fehler; kein zweiter Append;
+- auch der autorisierte Retry endet erneut in unknown_outcome und Envelope fehlt
+  im Readback => Snapshot erneut canonical_full verifizieren, Envelope pending
+  lassen; kein blinder dritter Append;
 - physisch vorhandene stale_writer_rejected-Revision wird lokal als durable statt
   stale_writer_pending klassifiziert => Implementierungs-/Assurance-Fehler;
 - neuer Envelope verwendet einen bereits belegten Control-ID-Bytewert erneut,
