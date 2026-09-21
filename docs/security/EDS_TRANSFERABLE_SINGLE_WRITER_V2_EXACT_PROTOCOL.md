@@ -3996,11 +3996,19 @@ Reihenfolge:
     Confirmation-Retries persistieren. Einen danach vorhandenen
     post-activation Suffix vollständig per canonical_full verifizieren und
     anschließend die vollständige activation_lineage-/Migration-/Confirmation-
-    Prüfung ausführen. Erst jetzt ist der Successor remote aktiviert.
-21. **obligatorisch** ein neues activation_state="activated" SyncBackupV6 des
+    Prüfung ausführen. Erst jetzt ist der Successor remote aktiviert. Hat dieser
+    Suffix den Recovery-State gegenüber dem in Schritt 14 erzeugten
+    RecoveryArtifact fortgeschrieben oder den Successor durch ein gültiges
+    RotationAnnouncement bereits wieder versiegelt, wird der lokale Upgrade-
+    Vorgang terminal `post_activation_superseded`: die gültige Remote-Historie
+    bleibt bestehen, aber es gibt aus diesem Operation-State kein activated
+    Backup und keinen automatischen lokalen Switch.
+21. Nur wenn Schritt 20 nicht post_activation_superseded ergibt:
+    **obligatorisch** ein neues activation_state="activated" SyncBackupV6 des
     Successors erzeugen und Test-Restore-verifizieren; remote_anchor_at_export
-    muss dem aktuellen vollständig verifizierten Prefix entsprechen und
-    successor_activation_anchor monoton erweitern.
+    muss dem aktuellen vollständig verifizierten Prefix entsprechen,
+    successor_activation_anchor monoton erweitern und das RecoveryArtifact muss
+    exakt dem End-Recovery-State der exportierten Rows entsprechen.
 22. ActivationLineageCacheV2 persistieren/readback-verifizieren.
 23. erst danach atomar auf v2 umschalten; v1 retire und normale Successor-Writes
     freigeben.
