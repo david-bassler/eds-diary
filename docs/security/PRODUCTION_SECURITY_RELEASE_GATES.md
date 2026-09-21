@@ -83,7 +83,7 @@ EDS Diary ist **nicht** als „production secure“ freigegeben.
   Journal- und Envelope-Readback sowie **v1**-Recovery-Key-Rekey und remote
   Recovery-Artefakt-Readback.
 - v1-Rotation mit zusätzlicher physischer Source-Row zwischen Freeze und
-  Announcement => Fail-Stop; staged RecoveryArtifact bleibt bis zum durablem
+  Announcement => Fail-Stop; staged RecoveryArtifact bleibt bis zum durablen
   Announcement ausschließlich lokal.
 - Legacy-Migration mit konkurrierendem Legacy-Write => Catch-up bis stabil,
   anschließend Entfernung der Klartext-Stores und Schema-Fence.
