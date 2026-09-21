@@ -34,7 +34,7 @@ function setup(envelope: PreparedEnvelope|readonly PreparedEnvelope[],writeAutho
     },
   }
   const coordinator=new SingleWriterCoordinator('AAECAwQFBgcICQoLDA0ODw','EBESExQVFhcYGRobHB0eHw','remote',transport,new GoogleSheetsSingleWriterProfileCodec(new TestRemoteVerifier()),store,false,writeAuthority??singleWriterV1WriteAuthority())
-  return {transport,coordinator,getDurable:()=>durable.at(-1)??'',getDurables:()=>durable,getQuarantined:()=>quarantined,generation:()=>generation}
+  return {transport,coordinator,getDurable:()=>durable.at(-1)??'',getDurables:()=>durable,getQuarantined:()=>quarantined,generation:()=>generation,bumpGeneration:()=>++generation}
 }
 const envelope={envelopeId:'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',iv:'AAAAAAAAAAAAAAAA',ciphertext:'A'.repeat(1387),bytesHash:'hash'}
 describe('single writer coordinator',()=>{
@@ -56,6 +56,51 @@ describe('single writer coordinator',()=>{
     expect(transport.appendAttempts).toHaveLength(1)
     expect(getQuarantined()).toEqual([envelope.envelopeId])
     expect(coordinator.state).toBe('remote_verified')
+  })
+  it('rechecks local security generation after async unknown-outcome retry authorization',async()=>{
+    let bump=()=>0
+    const authority:WriteAuthority={
+      profileId:SINGLE_WRITER_V1_PROFILE,
+      accessAfterPull:()=> 'writer',
+      canPrepareDomainWrite:()=> 'writer',
+      verifyBeforePush:(_envelope,_verified,phase)=>{if(phase==='unknown_outcome_retry')bump();return 'push'},
+      accessAfterReadback:()=> 'writer',
+    }
+    const prepared=setup(envelope,authority);bump=prepared.bumpGeneration
+    prepared.transport.loseNextAppendBeforeCommit=true
+    prepared.coordinator.connected();await prepared.coordinator.pullVerify()
+    await expect(prepared.coordinator.pushPending()).rejects.toThrow(/generation changed after unknown-outcome retry authorization/i)
+    expect(prepared.transport.appendAttempts).toHaveLength(1)
+    expect(prepared.coordinator.state).toBe('security_blocked')
+  })
+  it('rejects inconsistent semantic envelope dispositions before persistence',async()=>{
+    const transport=new InMemoryTransport(),remoteId='invalid-dispositions'
+    transport.remotes.set(remoteId,{manifest,rows:[[envelope.envelopeId,envelope.iv,envelope.ciphertext]]})
+    const verifier={
+      profileId:SINGLE_WRITER_V1_PROFILE,
+      verify:async(snapshot:{manifest:readonly string[];rows:ReadonlyArray<readonly string[]>})=>({
+        profileId:SINGLE_WRITER_V1_PROFILE,
+        profileState:null,
+        snapshot,
+        manifestFingerprint:'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+        retired:false,
+        verifiedEnvelopeIds:new Set([envelope.envelopeId]),
+        acceptedEnvelopeIds:new Set([envelope.envelopeId]),
+        staleWriterEnvelopeIds:new Set([envelope.envelopeId]),
+      }),
+    }
+    let committed=false
+    const store:CoordinatorStore={
+      readAnchor:async()=>null,
+      pending:async()=>[],
+      generation:async()=>1,
+      commitVerifiedPull:async()=>{committed=true;return 2},
+    }
+    const coordinator=new SingleWriterCoordinator('AAECAwQFBgcICQoLDA0ODw','EBESExQVFhcYGRobHB0eHw',remoteId,transport,new GoogleSheetsSingleWriterProfileCodec(verifier),store,false,singleWriterV1WriteAuthority())
+    coordinator.connected()
+    await expect(coordinator.pullVerify()).rejects.toThrow(/both accepted and stale-writer rejected/i)
+    expect(committed).toBe(false)
+    expect(coordinator.state).toBe('security_blocked')
   })
   it('fails closed on rollback and differing bytes',async()=>{const {coordinator,transport}=setup(envelope);coordinator.connected();await coordinator.pullVerify();transport.remotes.set('remote',{manifest,rows:[[envelope.envelopeId,'AQEBAQEBAQEBAQEB',envelope.ciphertext]]});await expect(coordinator.pushPending()).rejects.toThrow(/different bytes/);expect(coordinator.state).toBe('security_blocked')})
   it('advances the generation independently for three pending envelopes',async()=>{const envelopes=[1,2,3].map(value=>({...envelope,envelopeId:baseId(value)}));const {coordinator,getDurables,generation}=setup(envelopes);coordinator.connected();await coordinator.pullVerify();await coordinator.pushPending();expect(getDurables()).toEqual(envelopes.map(item=>item.envelopeId));expect(generation()).toBe(5)})
