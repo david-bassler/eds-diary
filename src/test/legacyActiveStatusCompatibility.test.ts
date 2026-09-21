@@ -63,25 +63,6 @@ async function seedLegacyActiveRecords(): Promise<void> {
   })
 }
 
-async function readLegacyRecord(storeName: string, id: string): Promise<Record<string, unknown>> {
-  const database = await new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open('eds-diary')
-    request.onsuccess = () => resolve(request.result)
-    request.onerror = () => reject(request.error)
-  })
-
-  try {
-    const tx = database.transaction(storeName, 'readonly')
-    return await new Promise<Record<string, unknown>>((resolve, reject) => {
-      const request = tx.objectStore(storeName).get(id)
-      request.onsuccess = () => resolve(request.result)
-      request.onerror = () => reject(request.error)
-    })
-  } finally {
-    database.close()
-  }
-}
-
 describe('legacy active status compatibility', () => {
   beforeEach(async () => {
     vi.resetModules()
@@ -92,16 +73,21 @@ describe('legacy active status compatibility', () => {
   it('prepares active legacy pain and medication records for secure migration', async () => {
     const { remoteSessionStatus } = await import('../data/initializeDataLayer')
     await expect(remoteSessionStatus()).resolves.toMatchObject({ mode: 'local_offline' })
-    const { getRecord, LOCAL_STORES } = await import('../data/localDatabase')
+    const { getAllRecords, getRecord, LOCAL_STORES, __localDatabaseTesting } = await import('../data/localDatabase')
     await expect(getRecord<{ id: string; values: string[] }>(LOCAL_STORES.settings, 'custom-pain-types')).resolves.toEqual({
       id: 'custom-pain-types',
       values: ['Brennend', 'Elektrisch'],
     })
 
-    const pain = await readLegacyRecord('painEntries', 'pain-active')
-    const medication = await readLegacyRecord('medicationEntries', 'med-active')
-
+    const pain = (await getAllRecords<Record<string, unknown>>(LOCAL_STORES.painEntries)).find(value=>value.note==='legacy pain')
+    const medication = (await getAllRecords<Record<string, unknown>>(LOCAL_STORES.medicationEntries)).find(value=>value.medicationName==='Testmedikament')
+    expect(pain).toBeTruthy()
+    expect(medication).toBeTruthy()
     expect(pain).not.toHaveProperty('status')
     expect(medication).not.toHaveProperty('status')
+
+    const database=await __localDatabaseTesting.openDatabase()
+    expect(database.objectStoreNames.contains('painEntries')).toBe(false)
+    expect(database.objectStoreNames.contains('medicationEntries')).toBe(false)
   })
 })
