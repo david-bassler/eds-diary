@@ -906,8 +906,15 @@ Vor einem normalen finalen lokalen Switch ist neben dem staged Backup zwingend
 ein **activated SyncBackupV6** zu erzeugen und per Test-Restore zu prüfen. Sein
 RemoteAnchor muss den successor_activation_anchor enthalten, darf ihn nur um
 vollständig verifizierte post-activation Rows erweitern und sein
-RecoveryArtifact muss exakt zum finalen Recovery-State dieser Rows passen. Ein
-Backup kann Daten/Schlüssel offline wiederherstellen;
+RecoveryArtifact muss exakt zum finalen Recovery-State dieser Rows passen.
+**Unmittelbar vor dem lokalen Switch** folgt noch ein letzter canonical_full des
+Successors. Recovery-State-Fortschritt oder erneutes Seal seit dem Backup =>
+post_activation_superseded/kein Switch; reine Fachrows/WriterGrants bleiben
+zulässig und der lokale Writerstatus wird aus dieser letzten Authority
+abgeleitet. Zwischen diesem letzten Read und dem lokalen Commit bleibt mangels
+providerseitigem CAS ein unvermeidbares Race-Fenster; es wird vor jeder späteren
+Mutation durch das ohnehin verpflichtende frische Full Verify wieder erkannt.
+Ein Backup kann Daten/Schlüssel offline wiederherstellen;
 remote-active Writer-Recovery benötigt weiterhin die historische
 Activation-Lineage-Source-Kette.
 ## 18. Migration v1 -> v2
@@ -985,8 +992,13 @@ Ablauf:
     Suffix erweitern und das RecoveryArtifact muss zum End-Recovery-State passen;
 13. ActivationLineageCacheV2 mit eigenem Cache-ID/Hash
     persistieren/readback-verifizieren;
-14. erst danach atomar auf v2 umschalten und v1 retire; lokale Writer-Freigabe
-    nur, wenn die final verifizierte Authority weiterhin zum lokalen Key passt.
+14. unmittelbar vor dem lokalen Umschalten Successor erneut canonical_full
+    prüfen. Recovery-State-Fortschritt/erneutes Seal seit Backup =>
+    post_activation_superseded; reine Fachrows/WriterGrants bleiben zulässig und
+    writer_status wird aus der letzten Authority abgeleitet;
+15. erst danach atomar auf v2 umschalten und v1 retire. Die No-CAS-Restgrenze
+    zwischen letztem Read und lokalem Commit bleibt bewusst bestehen; vor jeder
+    späteren Mutation folgt erneut Full Verify.
 
 Alte v1-Geräte sehen das Announcement und dürfen die alte Epoche nicht weiter
 als aktiv behandeln.
@@ -1283,6 +1295,10 @@ Mindestens:
 85. post-activation Suffix akzeptiert RotationAnnouncement auf dem Successor ->
     Successor bereits erneut sealed; alter Cutover post_activation_superseded,
     kein Auto-Switch.
+86. Nach activated Backup/Lineage-Cache verändert sich der Successor vor dem
+    lokalen Switch: letzter canonical_full muss RecoveryTransition/Seal erkennen
+    und post_activation_superseded setzen; reine Fachrows/WriterGrants dürfen
+    den Switch mit final neu abgeleitetem Writerstatus fortsetzen.
 
 ## 22. Nicht-Ziele
 
