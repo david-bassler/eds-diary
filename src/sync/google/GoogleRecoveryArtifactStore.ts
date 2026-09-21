@@ -89,6 +89,16 @@ export class GoogleRecoveryArtifactStore {
     return cell.userEnteredValue.stringValue
   }
 
+  private async verifyReplacement(secret:Uint8Array,artifact:RecoveryArtifact,prior:string|null):Promise<void>{
+    const next=await recoverRootKeyCandidate(artifact,secret)
+    if(prior===null)return
+    const parsed=parseStrictJson(utf8(prior)) as unknown
+    if(canonicalJson(parsed as never)!==prior)throw new Error('Existing recovery artifact is not stored canonically.')
+    const previous=await recoverRootKeyCandidate(parsed as RecoveryArtifact,secret)
+    if(previous.payload.diary_id!==next.payload.diary_id)throw new Error('Recovery artifact locator is already bound to a different diary.')
+    if(next.payload.recovery_generation<previous.payload.recovery_generation||(next.payload.recovery_generation===previous.payload.recovery_generation&&next.payload.created_at<=previous.payload.created_at))throw new Error('Recovery artifact rollback or ambiguous replacement was rejected.')
+  }
+
   private async create(locator:string):Promise<string>{
     try{
       await this.api.request<Spreadsheet>('https://sheets.googleapis.com/v4/spreadsheets',{method:'POST',body:JSON.stringify({properties:{title:`${NAME_PREFIX}${locator}`},sheets:[{properties:{title:'_a',sheetType:'GRID',gridProperties:{rowCount:1,columnCount:1}}}]})})
@@ -96,6 +106,22 @@ export class GoogleRecoveryArtifactStore {
     const candidates=await this.candidates(locator)
     if(candidates.length!==1||!candidates[0]?.id)throw new Error(candidates.length>1?'Recovery artifact creation is ambiguous.':'Recovery artifact resource could not be reconciled.')
     return candidates[0].id
+  }
+
+  async prepare(secret:Uint8Array,artifact:RecoveryArtifact):Promise<void>{
+    const locator=await recoveryArtifactLocator(secret)
+    let candidates=await this.candidates(locator)
+    if(candidates.length>1)throw new Error('Recovery artifact discovery is ambiguous.')
+    const remoteId=candidates[0]?.id??await this.create(locator)
+    await this.verifyFile(remoteId,locator,true)
+    const properties=await this.api.request<DriveFile>(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(remoteId)}?fields=appProperties`)
+    if(!sameProperties(properties.appProperties??{},expectedProperties(locator))){
+      await this.api.request(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(remoteId)}?fields=id,appProperties`,{method:'PATCH',body:JSON.stringify({appProperties:expectedProperties(locator)})})
+    }
+    await this.verifyFile(remoteId,locator)
+    await this.verifyReplacement(secret,artifact,await this.readArtifactText(remoteId))
+    candidates=await this.candidates(locator)
+    if(candidates.length!==1||candidates[0]?.id!==remoteId)throw new Error('Recovery artifact resource is no longer unique.')
   }
 
   async publish(secret:Uint8Array,artifact:RecoveryArtifact):Promise<void>{
@@ -111,12 +137,7 @@ export class GoogleRecoveryArtifactStore {
     }
     await this.verifyFile(remoteId,locator)
     const prior=await this.readArtifactText(remoteId)
-    if(prior!==null&&prior!==encoded){
-      const priorArtifact=parseStrictJson(utf8(prior)) as unknown as RecoveryArtifact
-      const [previous,next]=await Promise.all([recoverRootKeyCandidate(priorArtifact,secret),recoverRootKeyCandidate(artifact,secret)])
-      if(previous.payload.diary_id!==next.payload.diary_id)throw new Error('Recovery artifact locator is already bound to a different diary.')
-      if(next.payload.recovery_generation<previous.payload.recovery_generation||(next.payload.recovery_generation===previous.payload.recovery_generation&&next.payload.created_at<=previous.payload.created_at))throw new Error('Recovery artifact rollback or ambiguous replacement was rejected.')
-    }
+    if(prior!==encoded)await this.verifyReplacement(secret,artifact,prior)
     if(prior!==encoded){
       const sheetId=await this.artifactSheetId(remoteId)
       try{
@@ -128,14 +149,21 @@ export class GoogleRecoveryArtifactStore {
     if(candidates.length!==1||candidates[0]?.id!==remoteId)throw new Error('Recovery artifact resource is no longer unique.')
   }
 
-  async load(secret:Uint8Array):Promise<RecoveryArtifact>{
+  async find(secret:Uint8Array):Promise<RecoveryArtifact|null>{
     const locator=await recoveryArtifactLocator(secret),candidates=await this.candidates(locator)
-    if(candidates.length!==1||!candidates[0]?.id)throw new Error(candidates.length?'Recovery artifact discovery is ambiguous.':'No remote recovery artifact matches this recovery key.')
+    if(candidates.length===0)return null
+    if(candidates.length!==1||!candidates[0]?.id)throw new Error('Recovery artifact discovery is ambiguous.')
     await this.verifyFile(candidates[0].id,locator)
     const text=await this.readArtifactText(candidates[0].id)
-    if(!text)throw new Error('Remote recovery artifact is empty.')
+    if(!text)return null
     const parsed=parseStrictJson(utf8(text)) as unknown
     if(canonicalJson(parsed as never)!==text)throw new Error('Remote recovery artifact is not stored canonically.')
     return parsed as RecoveryArtifact
+  }
+
+  async load(secret:Uint8Array):Promise<RecoveryArtifact>{
+    const artifact=await this.find(secret)
+    if(!artifact)throw new Error('No remote recovery artifact matches this recovery key.')
+    return artifact
   }
 }

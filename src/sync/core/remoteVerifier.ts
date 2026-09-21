@@ -174,6 +174,7 @@ export class RecoveryBootstrapVerifier {
       return{source:'authenticated-remote',verified,remoteBinding:{provider_id:SINGLE_WRITER_V1_PROFILE,remote_resource_id:authority.remoteResourceId!,remote_identity_binding:authority.authenticatedAccountBinding!}}
     }
     const backup=await authority.loadBackup(),epochSalt=await deriveEpochSalt(fixedBase64Url(p.diary_id,16),fixedBase64Url(p.epoch_id,16)),verifier=new SingleWriterV1RemoteVerifier({rootKey:candidate.rootKey,diaryId:p.diary_id,epochId:p.epoch_id,expectedManifestFingerprint:p.manifest_fingerprint,expectedKeyId:p.key_id,expectedRecoveryGeneration:p.recovery_generation,expectedRecoveryCommitment:candidate.recoveryCommitment,expectedGoogleAccountBinding:p.google_account_binding,schemas:this.options.schemas,oldAnchor:p.remote_anchor,localEnvelopes:[],localHeadRevisionIds:new Set()}),backupModule=await import('../../security/backup'),rows=await backupModule.testRestoreBackup({rootKey:candidate.rootKey,epochSalt,diaryId:p.diary_id,epochId:p.epoch_id,keyId:p.key_id,manifestFingerprint:p.manifest_fingerprint},backup,verifier),verified=await verifier.verify({manifest:backup.epoch_manifest_public,rows})
+    if(verified.retired)throw new Error('Verified backup refers to a retired epoch; normal recovery does not perform historical rollback.')
     return{source:'verified-backup',verified,remoteBinding:null}
   }
 }
