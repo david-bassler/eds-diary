@@ -1335,6 +1335,11 @@ Für v2:
 - `VerifiedRemoteState` muss seine `profileId` tragen und darf
   profil-spezifischen, bereits verifizierten Zustand nur als klar abgegrenzten
   `profileState` an die Authority-Schicht weiterreichen;
+- der gemeinsame `RemoteProfileVerifier.verify()`-/
+  `TransportProfileCodec.verifyRemote()`-Pfad ist **canonical_full-only**.
+  Der operation-gebundene v2-`rotation_resume`-Verifier liefert einen eigenen
+  staged Resulttyp und darf niemals einen normalen `VerifiedRemoteState`
+  erzeugen oder an CoordinatorStore/WriteAuthority weiterreichen;
 - Anchor-Erzeugung und Prefix-Fortschrittsprüfung gehören in den
   `TransportProfileCodec`, nicht in den gemeinsamen Coordinator;
 - niemals eine v2-Epoche über einen v1-Codec oder einen Verified-State eines
