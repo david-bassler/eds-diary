@@ -1310,6 +1310,11 @@ Mindestens:
     sind nur vollständig leer oder bereits exakt v6; vor Artifact-Write müssen
     die exakten drei v6-Properties readback-verifiziert sein. Widersprüchliche
     nicht-leere Artifact-Bytes/Properties bleiben ambiguous/security_blocked.
+89. Jedes RecoveryArtifactV6 wird vor erster Remote-Mutation one-shot vollständig
+    lokal persistiert/readback-verifiziert und per SHA-256 an den jeweiligen
+    Operation-State gebunden. Create-/Write-Retries regenerieren niemals
+    recovery_artifact_id, Salt, IV oder Ciphertext. recovery_rekey besitzt
+    zusätzlich den D-002 artifact_publish_attempted-Fence.
 
 ## 22. Nicht-Ziele
 
