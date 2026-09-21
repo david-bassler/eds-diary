@@ -1299,6 +1299,10 @@ Mindestens:
     lokalen Switch: letzter canonical_full muss RecoveryTransition/Seal erkennen
     und post_activation_superseded setzen; reine Fachrows/WriterGrants dürfen
     den Switch mit final neu abgeleitetem Writerstatus fortsetzen.
+87. Auch der nach frischem Full Verify autorisierte Unknown-Outcome-Retry endet
+    erneut in unknown_outcome und das Envelope fehlt weiter -> Readback erneut
+    canonical_full verifizieren, Envelope pending lassen und aktuellen Versuch
+    beenden; kein blinder dritter Append.
 
 ## 22. Nicht-Ziele
 
