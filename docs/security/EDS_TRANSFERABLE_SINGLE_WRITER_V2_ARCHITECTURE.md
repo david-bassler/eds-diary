@@ -731,12 +731,15 @@ Recovery-Rekey ändert den Writer nicht automatisch. Die neue
 Recovery-Authority wird zuerst auf der **noch aktiven, unsealed Source** durch
 einen writer-signierten `RecoveryAuthorityTransitionV2` aktiviert. Das neue
 RecoveryArtifactV6 wird bereits davor unter dem neuen URS publiziert und bindet
-die exakt vorbereiteten Transition-Envelope-Bytes. Dieser Publish/Readback ist
-ein bewusster **Point of no local return**: Danach kann ein lokaler Abort die
-bereits remote gespeicherte, writer-signierte bedingte Capability nicht
-widerrufen. Solange die Source noch exakt am gebundenen Anchor steht, muss die
-Transition fertiggestellt/reconciliiert werden; erst eine andere physische Row
-macht sie tatsächlich stale.
+die exakt vorbereiteten Transition-Envelope-Bytes. Der **erste mutierende
+Artifact-Publish-Versuch** ist der bewusste Point of no local return: Unmittelbar
+davor wird `artifact_publish_attempted=true` persistent/readback-verifiziert.
+Danach kann weder ein fehlender Erfolgs-Callback noch ein
+`unknown_outcome` als lokaler Abort interpretiert werden; das Publish-Outcome
+muss per Discovery/Grid-Readback reconciliiert werden. Existieren die exakten
+Artifact-Bytes remote und steht die Source weiter am gebundenen Anchor, muss die
+Transition fertiggestellt werden. Erst eine andere physische Source-Row macht
+die vorbereitete Capability tatsächlich stale.
 
 Jede akzeptierte RecoveryAuthorityTransitionV2 muss **frischen URS und frisches
 Recovery-Takeover-Keypair** verwenden. v2 führt dafür ab seiner ersten
