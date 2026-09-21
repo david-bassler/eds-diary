@@ -143,6 +143,15 @@ version range and never recreates deleted legacy stores. A fresh installation
 therefore starts above legacy clients rather than at browser-default version 1
 without sacrificing downgrade safety.
 
+The fresh-profile Recovery opener is intentionally stricter and non-destructive:
+it never deletes historical plaintext stores or upgrades a legacy/foreign
+pre-v9 database merely to inspect freshness. A database containing the historical
+revisions store is rejected before mutation. A sub-v9 database may be raised to
+the secure floor only when its schema consists exclusively of the secure
+Recovery-bootstrap stores created by this implementation; this permits crash
+resume of a newly created empty Recovery gate without modifying an existing
+legacy profile.
+
 If another open tab blocks the version change, migration is **not** considered
 ready for product use. The user must close the old tab and retry. On retry the
 cleanup and schema fence are re-established.
@@ -274,6 +283,9 @@ A future change touching these paths must preserve all of the following:
 - an old open client may block the schema fence but may not be silently ignored;
 - reappearing legacy localStorage alone is removed without inventing another
   IndexedDB schema version once the legacy object stores are already gone;
+- Recovery freshness inspection never deletes historical revisions or upgrades
+  an existing legacy/foreign pre-v9 schema; only an exact secure bootstrap-only
+  schema may resume its floor upgrade;
 - only IndexedDB versions 9 and 10 are accepted after the legacy boundary; future versions fail closed on application rollback;
 - normal current-backup export rejects retired epochs;
 - normal backup recovery rejects retired epochs;
