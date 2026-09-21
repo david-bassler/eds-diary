@@ -38,6 +38,9 @@ describe('v2 pre-implementation hardening boundaries',()=>{
     expect(protocol).toMatch(/Unknown Outcome kehrt\s+zu Schritt 1 zurück/s)
     expect(protocol).toMatch(/pre-bound.*appProperties.*vollständig leer.*exakt die drei\s+erwarteten v6-Properties/s)
     expect(protocol).toMatch(/vor dem Artifact-Write exakt\s+`app_format="sync-recovery-v6"`/s)
+    expect(protocol).toMatch(/RecoveryArtifactV6 wird \*\*one-shot\*\* vollständig erzeugt/)
+    expect(protocol).toMatch(/recovery_artifact_sha256/)
+    expect(protocol).toMatch(/Salt, wrap_iv, ID oder Ciphertext werden nie\s+regeneriert/s)
   })
   it('requires semantic envelope dispositions instead of physical-row durability inference',async()=>{
     const contracts=await readFile('src/sync/core/contracts.ts','utf8')
