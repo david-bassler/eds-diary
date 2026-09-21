@@ -11,6 +11,7 @@ import type { VerifiedRecoveryBootstrap } from '../sync/core/remoteVerifier'
 
 const SECURE_DATABASE_VERSION_FLOOR = 9
 const DEFAULT_DATABASE_NAME = 'eds-diary'
+const LEGACY_PLAINTEXT_STORES = ['painEntries','medicationEntries','medicationPrescriptions','activityEntries','settings'] as const
 const STORES = {
   context:'epochContexts',wraps:'rootWraps',wrappingKeys:'wrappingKeys',reservations:'envelopeReservations',
   envelopes:'envelopes',outbox:'outbox',state:'epochSecurityState',migration:'migrationState',operations:'operationState',
@@ -46,7 +47,7 @@ function openRecoveryDatabase(name:string):Promise<IDBDatabase>{return new Promi
 })}
 async function deleteRecoveryDatabase(name:string):Promise<void>{await new Promise<void>((resolve,reject)=>{const request=indexedDB.deleteDatabase(name);request.addEventListener('success',()=>resolve(),{once:true});request.addEventListener('error',()=>reject(request.error??new Error('Recovery database cleanup failed.')),{once:true});request.addEventListener('blocked',()=>reject(new Error('Recovery database cleanup was blocked.')),{once:true})})}
 
-async function assertFresh(db:IDBDatabase):Promise<void>{const names=Object.values(STORES),tx=db.transaction(names,'readonly');for(const name of names){const count=await requestResult(tx.objectStore(name).count());if(count!==0){tx.abort();throw new Error('Recovery activation requires a fresh local profile.')}}await transactionDone(tx)}
+async function assertFresh(db:IDBDatabase):Promise<void>{const names=[...Object.values(STORES),...LEGACY_PLAINTEXT_STORES.filter(name=>db.objectStoreNames.contains(name))],tx=db.transaction(names,'readonly');for(const name of names){const count=await requestResult(tx.objectStore(name).count());if(count!==0){tx.abort();throw new Error('Recovery activation requires a fresh local profile.')}}await transactionDone(tx)}
 function sameBytes(left:Uint8Array,right:Uint8Array):boolean{return left.byteLength===right.byteLength&&left.every((byte,index)=>byte===right[index])}
 
 export interface RecoveredProfileOptions {databaseName?:string;cleanupAfterVerify?:boolean;recoveryArtifact?:RecoveryArtifact}
