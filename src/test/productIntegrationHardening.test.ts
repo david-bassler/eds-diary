@@ -31,6 +31,15 @@ describe('product integration hardening',()=>{
     expect(()=>assertAllowedGoogleApiRequest(new URL('https://sheets.googleapis.com/v4/spreadsheets/abc'),'POST')).toThrow('nicht erlaubt')
   })
 
+  it('rejects an existing legacy v8 profile without upgrading or altering it',async()=>{
+    const databaseName=`eds-diary-recovery-legacy-${base64Url(randomBytes(8))}`
+    await new Promise<void>((resolve,reject)=>{const request=indexedDB.open(databaseName,8);request.onupgradeneeded=()=>{request.result.createObjectStore('painEntries',{keyPath:'id'});request.transaction!.objectStore('painEntries').put({id:'legacy-pain',note:'must remain on v8'})};request.onsuccess=()=>{request.result.close();resolve()};request.onerror=()=>reject(request.error)})
+    await expect(storedRecoveredRecoveryArtifact(databaseName)).rejects.toThrow('existing legacy or foreign database schema')
+    const check=await requestResult(indexedDB.open(databaseName)),tx=check.transaction('painEntries','readonly'),stored=await requestResult<{id:string;note:string}|undefined>(tx.objectStore('painEntries').get('legacy-pain'));await transactionDone(tx);expect(check.version).toBe(8);check.close()
+    expect(stored?.note).toBe('must remain on v8')
+    await new Promise<void>((resolve,reject)=>{const request=indexedDB.deleteDatabase(databaseName);request.onsuccess=()=>resolve();request.onerror=()=>reject(request.error)})
+  })
+
   it('rejects historical plaintext revisions without deleting them during recovery inspection',async()=>{
     const databaseName=`eds-diary-recovery-nondestructive-${base64Url(randomBytes(8))}`
     const db=await requestResult(indexedDB.open(databaseName,8))
