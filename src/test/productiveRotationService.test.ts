@@ -103,6 +103,12 @@ describe('ProductiveRotationService',()=>{
     await runFault('after-backup-verified')
     await runFault('after-announcement-envelope')
 
+    const beforePreflightRows=sourceRemote.rows.length
+    stagedRecovery[0]!.artifact='{}'
+    await expect(new ProductiveRotationService(session,transport,urs,()=>createdAt).rotate()).rejects.toThrow('Recovery artifact schema mismatch')
+    expect(sourceRemote.rows).toHaveLength(beforePreflightRows)
+    stagedRecovery[0]!.artifact=''
+
     sourceRemote.rows.push([...sourceRemote.rows[0]!])
     await expect(new ProductiveRotationService(session,transport,urs,()=>createdAt).rotate()).rejects.toThrow(/Source changed around the rotation announcement|no longer immediately extends/)
     const recoveryAfterBlockedCutover=[...google.remotes.values()].filter(item=>!item.trashed&&item.properties.app_format==='sync-recovery-v5')
