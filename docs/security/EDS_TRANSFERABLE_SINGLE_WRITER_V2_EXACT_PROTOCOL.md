@@ -3317,8 +3317,10 @@ erzeugt werden, wenn:
 
 Dieser Adoption-State wird lokal mit einem **neuen** operation_id direkt in
 stage=`transition_durable` angelegt. authority_anchor_before_transition,
-transition_envelope, recovery_artifact_id/-locator, transition_proof_sha256 und
-alle to-Felder werden aus dem verifizierten Artifact/Remotezustand übernommen.
+transition_envelope, recovery_artifact_id/-locator,
+recovery_artifact_sha256, transition_proof_sha256 und alle to-Felder werden aus
+dem verifizierten Artifact/Remotezustand übernommen; der Artifact-Hash wird aus
+den kanonischen logischen Artifact-Bytes neu berechnet.
 Damit hängt Phase B nach Geräteverlust nicht vom verlorenen ursprünglichen
 Operation-State ab.
 
