@@ -49,6 +49,17 @@ EDS Diary ist **nicht** als „production secure“ freigegeben.
   vorherige Remote-Source. Google-Recovery benötigt für aktivierte Epochen dadurch
   weiterhin nur Konto + Recovery-Key, ohne einen staged Successor vorzeitig zum
   aktuellen Recovery-Ziel zu machen.
+- Bei normaler v1-Rotation mit unveränderter Recovery-Generation bleibt die
+  bestehende Same-Generation-Rollback-Sperre des Google-Recovery-Stores erhalten.
+  Das neue RecoveryArtifact übernimmt einen monotonen Zeit-Floor aus dem
+  kryptographisch geöffneten und exakt an die aktive Source gebundenen bisherigen
+  Remote-Artefakt; eine rückwärts laufende Geräteuhr kann die legitime Rotation
+  dadurch nicht mehr blockieren.
+- Recovery-Persistenz und normaler Datenlayer verwenden denselben sicheren
+  IndexedDB-Versionsfloor (mindestens 9). Der Recovery-Pfad erzeugt keine
+  Legacy-Klartext-Stores mehr; vorhandene Legacy-Stores bleiben jedoch Teil der
+  Fresh-Profile-Prüfung und verhindern eine Wiederherstellung in ein nicht
+  frisches Profil.
 - Der Browser-Persistenzstatus wird über die Storage API angefordert und angezeigt;
   die Zahl ausschließlich lokal vorhandener Änderungen wird aus der persistenten
   Envelope-Outbox statt aus flüchtigem UI-Zustand ermittelt.
@@ -87,6 +98,11 @@ EDS Diary ist **nicht** als „production secure“ freigegeben.
 - v1-Rotation mit zusätzlicher physischer Source-Row zwischen Freeze und
   Announcement => Fail-Stop; staged RecoveryArtifact bleibt bis zum durablen
   Announcement ausschließlich lokal.
+- Zweite normale v1-Rotation bei rückwärts gesetzter Geräteuhr => RecoveryArtifact
+  bleibt same-generation rollback-geschützt und erhält dennoch einen strikt
+  monotonen created_at-Wert.
+- Recovery-Profil-Opener auf einer bereits höher versionierten Produktions-DB =>
+  kein VersionError und keine Neuerzeugung von Legacy-Klartext-Stores.
 - Legacy-Migration mit konkurrierendem Legacy-Write => Catch-up bis stabil,
   anschließend Entfernung der Klartext-Stores und Schema-Fence.
 - Kryptographisch gültiges Backup einer per Rotation retired Epoche => normales
