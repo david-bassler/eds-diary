@@ -29,6 +29,10 @@ function applyRecoverySchema(db:IDBDatabase):void{
   for(const name of Object.values(STORES))if(!db.objectStoreNames.contains(name)){const store=db.createObjectStore(name,{keyPath:'id'});if(name===STORES.envelopes||name===STORES.outbox)store.createIndex('byEpoch','epochId')}
 }
 function recoverySchemaReady(db:IDBDatabase):boolean{return Object.values(STORES).every(name=>db.objectStoreNames.contains(name))&&!db.objectStoreNames.contains('revisions')}
+function recoveryBootstrapSchemaOnly(db:IDBDatabase):boolean{
+  const expected=new Set<string>(Object.values(STORES)),actual=Array.from(db.objectStoreNames)
+  return recoverySchemaReady(db)&&actual.length===expected.size&&actual.every(name=>expected.has(name))
+}
 function openRecoveryDatabase(name:string):Promise<IDBDatabase>{return new Promise((resolve,reject)=>{
   const fail=(error:unknown)=>reject(error instanceof Error?error:new Error('Recovery database open failed.'))
   const request=indexedDB.open(name)
@@ -38,13 +42,16 @@ function openRecoveryDatabase(name:string):Promise<IDBDatabase>{return new Promi
     const current=request.result
     if(current.objectStoreNames.contains('revisions')){current.close();fail(new Error('Recovery activation requires a fresh local profile; historical plaintext revisions are present.'));return}
     if(current.version>SECURE_DATABASE_VERSION_CEILING){current.close();fail(new Error('Recovery database was created by a newer app version and cannot be opened safely.'));return}
-    if(current.version>=SECURE_DATABASE_VERSION_FLOOR&&recoverySchemaReady(current)){resolve(current);return}
-    const version=Math.max(current.version+1,SECURE_DATABASE_VERSION_FLOOR)
-    if(version>SECURE_DATABASE_VERSION_CEILING){current.close();fail(new Error('Recovery database schema cannot be repaired within this app version.'));return}
+    if(current.version>=SECURE_DATABASE_VERSION_FLOOR){
+      if(recoverySchemaReady(current)){resolve(current);return}
+      current.close();fail(new Error('Recovery database schema is not a supported secure profile.'));return
+    }
+    if(!recoveryBootstrapSchemaOnly(current)){current.close();fail(new Error('Recovery activation requires a fresh local profile; an existing legacy or foreign database schema is present.'));return}
+    const version=SECURE_DATABASE_VERSION_FLOOR
     current.close()
     const upgrade=indexedDB.open(name,version)
     upgrade.addEventListener('upgradeneeded',()=>applyRecoverySchema(upgrade.result))
-    upgrade.addEventListener('success',()=>resolve(upgrade.result),{once:true})
+    upgrade.addEventListener('success',()=>{if(!recoverySchemaReady(upgrade.result)){upgrade.result.close();fail(new Error('Recovery database schema upgrade readback failed.'));return}resolve(upgrade.result)},{once:true})
     upgrade.addEventListener('error',()=>fail(upgrade.error??new Error('Recovery database schema upgrade failed.')),{once:true})
     upgrade.addEventListener('blocked',()=>fail(new Error('Recovery database schema upgrade is blocked by another open app tab. Close other tabs and retry.')),{once:true})
   },{once:true})
