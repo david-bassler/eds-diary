@@ -82,17 +82,24 @@ one-shot Transition envelope. Possession of the new URS therefore grants a
 conditional, remotely exercisable capability. Deleting or changing an
 IndexedDB operation state cannot revoke bytes already stored remotely.
 
-**Create convergence.** The same point-of-no-return also covers unknown outcomes
-while creating the owner-only Recovery resource. Before every create/retry the
-client performs neutral discovery. Multiple candidates may be converged only
-when every candidate is fully verified and empty or byte-identical to the one
-expected Artifact; contradictory non-empty bytes remain fatal. This mirrors the
-existing persisted v1 creation strategy and avoids turning a lost create
-response into a permanent availability deadlock without weakening ambiguity
-checks. A fresh pre-bound Sheets candidate may have empty appProperties, but
-before any Artifact bytes are written the exact three v6 Recovery properties
-must be patched and readback-verified; any other non-empty property set is
-conflicting.
+**Artifact one-shot + create convergence.** Every v2 RecoveryArtifact is
+fully generated once and its exact canonical logical bytes plus SHA-256 are
+persisted/readback-verified before the first remote mutation. Retries never
+regenerate artifact ID, salt, IV or ciphertext. This general one-shot rule
+applies to Genesis/Profile-Upgrade/normal rotation/recovery_rekey; the extra
+`artifact_publish_attempted` no-return fence is specific to the same-epoch
+rekey because only there the newly introduced URS obtains a conditional
+Transition capability before it is current.
+
+Before every create/retry the client performs neutral discovery. Multiple
+candidates may be converged only when every candidate is fully verified and
+empty or byte-identical to the expected Artifact; contradictory non-empty bytes
+remain fatal. This mirrors the existing persisted v1 creation strategy and
+avoids turning a lost create response into a permanent availability deadlock
+without weakening ambiguity checks. A fresh pre-bound Sheets candidate may have
+empty appProperties, but before any Artifact bytes are written the exact three
+v6 Recovery properties must be patched and readback-verified; any other
+non-empty property set is conflicting.
 
 **Rejected alternative.** Allow a local abort because Artifact publish did not
 return success, or allow `transition_unknown -> stale` merely because the
