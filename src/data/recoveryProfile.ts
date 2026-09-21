@@ -10,6 +10,7 @@ import { createAnchorV1 } from '../sync/core/prefix'
 import type { VerifiedRecoveryBootstrap } from '../sync/core/remoteVerifier'
 
 const SECURE_DATABASE_VERSION_FLOOR = 9
+const SECURE_DATABASE_VERSION_CEILING = 10
 const DEFAULT_DATABASE_NAME = 'eds-diary'
 const LEGACY_PLAINTEXT_STORES = ['painEntries','medicationEntries','medicationPrescriptions','activityEntries','settings'] as const
 const STORES = {
@@ -36,8 +37,11 @@ function openRecoveryDatabase(name:string):Promise<IDBDatabase>{return new Promi
   request.addEventListener('error',()=>fail(request.error??new Error('Recovery database open failed.')),{once:true})
   request.addEventListener('success',()=>{
     const current=request.result
+    if(current.version>SECURE_DATABASE_VERSION_CEILING){current.close();fail(new Error('Recovery database was created by a newer app version and cannot be opened safely.'));return}
     if(current.version>=SECURE_DATABASE_VERSION_FLOOR&&recoverySchemaReady(current)){resolve(current);return}
-    const version=Math.max(current.version+1,SECURE_DATABASE_VERSION_FLOOR);current.close()
+    const version=Math.max(current.version+1,SECURE_DATABASE_VERSION_FLOOR)
+    if(version>SECURE_DATABASE_VERSION_CEILING){current.close();fail(new Error('Recovery database schema cannot be repaired within this app version.'));return}
+    current.close()
     const upgrade=indexedDB.open(name,version)
     upgrade.addEventListener('upgradeneeded',()=>applyRecoverySchema(upgrade.result))
     upgrade.addEventListener('success',()=>resolve(upgrade.result),{once:true})
