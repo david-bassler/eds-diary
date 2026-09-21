@@ -260,6 +260,40 @@ to CoordinatorStore/WriteAuthority.
 
 ---
 
+## D-010 – Valid post-activation lifecycle changes may supersede a local cutover
+
+**Decision.** SuccessorActivationConfirmation makes the Successor remotely
+active. A valid post-activation suffix containing only domain rows and/or
+WriterGrants can be incorporated into the initiating device's final verify,
+activated backup and switch. If the suffix instead advances RecoveryAuthority
+or seals the Successor through a newer RotationAnnouncement, the remote history
+remains valid but the initiating local operation becomes terminal
+`post_activation_superseded`. It must not create an activated backup with the
+historical staged RecoveryArtifact and must not auto-switch to an already
+overhauled lifecycle state.
+
+**Why.** D-006 intentionally allows legitimate remote progress after
+Confirmation because there is no provider-side lease. RecoveryAuthorityTransition
+can make the staged RecoveryArtifact historically stale, and a later rotation
+can seal the just-activated Successor. Forcing the old initiator to finish anyway
+would either produce a misleading backup or install a local active state that no
+longer represents the canonical lifecycle.
+
+**Rejected alternatives.**
+- Treat every such suffix as `cutover_race`: rejected because the rows are
+  valid post-activation history and D-006 deliberately permits them.
+- Globally forbid RecoveryTransition/Rotation until one device finishes local
+  switch: rejected because that local completion state is not remotely visible
+  or enforceable without a lease.
+- Build the activated backup using the old staged RecoveryArtifact: rejected
+  because restore would bind a historical Recovery authority to newer rows.
+
+**Revisit only if.** The protocol gains a cross-device lease/finalization token,
+or a future backup/recovery format can safely checkpoint current lifecycle state
+without requiring the staged Artifact to remain current.
+
+---
+
 ## Implementation status at this review
 
 This ledger separates **decision stability** from **implementation status**.
@@ -276,6 +310,7 @@ A recorded decision may be normative before its v2 runtime exists.
 | D-007 | Protocol/architecture specified; v2 recovery/rotation runtime pending. |
 | D-008 | Provider/profile identity split implemented in shared contracts and v1 adapters; v2 adapter pending. |
 | D-009 | Shared canonical-only verifier boundary documented in contracts; separate v2 rotation-resume API/result type still pending with the v2 verifier implementation. |
+| D-010 | Protocol/operation-state and backup semantics specified for post-activation lifecycle supersession; v2 runtime pending. |
 
 A future review should not report an item in the “pending” column as a newly
 discovered protocol flaw unless the implementation stack claims that item is
