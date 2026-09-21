@@ -30,6 +30,10 @@ export interface RemoteTransport {
   read(remoteId: string): Promise<RemoteSnapshot>
   append(remoteId: string, row: readonly [string, string, string]): Promise<void>
 }
+/** Shared coordinator verifier: this entry point is canonical-full only.
+ * Profile-specific crash/resume verification that intentionally yields a
+ * non-canonical staged result (for example v2 rotation_resume) must use a
+ * separate profile API and must never manufacture VerifiedRemoteState. */
 export interface RemoteProfileVerifier {
   readonly profileId: string
   verify(snapshot: RemoteSnapshot): Promise<VerifiedRemoteState>
