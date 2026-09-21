@@ -31,6 +31,12 @@ describe('v2 pre-implementation hardening boundaries',()=>{
     expect(protocol).toMatch(/vor dem ersten\s+mutierenden Remote-Request/i)
     expect(protocol).toMatch(/Unknown Outcome des Artifact-Publish.*keinen lokalen Abort/s)
   })
+  it('makes recovery resource creation converge only for verified equivalent duplicates',async()=>{
+    const protocol=await readFile('docs/security/EDS_TRANSFERABLE_SINGLE_WRITER_V2_EXACT_PROTOCOL.md','utf8')
+    expect(protocol).toMatch(/Mehrere Kandidaten dürfen nur dann automatisch konvergiert werden/)
+    expect(protocol).toMatch(/andere nicht-leere Artifact-Bytes.*ambiguous\/security_blocked/s)
+    expect(protocol).toMatch(/Unknown Outcome kehrt\s+zu Schritt 1 zurück/s)
+  })
   it('requires semantic envelope dispositions instead of physical-row durability inference',async()=>{
     const contracts=await readFile('src/sync/core/contracts.ts','utf8')
     const coordinator=await readFile('src/sync/core/coordinator.ts','utf8')
