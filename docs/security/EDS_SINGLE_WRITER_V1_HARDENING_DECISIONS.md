@@ -102,8 +102,13 @@ that never became canonical look like the current recovery target.
 
 **Availability boundary.** Resource creation/discovery ambiguity is resolved
 before the source is retired. This matters especially for recovery_rekey, whose
-new URS normally has no pre-existing Recovery resource. After the announcement,
-publication updates the already unique slot and reconciles by readback.
+new URS normally has no pre-existing Recovery resource. The pre-bound slot is
+also checked against the exact staged Artifact using the same diary/generation/
+ordering rules as publish, without writing the staged bytes. That replacement
+preflight is repeated immediately before the mutating Source-announcement append.
+After the announcement, publication updates the already unique compatible slot
+and reconciles by readback. A concurrent change after the final preflight remains
+part of the documented v1 no-CAS race boundary.
 
 **Rejected alternative.** Publish Recovery bytes immediately after successor
 bootstrap because the artifact is cryptographically valid. Rejected because
@@ -260,11 +265,15 @@ A future change touching these paths must preserve all of the following:
   v1 cutover;
 - source remote state is checked again immediately before local switch;
 - staged normal/rekey RecoveryArtifact bytes are not remotely published before durable
-  source announcement; an empty uniquely verified provider slot may be pre-bound;
+  source announcement; an empty uniquely verified provider slot may be pre-bound,
+  and its exact replacement compatibility is rechecked immediately before the
+  Source-announcement append;
 - remote enablement remains the explicit no-source publication exception;
 - verified legacy cutover leaves no plaintext legacy object store or legacy
   activity-type localStorage value;
 - an old open client may block the schema fence but may not be silently ignored;
+- reappearing legacy localStorage alone is removed without inventing another
+  IndexedDB schema version once the legacy object stores are already gone;
 - only IndexedDB versions 9 and 10 are accepted after the legacy boundary; future versions fail closed on application rollback;
 - normal current-backup export rejects retired epochs;
 - normal backup recovery rejects retired epochs;
