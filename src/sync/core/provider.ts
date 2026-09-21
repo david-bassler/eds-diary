@@ -14,6 +14,7 @@ export interface SingleWriterProviderSession {
   creationProperties(diaryId:string,epochId:string):Promise<Readonly<Record<string,string>>>
   recoveryLocator(diaryId:string,epochId:string):Promise<string>
   recoveryAuthority(transport:RemoteTransport,locator:string,remoteResourceId:string):Promise<IndependentBootstrapAuthority>
+  prepareRecoveryArtifactSlot(secret:Uint8Array):Promise<void>
   publishRecoveryArtifact(secret:Uint8Array,artifact:RecoveryArtifact):Promise<void>
   findRecoveryArtifact(secret:Uint8Array):Promise<RecoveryArtifact|null>
   loadRecoveryArtifact(secret:Uint8Array):Promise<RecoveryArtifact>
