@@ -44,6 +44,16 @@ URS produces a different commitment in a different generation.
 `recovery_history_by_prefix` of the current epoch. Rejected because epoch
 rotation would erase the security memory the Rekey promise depends on.
 
+**Enforcement split.** The ordinary remote-log verifier can prove history
+uniqueness of the writer-signed `recovery_urs_id`, but it cannot recompute a
+hash of a secret URS it does not possess. Secret-aware Artifact
+creation/decryption/test-recovery therefore recomputes **both**
+`recovery_urs_id` and the generation-bound commitment from the entered URS and
+requires exact equality before the prepared Transition may be completed. The
+takeover-key ID is independently reproducible from its public key. This split is
+intentional; a future review must not assume that the remote-only verifier knows
+the URS.
+
 **Bound/legacy choice.** History is capped at 128 entries. Once exhausted,
 another protocol version is required rather than introducing an unreviewed
 accumulator/compaction scheme. v1 did not record stable historical URS IDs, so
@@ -58,20 +68,25 @@ pre-v2 credential history.
 
 ## D-002 – Publishing the staged RecoveryArtifact is a point of no local return
 
-**Decision.** A recovery_rekey may be freely abandoned before successful
-RecoveryArtifact publish/readback. Afterwards it cannot be cancelled merely by
-changing local state while its authority anchor remains current. It must either
-finish the exact prepared transition or become stale because another physical
-remote row has actually overtaken the anchor.
+**Decision.** A recovery_rekey may be freely abandoned only before the first
+mutating RecoveryArtifact publish attempt. Immediately before that request the
+operation persistently records `artifact_publish_attempted=true`. From then on,
+success **or unknown outcome** must be reconciled remotely; absence of a local
+success callback is not evidence that the immutable Artifact/capability is
+absent. If the exact Artifact exists while its authority anchor remains current,
+the operation must finish the exact prepared Transition. It can become stale
+only when another physical remote row has actually overtaken that anchor.
 
 **Why.** The published immutable artifact already contains the writer-signed
 one-shot Transition envelope. Possession of the new URS therefore grants a
 conditional, remotely exercisable capability. Deleting or changing an
 IndexedDB operation state cannot revoke bytes already stored remotely.
 
-**Rejected alternative.** Allow `transition_unknown -> stale` after a local
-"abort" if the Transition is not yet visible remotely. Rejected because the
-remote artifact can later complete the supposedly aborted transition.
+**Rejected alternative.** Allow a local abort because Artifact publish did not
+return success, or allow `transition_unknown -> stale` merely because the
+Transition is not yet visible remotely. Rejected because an unknown publish may
+already have stored the immutable Artifact, which can later complete the
+supposedly aborted Transition.
 
 **Revisit only if.** A future protocol adds a remotely verifiable revocation/
 abort control that is ordered against the prepared transition.
@@ -205,6 +220,28 @@ because v1 bytes/state are frozen.
 
 **Revisit only if.** A new persisted-state version deliberately migrates the
 legacy v1 binding with explicit compatibility rules.
+
+---
+
+## Implementation status at this review
+
+This ledger separates **decision stability** from **implementation status**.
+A recorded decision may be normative before its v2 runtime exists.
+
+| Decision | Status after PR #47 |
+| --- | --- |
+| D-001 | Protocol/schema specified; v2 runtime verifier/artifact implementation still pending. |
+| D-002 | Protocol/operation-state semantics specified; v2 runtime still pending. |
+| D-003 | Shared coordinator retry path implemented and tested; v2 policy implementation still pending. |
+| D-004 | Shared semantic disposition contract implemented; current IndexedDB store remains explicitly v1-only, v2 store/quarantine persistence still pending. |
+| D-005 | Shared WriteAuthority contract and push/retry/readback gates implemented. **The v2 domain-write preparation path does not exist yet**, so `canPrepareDomainWrite` is intentionally not wired into current v1 local writes. Wiring it is a v2 implementation requirement, not completed work in this PR. |
+| D-006 | Protocol/architecture specified; v2 rotation runtime pending. |
+| D-007 | Protocol/architecture specified; v2 recovery/rotation runtime pending. |
+| D-008 | Provider/profile identity split implemented in shared contracts and v1 adapters; v2 adapter pending. |
+
+A future review should not report an item in the “pending” column as a newly
+discovered protocol flaw unless the implementation stack claims that item is
+already complete.
 
 ---
 
