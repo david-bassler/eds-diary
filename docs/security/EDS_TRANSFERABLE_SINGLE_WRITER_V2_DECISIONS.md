@@ -268,16 +268,23 @@ WriterGrants can be incorporated into the initiating device's final verify,
 activated backup and switch. If the suffix instead advances RecoveryAuthority
 or seals the Successor through a newer RotationAnnouncement, the remote history
 remains valid but the initiating local operation becomes terminal
-`post_activation_superseded`. It must not create an activated backup with the
-historical staged RecoveryArtifact and must not auto-switch to an already
-overhauled lifecycle state.
+`post_activation_superseded`. If this is detected before the activated backup,
+no such backup is produced; if it is detected by the mandatory final
+`canonical_full` **after** an activated backup but before local switch, that
+already verified backup remains a valid historical safety point but no longer
+authorizes the local switch. The initiating device must not auto-switch to an
+already overhauled lifecycle state.
 
 **Why.** D-006 intentionally allows legitimate remote progress after
 Confirmation because there is no provider-side lease. RecoveryAuthorityTransition
 can make the staged RecoveryArtifact historically stale, and a later rotation
-can seal the just-activated Successor. Forcing the old initiator to finish anyway
-would either produce a misleading backup or install a local active state that no
-longer represents the canonical lifecycle.
+can seal the just-activated Successor. The lifecycle check therefore runs once
+while building the activated backup **and again immediately before the local
+switch**. Forcing the old initiator to finish anyway would either produce a
+misleading backup or install a local active state that no longer represents the
+last known canonical lifecycle. There is still an unavoidable read-to-local-
+commit race after that last verify; it cannot grant remote authority and is
+caught by the fresh canonical verify required before every later mutation.
 
 **Rejected alternatives.**
 - Treat every such suffix as `cutover_race`: rejected because the rows are
