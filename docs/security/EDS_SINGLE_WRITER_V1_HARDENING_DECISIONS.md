@@ -119,8 +119,11 @@ phase="cutover", verified=true and then:
    stores, and the historical plaintext revisions store if present;
 5. reopens and verifies that the plaintext stores are absent.
 
-The production database opener is version-agnostic and repairs only the secure
-schema; it never recreates deleted legacy stores.
+The production database opener is version-agnostic above a security floor, but
+every current database is forced to at least IndexedDB version 9. Version 8 was
+the last pre-fence application schema. The opener repairs only the secure schema
+and never recreates deleted legacy stores. A fresh installation therefore also
+starts above legacy clients rather than at browser-default version 1.
 
 If another open tab blocks the version change, migration is **not** considered
 ready for product use. The user must close the old tab and retry. On retry the
@@ -134,8 +137,10 @@ insufficient because an old app could reopen the same schema and recreate
 plaintext data.
 
 IndexedDB version advancement provides the browser-native compatibility fence:
-an old client that requests its fixed older database version receives a
-VersionError once the fence is established.
+an old client that requests its fixed version 8 receives a VersionError once the
+current opener has established the version-9 floor. After an actual plaintext
+legacy migration, the destruction step advances the version again while
+deleting the old stores.
 
 **Rejected alternatives.**
 - Leave legacy rows in place because the new UI no longer reads them: rejected
