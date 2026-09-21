@@ -60,9 +60,11 @@ EDS Diary ist **nicht** als „production secure“ freigegeben.
   kryptographischen Vergleiche verwenden weiterhin kanonische JCS-Bytes.
 - Nach verifiziertem Legacy-Cutover werden die ursprünglichen Klartext-Fachstores
   readback-verifiziert geleert, der Legacy-localStorage-Wert entfernt und die
-  IndexedDB-Version als Schema-Fence erhöht; die Klartext-Stores werden gelöscht
-  und vom aktuellen Schema nicht wieder angelegt. Ein alter offener Tab darf
-  diesen Fence blockieren, aber nicht still umgangen werden.
+  IndexedDB-Version als Schema-Fence erhöht; aktuelle Profile liegen mindestens
+  auf Version 9 (oberhalb des letzten Legacy-Clients mit Version 8), die
+  Klartext-Stores werden gelöscht und vom aktuellen Schema nicht wieder
+  angelegt. Ein alter offener Tab darf diesen Fence blockieren, aber nicht still
+  umgangen werden.
 - Aktuelle Remote-Backups werden vor Export vollständig verifiziert, enthalten
   lokale pending Envelopes und werden nicht aus einer bereits retired Epoche
   erzeugt. Der normale Backup-Recovery-Pfad lehnt retired Epochen ebenfalls ab;
