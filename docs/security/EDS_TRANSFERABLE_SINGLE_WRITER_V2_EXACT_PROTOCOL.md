@@ -4118,6 +4118,11 @@ für mindestens:
 41. Protected ManifestV6 bindet creation_locator; RotationAnnouncementV2 mit
     successor_creation_locator != Successor-Manifest.creation_locator =>
     security_blocked.
+42. Recovery-Rekey Artifact-Publish-Crash/Unknown-Outcome: vor erstem
+    mutierenden Publish-Request wird artifact_publish_attempted=true durable;
+    Crash danach darf keinen lokalen Abort erzeugen. Exact Artifact-Readback =>
+    recovery_artifact_published und Transition completion-pflichtig; anderer
+    physischer Source-Suffix am authority_anchor => stale.
 
 Negative Vectors:
 
@@ -4203,6 +4208,10 @@ Negative Vectors:
 - Recovery-Rekey wird nach erfolgreichem staged Artifact-Publish lokal abgebrochen,
   obwohl authority_anchor remote unverändert ist => Operation-State ungültig;
   Transition bleibt completion-pflichtig und darf nicht als stale verworfen werden;
+- RecoveryArtifact-Publish liefert unknown_outcome/Crash nach möglicher
+  Remote-Mutation, artifact_publish_attempted=true, lokaler Code behandelt dies
+  trotzdem als „nicht publiziert“ und bricht ab => Operation-State ungültig;
+  zuerst Discovery/Grid-Readback-Reconciliation;
 - Unknown-Outcome-Retry ohne erneutes canonical_full des aktuellen Prefixes =>
   Implementierungs-/Assurance-Fehler; kein zweiter Append;
 - physisch vorhandene stale_writer_rejected-Revision wird lokal als durable statt
