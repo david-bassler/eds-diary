@@ -2632,9 +2632,13 @@ Phase A – Recovery-Authority auf der noch aktiven Source:
    enthält denselben RK_epoch, dieselbe vollständig verifizierte
    activation_lineage, die um den to-State fortgeschriebene
    recovery_credential_history, den neuen Recovery-Key-State und
-   RecoveryAuthorityTransitionProofV2. **Ab erfolgreichem Publish/Readback ist
-   diese vorbereitete Transition lokal nicht mehr frei abbrechbar**, solange
-   ihr authority_anchor remote unverändert ist;
+   RecoveryAuthorityTransitionProofV2. **Vor dem ersten mutierenden
+   Publish-Request** muss RecoveryRekeyOperationStateV2.artifact_publish_attempted
+   persistent=true/readback-verifiziert sein. Ab diesem Punkt ist auch ein
+   Publish-Timeout/Unknown-Outcome kein freier Abort-Pfad: das Outcome wird über
+   exakte Discovery/Grid-Readback reconciliiert; sobald die Artifact-Bytes
+   remote existieren, muss die vorbereitete Transition fertiggestellt werden,
+   solange ihr authority_anchor remote unverändert ist;
 5. Recovery des staged Artifacts testen;
 6. exakte Transition-Envelope-Bytes appendieren + Full Readback;
 7. neues Artifact jetzt gegen den aktuellen Source-Recovery-State prüfen und
@@ -3101,6 +3105,7 @@ current.
   transition_envelope,
   recovery_artifact_id,
   recovery_artifact_locator,
+  artifact_publish_attempted,
   transition_proof_sha256,
   to_recovery_generation,
   to_recovery_urs_commitment,
@@ -3117,10 +3122,21 @@ URS-verschlüsselt.
 
 transition_id, to_recovery_generation, to_recovery_urs_commitment,
 to_recovery_urs_id und to_recovery_takeover_key_id müssen exakt den to-Feldern
-des persistent
-vorbereiteten RecoveryAuthorityTransitionV2-Envelope und des
+des persistent vorbereiteten RecoveryAuthorityTransitionV2-Envelope und des
 RecoveryAuthorityTransitionProofV2 entsprechen und sind ab der ersten
 persistierten Operation-State-Version immutable.
+
+`artifact_publish_attempted` startet false. Unmittelbar **vor dem ersten
+mutierenden Remote-Request**, der das staged RecoveryArtifactV6 erzeugen oder
+dessen Grid schreiben könnte, wird es persistent auf true gesetzt und
+readback-verifiziert; danach ist es immutable true. Damit überlebt auch ein
+Crash/Timeout zwischen Remote-Mutation und Artifact-Readback. Solange
+`artifact_publish_attempted=true` ist, darf ein rein lokaler Abort niemals
+`stale` erzeugen, selbst wenn der lokale Stage-Name noch
+`new_material_staged` lautet. Zuerst muss das Publish-Outcome per
+authentifizierter Discovery/Grid-Readback reconciliiert werden; existieren die
+exakten Artifact-Bytes, gilt die Operation als
+`recovery_artifact_published`.
 
 operation_origin="local_rekey" startet ausschließlich in
 `new_material_staged`.
@@ -3218,14 +3234,24 @@ Operation-State ab.
 Geschlossene Stage-Reihenfolge für operation_origin="local_rekey":
 
 ~~~text
-new_material_staged -> recovery_artifact_published
-recovery_artifact_published -> transition_pending
-transition_pending -> transition_unknown | transition_durable
+new_material_staged -> recovery_artifact_published | stale
+recovery_artifact_published -> transition_pending | stale
+transition_pending -> transition_unknown | transition_durable | stale
 transition_unknown -> transition_durable | stale
 transition_durable -> source_backup_verified
 source_backup_verified -> successor_rotation_required
 successor_rotation_required -> completed
 ~~~
+
+Die vier `-> stale`-Kanten sind **keine freien Abbruchpfade**:
+- aus `new_material_staged` ist lokaler Abort nur zulässig, solange
+  artifact_publish_attempted=false;
+- sobald artifact_publish_attempted=true ist, ist `stale` vor
+  transition_durable ausschließlich zulässig, wenn canonical_full einen anderen
+  ersten physischen Suffix nach authority_anchor beweist und §16c die
+  vorbereitete Transition damit irreversibel unappendbar macht;
+- ein Unknown Outcome des Artifact-Publish ist deshalb niemals gleichbedeutend
+  mit „nicht publiziert“ und erlaubt keinen lokalen Abort.
 
 Für operation_origin="remote_pending_rekey_adoption" gilt
 supersedes_transition_id=null und superseded_by_transition_id=null.
@@ -3253,10 +3279,15 @@ atomaren Supersession auf `superseded` wechseln.
 
 Crash-Regeln:
 
-- Vor `recovery_artifact_published` ist keine neue Remote-Recovery-Authority
-  behauptbar.
-- Nach `recovery_artifact_published`, aber vor durable Transition, kann nur
-  §16c die exakt vorbereitete Transition crash-resumable abschließen.
+- Solange artifact_publish_attempted=false ist, ist keine staged
+  Recovery-Capability remote behauptbar und ein lokaler Abort aus
+  new_material_staged zulässig.
+- Sobald artifact_publish_attempted=true ist, muss ein Crash/Unknown Outcome des
+  Artifact-Publish zuerst remote reconciliiert werden; lokale Abwesenheit eines
+  Erfolgs-Callbacks beweist keine Abwesenheit der Capability.
+- Nach verifiziertem `recovery_artifact_published`, aber vor durable
+  Transition, kann nur §16c die exakt vorbereitete Transition crash-resumable
+  abschließen.
 - Nach `transition_durable` muss ein activated SyncBackupV6 der **Source**
   erzeugt und Test-Restore-verifiziert werden; danach stage=
   `successor_rotation_required`.
