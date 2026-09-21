@@ -16,6 +16,38 @@ describe('v1 anchor boundary',()=>{it('freezes the persisted remote anchor as v1
 describe('profile-neutral coordinator boundaries',()=>{it('delegates anchor semantics to the profile codec rather than importing v1 prefix helpers',async()=>{const coordinator=await readFile('src/sync/core/coordinator.ts','utf8'),contracts=await readFile('src/sync/core/contracts.ts','utf8'),codec=await readFile('src/sync/google/GoogleSheetsSingleWriterProfileCodec.ts','utf8');expect(coordinator).not.toMatch(/from '.\/prefix'/);expect(coordinator).not.toMatch(/singleWriterV1WriteAuthority/);expect(coordinator).toMatch(/codec\.assertExtendsAnchor/);expect(coordinator).toMatch(/codec\.createAnchor/);expect(contracts).toMatch(/interface RemoteAnchorState/);expect(contracts).toMatch(/createAnchor\(diaryId:string,epochId:string/);expect(contracts).toMatch(/assertExtendsAnchor\(anchor:RemoteAnchorState\|null/);expect(codec).toMatch(/createAnchorV1/);expect(codec).toMatch(/assertExtendsAnchorV1/)})})
 
 
+describe('v1 production hardening boundaries',()=>{
+  it('keeps the repo-wide v1 adversarial decisions in an explicit anti-churn ledger',async()=>{
+    const ledger=await readFile('docs/security/EDS_SINGLE_WRITER_V1_HARDENING_DECISIONS.md','utf8')
+    for(const id of ['V1-H-001','V1-H-002','V1-H-003','V1-H-004','V1-H-005','V1-H-006'])expect(ledger).toContain(id)
+    expect(ledger).toMatch(/Rejected alternative/)
+    expect(ledger).toMatch(/fail-stop/i)
+    expect(ledger).toMatch(/schema fence/i)
+  })
+  it('keeps staged v1 recovery local until the source announcement is durable',async()=>{
+    const rotation=await readFile('src/data/productiveRotationService.ts','utf8')
+    const staged=rotation.indexOf("if(state.migrationKind==='remote_enablement')await this.session.publishRecoveryArtifact")
+    const announcement=rotation.indexOf("await this.session.publishRecoveryArtifact(this.urs,recovery)")
+    expect(staged).toBeGreaterThan(-1)
+    expect(announcement).toBeGreaterThan(staged)
+    expect(rotation).toMatch(/Source changed around the rotation announcement/)
+    expect(rotation).toMatch(/verifySourceStillAtAnnouncement/)
+  })
+  it('destroys and schema-fences plaintext legacy stores only after verified cutover',async()=>{
+    const local=await readFile('src/data/localDatabase.ts','utf8')
+    expect(local).toMatch(/sealLegacyPlaintextStorage/)
+    expect(local).toMatch(/phase:'cutover',verified:true.*sealLegacyPlaintextStorage/s)
+    expect(local).toMatch(/deleteObjectStore/)
+    expect(local).toMatch(/Legacy plaintext storage sealing is blocked by another open app tab/)
+  })
+  it('does not treat a retired v1 epoch as a normal current backup or recovery point',async()=>{
+    const exports=await readFile('src/data/artifactExports.ts','utf8')
+    const verifier=await readFile('src/sync/core/remoteVerifier.ts','utf8')
+    expect(exports).toMatch(/verified\.retired.*current backup/s)
+    expect(verifier).toMatch(/verified\.retired.*historical rollback/s)
+  })
+})
+
 describe('v2 pre-implementation hardening boundaries',()=>{
   it('keeps security rationale in an explicit anti-churn decision ledger',async()=>{
     const ledger=await readFile('docs/security/EDS_TRANSFERABLE_SINGLE_WRITER_V2_DECISIONS.md','utf8')
