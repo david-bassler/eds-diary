@@ -221,7 +221,10 @@ async function migrateLegacy():Promise<void>{const db=await openDatabase(),initi
     }
     throw new Error('Legacy source did not stabilize during encrypted migration.')
   })}
-async function ready():Promise<void>{readyPromise??=migrateLegacy();return readyPromise}
+async function ready():Promise<void>{
+  if(!readyPromise)readyPromise=migrateLegacy().catch(error=>{readyPromise=null;throw error})
+  return readyPromise
+}
 
 export async function getAllRecords<T>(storeName:LocalStoreName):Promise<T[]>{await ready();return readValues<T>(await openDatabase(),storeName)}
 export async function getRecord<T>(storeName:LocalStoreName,id:string):Promise<T|undefined>{return(await getAllRecords<T&{id:string}>(storeName)).find(value=>value.id===id)}
