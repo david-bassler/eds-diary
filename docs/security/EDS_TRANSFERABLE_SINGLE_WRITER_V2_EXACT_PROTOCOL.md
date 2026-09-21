@@ -2602,9 +2602,23 @@ Für **jede** v2→v2-Rotation ist die Reihenfolge verbindlich:
     Prefixes entsprechen; ohne Suffix sind staging/activation Recovery-State
     identisch.
 15. ActivationLineageCacheV2 des Successors persistent/readback-verifizieren.
-16. erst danach lokaler atomarer Switch/Retire; erst ab diesem Switch darf
-    dieses Gerät normale Successor-Writes erzeugen, sofern es nach finalem
-    Verify weiterhin current Writer ist.
+16. **Unmittelbar vor dem lokalen Switch** den Successor erneut per
+    canonical_full lesen. Die Confirmation/ActivationLineage müssen weiterhin
+    gültig sein. Hat der seit dem Backup hinzugekommene Suffix den Recovery-State
+    fortgeschrieben oder den Successor versiegelt, =>
+    `post_activation_superseded`, kein lokaler Switch. Enthält er nur gültige
+    Fachrows und/oder WriterGrants, bleibt der Switch zulässig; writer_status
+    wird aus der jetzt final verifizierten Writer-Authority abgeleitet und ggf.
+    read_only. Das bereits verifizierte activated Backup bleibt als gültiger
+    Cutover-Sicherheitspunkt bestehen; spätere Remote-Rows werden beim Restore
+    über dessen Freshness-Floor normal nachgezogen.
+17. erst danach lokaler atomarer Switch/Retire; erst ab diesem Switch darf
+    dieses Gerät normale Successor-Writes erzeugen, sofern es nach diesem letzten
+    Verify weiterhin current Writer ist. Zwischen diesem letzten Remote-Read und
+    dem lokalen Commit existiert mangels providerseitigem CAS weiterhin ein
+    unvermeidbares Race-Fenster; es kann keine Remote-Authority erzeugen und wird
+    vor jeder späteren Mutation durch das obligatorische frische canonical_full
+    wieder erkannt.
 
 Ein staged Backup ersetzt das obligatorische activated Cutover-Backup niemals.
 
@@ -4010,8 +4024,15 @@ Reihenfolge:
     successor_activation_anchor monoton erweitern und das RecoveryArtifact muss
     exakt dem End-Recovery-State der exportierten Rows entsprechen.
 22. ActivationLineageCacheV2 persistieren/readback-verifizieren.
-23. erst danach atomar auf v2 umschalten; v1 retire und normale Successor-Writes
-    freigeben.
+23. unmittelbar vor dem lokalen Umschalten den v2-Successor erneut
+    canonical_full verifizieren. Recovery-State-Fortschritt oder erneutes Seal
+    seit dem activated Backup => post_activation_superseded/kein Auto-Switch;
+    reine Fachrows/WriterGrants sind zulässig und der lokale writer_status wird
+    aus der letzten Authority abgeleitet.
+24. erst danach atomar auf v2 umschalten; v1 retire und normale Successor-Writes
+    freigeben. Auch hier bleibt zwischen letztem Remote-Read und lokalem Commit
+    die dokumentierte No-CAS-Restgrenze; vor jeder Mutation folgt erneut Full
+    Verify.
 
 Kein v1-Client darf eine v2-Epoche als v1 interpretieren.
 
@@ -4196,6 +4217,11 @@ für mindestens:
     oder ein den Successor versiegelndes RotationAnnouncement vor lokalem
     Cutover => post_activation_superseded; kein activated Backup mit historischem
     RecoveryArtifact und kein automatischer Switch.
+44. Finaler Pre-Switch-Verify: nach activated Backup/Lineage-Cache wird
+    unmittelbar vor lokalem Switch erneut canonical_full ausgeführt. Seit Backup
+    hinzugekommener RecoveryTransition-/Seal-Fortschritt =>
+    post_activation_superseded; reine Fachrows/WriterGrants dürfen fortgesetzt
+    werden, Writerstatus stammt aus der letzten Authority.
 
 Negative Vectors:
 
