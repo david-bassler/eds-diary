@@ -3422,7 +3422,7 @@ announcement_unknown -> announcement_durable | stale
 announcement_durable -> confirmation_unknown | confirmation_durable | cutover_race
 confirmation_unknown -> confirmation_durable | cutover_race
 confirmation_durable -> activated_backup_verified | post_activation_superseded
-activated_backup_verified -> switched
+activated_backup_verified -> switched | post_activation_superseded
 ~~~
 
 `stale` darf zusätzlich aus jedem Stadium **vor**
@@ -3443,13 +3443,16 @@ und darf weder activated Backup noch lokalen Switch erzeugen.
 `switched`, `stale`, `cutover_race` und
 `post_activation_superseded` sind terminal.
 
-`post_activation_superseded` ist ausschließlich nach
-`confirmation_durable` zulässig, wenn canonical_full beweist, dass ein
-gültiger post-activation Suffix entweder den Recovery-State gegenüber dem
-staged RecoveryArtifact fortgeschrieben oder den Successor bereits wieder
-versiegelt hat. Dieser Zustand ist **kein** Cutover-Race und macht die gültige
-Remote-Historie nicht rückgängig. Er verbietet lediglich activated Backup und
-automatischen lokalen Switch dieses überholten Operation-State.
+`post_activation_superseded` ist ausschließlich aus
+`confirmation_durable` oder `activated_backup_verified` zulässig, wenn
+canonical_full beweist, dass ein gültiger post-activation Suffix entweder den
+Recovery-State gegenüber dem für diesen Cutover gültigen RecoveryArtifact
+fortgeschrieben oder den Successor bereits wieder versiegelt hat. Dieser Zustand
+ist **kein** Cutover-Race und macht die gültige Remote-Historie nicht
+rückgängig. Aus confirmation_durable verbietet er die Erzeugung eines activated
+Backups; aus activated_backup_verified bleibt das bereits erfolgreich
+verifizierte Backup ein gültiger historischer Sicherheitspunkt, aber es darf
+keinen automatischen lokalen Switch mehr autorisieren.
 
 Wird eine Rotation **vor** durable Source-Announcement `stale` und existiert
 bereits eine Successor-Ressource, wird deren lokaler EpochLocalSecurityStateV6
@@ -3488,8 +3491,10 @@ Feldinvarianten nach Stage:
 - staged_backup_id: bis recovery_artifact_verified null; ab
   staged_backup_verified non-null und immutable;
 - activated_backup_id: bis announcement_durable null; ab
-  activated_backup_verified non-null und immutable;
-  in post_activation_superseded bleibt es null.
+  activated_backup_verified non-null und immutable. Wird
+  post_activation_superseded direkt aus confirmation_durable erreicht, bleibt es
+  null; wird der Zustand aus activated_backup_verified erreicht, bleibt die
+  bereits gesetzte Backup-ID non-null und immutable.
 
 Die Reihenfolge `announcement_prepared -> recovery_artifact_verified` ist
 zwingend, weil RecoveryActivationProofV2 bzw. ProfileUpgradeActivationEntryV2
