@@ -31,6 +31,13 @@ describe('product integration hardening',()=>{
     expect(()=>assertAllowedGoogleApiRequest(new URL('https://sheets.googleapis.com/v4/spreadsheets/abc'),'POST')).toThrow('nicht erlaubt')
   })
 
+  it('rejects recovery databases created by a future incompatible app schema',async()=>{
+    const databaseName=`eds-diary-future-schema-${base64Url(randomBytes(8))}`
+    const db=await requestResult(indexedDB.open(databaseName,11));db.close()
+    await expect(storedRecoveredRecoveryArtifact(databaseName)).rejects.toThrow('newer app version')
+    await new Promise<void>((resolve,reject)=>{const request=indexedDB.deleteDatabase(databaseName);request.onsuccess=()=>resolve();request.onerror=()=>reject(request.error)})
+  })
+
   it('keeps backup-restored profiles eligible for first remote enablement and preserves the recovery artifact after readback',async()=>{
     const databaseName=`eds-diary-recovery-regression-${base64Url(randomBytes(8))}`,diary=b(1,16),epoch=b(2,16),keyId=b(3,16),fingerprint=b(4,32)
     const candidate:RecoveredRootCandidate={rootKey:randomBytes(32),recoveryCommitment:b(5,32),payload:{recovery_artifact_id:b(6,16),diary_id:diary,epoch_id:epoch,key_id:keyId,RK_epoch:b(7,32),manifest_fingerprint:fingerprint,remote_anchor:null,google_account_binding:b(8,32),recovery_generation:1,created_at:'2026-09-17T12:00:00.000Z'}}
