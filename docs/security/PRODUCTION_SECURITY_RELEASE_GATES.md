@@ -62,10 +62,15 @@ EDS Diary ist **nicht** als „production secure“ freigegeben.
   dadurch nicht mehr blockieren.
 - Recovery-Persistenz und normaler Datenlayer verwenden denselben unterstützten
   IndexedDB-Bereich (Version 9/10; >10 fail-closed). Der Recovery-Pfad erzeugt keine
-  Legacy-Klartext-Stores mehr; vorhandene Legacy-Stores bleiben jedoch Teil der
-  Fresh-Profile-Prüfung und verhindern eine Wiederherstellung in ein nicht
-  frisches Profil. Taucht nach dem v10-Schema-Fence nur der alte localStorage-Key
-  erneut auf, wird er entfernt, ohne dafür eine unzulässige Version 11 zu erzeugen.
+  Legacy-Klartext-Stores mehr und führt die Fresh-Profile-Prüfung nicht-destruktiv
+  aus: ein historischer `revisions`-Store oder ein bestehendes Legacy-/Fremdschema
+  wird vor Löschung bzw. Versionsupgrade abgelehnt. Nur eine ausschließlich aus
+  den Secure-Recovery-Stores bestehende, bereits von diesem Bootstrap angelegte
+  sub-v9-DB darf nach Crash auf den Floor weitergehoben werden. Vorhandene
+  Legacy-Stores bleiben Teil der Fresh-Profile-Prüfung und verhindern bei Inhalt
+  eine Wiederherstellung in ein nicht frisches Profil. Taucht nach dem
+  v10-Schema-Fence nur der alte localStorage-Key erneut auf, wird er entfernt,
+  ohne dafür eine unzulässige Version 11 zu erzeugen.
 - Der Browser-Persistenzstatus wird über die Storage API angefordert und angezeigt;
   die Zahl ausschließlich lokal vorhandener Änderungen wird aus der persistenten
   Envelope-Outbox statt aus flüchtigem UI-Zustand ermittelt.
@@ -112,7 +117,9 @@ EDS Diary ist **nicht** als „production secure“ freigegeben.
   monotonen created_at-Wert.
 - Recovery-Profil-Opener auf einer unterstützten höher versionierten Produktions-DB
   (9/10) => kein VersionError und keine Neuerzeugung von Legacy-Klartext-Stores;
-  Version 11+ => fail-closed als zukünftiges Schema.
+  Version 11+ => fail-closed als zukünftiges Schema. Historische `revisions`-
+  Daten sowie ein belegtes v8-Legacy-Profil werden abgelehnt, ohne Store-Löschung,
+  Datenänderung oder Versionsupgrade.
 - Legacy-Migration mit konkurrierendem Legacy-Write => Catch-up bis stabil,
   anschließend Entfernung der Klartext-Stores und Schema-Fence.
 - Kryptographisch gültiges Backup einer per Rotation retired Epoche => normales
