@@ -99,6 +99,11 @@ abort control that is ordered against the prepared transition.
 missing on readback, the coordinator performs canonical full verification of
 that new snapshot before any retry. The profile-specific WriteAuthority then
 decides `push` or `quarantine_stale_writer` for the exact prepared envelope.
+If that authorized retry itself returns another unknown outcome, the coordinator
+again performs readback. If the envelope is still absent, it full-verifies and
+persists the new snapshot, leaves the envelope pending, and ends the current
+attempt. A later attempt starts from a fresh full verify; there is no blind
+third append.
 
 **Why.** A structural read cannot prove that writer authority, seal state,
 pending-rekey fence, or a control record's decision anchor are unchanged.
