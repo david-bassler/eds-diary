@@ -82,6 +82,15 @@ one-shot Transition envelope. Possession of the new URS therefore grants a
 conditional, remotely exercisable capability. Deleting or changing an
 IndexedDB operation state cannot revoke bytes already stored remotely.
 
+**Create convergence.** The same point-of-no-return also covers unknown outcomes
+while creating the owner-only Recovery resource. Before every create/retry the
+client performs neutral discovery. Multiple candidates may be converged only
+when every candidate is fully verified and empty or byte-identical to the one
+expected Artifact; contradictory non-empty bytes remain fatal. This mirrors the
+existing persisted v1 creation strategy and avoids turning a lost create
+response into a permanent availability deadlock without weakening ambiguity
+checks.
+
 **Rejected alternative.** Allow a local abort because Artifact publish did not
 return success, or allow `transition_unknown -> stale` merely because the
 Transition is not yet visible remotely. Rejected because an unknown publish may
