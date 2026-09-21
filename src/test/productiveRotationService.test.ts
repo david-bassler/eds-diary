@@ -89,20 +89,26 @@ describe('ProductiveRotationService',()=>{
     expect([...google.appendCounts.values()].every(count=>count===1)).toBe(true)
 
     await runFault('after-recovery-verified')
-    expect([...google.remotes.values()].filter(item=>!item.trashed&&item.properties.app_format==='sync-recovery-v5')).toHaveLength(0)
+    const stagedRecovery=[...google.remotes.values()].filter(item=>!item.trashed&&item.properties.app_format==='sync-recovery-v5')
+    expect(stagedRecovery).toHaveLength(1)
+    expect(stagedRecovery[0]?.artifact).toBe('')
     await runFault('after-backup-verified')
     await runFault('after-announcement-envelope')
 
     sourceRemote.rows.push([...sourceRemote.rows[0]!])
     await expect(new ProductiveRotationService(session,transport,urs,()=>createdAt).rotate()).rejects.toThrow(/Source changed around the rotation announcement|no longer immediately extends/)
-    expect([...google.remotes.values()].filter(item=>!item.trashed&&item.properties.app_format==='sync-recovery-v5')).toHaveLength(0)
+    const recoveryAfterBlockedCutover=[...google.remotes.values()].filter(item=>!item.trashed&&item.properties.app_format==='sync-recovery-v5')
+    expect(recoveryAfterBlockedCutover).toHaveLength(1)
+    expect(recoveryAfterBlockedCutover[0]?.artifact).toBe('')
     sourceRemote.rows.pop()
 
     google.crashAfterAppend='source'
     await expect(new ProductiveRotationService(session,transport,urs,()=>createdAt).rotate()).rejects.toThrow('simulated crash after source append')
     expect(google.crashAfterAppend).toBeNull()
     await runFault('after-announcement-durable')
-    expect([...google.remotes.values()].filter(item=>!item.trashed&&item.properties.app_format==='sync-recovery-v5')).toHaveLength(1)
+    const recoveryAfterAnnouncement=[...google.remotes.values()].filter(item=>!item.trashed&&item.properties.app_format==='sync-recovery-v5')
+    expect(recoveryAfterAnnouncement).toHaveLength(1)
+    expect(recoveryAfterAnnouncement[0]?.artifact).not.toBe('')
     expect([...google.appendCounts.values()].every(count=>count===1)).toBe(true)
 
     await runFault('before-atomic-switch')
