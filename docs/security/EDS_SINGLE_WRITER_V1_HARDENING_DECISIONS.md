@@ -81,11 +81,15 @@ evidence is worse than stopping.
 ## V1-H-003 – A staged successor is not the current Google Recovery target
 
 **Decision.** For normal v1 rotation and v1 recovery-rekey rotation,
-RecoveryArtifactV5 is generated one-shot, locally persisted, independently
-bootstrap-tested, and kept local while the successor is staged. It is published
-to the owner-only Google Recovery resource only **after** the source announcement
-has been read back and accepted under V1-H-002. Remote enablement is the explicit
-exception because there is no prior remote source to retire.
+RecoveryArtifactV5 is generated one-shot, locally persisted and independently
+bootstrap-tested while the successor is staged. Before the source announcement,
+the provider may prepare and uniquely verify the secret-derived owner-only
+Recovery resource, but the staged successor Artifact bytes are **not** written
+there. A newly created slot therefore remains empty and is not a recoverable
+successor. The exact locally persisted Artifact is written only **after** the
+source announcement has been read back and accepted under V1-H-002. Remote
+enablement is the explicit exception because there is no prior remote source to
+retire.
 
 If Recovery publication succeeds but the process crashes before the local
 announcement_durable state is persisted, resume repeats the same artifact
@@ -96,10 +100,16 @@ as the first pointer during Google recovery. Publishing a staged successor befor
 the source cutover meant a crash or competing rotation could make a successor
 that never became canonical look like the current recovery target.
 
-**Rejected alternative.** Publish Recovery immediately after successor
+**Availability boundary.** Resource creation/discovery ambiguity is resolved
+before the source is retired. This matters especially for recovery_rekey, whose
+new URS normally has no pre-existing Recovery resource. After the announcement,
+publication updates the already unique slot and reconciles by readback.
+
+**Rejected alternative.** Publish Recovery bytes immediately after successor
 bootstrap because the artifact is cryptographically valid. Rejected because
 cryptographic self-consistency of a staged successor is not the same as
-canonical activation.
+canonical activation. Creating/verifying an empty slot is allowed because it
+contains no RK or successor activation material.
 
 **Wire compatibility.** sync-recovery-v5 is unchanged. This is publication
 ordering only.
@@ -249,8 +259,8 @@ A future change touching these paths must preserve all of the following:
 - the exact announcement is the only row allowed after the frozen prefix during
   v1 cutover;
 - source remote state is checked again immediately before local switch;
-- staged normal/rekey RecoveryArtifact is not remotely published before durable
-  source announcement;
+- staged normal/rekey RecoveryArtifact bytes are not remotely published before durable
+  source announcement; an empty uniquely verified provider slot may be pre-bound;
 - remote enablement remains the explicit no-source publication exception;
 - verified legacy cutover leaves no plaintext legacy object store or legacy
   activity-type localStorage value;
