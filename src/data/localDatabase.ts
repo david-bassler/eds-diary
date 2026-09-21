@@ -37,7 +37,6 @@ import rotationAnnouncementSchema from '../security/schemas/rotation-announcemen
 import { validateRevisionV1 } from '../security/revisions'
 
 const DATABASE_NAME = 'eds-diary'
-const DATABASE_VERSION = 8
 
 export const LOCAL_STORES = {
   painEntries: 'painEntries', medicationEntries: 'medicationEntries',
@@ -86,15 +85,31 @@ export class LocalUnlockRequiredError extends Error{constructor(readonly mode:'p
 
 function result<T>(request:IDBRequest<T>):Promise<T>{return new Promise((resolve,reject)=>{request.addEventListener('success',()=>resolve(request.result),{once:true});request.addEventListener('error',()=>reject(request.error??new Error('IndexedDB request failed.')),{once:true})})}
 function complete(tx:IDBTransaction):Promise<void>{return new Promise((resolve,reject)=>{tx.addEventListener('complete',()=>resolve(),{once:true});tx.addEventListener('abort',()=>reject(tx.error??new Error('IndexedDB transaction aborted.')),{once:true});tx.addEventListener('error',()=>reject(tx.error??new Error('IndexedDB transaction failed.')),{once:true})})}
+function applyCurrentSchema(db:IDBDatabase,tx:IDBTransaction|null):void{
+  if(db.objectStoreNames.contains('revisions'))db.deleteObjectStore('revisions')
+  for(const name of Object.values(STORES))if(!db.objectStoreNames.contains(name)){const store=db.createObjectStore(name,{keyPath:'id'});if(name===STORES.envelopes||name===STORES.outbox)store.createIndex('byEpoch','epochId')}
+  if(tx&&db.objectStoreNames.contains(STORES.operations)){const operations=tx.objectStore(STORES.operations),cursor=operations.openCursor();cursor.addEventListener('success',()=>{const current=cursor.result;if(!current)return;if(typeof current.key==='string'&&current.key.startsWith('rotation-artifact:revision:'))current.delete();current.continue()})}
+}
+function trackDatabase(db:IDBDatabase):IDBDatabase{db.addEventListener('versionchange',()=>{db.close();databasePromise=null});return db}
+function secureSchemaReady(db:IDBDatabase):boolean{return Object.values(STORES).every(name=>db.objectStoreNames.contains(name))&&!db.objectStoreNames.contains('revisions')}
 function openDatabase():Promise<IDBDatabase>{
   if(databasePromise)return databasePromise
-  databasePromise=new Promise((resolve,reject)=>{const request=indexedDB.open(DATABASE_NAME,DATABASE_VERSION);request.addEventListener('upgradeneeded',()=>{
-    const db=request.result
-    for(const name of LEGACY_STORES)if(!db.objectStoreNames.contains(name))db.createObjectStore(name,{keyPath:'id'})
-    if(db.objectStoreNames.contains('revisions'))db.deleteObjectStore('revisions')
-    for(const name of Object.values(STORES))if(!db.objectStoreNames.contains(name)){const store=db.createObjectStore(name,{keyPath:'id'});if(name===STORES.envelopes||name===STORES.outbox)store.createIndex('byEpoch','epochId')}
-    if(request.transaction&&db.objectStoreNames.contains(STORES.operations)){const operations=request.transaction.objectStore(STORES.operations),cursor=operations.openCursor();cursor.addEventListener('success',()=>{const current=cursor.result;if(!current)return;if(typeof current.key==='string'&&current.key.startsWith('rotation-artifact:revision:'))current.delete();current.continue()})}
-  });request.addEventListener('success',()=>resolve(request.result),{once:true});request.addEventListener('error',()=>{databasePromise=null;reject(request.error??new Error('Database open failed.'))},{once:true})})
+  databasePromise=new Promise((resolve,reject)=>{
+    const fail=(error:unknown)=>{databasePromise=null;reject(error instanceof Error?error:new Error('Database open failed.'))}
+    const request=indexedDB.open(DATABASE_NAME)
+    request.addEventListener('upgradeneeded',()=>applyCurrentSchema(request.result,request.transaction))
+    request.addEventListener('error',()=>fail(request.error??new Error('Database open failed.')),{once:true})
+    request.addEventListener('success',()=>{
+      const current=request.result
+      if(secureSchemaReady(current)){resolve(trackDatabase(current));return}
+      const nextVersion=current.version+1;current.close()
+      const upgrade=indexedDB.open(DATABASE_NAME,nextVersion)
+      upgrade.addEventListener('upgradeneeded',()=>applyCurrentSchema(upgrade.result,upgrade.transaction))
+      upgrade.addEventListener('success',()=>resolve(trackDatabase(upgrade.result)),{once:true})
+      upgrade.addEventListener('error',()=>fail(upgrade.error??new Error('Database schema upgrade failed.')),{once:true})
+      upgrade.addEventListener('blocked',()=>fail(new Error('Database schema upgrade is blocked by another open app tab. Close other tabs and retry.')),{once:true})
+    },{once:true})
+  })
   return databasePromise
 }
 async function wrappingKey(db:IDBDatabase,wrapId:string):Promise<CryptoKey>{const tx=db.transaction(STORES.wrappingKeys,'readonly'),existing=await result<{id:string;key:CryptoKey}|undefined>(tx.objectStore(STORES.wrappingKeys).get(wrapId));await complete(tx);if(existing)return existing.key;const key=await crypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']);const write=db.transaction(STORES.wrappingKeys,'readwrite');write.objectStore(STORES.wrappingKeys).add({id:wrapId,key});await complete(write);return key}
@@ -162,7 +177,7 @@ export class UnresolvedRecordConflictError extends Error{constructor(readonly re
 function logicalAppId(revision:RevisionV1,store:LocalStoreName):string{if(store===LOCAL_STORES.settings){if(revision.record_type==='activity_type_settings')return'activity-types';if(revision.record_type==='pain_type_settings')return'custom-pain-types'}return revision.record_id}
 async function readValues<T>(db:IDBDatabase,store:LocalStoreName):Promise<T[]>{await verifyLocalIntegrityFor(db);const loaded=await loadEpoch(db),tx=db.transaction(STORES.envelopes,'readonly'),items=await result<StoredEnvelope[]>(tx.objectStore(STORES.envelopes).index('byEpoch').getAll(loaded.context.epochId));await complete(tx);const revisions:RevisionV1[]=[];for(const item of items.sort((a,b)=>a.localSeq-b.localSeq)){const revision=await openEnvelope(loaded.rootKey,loaded.epochSalt,{diaryId:loaded.context.diaryId,epochId:loaded.context.epochId},item);if(revision.record_status==='active')validateDomainData(DOMAIN_SCHEMAS[revision.record_schema],revision.record_data);revisions.push(revision)}const graph=validateRevisionGraphV1(revisions),allowed=store===LOCAL_STORES.settings?new Set(['pain_type_settings','activity_type_settings']):new Set([STORE_PROFILE[store].recordType]);for(const [recordId,ids] of graph.headsByRecord){const first=graph.revisions.get(sortedRevisionIds(ids)[0]!);if(first&&allowed.has(first.record_type)&&ids.size>1)throw new UnresolvedRecordConflictError(recordId,sortedRevisionIds(ids))}const output:T[]=[];for(const ids of graph.headsByRecord.values())for(const revisionId of ids){const revision=graph.revisions.get(revisionId);if(!revision||!allowed.has(revision.record_type))continue;const data=(revision.record_data??{}) as Record<string,unknown>,status=revision.record_status==='deleted'?{status:'deleted'}:{};output.push({id:logicalAppId(revision,store),...data,...status} as T)}return output}
 async function rememberMapping(db:IDBDatabase,store:LocalStoreName,recordId:string,legacyId:string):Promise<void>{const id=`map:${store}:${recordId}`,read=db.transaction(STORES.migration,'readonly'),existing=await result<{id:string;legacyId:string}|undefined>(read.objectStore(STORES.migration).get(id));await complete(read);if(existing&&existing.legacyId!==legacyId)throw new Error('Fatal deterministic legacy record ID collision.');const tx=db.transaction(STORES.migration,'readwrite');tx.objectStore(STORES.migration).put({id,legacyId});await complete(tx)}
-async function inventory(db:IDBDatabase):Promise<Array<{key:string;store:LocalStoreName;value:Record<string,unknown>}>>{const entries:Array<{key:string;store:LocalStoreName;value:Record<string,unknown>}>=[];for(const store of LEGACY_STORES){const tx=db.transaction(store,'readonly'),values=await result<Record<string,unknown>[]>(tx.objectStore(store).getAll());await complete(tx);for(const value of values)entries.push({key:`idb:${store}:${String(value.id)}`,store,value:normalizedLegacyValue(store,value)})}const raw=globalThis.localStorage?.getItem(LEGACY_ACTIVITY_TYPES);if(raw){const value=JSON.parse(raw) as unknown;if(!Array.isArray(value))throw new Error('Legacy activity types are malformed.');entries.push({key:'localStorage:activity-types',store:LOCAL_STORES.settings,value:{id:'activity-types',values:value}})}return entries}
+async function inventory(db:IDBDatabase):Promise<Array<{key:string;store:LocalStoreName;value:Record<string,unknown>}>>{const entries:Array<{key:string;store:LocalStoreName;value:Record<string,unknown>}>=[];for(const store of LEGACY_STORES){if(!db.objectStoreNames.contains(store))continue;const tx=db.transaction(store,'readonly'),values=await result<Record<string,unknown>[]>(tx.objectStore(store).getAll());await complete(tx);for(const value of values)entries.push({key:`idb:${store}:${String(value.id)}`,store,value:normalizedLegacyValue(store,value)})}const raw=globalThis.localStorage?.getItem(LEGACY_ACTIVITY_TYPES);if(raw){const value=JSON.parse(raw) as unknown;if(!Array.isArray(value))throw new Error('Legacy activity types are malformed.');entries.push({key:'localStorage:activity-types',store:LOCAL_STORES.settings,value:{id:'activity-types',values:value}})}return entries}
 async function migrationHash(value:MigrationState):Promise<string>{return base64Url(await sha256(canonicalBytes(value as never)))}
 async function saveMigration(db:IDBDatabase,value:MigrationState):Promise<void>{const loaded=await loadEpoch(db),hash=await migrationHash(value),state={...loaded.state,migration_state_ref:{operation_id:value.operationId,state:value.phase,state_record_hash:hash},operation_generation:loaded.state.operation_generation+1},tag=await stateTag(loaded.rootKey,loaded.epochSalt,state),tx=db.transaction([STORES.migration,STORES.state],'readwrite');tx.objectStore(STORES.migration).put(value);tx.objectStore(STORES.state).put({id:loaded.context.epochId,state,tag} satisfies StoredState);await complete(tx);const checked=await loadEpoch(db),read=db.transaction(STORES.migration,'readonly'),stored=await result<MigrationState|undefined>(read.objectStore(STORES.migration).get('legacy-v1'));await complete(read);if(!stored||checked.state.migration_state_ref?.state_record_hash!==await migrationHash(stored))throw new Error('Migration state readback failed.')}
 type LegacySource={key:string;store:LocalStoreName;value:Record<string,unknown>}
@@ -171,7 +186,28 @@ function legacyTarget(key:string):{store:LocalStoreName;id:string}{if(key==='loc
 async function migratedVisibleId(context:EpochContext,store:LocalStoreName,legacyId:string):Promise<string>{if(store!==LOCAL_STORES.settings)return recordIdentity(context,store,legacyId);const profile=profileFor(store,legacyId);return profile.recordType==='activity_type_settings'?'activity-types':'custom-pain-types'}
 function sameCanonical(left:unknown,right:unknown):boolean{return decodeUtf8(canonicalBytes(left as never))===decodeUtf8(canonicalBytes(right as never))}
 async function verifyLegacyTarget(db:IDBDatabase,item:LegacySource):Promise<void>{const context=(await loadEpoch(db)).context,legacyId=String(item.value.id),expectedId=await migratedVisibleId(context,item.store,legacyId),values=await readValues<Record<string,unknown>>(db,item.store),target=values.find(value=>String(value.id)===expectedId);if(!target)throw new Error('Legacy target verification failed.');if(item.value.status==='deleted'){if(target.status!=='deleted')throw new Error('Legacy tombstone target verification failed.');return}const expected={...item.value,id:expectedId},actual={...target};if(!Object.prototype.hasOwnProperty.call(expected,'status'))delete actual.status;if(!sameCanonical(expected,actual))throw new Error('Legacy target bytes changed during migration.')}
-async function migrateLegacy():Promise<void>{const db=await openDatabase(),initial=await loadEpoch(db);await withDiaryLock(initial.context.diaryId,async()=>{let loaded=await loadEpoch(db);const tx=db.transaction(STORES.migration,'readonly');let migration=await result<MigrationState|undefined>(tx.objectStore(STORES.migration).get('legacy-v1'));await complete(tx);if(migration){const ref=loaded.state.migration_state_ref;if(!ref||ref.operation_id!==migration.operationId||ref.state!==migration.phase||ref.state_record_hash!==await migrationHash(migration))throw new Error('Authenticated migration state binding failed.');if(migration.verified&&migration.phase==='cutover')return}else{const first=await inventory(db),fingerprint=await legacyFingerprint(first);migration={id:'legacy-v1',operationId:base64Url(await sha256(canonicalBytes(['legacy-v1',loaded.context.diaryId,loaded.context.epochId]))),phase:'inventory',sourceKeys:first.map(item=>item.key),completedKeys:[],legacyDirtyGeneration:0,verified:false,sourceFingerprint:fingerprint,stablePasses:0};await saveMigration(db,migration)}
+async function sealLegacyPlaintextStorage(db:IDBDatabase):Promise<void>{
+  const legacyStores=LEGACY_STORES.filter(name=>db.objectStoreNames.contains(name)),hadLocalStorage=globalThis.localStorage?.getItem(LEGACY_ACTIVITY_TYPES)!==null
+  if(legacyStores.length){const tx=db.transaction(legacyStores,'readwrite');for(const name of legacyStores)tx.objectStore(name).clear();await complete(tx);const verify=db.transaction(legacyStores,'readonly');for(const name of legacyStores)if(await result(verify.objectStore(name).count())!==0){verify.abort();throw new Error('Legacy plaintext store cleanup readback failed.')}await complete(verify)}
+  globalThis.localStorage?.removeItem(LEGACY_ACTIVITY_TYPES)
+  if(globalThis.localStorage?.getItem(LEGACY_ACTIVITY_TYPES)!==null)throw new Error('Legacy plaintext localStorage cleanup failed.')
+  if(!legacyStores.length&&!hadLocalStorage)return
+
+  const nextVersion=db.version+1
+  databasePromise=null
+  db.close()
+  await new Promise<void>((resolve,reject)=>{
+    const request=indexedDB.open(DATABASE_NAME,nextVersion);let settled=false
+    const fail=(error:Error)=>{if(settled)return;settled=true;reject(error)}
+    request.addEventListener('upgradeneeded',()=>{for(const name of LEGACY_STORES)if(request.result.objectStoreNames.contains(name))request.result.deleteObjectStore(name);if(request.result.objectStoreNames.contains('revisions'))request.result.deleteObjectStore('revisions')})
+    request.addEventListener('blocked',()=>fail(new Error('Legacy plaintext storage sealing is blocked by another open app tab. Close other tabs and retry.')),{once:true})
+    request.addEventListener('error',()=>fail(request.error??new Error('Legacy plaintext storage sealing failed.')),{once:true})
+    request.addEventListener('success',()=>{request.result.close();if(settled)return;settled=true;resolve()},{once:true})
+  })
+  const checked=await openDatabase()
+  if(LEGACY_STORES.some(name=>checked.objectStoreNames.contains(name))||checked.objectStoreNames.contains('revisions'))throw new Error('Legacy plaintext schema fence readback failed.')
+}
+async function migrateLegacy():Promise<void>{const db=await openDatabase(),initial=await loadEpoch(db);await withDiaryLock(initial.context.diaryId,async()=>{let loaded=await loadEpoch(db);const tx=db.transaction(STORES.migration,'readonly');let migration=await result<MigrationState|undefined>(tx.objectStore(STORES.migration).get('legacy-v1'));await complete(tx);if(migration){const ref=loaded.state.migration_state_ref;if(!ref||ref.operation_id!==migration.operationId||ref.state!==migration.phase||ref.state_record_hash!==await migrationHash(migration))throw new Error('Authenticated migration state binding failed.');if(migration.verified&&migration.phase==='cutover'){await sealLegacyPlaintextStorage(db);return}}else{const first=await inventory(db),fingerprint=await legacyFingerprint(first);migration={id:'legacy-v1',operationId:base64Url(await sha256(canonicalBytes(['legacy-v1',loaded.context.diaryId,loaded.context.epochId]))),phase:'inventory',sourceKeys:first.map(item=>item.key),completedKeys:[],legacyDirtyGeneration:0,verified:false,sourceFingerprint:fingerprint,stablePasses:0};await saveMigration(db,migration)}
     for(let pass=0;pass<32;pass++){
       const before=await inventory(db),beforeFingerprint=await legacyFingerprint(before),beforeKeys=new Set(before.map(item=>item.key)),knownKeys=[...new Set([...migration.sourceKeys,...beforeKeys])].sort();migration={...migration,phase:'backfill',sourceKeys:knownKeys,completedKeys:[],verified:false,sourceFingerprint:beforeFingerprint,stablePasses:0};await saveMigration(db,migration)
       for(const item of before){loaded=await loadEpoch(db);const recordId=await recordIdentity(loaded.context,item.store,String(item.value.id)),revisionId=base64Url(await sha256(canonicalBytes(['legacy-migration-v2',migration.operationId,item.key,item.value] as never)));await rememberMapping(db,item.store,recordId,String(item.value.id));await persistRevision(db,item.store,item.value,revisionId);migration={...migration,completedKeys:[...migration.completedKeys,item.key]};await saveMigration(db,migration)}
@@ -181,7 +217,7 @@ async function migrateLegacy():Promise<void>{const db=await openDatabase(),initi
       for(const item of after)await verifyLegacyTarget(db,item)
       const afterSet=new Set(after.map(item=>item.key));for(const key of afterKeys){if(afterSet.has(key))continue;const target=legacyTarget(key),context=(await loadEpoch(db)).context,expectedId=await migratedVisibleId(context,target.store,target.id),values=await readValues<Record<string,unknown>>(db,target.store),value=values.find(item=>String(item.id)===expectedId);if(!value||value.status!=='deleted')throw new Error('Deleted legacy source was not preserved as a tombstone.')}
       const finalInventory=await inventory(db),finalFingerprint=await legacyFingerprint(finalInventory);if(finalFingerprint!==afterFingerprint){migration={...migration,legacyDirtyGeneration:migration.legacyDirtyGeneration+1,sourceFingerprint:finalFingerprint,stablePasses:0};await saveMigration(db,migration);continue}
-      migration={...migration,phase:'cutover',verified:true,sourceFingerprint:finalFingerprint,stablePasses:2};await saveMigration(db,migration);return
+      migration={...migration,phase:'cutover',verified:true,sourceFingerprint:finalFingerprint,stablePasses:2};await saveMigration(db,migration);await sealLegacyPlaintextStorage(db);return
     }
     throw new Error('Legacy source did not stabilize during encrypted migration.')
   })}
