@@ -884,7 +884,8 @@ vorbereiten -> Activation-Evidence/Lineage bilden -> RecoveryArtifact -> staged
 Backup -> Announcement append/readback -> Successor-Suffix ab staging anchor
 klassifizieren -> fehlende SuccessorActivationConfirmation one-shot
 append/readback bzw. bereits identische Confirmation reconciliieren ->
-post-activation Suffix vollständig verifizieren -> activated Backup -> Switch.
+post-activation Suffix vollständig verifizieren -> Lifecycle-Reconciliation ->
+activated Backup -> Switch **oder** terminal post_activation_superseded.
 Das Announcement muss **vor** RecoveryArtifact/Backup vorbereitet sein, weil
 diese seine exakten Bytes kryptographisch binden. Weicht der Successor nach
 durable Source-Seal durch eine **andere erste Row als die exakt vorbereitete
@@ -893,11 +894,20 @@ Confirmation** vom staging anchor ab, endet der Vorgang terminal als
 Backup/Switch. Ist die erste neue Row exakt die vorbereitete Confirmation, wird
 sie dagegen als bereits durable reconciliiert.
 
-Vor dem finalen lokalen Switch ist neben dem staged Backup zwingend ein
-**activated SyncBackupV6** zu erzeugen und per Test-Restore zu prüfen. Sein
-RemoteAnchor muss den successor_activation_anchor enthalten und darf ihn nur um
-vollständig verifizierte post-activation Rows erweitern. Ein Backup kann
-Daten/Schlüssel offline wiederherstellen;
+Nach Confirmation darf ein anderer legitimer Writer remote weiterarbeiten. Sind
+das nur Fachrows/WriterGrants, kann der initiierende Cutover den finalen Prefix
+in sein activated Backup aufnehmen und ggf. read_only wechseln. Hat der Suffix
+aber die Recovery-Authority fortgeschrieben oder den Successor bereits durch
+eine weitere Rotation versiegelt, ist die Remote-Historie gültig, der lokale
+Operation-State aber **überholt**: `post_activation_superseded`, kein Backup
+mit historischem RecoveryArtifact und kein automatischer lokaler Switch.
+
+Vor einem normalen finalen lokalen Switch ist neben dem staged Backup zwingend
+ein **activated SyncBackupV6** zu erzeugen und per Test-Restore zu prüfen. Sein
+RemoteAnchor muss den successor_activation_anchor enthalten, darf ihn nur um
+vollständig verifizierte post-activation Rows erweitern und sein
+RecoveryArtifact muss exakt zum finalen Recovery-State dieser Rows passen. Ein
+Backup kann Daten/Schlüssel offline wiederherstellen;
 remote-active Writer-Recovery benötigt weiterhin die historische
 Activation-Lineage-Source-Kette.
 ## 18. Migration v1 -> v2
@@ -964,10 +974,15 @@ Ablauf:
     Grenze durch diese Confirmation ableiten;
 11. einen danach vorhandenen post-activation Suffix vollständig verifizieren
     und ActivationLineage einschließlich Migration-Integrität und Confirmation
-    vollständig prüfen;
-12. **obligatorisch** activated SyncBackupV6 erzeugen und Test-Restore; sein
-    RemoteAnchor muss den successor_activation_anchor enthalten und darf ihn nur
-    um den vollständig verifizierten post-activation Suffix erweitern;
+    vollständig prüfen. Fortschreibung nur von Fachrows/WriterGrants ist
+    integrierbar. Hat der Suffix den Recovery-State geändert oder den Successor
+    bereits versiegelt, endet dieser lokale Upgrade-State
+    `post_activation_superseded`: gültige Remote-Historie bleibt bestehen,
+    aber kein stale RecoveryArtifact/Backup und kein automatischer Switch;
+12. nur im nicht-supersedeten Fall obligatorisch activated SyncBackupV6 erzeugen
+    und Test-Restore; sein RemoteAnchor muss den successor_activation_anchor
+    enthalten, darf ihn nur um den vollständig verifizierten post-activation
+    Suffix erweitern und das RecoveryArtifact muss zum End-Recovery-State passen;
 13. ActivationLineageCacheV2 mit eigenem Cache-ID/Hash
     persistieren/readback-verifizieren;
 14. erst danach atomar auf v2 umschalten und v1 retire; lokale Writer-Freigabe
