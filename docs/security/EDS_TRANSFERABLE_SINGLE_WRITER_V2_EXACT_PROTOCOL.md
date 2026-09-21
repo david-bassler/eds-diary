@@ -3179,16 +3179,19 @@ gilt exakt:
    neuen State zeigt.
 5. Erst danach dürfen die neuen RecoveryArtifact-/Transition-Remote-Schritte
    beginnen.
-6. Wird der neue Versuch **vor erfolgreichem Publish/Readback seines neuen
-   RecoveryArtifactV6** lokal abgebrochen oder stale, wird sein State terminal
-   `stale`. Ist das neue Artifact bereits publiziert, ist ein rein lokaler
-   Abbruch verboten: Solange Remote noch exakt am authority_anchor steht, muss
-   die vorbereitete Transition fertiggestellt/reconciliiert werden. `stale` ist
-   nach Artifact-Publish nur zulässig, wenn canonical_full beweist, dass eine
-   andere physische Row den Anchor bereits irreversibel überholt hat und die
-   vorbereitete Transition deshalb nach §16c nicht mehr appendbar ist. Erst
-   danach wird der alte suspendierte State wieder gebunden/adoptiert, falls
-   dessen Remote-Transition weiterhin current ist.
+6. Wird der neue Versuch **vor dem ersten mutierenden Artifact-Publish-
+   Request**, also bei `artifact_publish_attempted=false`, lokal abgebrochen
+   oder anderweitig stale, wird sein State terminal `stale`. Sobald
+   `artifact_publish_attempted=true` persistent ist, ist ein rein lokaler
+   Abbruch auch ohne Erfolgs-Readback verboten: das Publish-Outcome muss zuerst
+   remote reconciliiert werden. Solange Remote noch exakt am authority_anchor
+   steht, werden dieselben Artifact-Bytes weiter reconciliiert/publiziert und
+   anschließend die vorbereitete Transition fertiggestellt. `stale` ist dann
+   nur zulässig, wenn canonical_full beweist, dass eine andere physische Row den
+   Anchor irreversibel überholt hat und die vorbereitete Transition deshalb nach
+   §16c nicht mehr appendbar ist. Erst danach wird der alte suspendierte State
+   wieder gebunden/adoptiert, falls dessen Remote-Transition weiterhin current
+   ist.
 7. Wird die neue Transition durable, muss canonical_full beweisen:
    current_recovery_rekey_transition_id == neue transition_id und
    supersedes_transition_id == alte transition_id. Danach werden **in einer
