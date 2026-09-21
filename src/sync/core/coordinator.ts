@@ -33,6 +33,13 @@ export class SingleWriterCoordinator {
   private assertVerifiedProfile(verified:VerifiedRemoteState):void{
     if(verified.profileId!==this.codec.profileId)throw new Error('Verified remote profile mismatch.')
     if(verified.retired&&!this.allowRetirement)throw new Error('A rotation announcement retired this epoch.')
+    const physicalIds=new Set(verified.snapshot.rows.map(row=>row[0]))
+    if(physicalIds.size!==verified.verifiedEnvelopeIds.size||[...physicalIds].some(id=>!verified.verifiedEnvelopeIds.has(id)))throw new Error('Verified envelope set does not match the physical snapshot.')
+    for(const id of verified.acceptedEnvelopeIds)if(!verified.verifiedEnvelopeIds.has(id))throw new Error('Accepted envelope is not in the verified physical set.')
+    for(const id of verified.staleWriterEnvelopeIds){
+      if(!verified.verifiedEnvelopeIds.has(id))throw new Error('Stale-writer envelope is not in the verified physical set.')
+      if(verified.acceptedEnvelopeIds.has(id))throw new Error('Envelope cannot be both accepted and stale-writer rejected.')
+    }
   }
 
   private async quarantine(envelopeId:string,expectedGeneration:number):Promise<number>{
@@ -116,6 +123,7 @@ export class SingleWriterCoordinator {
           this.state='remote_verified'
           return
         }
+        if(await this.store.generation()!==expectedGeneration){this.state='security_blocked';throw new Error('Local security generation changed after unknown-outcome retry authorization.')}
 
         await this.transport.append(this.remoteId, row)
         snapshot = await this.transport.read(this.remoteId)
