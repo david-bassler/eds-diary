@@ -1,5 +1,6 @@
 import type { PreparedEnvelope } from '../../security/envelopes'
 
+export const GOOGLE_DRIVE_SHEETS_PROVIDER = 'google-drive-sheets-v1' as const
 export const SINGLE_WRITER_V1_PROFILE = 'google-sheets-single-writer-v1' as const
 /** Backwards-compatible alias for existing v1 callers. New code should use SINGLE_WRITER_V1_PROFILE. */
 export const SINGLE_WRITER_PROFILE = SINGLE_WRITER_V1_PROFILE
@@ -12,9 +13,10 @@ export interface RemoteSnapshot { manifest: readonly string[]; rows: ReadonlyArr
 export interface RemoteAnchorState { anchor_profile: string; covered_row_count: number; prefix_hash: string }
 /** Branded result that can only be produced after manifest, every envelope, graph,
  * controls, binding, anchor and local reconciliation have been verified. */
-export interface VerifiedRemoteState { profileId:string; profileState:unknown; snapshot: RemoteSnapshot; manifestFingerprint: string; retired: boolean; verifiedEnvelopeIds: ReadonlySet<string> }
+export interface VerifiedRemoteState { profileId:string; profileState:unknown; snapshot: RemoteSnapshot; manifestFingerprint: string; retired: boolean; verifiedEnvelopeIds: ReadonlySet<string>; acceptedEnvelopeIds: ReadonlySet<string>; staleWriterEnvelopeIds: ReadonlySet<string> }
 export interface AuthProvider { authenticate(actionId: string): Promise<IdentityBinding>; getIdentityBinding(): IdentityBinding | null; disconnect(): Promise<void> }
 export interface RemoteTransport {
+  readonly providerId: string
   readonly profileId: string
   discover(locator: string): Promise<readonly RemoteCandidate[]>
   create(locator: string, manifest: readonly string[]): Promise<void>
@@ -28,16 +30,28 @@ export interface RemoteTransport {
   read(remoteId: string): Promise<RemoteSnapshot>
   append(remoteId: string, row: readonly [string, string, string]): Promise<void>
 }
+/** Shared coordinator verifier: this entry point is canonical-full only.
+ * Profile-specific crash/resume verification that intentionally yields a
+ * non-canonical staged result (for example v2 rotation_resume) must use a
+ * separate profile API and must never manufacture VerifiedRemoteState. */
 export interface RemoteProfileVerifier {
   readonly profileId: string
   verify(snapshot: RemoteSnapshot): Promise<VerifiedRemoteState>
 }
 
 export type WriteAccess = 'writer' | 'read_only'
+export type WritePushPhase = 'initial' | 'unknown_outcome_retry'
+export type WritePushDecision = 'push' | 'quarantine_stale_writer'
 export interface WriteAuthority {
   readonly profileId: string
   accessAfterPull(verified: VerifiedRemoteState): Promise<WriteAccess> | WriteAccess
-  assertBeforePush(): Promise<void> | void
+  /** Used by the domain-write preparation path before a new immutable envelope
+   * is persisted. v2 requires this to be based on a fresh canonical verify. */
+  canPrepareDomainWrite(verified: VerifiedRemoteState): Promise<WriteAccess> | WriteAccess
+  /** Re-checks the exact prepared envelope against the latest verified state.
+   * Unknown-outcome retries must pass phase='unknown_outcome_retry' after a new
+   * full verification; a structural read alone is never sufficient. */
+  verifyBeforePush(envelope: PreparedEnvelope, verified: VerifiedRemoteState, phase: WritePushPhase): Promise<WritePushDecision> | WritePushDecision
   accessAfterReadback(verified: VerifiedRemoteState): Promise<WriteAccess> | WriteAccess
 }
 

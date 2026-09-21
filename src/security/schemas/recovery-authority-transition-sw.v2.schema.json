@@ -7,9 +7,11 @@
     "transition_id",
     "transition_kind",
     "from_recovery_generation",
+    "from_recovery_urs_id",
     "from_recovery_takeover_key_id",
     "to_recovery_generation",
     "to_recovery_urs_commitment",
+    "to_recovery_urs_id",
     "to_recovery_takeover_key_id",
     "to_recovery_takeover_public_key",
     "authority_anchor"
@@ -27,6 +29,10 @@
       "minimum": 0,
       "maximum": 9007199254740991
     },
+    "from_recovery_urs_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{43}$"
+    },
     "from_recovery_takeover_key_id": {
       "type": "string",
       "pattern": "^[A-Za-z0-9_-]{43}$"
@@ -37,6 +43,10 @@
       "maximum": 9007199254740991
     },
     "to_recovery_urs_commitment": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{43}$"
+    },
+    "to_recovery_urs_id": {
       "type": "string",
       "pattern": "^[A-Za-z0-9_-]{43}$"
     },

@@ -20,6 +20,7 @@ export class SingleWriterSyncService {
     const active=await activeEpochSyncContext(),remote=active.state.remote_binding
     if(!remote||remote.provider_id!==session.profileId||remote.remote_resource_id==='')throw new Error('Authenticated provider binding does not match local state.')
     const transport=await session.transportForEpoch(active.diaryId,active.epochId)
+    if(transport.providerId!==session.providerId||transport.profileId!==session.profileId)throw new Error('Authenticated transport provider/profile identity mismatch.')
     const identityBinding=await session.remoteIdentityBinding(transport)
     if(remote.remote_identity_binding!==identityBinding)throw new Error('Authenticated provider identity does not match local state.')
     const material=await activeEpochVerifierMaterial()

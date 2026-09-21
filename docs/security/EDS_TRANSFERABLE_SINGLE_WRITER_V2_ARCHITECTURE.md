@@ -1,5 +1,7 @@
 # EDS Diary – Transferable Single Writer v2
 
+Die Begründungen stabiler Sicherheitsentscheidungen und verworfener Alternativen stehen ergänzend in `EDS_TRANSFERABLE_SINGLE_WRITER_V2_DECISIONS.md`; spätere Reviews sollen dort zwischen neuer Erkenntnis und bloßem Design-Pendeln unterscheiden.
+
 Status: **ARCHITEKTURRAHMEN DEFINIERT / EXAKTES v2-PROTOKOLL IN EDS_TRANSFERABLE_SINGLE_WRITER_V2_EXACT_PROTOCOL.md EINGEFROREN / NOCH NICHT IMPLEMENTIERT**
 
 Stand: 20.09.2026
@@ -729,16 +731,24 @@ Recovery-Rekey ändert den Writer nicht automatisch. Die neue
 Recovery-Authority wird zuerst auf der **noch aktiven, unsealed Source** durch
 einen writer-signierten `RecoveryAuthorityTransitionV2` aktiviert. Das neue
 RecoveryArtifactV6 wird bereits davor unter dem neuen URS publiziert und bindet
-die exakt vorbereiteten Transition-Envelope-Bytes. Nach Crash darf Recovery diese
-Bytes nur fertig appendieren, wenn die Source noch exakt am gebundenen Anchor
-steht; jede intervenierende Row macht den vorbereiteten Rekey stale.
+die exakt vorbereiteten Transition-Envelope-Bytes. Der **erste mutierende
+Artifact-Publish-Versuch** ist der bewusste Point of no local return: Unmittelbar
+davor wird `artifact_publish_attempted=true` persistent/readback-verifiziert.
+Danach kann weder ein fehlender Erfolgs-Callback noch ein
+`unknown_outcome` als lokaler Abort interpretiert werden; das Publish-Outcome
+muss per Discovery/Grid-Readback reconciliiert werden. Existieren die exakten
+Artifact-Bytes remote und steht die Source weiter am gebundenen Anchor, muss die
+Transition fertiggestellt werden. Erst eine andere physische Source-Row macht
+die vorbereitete Capability tatsächlich stale.
 
-Jede akzeptierte RecoveryAuthorityTransitionV2 muss ein **frisches**
-Recovery-Takeover-Keypair verwenden. Die neue recovery_takeover_key_id darf in
-derselben Source-Epoche weder dem Manifest-Startkey noch irgendeiner früheren,
-auch bereits supersedierten Recovery-Generation entsprechen. Das verhindert,
-dass kompromittiertes altes Takeover-Material durch eine spätere Generation
-wieder zur aktuellen Authority wird.
+Jede akzeptierte RecoveryAuthorityTransitionV2 muss **frischen URS und frisches
+Recovery-Takeover-Keypair** verwenden. v2 führt dafür ab seiner ersten
+Aktivierung eine epochübergreifend fortgetragene
+`recovery_credential_history`: der generationsunabhängige `recovery_urs_id`
+und die recovery_takeover_key_id dürfen weder aktuell noch historisch bereits
+vorgekommen sein. Das verhindert auch nach Epoch-Rotation ein K1→K2→K1 bzw.
+U1→U2→U1. Vor-v2 Recovery-Credentials können mangels historischer v1-IDs nicht
+rückwirkend erkannt werden; diese Legacy-Grenze ist ausdrücklich akzeptiert.
 
 Nach durable Transition ist die alte Recovery-Generation auch innerhalb
 derselben Source für neue Forced Takeovers ungültig. Gleichzeitig setzt der
@@ -830,7 +840,10 @@ benötigen. Er ersetzt aber nicht den **aktuellen** URS: Jede normale Rotation
 muss den aktuellen URS erneut erhalten, das aktuelle Source-RecoveryArtifactV6
 entschlüsseln und dessen Recovery-Takeover-Keypair prüfen, weil nur dort das
 Takeover-Private-Key-Material liegt, das in das neue Successor-Artifact
-übernommen werden muss. Ist der aktuelle URS verloren, wird zuerst ein
+übernommen werden muss. Auch ein **carried** Keypair wird für die konkrete
+Successor-Epoche erneut als RecoveryTakeoverStagingV2 unter dem aktuellen URS
+persistiert/readback-verifiziert; Crash-Sicherheit gilt nicht nur für neu
+generierte Keypairs. Ist der aktuelle URS verloren, wird zuerst ein
 recovery_rekey auf einen neuen URS durchgeführt; ein zusätzliches lokales
 Private-Key-Escrow gibt es nicht. Der Cache besitzt einen eigenen
 Cache-Identifier/Cache-Hash und ist **kein** Operation-State. Kompromittierung des aktuellen URS offenbart bewusst die im
@@ -871,7 +884,8 @@ vorbereiten -> Activation-Evidence/Lineage bilden -> RecoveryArtifact -> staged
 Backup -> Announcement append/readback -> Successor-Suffix ab staging anchor
 klassifizieren -> fehlende SuccessorActivationConfirmation one-shot
 append/readback bzw. bereits identische Confirmation reconciliieren ->
-post-activation Suffix vollständig verifizieren -> activated Backup -> Switch.
+post-activation Suffix vollständig verifizieren -> Lifecycle-Reconciliation ->
+activated Backup -> Switch **oder** terminal post_activation_superseded.
 Das Announcement muss **vor** RecoveryArtifact/Backup vorbereitet sein, weil
 diese seine exakten Bytes kryptographisch binden. Weicht der Successor nach
 durable Source-Seal durch eine **andere erste Row als die exakt vorbereitete
@@ -880,11 +894,27 @@ Confirmation** vom staging anchor ab, endet der Vorgang terminal als
 Backup/Switch. Ist die erste neue Row exakt die vorbereitete Confirmation, wird
 sie dagegen als bereits durable reconciliiert.
 
-Vor dem finalen lokalen Switch ist neben dem staged Backup zwingend ein
-**activated SyncBackupV6** zu erzeugen und per Test-Restore zu prüfen. Sein
-RemoteAnchor muss den successor_activation_anchor enthalten und darf ihn nur um
-vollständig verifizierte post-activation Rows erweitern. Ein Backup kann
-Daten/Schlüssel offline wiederherstellen;
+Nach Confirmation darf ein anderer legitimer Writer remote weiterarbeiten. Sind
+das nur Fachrows/WriterGrants, kann der initiierende Cutover den finalen Prefix
+in sein activated Backup aufnehmen und ggf. read_only wechseln. Hat der Suffix
+aber die Recovery-Authority fortgeschrieben oder den Successor bereits durch
+eine weitere Rotation versiegelt, ist die Remote-Historie gültig, der lokale
+Operation-State aber **überholt**: `post_activation_superseded`, kein Backup
+mit historischem RecoveryArtifact und kein automatischer lokaler Switch.
+
+Vor einem normalen finalen lokalen Switch ist neben dem staged Backup zwingend
+ein **activated SyncBackupV6** zu erzeugen und per Test-Restore zu prüfen. Sein
+RemoteAnchor muss den successor_activation_anchor enthalten, darf ihn nur um
+vollständig verifizierte post-activation Rows erweitern und sein
+RecoveryArtifact muss exakt zum finalen Recovery-State dieser Rows passen.
+**Unmittelbar vor dem lokalen Switch** folgt noch ein letzter canonical_full des
+Successors. Recovery-State-Fortschritt oder erneutes Seal seit dem Backup =>
+post_activation_superseded/kein Switch; reine Fachrows/WriterGrants bleiben
+zulässig und der lokale Writerstatus wird aus dieser letzten Authority
+abgeleitet. Zwischen diesem letzten Read und dem lokalen Commit bleibt mangels
+providerseitigem CAS ein unvermeidbares Race-Fenster; es wird vor jeder späteren
+Mutation durch das ohnehin verpflichtende frische Full Verify wieder erkannt.
+Ein Backup kann Daten/Schlüssel offline wiederherstellen;
 remote-active Writer-Recovery benötigt weiterhin die historische
 Activation-Lineage-Source-Kette.
 ## 18. Migration v1 -> v2
@@ -951,14 +981,24 @@ Ablauf:
     Grenze durch diese Confirmation ableiten;
 11. einen danach vorhandenen post-activation Suffix vollständig verifizieren
     und ActivationLineage einschließlich Migration-Integrität und Confirmation
-    vollständig prüfen;
-12. **obligatorisch** activated SyncBackupV6 erzeugen und Test-Restore; sein
-    RemoteAnchor muss den successor_activation_anchor enthalten und darf ihn nur
-    um den vollständig verifizierten post-activation Suffix erweitern;
+    vollständig prüfen. Fortschreibung nur von Fachrows/WriterGrants ist
+    integrierbar. Hat der Suffix den Recovery-State geändert oder den Successor
+    bereits versiegelt, endet dieser lokale Upgrade-State
+    `post_activation_superseded`: gültige Remote-Historie bleibt bestehen,
+    aber kein stale RecoveryArtifact/Backup und kein automatischer Switch;
+12. nur im nicht-supersedeten Fall obligatorisch activated SyncBackupV6 erzeugen
+    und Test-Restore; sein RemoteAnchor muss den successor_activation_anchor
+    enthalten, darf ihn nur um den vollständig verifizierten post-activation
+    Suffix erweitern und das RecoveryArtifact muss zum End-Recovery-State passen;
 13. ActivationLineageCacheV2 mit eigenem Cache-ID/Hash
     persistieren/readback-verifizieren;
-14. erst danach atomar auf v2 umschalten und v1 retire; lokale Writer-Freigabe
-    nur, wenn die final verifizierte Authority weiterhin zum lokalen Key passt.
+14. unmittelbar vor dem lokalen Umschalten Successor erneut canonical_full
+    prüfen. Recovery-State-Fortschritt/erneutes Seal seit Backup =>
+    post_activation_superseded; reine Fachrows/WriterGrants bleiben zulässig und
+    writer_status wird aus der letzten Authority abgeleitet;
+15. erst danach atomar auf v2 umschalten und v1 retire. Die No-CAS-Restgrenze
+    zwischen letztem Read und lokalem Commit bleibt bewusst bestehen; vor jeder
+    späteren Mutation folgt erneut Full Verify.
 
 Alte v1-Geräte sehen das Announcement und dürfen die alte Epoche nicht weiter
 als aktiv behandeln.
@@ -1182,9 +1222,11 @@ Mindestens:
 61. cache_id/rotation_id/migration_id/transition_id/confirmation_id/operation_id:
     exakte Decode-Länge und kanonisches Base64URL; falsche Länge oder
     nicht-kanonische Repräsentation -> fail-closed.
-62. Recovery-Rekey versucht aktuellen oder früheren supersedierten
-    Recovery-Takeover-Key derselben Epoche erneut als to-Key zu verwenden ->
-    recovery_takeover_key_reuse / security_blocked.
+62. Recovery-Rekey verwendet einen seit der ersten v2-Aktivierung
+    bereits bekannten URS oder Recovery-Takeover-Key erneut — auch aus einer
+    Vorgänger-Epoche -> recovery_credential_reuse / security_blocked. Die
+    v1→v2-Legacy-Grenze für historisch vor-v2 pensionierte Credentials bleibt
+    ausdrücklich dokumentiert.
 63. zweite Control-Row in anderem Envelope verwendet einen bereits belegten
     Control-ID-Bytewert erneut — auch cross-type zwischen
     grant_id/rotation_id/migration_id/transition_id/confirmation_id ->
@@ -1223,6 +1265,56 @@ Mindestens:
     Control-IDs.
 75. successor_creation_locator im Announcement != geschützter
     Manifest.creation_locator -> security_blocked.
+76. Successor-Manifest/RecoveryArtifact kürzt, ersetzt oder erfindet
+    recovery_credential_history gegenüber der final verifizierten v2-Source ->
+    recovery_credential_history_mismatch / security_blocked.
+77. staged RecoveryArtifact bereits publiziert, lokaler Abort bei weiterhin
+    unverändertem Transition-Anchor -> unzulässig; exakte Transition bleibt
+    completion-pflichtig.
+78. Unknown Outcome mit fehlendem Envelope -> ohne erneutes canonical_full kein
+    Retry; wird die vorbereitete Revision inzwischen stale, landet sie in
+    stale_writer_pending statt in einem zweiten Append.
+79. physisch vorhandene stale_writer_rejected-Row -> niemals allein wegen
+    Prefix-Coverage als lokaler durable Commit markieren.
+80. RecoveryArtifact-Publish mutating request wurde versucht und endet in
+    Crash/unknown_outcome -> artifact_publish_attempted bleibt durable true;
+    lokaler Abort ist verboten, bis Remote-Reconciliation bzw. ein echter
+    Anchor-Overtake den Zustand entscheidet.
+81. VerifiedRemoteState meldet eine Envelope-ID zugleich accepted und
+    stale_writer_rejected oder meldet accepted/stale IDs außerhalb des
+    verifizierten physischen Sets -> gemeinsamer Coordinator security_blocked
+    vor Persistenz.
+82. operation_generation ändert sich während der asynchronen
+    unknown-outcome-retry-Authority-Prüfung -> kein zweiter Append; fail-closed.
+83. post-activation Suffix enthält nur Fachrows/WriterGrants -> finalen Prefix
+    vollständig verifizieren, End-Writer-Authority ins Backup binden, Cutover
+    ggf. read_only fortsetzen.
+84. post-activation Suffix akzeptiert RecoveryAuthorityTransition -> staged
+    RecoveryArtifact ist historisch; lokaler Operation-State wird
+    post_activation_superseded, kein stale activated Backup/kein Auto-Switch.
+85. post-activation Suffix akzeptiert RotationAnnouncement auf dem Successor ->
+    Successor bereits erneut sealed; alter Cutover post_activation_superseded,
+    kein Auto-Switch.
+86. Nach activated Backup/Lineage-Cache verändert sich der Successor vor dem
+    lokalen Switch: letzter canonical_full muss RecoveryTransition/Seal erkennen
+    und post_activation_superseded setzen; reine Fachrows/WriterGrants dürfen
+    den Switch mit final neu abgeleitetem Writerstatus fortsetzen.
+87. Auch der nach frischem Full Verify autorisierte Unknown-Outcome-Retry endet
+    erneut in unknown_outcome und das Envelope fehlt weiter -> Readback erneut
+    canonical_full verifizieren, Envelope pending lassen und aktuellen Versuch
+    beenden; kein blinder dritter Append.
+88. RecoveryArtifact-Create verliert Response und später erscheinen mehrere
+    Kandidaten desselben Locators: nur owner-only/Grid-verifizierte,
+    pre-bound leere oder byte-identisch erwartete operation-eigene Duplikate
+    dürfen deterministisch konvergiert/orphaned werden. Pre-bound appProperties
+    sind nur vollständig leer oder bereits exakt v6; vor Artifact-Write müssen
+    die exakten drei v6-Properties readback-verifiziert sein. Widersprüchliche
+    nicht-leere Artifact-Bytes/Properties bleiben ambiguous/security_blocked.
+89. Jedes RecoveryArtifactV6 wird vor erster Remote-Mutation one-shot vollständig
+    lokal persistiert/readback-verifiziert und per SHA-256 an den jeweiligen
+    Operation-State gebunden. Create-/Write-Retries regenerieren niemals
+    recovery_artifact_id, Salt, IV oder Ciphertext. recovery_rekey besitzt
+    zusätzlich den D-002 artifact_publish_attempted-Fence.
 
 ## 22. Nicht-Ziele
 
@@ -1299,6 +1391,11 @@ Für v2:
 - `VerifiedRemoteState` muss seine `profileId` tragen und darf
   profil-spezifischen, bereits verifizierten Zustand nur als klar abgegrenzten
   `profileState` an die Authority-Schicht weiterreichen;
+- der gemeinsame `RemoteProfileVerifier.verify()`-/
+  `TransportProfileCodec.verifyRemote()`-Pfad ist **canonical_full-only**.
+  Der operation-gebundene v2-`rotation_resume`-Verifier liefert einen eigenen
+  staged Resulttyp und darf niemals einen normalen `VerifiedRemoteState`
+  erzeugen oder an CoordinatorStore/WriteAuthority weiterreichen;
 - Anchor-Erzeugung und Prefix-Fortschrittsprüfung gehören in den
   `TransportProfileCodec`, nicht in den gemeinsamen Coordinator;
 - niemals eine v2-Epoche über einen v1-Codec oder einen Verified-State eines
@@ -1385,19 +1482,34 @@ Remote-Eigenschaft ist.
 Gemeinsame Push-/Readback-/Generation-Mechanik kann wiederverwendet werden.
 Der Coordinator darf dabei weder `RemoteAnchorV1` noch v1-Prefix-Helper kennen:
 er delegiert Anchor-Erzeugung/-Fortschrittsprüfung an den aktiven Profilcodec.
-Die Schreibfreigabe läuft zusätzlich über eine profilabhängige
-Authority-Schnittstelle, z.B.:
+
+Zwei zusätzliche Grenzen sind nach adversarial Review verbindlich:
+
+- Nach einem Unknown Outcome reicht ein struktureller Read **nicht**. Fehlt das
+  vorbereitete Envelope, muss vor jedem Retry erneut canonical full verifiziert
+  werden; erst danach entscheidet die profilabhängige Authority für genau diese
+  Envelope-Bytes `push` oder `quarantine_stale_writer`.
+- Persistenz bekommt den vollständigen `VerifiedRemoteState` mit semantischen
+  Envelope-Dispositionen. Physische Row-Anwesenheit/Anchor-Coverage allein darf
+  niemals `durable` bedeuten, weil v2 eine physisch vorhandene
+  `stale_writer_rejected`-Revision ausdrücklich zulässt.
+
+Die Schreibfreigabe läuft deshalb über eine profilabhängige
+Authority-Schnittstelle:
 
 ```text
 WriteAuthority {
-  canPrepareDomainWrite(...)
-  verifyBeforePush(...)
-  verifyAfterReadback(...)
+  canPrepareDomainWrite(verified)
+  verifyBeforePush(envelope, verified, initial|unknown_outcome_retry)
+    -> push | quarantine_stale_writer
+  accessAfterReadback(verified)
 }
 ```
 
 v1 bekommt eine Adapterimplementierung mit exakt bisheriger Semantik. v2 prüft
-Grant/Generation/Device-ID.
+Grant/Generation/Device-ID sowie Seal-/Pending-Rekey-State. `CoordinatorStore`
+entscheidet Outbox-Durability anhand der verifizierten semantischen
+Envelope-Sets, nicht anhand roher Rows.
 
 #### `src/data/localDatabase.ts`
 
@@ -1554,19 +1666,26 @@ eigentlichen Writer-Handoff-Implementierung geschehen.
 ## 26. Empfohlene Refactoring-Reihenfolge ohne Verhaltensänderung
 
 Vor v2-Funktionalität war ein eigener vorbereitender Refactoring-PR verlangt.
-PR #36 ist gemergt und die vollständige Security Validation auf dem kombinierten
-Stand war grün; diese Vorentkopplung ist damit abgeschlossen:
+PR #36 hat die ursprüngliche Profilentkopplung sauber hergestellt. Spätere
+adversariale Reviews haben jedoch gezeigt, dass zwei **semantische** Contract-
+Grenzen damals noch nicht sichtbar waren: Unknown-Outcome-Retry brauchte keinen
+erneuten Full Verify, und lokale Durability konnte nur physische Row-Anwesenheit
+sehen. Diese Erkenntnis ist kein Zurückdrehen von #36, sondern eine stärkere
+Anforderung, die erst durch v2-stale-writer-Semantik entsteht. Der
+Implementierungsstart bleibt blockiert, bis auch diese Nachhärtung grün ist:
 
 1. aktuelle v1-Konstanten und Typen explizit als V1 benennen;
 2. `RevisionV1` und `EpochLocalSecurityStateV5` als eingefrorene Typen
    herausziehen;
 3. v1-Verifier hinter eine profilbezogene Verifier-Schnittstelle setzen;
 4. Coordinator-Schreibfreigabe hinter eine profilneutrale
-   `WriteAuthority`-Policy mit `writer | read_only` ziehen; diese Policy
-   gehört in den Protokoll-/lokalen State-Layer, **nicht** in den
-   Google-Provider;
-5. `VerifiedRemoteState` an `profileId` binden und einen abgegrenzten
-   `profileState` für spätere v2-Authority-Daten vorsehen;
+   `WriteAuthority`-Policy ziehen; die Policy besitzt getrennte Prepare-,
+   Push-/Retry- und Readback-Gates und kann stale Writer explizit
+   quarantinieren. Sie gehört in den Protokoll-/lokalen State-Layer, **nicht**
+   in den Google-Provider;
+5. `VerifiedRemoteState` an `profileId` binden, einen abgegrenzten
+   `profileState` für spätere v2-Authority-Daten vorsehen und semantische
+   accepted/stale-writer Envelope-Sets an die Persistenz weitergeben;
 6. auch `RemoteAnchorV1` explizit als eingefrorenes v1-Wireformat benennen und
    Anchor-Policy aus dem gemeinsamen Coordinator in den Profilcodec verschieben;
 7. Remote-Binding/Profile-ID aus fest codierten lokalen Persistenzstellen

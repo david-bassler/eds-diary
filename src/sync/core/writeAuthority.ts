@@ -7,7 +7,8 @@ import { SINGLE_WRITER_V1_PROFILE, type WriteAuthority } from './contracts'
 export class SingleWriterV1WriteAuthority implements WriteAuthority {
   readonly profileId = SINGLE_WRITER_V1_PROFILE
   accessAfterPull(): 'writer' { return 'writer' }
-  assertBeforePush(): void {}
+  canPrepareDomainWrite(): 'writer' { return 'writer' }
+  verifyBeforePush(): 'push' { return 'push' }
   accessAfterReadback(): 'writer' { return 'writer' }
 }
 
