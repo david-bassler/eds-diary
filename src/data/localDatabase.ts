@@ -187,10 +187,10 @@ async function migratedVisibleId(context:EpochContext,store:LocalStoreName,legac
 function sameCanonical(left:unknown,right:unknown):boolean{return decodeUtf8(canonicalBytes(left as never))===decodeUtf8(canonicalBytes(right as never))}
 async function verifyLegacyTarget(db:IDBDatabase,item:LegacySource):Promise<void>{const context=(await loadEpoch(db)).context,legacyId=String(item.value.id),expectedId=await migratedVisibleId(context,item.store,legacyId),values=await readValues<Record<string,unknown>>(db,item.store),target=values.find(value=>String(value.id)===expectedId);if(!target)throw new Error('Legacy target verification failed.');if(item.value.status==='deleted'){if(target.status!=='deleted')throw new Error('Legacy tombstone target verification failed.');return}const expected={...item.value,id:expectedId},actual={...target};if(!Object.prototype.hasOwnProperty.call(expected,'status'))delete actual.status;if(!sameCanonical(expected,actual))throw new Error('Legacy target bytes changed during migration.')}
 async function sealLegacyPlaintextStorage(db:IDBDatabase):Promise<void>{
-  const legacyStores=LEGACY_STORES.filter(name=>db.objectStoreNames.contains(name)),hadLocalStorage=globalThis.localStorage?.getItem(LEGACY_ACTIVITY_TYPES)!==null
-  if(legacyStores.length){const tx=db.transaction(legacyStores,'readwrite');for(const name of legacyStores)tx.objectStore(name).clear();await complete(tx);const verify=db.transaction(legacyStores,'readonly');for(const name of legacyStores)if(await result(verify.objectStore(name).count())!==0){verify.abort();throw new Error('Legacy plaintext store cleanup readback failed.')}await complete(verify)}
-  globalThis.localStorage?.removeItem(LEGACY_ACTIVITY_TYPES)
-  if(globalThis.localStorage?.getItem(LEGACY_ACTIVITY_TYPES)!==null)throw new Error('Legacy plaintext localStorage cleanup failed.')
+  const legacyStores=LEGACY_STORES.filter(name=>db.objectStoreNames.contains(name)),storage=globalThis.localStorage,hadLocalStorage=storage?storage.getItem(LEGACY_ACTIVITY_TYPES)!==null:false
+  if(legacyStores.length){const tx=db.transaction(legacyStores,'readwrite');for(const name of legacyStores)tx.objectStore(name).clear();await complete(tx);const verify=db.transaction(legacyStores,'readonly'),counts=legacyStores.map(name=>result(verify.objectStore(name).count()));if((await Promise.all(counts)).some(count=>count!==0)){verify.abort();throw new Error('Legacy plaintext store cleanup readback failed.')}await complete(verify)}
+  storage?.removeItem(LEGACY_ACTIVITY_TYPES)
+  if(storage&&storage.getItem(LEGACY_ACTIVITY_TYPES)!==null)throw new Error('Legacy plaintext localStorage cleanup failed.')
   if(!legacyStores.length&&!hadLocalStorage)return
 
   const nextVersion=db.version+1
