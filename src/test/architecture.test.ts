@@ -70,11 +70,14 @@ describe('v2 pre-implementation hardening boundaries',()=>{
     expect(contracts).toMatch(/must never manufacture VerifiedRemoteState/)
     expect(protocol).toMatch(/staged_incomplete, \*\*kein\*\* kanonischer\s+VerifiedRemoteState/)
   })
-  it('keeps valid post-activation lifecycle advancement from producing a stale cutover backup',async()=>{
+  it('keeps valid post-activation lifecycle advancement from producing a stale cutover backup or switch',async()=>{
     const protocol=await readFile('docs/security/EDS_TRANSFERABLE_SINGLE_WRITER_V2_EXACT_PROTOCOL.md','utf8')
     const ledger=await readFile('docs/security/EDS_TRANSFERABLE_SINGLE_WRITER_V2_DECISIONS.md','utf8')
     expect(protocol).toMatch(/post_activation_superseded/)
     expect(protocol).toMatch(/RecoveryArtifactV6 muss exakt dem final verifizierten Recovery-State/s)
+    expect(protocol).toMatch(/Unmittelbar vor dem lokalen Switch.*canonical_full/s)
+    expect(protocol).toMatch(/activated_backup_verified -> switched \\| post_activation_superseded/)
     expect(ledger).toMatch(/D-010/)
+    expect(ledger).toMatch(/mandatory final\\s+`canonical_full`/s)
   })
 })
