@@ -32,6 +32,7 @@ describe('v1 production hardening boundaries',()=>{
     expect(staged).toBeGreaterThan(-1)
     expect(prepared).toBeGreaterThan(staged)
     expect(announcement).toBeGreaterThan(prepared)
+    expect(rotation).toMatch(/prepareRecoveryArtifactSlot\(this\.urs,recovery\).*transport\.append/s)
     expect(rotation).toMatch(/Source changed around the rotation announcement/)
     expect(rotation).toMatch(/verifySourceStillAtAnnouncement/)
   })
