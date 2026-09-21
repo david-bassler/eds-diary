@@ -2,8 +2,8 @@ import 'fake-indexeddb/auto'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { ProductiveRotationService, type ProductiveRotationFaultPoint } from '../data/productiveRotationService'
 import { DOMAIN_SCHEMA_REGISTRY, IndexedDbRotationRepository, LOCAL_STORES, __localDatabaseTesting, putRecord } from '../data/localDatabase'
-import { fromBase64Url } from '../security/crypto/bytes'
-import { recoverRootKeyCandidate } from '../security/recovery'
+import { base64Url, fromBase64Url } from '../security/crypto/bytes'
+import { createRecovery, recoverRootKeyCandidate } from '../security/recovery'
 import { randomBytes, recoveryCommitment } from '../security/crypto/core'
 import { createBestEffortRootWrap, stateTag } from '../security/localState'
 import { manifestFingerprint, prepareManifest, schemaRegistryHash, SCHEMA_ALLOWLIST } from '../security/manifest'
@@ -63,6 +63,13 @@ function deleteDatabase():Promise<void>{return new Promise((resolve,reject)=>{co
 describe('ProductiveRotationService',()=>{
   beforeEach(async()=>{await __localDatabaseTesting.resetForTesting();await deleteDatabase();globalThis.localStorage?.clear?.()})
 
+  it('preflights recovery-slot replacement without publishing staged bytes',async()=>{
+    const google=new GoogleBoundary(),session=googleProviderSessionFromAuthenticatedClient(google.client),secret=randomBytes(32),account=base64Url(randomBytes(32)),prior=await createRecovery({diary_id:base64Url(randomBytes(16)),epoch_id:base64Url(randomBytes(16)),key_id:base64Url(randomBytes(16)),RK_epoch:base64Url(randomBytes(32)),manifest_fingerprint:base64Url(randomBytes(32)),remote_anchor:null,google_account_binding:account,recovery_generation:1,created_at:'2026-09-16T10:00:00.000Z'},secret),next=await createRecovery({diary_id:base64Url(randomBytes(16)),epoch_id:base64Url(randomBytes(16)),key_id:base64Url(randomBytes(16)),RK_epoch:base64Url(randomBytes(32)),manifest_fingerprint:base64Url(randomBytes(32)),remote_anchor:null,google_account_binding:account,recovery_generation:2,created_at:'2026-09-16T11:00:00.000Z'},secret)
+    await session.publishRecoveryArtifact(secret,prior)
+    await expect(session.prepareRecoveryArtifactSlot(secret,next)).rejects.toThrow('different diary')
+    expect((await session.loadRecoveryArtifact(secret)).recovery_artifact_id).toBe(prior.recovery_artifact_id)
+  })
+
   it('survives the productive crash/resume matrix and a second complete rotation',async()=>{
     const createdAt='2026-09-16T12:00:00.000Z',urs=randomBytes(32),google=new GoogleBoundary(),repository=new IndexedDbRotationRepository()
     await putRecord(LOCAL_STORES.painEntries,pain('rotation-active'))
@@ -92,6 +99,7 @@ describe('ProductiveRotationService',()=>{
     const stagedRecovery=[...google.remotes.values()].filter(item=>!item.trashed&&item.properties.app_format==='sync-recovery-v5')
     expect(stagedRecovery).toHaveLength(1)
     expect(stagedRecovery[0]?.artifact).toBe('')
+    expect(await session.findRecoveryArtifact(urs)).toBeNull()
     await runFault('after-backup-verified')
     await runFault('after-announcement-envelope')
 
