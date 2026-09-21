@@ -19,7 +19,7 @@ describe('profile-neutral coordinator boundaries',()=>{it('delegates anchor sema
 describe('v1 production hardening boundaries',()=>{
   it('keeps the repo-wide v1 adversarial decisions in an explicit anti-churn ledger',async()=>{
     const ledger=await readFile('docs/security/EDS_SINGLE_WRITER_V1_HARDENING_DECISIONS.md','utf8')
-    for(const id of ['V1-H-001','V1-H-002','V1-H-003','V1-H-004','V1-H-005','V1-H-006'])expect(ledger).toContain(id)
+    for(const id of ['V1-H-001','V1-H-002','V1-H-003','V1-H-004','V1-H-005','V1-H-006','V1-H-007'])expect(ledger).toContain(id)
     expect(ledger).toMatch(/Rejected alternative/)
     expect(ledger).toMatch(/fail-stop/i)
     expect(ledger).toMatch(/schema fence/i)
@@ -47,6 +47,20 @@ describe('v1 production hardening boundaries',()=>{
     const verifier=await readFile('src/sync/core/remoteVerifier.ts','utf8')
     expect(exports).toMatch(/verified\.retired.*current backup/s)
     expect(verifier).toMatch(/verified\.retired.*historical rollback/s)
+  })
+  it('uses the secure database floor in recovery persistence without recreating legacy plaintext stores',async()=>{
+    const recovery=await readFile('src/data/recoveryProfile.ts','utf8')
+    expect(recovery).toMatch(/SECURE_DATABASE_VERSION_FLOOR = 9/)
+    expect(recovery).not.toMatch(/for\(const store of LEGACY_PLAINTEXT_STORES\).*createObjectStore/s)
+    expect(recovery).toMatch(/LEGACY_PLAINTEXT_STORES\.filter\(name=>db\.objectStoreNames\.contains\(name\)\)/)
+  })
+  it('keeps same-generation recovery rollback protection while deriving a monotonic artifact timestamp',async()=>{
+    const rotation=await readFile('src/data/productiveRotationService.ts','utf8')
+    const store=await readFile('src/sync/google/GoogleRecoveryArtifactStore.ts','utf8')
+    expect(rotation).toMatch(/recoveryArtifactCreatedAt/)
+    expect(rotation).toMatch(/monotonicIsoAfter\(local,payload\.created_at\)/)
+    expect(rotation).toMatch(/Current remote recovery artifact does not match the rotation source/)
+    expect(store).toMatch(/recovery_generation===previous\.payload\.recovery_generation&&next\.payload\.created_at<=previous\.payload\.created_at/)
   })
 })
 
