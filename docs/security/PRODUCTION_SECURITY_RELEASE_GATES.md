@@ -1,12 +1,12 @@
 # Production Security Release Gates
 
-Stand: 20.09.2026
+Stand: 21.09.2026
 
 EDS Diary ist **nicht** als „production secure“ freigegeben.
 
 | Gate | Status | Freigabekriterium |
 |---|---|---|
-| Interner Single-Writer-v1-Kern | **IMPLEMENTED / INTERN VALIDATED** | Kryptographischer Kern und produktive Integrationspfade sind fail-closed implementiert und automatisiert validiert. v1 setzt für Remote-Mutationen jedoch die Single-Remote-Writer-Betriebsannahme voraus und bietet noch kein geräteübergreifendes kryptographisches Fencing; dieses gehört zum separaten v2-Gate. |
+| Interner Single-Writer-v1-Kern | **IMPLEMENTED / INTERN VALIDATED** | Kryptographischer Kern und produktive Integrationspfade sind fail-closed implementiert und automatisiert validiert. Der v1-Cutover verlangt einen vollständig durablen Freeze-Prefix, das Announcement als einzige unmittelbare Folgerow und einen final unveränderten retired Source-Anchor vor lokalem Switch. Widersprüchliche Multi-Client-Evidenz führt zum Fail-Stop. v1 setzt weiterhin die Single-Remote-Writer-Betriebsannahme voraus und bietet kein geräteübergreifendes kryptographisches Fencing; dieses gehört zum separaten v2-Gate. |
 | Transferable Single Writer v2 | **ARCHITEKTUR + EXAKTES PROTOKOLL DEFINIERT / NICHT IMPLEMENTIERT** | Mehrere Geräte dürfen dasselbe Tagebuch lesen, aber nur eine remote verifizierte Writer-Key-Authority darf Fachcommits erzeugen. Das exakte v2 Wire-/Schema-/Signatur-/Recovery-Takeover-Profil ist in `EDS_TRANSFERABLE_SINGLE_WRITER_V2_EXACT_PROTOCOL.md` eingefroren. Vor produktiver Freigabe bleiben Implementierung, v1→v2-Migration, Join/Handoff/Fencing, Rotation-/Takeover-Tests und insbesondere das Live-Google-Konkurrenzgate abzuschließen. Ein generischer Browser-`CryptoKey` allein beweist nicht die Einzigartigkeit eines physischen Geräts. |
 | Google Auth-Origin | Implementiert / Deployment **BLOCKED_EXTERNAL** | Separat baubares `/google-auth/`-Artefakt mit erlaubtem Return-Origin, einmaliger Action-Bindung, Popup→Auth-Bridge-Handoff, MessagePort-RPC und exakt begrenzten Drive-/Sheets-Endpunkten. Das Credential wird nicht an Diary-Code übergeben. Die GitHub-Pages-Testbereitstellung bleibt same-origin; Deployment auf einen zweiten Origin und echte Credentials bleiben extern. |
 | Live Google Contract | **BLOCKED_EXTERNAL** | Hostile-Grid-/Permission-/Unknown-Outcome-Suite gegen dediziertes Google-Testkonto. Zusätzlich ist der reale Mehrgerätefall ausdrücklich kein v1-Join-Pfad: ein zweites Gerät darf ein bestehendes Tagebuch erst mit v2 Join/Handoff verwenden; erneutes v1-`remote_enablement` ist dafür kein unterstützter Ersatz. |
@@ -41,10 +41,14 @@ EDS Diary ist **nicht** als „production secure“ freigegeben.
   getrennte zweiphasige v2-RecoveryAuthorityTransition/Pending-Rekey-Fence-
   Konstruktion ist Bestandteil des oben als **NICHT IMPLEMENTIERT**
   ausgewiesenen Transferable-Single-Writer-v2-Gates.
-- Das verschlüsselte Recovery-Artefakt wird vor der Umschaltung zusätzlich in
-  einer privaten owner-only Google-Ressource unter einem aus dem Recovery-Key
-  abgeleiteten opaken Locator gespeichert und per Readback verifiziert. Google-
-  Recovery benötigt dadurch für neu gehärtete Epochen nur Konto + Recovery-Key.
+- Das verschlüsselte Recovery-Artefakt wird bei normaler v1-Rotation und
+  recovery_rekey zunächst one-shot lokal persistiert und bootstrap-verifiziert.
+  Erst nach durablem, race-geprüftem Source-Announcement wird exakt dieses
+  Artefakt in der privaten owner-only Google-Ressource veröffentlicht und per
+  Readback verifiziert. Remote-Enablement ist die ausdrückliche Ausnahme ohne
+  vorherige Remote-Source. Google-Recovery benötigt für aktivierte Epochen dadurch
+  weiterhin nur Konto + Recovery-Key, ohne einen staged Successor vorzeitig zum
+  aktuellen Recovery-Ziel zu machen.
 - Der Browser-Persistenzstatus wird über die Storage API angefordert und angezeigt;
   die Zahl ausschließlich lokal vorhandener Änderungen wird aus der persistenten
   Envelope-Outbox statt aus flüchtigem UI-Zustand ermittelt.
@@ -54,8 +58,15 @@ EDS Diary ist **nicht** als „production secure“ freigegeben.
 - Import akzeptiert auch frühere von der App pretty-printed exportierte JSON-Dateien,
   bleibt aber strikt gegen Duplicate Keys und nicht-I-JSON-konforme Werte; alle
   kryptographischen Vergleiche verwenden weiterhin kanonische JCS-Bytes.
-- Aktuelle Remote-Backups werden vor Export vollständig verifiziert und enthalten
-  lokale pending Envelopes.
+- Nach verifiziertem Legacy-Cutover werden die ursprünglichen Klartext-Fachstores
+  readback-verifiziert geleert, der Legacy-localStorage-Wert entfernt und die
+  IndexedDB-Version als Schema-Fence erhöht; die Klartext-Stores werden gelöscht
+  und vom aktuellen Schema nicht wieder angelegt. Ein alter offener Tab darf
+  diesen Fence blockieren, aber nicht still umgangen werden.
+- Aktuelle Remote-Backups werden vor Export vollständig verifiziert, enthalten
+  lokale pending Envelopes und werden nicht aus einer bereits retired Epoche
+  erzeugt. Der normale Backup-Recovery-Pfad lehnt retired Epochen ebenfalls ab;
+  historischer Rollback ist kein impliziter Standard-Recovery-Modus.
 - Explizite Fachkonflikt-Oberfläche, die alle aktiven und Tombstone-Heads zeigt
   und ausschließlich den sicheren gestuften Merge-Pfad verwendet.
 - Separat statisch baubares Auth-Origin-Gegenstück unter `/google-auth/`; die
@@ -71,6 +82,13 @@ EDS Diary ist **nicht** als „production secure“ freigegeben.
 - Recovery-/Backup-/Fresh-Profile-Bootstrap einschließlich RootWrap-, State-MAC-,
   Journal- und Envelope-Readback sowie **v1**-Recovery-Key-Rekey und remote
   Recovery-Artefakt-Readback.
+- v1-Rotation mit zusätzlicher physischer Source-Row zwischen Freeze und
+  Announcement => Fail-Stop; staged RecoveryArtifact bleibt bis zum durablem
+  Announcement ausschließlich lokal.
+- Legacy-Migration mit konkurrierendem Legacy-Write => Catch-up bis stabil,
+  anschließend Entfernung der Klartext-Stores und Schema-Fence.
+- Kryptographisch gültiges Backup einer per Rotation retired Epoche => normales
+  Backup-Recovery wird abgelehnt.
 - Regressionen für Legacy-Pretty-JSON-Import bei weiterem Duplicate-Key-Reject,
   Backup-Restore als erneut remote-aktivierbares Profil und dauerhaften
   Recovery-Artefakt-Readback.
@@ -92,6 +110,8 @@ EDS Diary ist **nicht** als „production secure“ freigegeben.
 - Produktions-CSP/-Header, Source-Map-/Logprüfung und externer Security-/Crypto-Audit.
 
 ## Interner Status
+
+`SECURITY/DECISION: single-writer-v1 production hardening rationale frozen in EDS_SINGLE_WRITER_V1_HARDENING_DECISIONS.md`
 
 `TODO_INTERNAL: transferable-single-writer-v2 implementation`
 
