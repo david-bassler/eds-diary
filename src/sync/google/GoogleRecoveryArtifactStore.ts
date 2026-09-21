@@ -128,14 +128,21 @@ export class GoogleRecoveryArtifactStore {
     if(candidates.length!==1||candidates[0]?.id!==remoteId)throw new Error('Recovery artifact resource is no longer unique.')
   }
 
-  async load(secret:Uint8Array):Promise<RecoveryArtifact>{
+  async find(secret:Uint8Array):Promise<RecoveryArtifact|null>{
     const locator=await recoveryArtifactLocator(secret),candidates=await this.candidates(locator)
-    if(candidates.length!==1||!candidates[0]?.id)throw new Error(candidates.length?'Recovery artifact discovery is ambiguous.':'No remote recovery artifact matches this recovery key.')
+    if(candidates.length===0)return null
+    if(candidates.length!==1||!candidates[0]?.id)throw new Error('Recovery artifact discovery is ambiguous.')
     await this.verifyFile(candidates[0].id,locator)
     const text=await this.readArtifactText(candidates[0].id)
     if(!text)throw new Error('Remote recovery artifact is empty.')
     const parsed=parseStrictJson(utf8(text)) as unknown
     if(canonicalJson(parsed as never)!==text)throw new Error('Remote recovery artifact is not stored canonically.')
     return parsed as RecoveryArtifact
+  }
+
+  async load(secret:Uint8Array):Promise<RecoveryArtifact>{
+    const artifact=await this.find(secret)
+    if(!artifact)throw new Error('No remote recovery artifact matches this recovery key.')
+    return artifact
   }
 }
