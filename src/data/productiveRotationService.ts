@@ -136,9 +136,8 @@ export class ProductiveRotationService {
     const local=this.now()
     if(state.migrationKind!=='normal')return local
     const source=this.source??await this.repository.verifiedActiveEpoch()
-    let prior:RecoveryArtifact
-    try{prior=await this.session.loadRecoveryArtifact(this.urs)}
-    catch(error){if(error instanceof Error&&error.message.includes('No remote recovery artifact'))return local;throw error}
+    const prior=await this.session.findRecoveryArtifact(this.urs)
+    if(!prior)return local
     const candidate=await recoverRootKeyCandidate(prior,this.urs),payload=candidate.payload
     if(payload.diary_id!==source.context.diaryId||payload.epoch_id!==source.context.epochId||payload.key_id!==source.context.keyId||payload.manifest_fingerprint!==source.context.manifestFingerprint||payload.recovery_generation!==source.state.recovery_generation||candidate.recoveryCommitment!==source.state.recovery_urs_commitment)throw new Error('Current remote recovery artifact does not match the rotation source.')
     return monotonicIsoAfter(local,payload.created_at)
