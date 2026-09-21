@@ -19,7 +19,7 @@ describe('profile-neutral coordinator boundaries',()=>{it('delegates anchor sema
 describe('v2 pre-implementation hardening boundaries',()=>{
   it('keeps security rationale in an explicit anti-churn decision ledger',async()=>{
     const ledger=await readFile('docs/security/EDS_TRANSFERABLE_SINGLE_WRITER_V2_DECISIONS.md','utf8')
-    for(const id of ['D-001','D-002','D-003','D-004','D-005','D-006','D-007','D-008','D-009'])expect(ledger).toContain(id)
+    for(const id of ['D-001','D-002','D-003','D-004','D-005','D-006','D-007','D-008','D-009','D-010'])expect(ledger).toContain(id)
     expect(ledger).toMatch(/Rejected alternative/)
     expect(ledger).toMatch(/Revisit only if/)
     expect(ledger).toMatch(/Implementation status at this review/)
@@ -69,5 +69,12 @@ describe('v2 pre-implementation hardening boundaries',()=>{
     expect(contracts).toMatch(/canonical-full only/)
     expect(contracts).toMatch(/must never manufacture VerifiedRemoteState/)
     expect(protocol).toMatch(/staged_incomplete, \*\*kein\*\* kanonischer\s+VerifiedRemoteState/)
+  })
+  it('keeps valid post-activation lifecycle advancement from producing a stale cutover backup',async()=>{
+    const protocol=await readFile('docs/security/EDS_TRANSFERABLE_SINGLE_WRITER_V2_EXACT_PROTOCOL.md','utf8')
+    const ledger=await readFile('docs/security/EDS_TRANSFERABLE_SINGLE_WRITER_V2_DECISIONS.md','utf8')
+    expect(protocol).toMatch(/post_activation_superseded/)
+    expect(protocol).toMatch(/RecoveryArtifactV6 muss exakt dem final verifizierten Recovery-State/s)
+    expect(ledger).toMatch(/D-010/)
   })
 })
