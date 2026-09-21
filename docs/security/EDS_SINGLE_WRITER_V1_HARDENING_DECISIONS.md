@@ -197,6 +197,43 @@ cross-device cutover, use the v2 protocol and its D-001…D-010 decision ledger.
 
 ---
 
+## V1-H-007 – Same-generation Recovery ordering is monotonic, not wall-clock authority
+
+**Decision.** The Google Recovery store continues to reject replacement of a
+RecoveryArtifact by another artifact in the same recovery generation unless the
+new payload has a strictly greater created_at value. Normal v1 rotation does
+not trust the local wall clock to satisfy that rule. Before creating the staged
+successor RecoveryArtifact it loads the current remote artifact with the current
+URS, decrypts it, and requires exact binding to the active Source diary, epoch,
+key, manifest fingerprint, recovery generation and recovery commitment. The new
+artifact timestamp is then max(local clock, previous created_at + 1 ms).
+
+If no remote artifact exists for an older profile, the local clock is used for
+the first publication. Any other failure while loading/verifying the current
+artifact is fatal.
+
+Recovery rekey is different: it advances recovery_generation, so same-generation
+timestamp ordering is not the security discriminator. Remote enablement has no
+prior remote Source artifact.
+
+**Why.** Normal rotation deliberately carries the same URS and recovery
+generation into the successor. The Recovery store therefore needs an ordering
+rule that prevents a stale device from replacing a newer same-generation epoch
+with an older artifact. Using raw device time alone made a legitimate rotation
+unavailable when the clock moved backwards after the previous publication.
+
+**Rejected alternative.** Remove or weaken the same-generation created_at
+comparison in GoogleRecoveryArtifactStore. Rejected because then a stale client
+holding the same URS could republish an older same-generation epoch as the
+normal Google Recovery target.
+
+**Interpretation.** created_at is not proof of real-world chronology and is not
+writer authority. In this v1 compatibility mechanism it is only a monotonic
+ordering token whose floor is authenticated by decrypting the current remote
+RecoveryArtifact.
+
+---
+
 ## Regression checklist
 
 A future change touching these paths must preserve all of the following:
@@ -215,6 +252,7 @@ A future change touching these paths must preserve all of the following:
 - an old open client may block the schema fence but may not be silently ignored;
 - normal current-backup export rejects retired epochs;
 - normal backup recovery rejects retired epochs;
+- same-generation normal rotation derives RecoveryArtifact created_at monotonically from the authenticated current remote artifact rather than trusting wall-clock monotonicity;
 - no frozen v1 wire/schema/fingerprint bytes are changed by these rules.
 
 A future review should classify a proposed reversal as either a new assumption,
