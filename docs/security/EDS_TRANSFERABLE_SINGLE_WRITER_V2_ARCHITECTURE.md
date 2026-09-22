@@ -305,7 +305,7 @@ writer_key_id und authorization** steht ausschließlich in
   "grant_id": "<32-byte base64url>",
   "writer_generation": 7,
   "writer_device_id": "<device-id>",
-  "writer_signing_public_key": "<canonical public-key encoding>",
+  "writer_public_key": "<canonical public-key encoding>",
   "previous_grant_id": "<32-byte base64url|null>",
   "previous_writer_generation": 6,
   "recovery_generation": 3,
@@ -504,7 +504,7 @@ Der Join-Pfad lautet:
 Für einen **normalen** Handoff muss der aktuelle Writer den Public Key des
 Zielgeräts authentisch erhalten. v2 verwendet dafür zunächst einen expliziten
 Out-of-Band-Transferdescriptor, z. B. QR-/Kopiercode mit
-`sync_profile + diary_id + epoch_id + writer_device_id + writer_key_id + public_key + nonce + possession_signature`, den das Zielgerät anzeigt und der
+`sync_profile + diary_id + epoch_id + writer_device_id + writer_key_id + writer_public_key + nonce + possession_signature`, den das Zielgerät anzeigt und der
 aktuelle Writer bestätigt. Der aktuelle Writer muss dabei Profil, Diary-ID und
 Epoch-ID exakt gegen seinen verifizierten aktuellen Kontext prüfen; ein
 Descriptor aus einer anderen oder bereits rotierten Epoche wird abgelehnt. `possession_signature` ist eine domainspezifische Signatur des Ziel-Private-Keys über die kanonischen übrigen Descriptorfelder; der aktuelle Writer verifiziert sie vor Grant-Erzeugung. Dadurch muss ein read-only Gerät keine
@@ -533,7 +533,7 @@ Ablauf:
 2. A muss alle eigenen Pending-Envelopes remote durable machen.
 3. Solange Pending-Daten existieren, ist „Writer übertragen“ blockiert.
 4. A verifiziert Bs Out-of-Band-Transferdescriptor und bindet
-   `writer_device_id + writer_signing_public_key`.
+   `writer_device_id + writer_public_key`.
 5. A erzeugt Grant `g+1` für B, gebunden an aktuellen Anchor und Grant `g`,
    und signiert ihn mit As aktuellem Writer-Schlüssel.
 6. A appendet exakt diesen Grant.
@@ -1329,18 +1329,28 @@ Nicht Teil von v2:
 
 ## 23. Implementierungsreihenfolge
 
+Die normative Feingranularität und die phasenweisen Golden-/Negative-Vector-Gates
+stehen in §23/§24 von
+`EDS_TRANSFERABLE_SINGLE_WRITER_V2_EXACT_PROTOCOL.md`. Diese Architekturdatei
+verwendet dieselbe Reihenfolge und darf sie nicht durch eine ältere gröbere
+Planung übersteuern:
+
 1. v2 Protokoll-/Schema-Definition exakt festschreiben. **Abgeschlossen; normative Quelle ist EDS_TRANSFERABLE_SINGLE_WRITER_V2_EXACT_PROTOCOL.md.**
-2. Writer-Provenienz in Revision/Verifier.
-3. Writer-Grant-Control-Automat.
-4. lokale Security-State-Erweiterung und fail-closed Writer-Gate.
-5. v1->v2 Epoch-Migration.
-6. read-only Join eines bestehenden Tagebuchs.
-7. kooperativer Writer-Transfer.
-8. forced takeover + stale-pending quarantine.
-9. UI.
-10. Unit-/Fault-/Browsermatrix.
-11. Live-Google-Konkurrenztest.
-12. erst danach produktive Freigabe des Mehrgerätepfads.
+2. reine v2 Typen/Validatoren/Krypto-Helper + die zu dieser Schicht gehörenden Golden Vectors.
+3. RevisionV2 + WriterSignatureV2.
+4. TransferableSingleWriterV2Verifier.
+5. WriterGrantStateMachine.
+6. EpochLocalSecurityStateV6 + Writer-Key-Store und fail-closed Writer-Gate.
+7. RecoveryArtifactV6 / RecoveryTakeoverAuthorityV2.
+8. SyncBackupV6.
+9. v1->v2 Epoch-Migration.
+10. read-only Join eines bestehenden Tagebuchs.
+11. kooperativer Writer-Transfer.
+12. forced takeover + stale-pending quarantine.
+13. UI.
+14. vollständige Unit-/Fault-/Browsermatrix bleibt über alle Schritte grün.
+15. Live-Google-Konkurrenztest.
+16. erst danach produktive Freigabe des Mehrgerätepfads.
 
 ## 24. Architekturentscheidung
 
