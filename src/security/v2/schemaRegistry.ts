@@ -14,6 +14,8 @@ import { canonicalBytes } from '../crypto/canonical'
 import { sha256 } from '../crypto/core'
 import { SINGLE_WRITER_V2_SCHEMA_ALLOWLIST } from './types'
 
+export const V2_SCHEMA_REGISTRY_HASH='45WLQG41o-vdMhcWnJR1yhF74km8H55N9wlPnGWdduI' as const
+
 export const V2_SCHEMA_REGISTRY:Readonly<Record<string,unknown>>=Object.freeze({
   'activity-entry/v1':activityEntrySchema,
   'activity-type-settings/v1':activityTypeSettingsSchema,
@@ -39,5 +41,7 @@ export async function schemaRegistryEntriesV2():Promise<SchemaRegistryEntryV2[]>
 }
 
 export async function schemaRegistryHashV2():Promise<string>{
-  return base64Url(await sha256(canonicalBytes(await schemaRegistryEntriesV2() as never)))
+  const hash=base64Url(await sha256(canonicalBytes(await schemaRegistryEntriesV2() as never)))
+  if(hash!==V2_SCHEMA_REGISTRY_HASH)throw new Error('v2 schema registry bytes do not match the frozen protocol hash.')
+  return hash
 }
