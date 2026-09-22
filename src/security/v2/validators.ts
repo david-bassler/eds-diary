@@ -91,7 +91,7 @@ export async function validateWriterGrantV2(value:unknown):Promise<WriterGrantV2
   if(await writerKeyIdV2(fixedBase64Url(publicKey,32,'writer_public_key'))!==keyId)throw new Error('writer_key_id does not match writer_public_key.')
   const authorization=object(grant.authorization,'authorization');exact(authorization,['kind','signer_key_id','signature'],'authorization');const kind=oneOf(authorization.kind,['manifest_genesis','writer_handoff','recovery_takeover'] as const,'authorization.kind');const signer=nullableId(authorization.signer_key_id,32,'authorization.signer_key_id'),signature=nullableId(authorization.signature,64,'authorization.signature')
   if(reason==='initial'){
-    if(generation!==1||grant.previous_grant_id!==null||previous!==0||kind!=='manifest_genesis'||signer!==null||signature!==null)throw new Error('Initial WriterGrantV2 invariants failed.')
+    if(generation!==1||grant.previous_grant_id!==null||previous!==0||kind!=='manifest_genesis'||signer!==null||signature!==null||grant.authority_anchor.covered_row_count!==0)throw new Error('Initial WriterGrantV2 invariants failed.')
   }else{
     if(generation<2||grant.previous_grant_id===null||previous!==generation-1||signer===null||signature===null)throw new Error('Non-genesis WriterGrantV2 predecessor invariants failed.')
     if(reason==='handoff'&&kind!=='writer_handoff')throw new Error('Handoff grant authorization kind mismatch.')
@@ -134,6 +134,7 @@ export function validateEpochMigrationV2(value:unknown):EpochMigrationV2{
   if(source.source_anchor===null)throw new Error('EpochMigrationV2 source_anchor must be non-null.')
   validateAnchorShape(source.source_anchor,[kind==='profile_upgrade'?SINGLE_WRITER_V1_PROFILE:SINGLE_WRITER_V2_PROFILE],'source.source_anchor')
   const transition=nullableId(migration.source_recovery_transition_id,32,'source_recovery_transition_id')
+  if(migration.result_semantic_snapshot_hash!==source.source_semantic_snapshot_hash)throw new Error('Unchanged one-source migration changed the semantic snapshot.')
   if(kind==='profile_upgrade'){
     if(migration.source_writer_authority!==null||transition!==null)throw new Error('Profile-upgrade migration authority fields must be null.')
   }else{
