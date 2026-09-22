@@ -54,6 +54,7 @@ export type V2FatalCode =
   | 'migration_snapshot_mismatch'
   | 'migration_head_count_mismatch'
   | 'activation_confirmation_mismatch'
+  | 'successor_staging_mismatch'
   | 'staged_pre_migration_control_forbidden'
   | 'recovery_credential_history_mismatch'
   | 'protocol_id_collision'
@@ -198,6 +199,8 @@ interface ReplayState {
   genesisRealized: boolean
   migrationRequired: boolean
   acceptedMigration: EpochMigrationV2 | null
+  acceptedMigrationEnvelopeId: string | null
+  acceptedMigrationRowIndex: number | null
   acceptedConfirmation: SuccessorActivationConfirmationV2 | null
   graph: MutableGraph
   authorityHistory: Map<number, WriterAuthoritySnapshotV2>
@@ -637,6 +640,8 @@ async function replay(
     genesisRealized: false,
     migrationRequired: trustRoot.predecessor_epochs.length === 1,
     acceptedMigration: null,
+    acceptedMigrationEnvelopeId: null,
+    acceptedMigrationRowIndex: null,
     acceptedConfirmation: null,
     graph: { revisions: new Map(), children: new Set(), counts: new Map(), depths: new Map() },
     authorityHistory: new Map([[0, copyWriter(currentWriter)]]),
@@ -734,6 +739,10 @@ async function replay(
               break
             case 'epoch-migration-sw-v2':
               disposition = await handleMigration(state, revision.record_data as EpochMigrationV2)
+              if (disposition === 'accepted') {
+                state.acceptedMigrationEnvelopeId = envelopeId
+                state.acceptedMigrationRowIndex = rowIndex
+              }
               break
             case 'successor-activation-confirmation-sw-v2':
               disposition = handleConfirmation(state, trustRoot, revision.record_data as SuccessorActivationConfirmationV2, prefixHashes, index)
@@ -825,6 +834,10 @@ export class TransferableSingleWriterV2Verifier {
       dispositions: [...state.dispositions],
     }
     if (!state.acceptedMigration) return { ...base, status: 'staged_incomplete' }
+    if (!state.acceptedMigrationEnvelopeId || state.acceptedMigrationRowIndex === null) fail('successor_staging_mismatch')
+    const invalidSuffix = state.dispositions.some((entry) => entry.row_index > state.acceptedMigrationRowIndex!
+      && (entry.disposition !== 'duplicate_retry' || entry.envelope_id !== state.acceptedMigrationEnvelopeId))
+    if (invalidSuffix) fail('successor_staging_mismatch')
     return { ...base, status: 'staged_migration_present', migration: state.acceptedMigration }
   }
 }
