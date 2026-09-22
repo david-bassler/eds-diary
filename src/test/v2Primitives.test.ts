@@ -164,6 +164,7 @@ describe('transferable single-writer v2 primitives',()=>{
     await expect(verifyEd25519V2(writer.publicKeyRaw,revision.writer_signature,revisionSigningBytesV2(diary,epoch,revision))).resolves.toBe(true)
     await expect(validateRevisionV2({...revision,unexpected:true} as unknown as RevisionV2)).rejects.toThrow(/unknown or missing/)
     await expect(validateRevisionV2({...revision,writer_context:null})).rejects.toThrow(/writer_context/)
+    await expect(validateRevisionV2({...revision,protocol_created_at:'2026-02-29T12:00:00.000Z'})).rejects.toThrow(/protocol_created_at/)
   })
 
   it('rejects structurally impossible v2 rotation/signing inputs before verifier state',async()=>{
