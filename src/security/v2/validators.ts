@@ -21,6 +21,13 @@ const MAX_PARENTS = 8
 const MAX_PER_RECORD = 4096
 const CREATED_AT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
 
+function canonicalTimestampV2(value:unknown,label:string):string{
+  if(typeof value!=='string'||!CREATED_AT.test(value))throw new Error(`Invalid ${label}.`)
+  const parsed=new Date(value)
+  if(Number.isNaN(parsed.valueOf())||parsed.toISOString()!==value)throw new Error(`Invalid ${label}.`)
+  return value
+}
+
 function object(value:unknown,label:string):Record<string,unknown>{
   if(!value||typeof value!=='object'||Array.isArray(value))throw new Error(`${label} must be an object.`)
   return value as Record<string,unknown>
@@ -163,7 +170,7 @@ async function validateControlData(revision:RevisionV2):Promise<void>{
 export async function validateRevisionV2<T>(revision:RevisionV2<T>):Promise<void>{
   const wrapper=object(revision,'RevisionV2');exact(wrapper,['record_type','record_schema','record_id','revision_id','parent_revision_ids','record_status','record_data','migration_origin','protocol_created_at','writer_context','writer_signature'],'RevisionV2')
   id(revision.record_id,16,'record_id');id(revision.revision_id,32,'revision_id')
-  if(!CREATED_AT.test(revision.protocol_created_at)||Number.isNaN(Date.parse(revision.protocol_created_at)))throw new Error('Invalid protocol_created_at.')
+  canonicalTimestampV2(revision.protocol_created_at,'protocol_created_at')
   if(!Object.prototype.hasOwnProperty.call(V2_RECORD_SCHEMA_BY_TYPE,revision.record_type))throw new Error('Invalid v2 record_type.')
   if(V2_RECORD_SCHEMA_BY_TYPE[revision.record_type as V2RecordType]!==revision.record_schema)throw new Error('Record type/schema binding mismatch.')
   if(!['active','deleted','control'].includes(revision.record_status))throw new Error('Invalid record_status.')
