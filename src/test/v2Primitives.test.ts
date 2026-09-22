@@ -5,6 +5,7 @@ import { canonicalBytes } from '../security/crypto/canonical'
 import { hkdfSha256, sha256 } from '../security/crypto/core'
 import {
   deriveActivationLineageCacheKeyV2,
+  envelopeAadV2,
   deriveBackupKeyV2,
   deriveEnvelopeKeyV2,
   deriveEpochSaltV2,
@@ -57,6 +58,7 @@ describe('transferable single-writer v2 primitives',()=>{
     await expect(deriveRecoveryKeyV2(urs,recoverySalt).then(base64Url)).resolves.toBe('1MqWxcxbxZ0wLaI1_BwqIWzYfjTk1negA9Mu7-3KBkQ')
     await expect(deriveRecoveryTakeoverStagingKeyV2(urs,stagingSalt).then(base64Url)).resolves.toBe('iUUfiRXRSAb92qfWB0HiyUnR2kFKFZ0Cs8HCz_tWtj4')
     await expect(deriveActivationLineageCacheKeyV2(root,salt).then(base64Url)).resolves.toBe('mRGU5jw6jG8c4v1Mc_O1x_hD6J7uyGHm96sSrNBOmyc')
+    await expect(sha256(envelopeAadV2('AAECAwQFBgcICQoLDA0ODw','EBESExQVFhcYGRobHB0eHw','oKGio6SlpqeoqaqrrK2ur7CxsrO0tba3uLm6u7y9vr8',1024)).then(base64Url)).resolves.toBe('POPVkTVrs33QOtHgijoo4BMflZ8PYMMjIQkuBPIsHe4')
     const core:Omit<TransferDescriptorV2,'possession_signature'>={format:'eds-writer-transfer-v2',version:2,sync_profile:SINGLE_WRITER_V2_PROFILE,diary_id:'AAECAwQFBgcICQoLDA0ODw',epoch_id:'EBESExQVFhcYGRobHB0eHw',writer_device_id:'ICEiIyQlJicoKSorLC0uLw',writer_key_id:'rs-mRc1Y2AimOhGNuqlEpdew1LHwFZUMnfzYnP4rqL4',writer_public_key:'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8',nonce:'QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8'}
     await expect(sha256(transferDescriptorPopBytesV2(core)).then(base64Url)).resolves.toBe('ZSQqmynmEjlPdgiw9DwX_vIptLoUOvPZAgZiQmkb_bo')
   })
