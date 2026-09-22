@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { base64Url, fromBase64Url } from '../security/crypto/bytes'
+import { canonicalBytes } from '../security/crypto/canonical'
+import { sha256 } from '../security/crypto/core'
 import {
   generateRecoveryTakeoverKeyMaterialV2,
   generateWriterDeviceKeyV2,
@@ -11,7 +13,7 @@ import {
 import { deriveEpochSaltV2 } from '../security/v2/crypto'
 import { envelopeRowV2, sealRevisionEnvelopeV2 } from '../security/v2/envelopes'
 import { createAnchorV2, prefixHashesV2 } from '../security/v2/prefix'
-import type { RecoveryAuthorityTransitionV2, RevisionV2, RotationAnnouncementV2, WriterGrantV2 } from '../security/v2/types'
+import type { EpochMigrationV2, RecoveryAuthorityTransitionV2, RevisionV2, RotationAnnouncementV2, WriterGrantV2 } from '../security/v2/types'
 import {
   TransferableSingleWriterV2Verifier,
   type VerifiedManifestTrustRootV2,
@@ -436,6 +438,74 @@ describe('TransferableSingleWriterV2Verifier', () => {
     }
     const row2 = envelopeRowV2(await seal(root, rootKey, await signedRevision(root, unsigned, writer.privateKey), 86))
     await expect(new TransferableSingleWriterV2Verifier().verifyCanonicalFull(root, rootKey, [row1, row2])).rejects.toMatchObject({ code: 'protocol_id_collision' })
+  })
+
+  it('rejects rotation_resume when any non-retry row extends the migration staging prefix', async () => {
+    const { root, writer } = await trustRoot(true)
+    const rootKey = bytes(18, 32)
+    const emptyHash = base64Url(await sha256(canonicalBytes([])))
+    const migration:EpochMigrationV2 = {
+      migration_id:id(106,32),
+      migration_kind:'normal',
+      source:{
+        source_epoch_id:root.predecessor_epochs[0]!.epoch_id,
+        source_manifest_fingerprint:root.predecessor_epochs[0]!.manifest_fingerprint,
+        source_anchor:await createAnchorV2(id(107,16),id(108,16),[]),
+        source_lineage_snapshot_hash:id(109,32),
+        source_semantic_snapshot_hash:emptyHash,
+      },
+      result_semantic_snapshot_hash:emptyHash,
+      active_head_count:0,
+      tombstone_head_count:0,
+      source_writer_authority:{
+        writer_generation:root.epoch_start_writer_generation,
+        writer_grant_id:root.epoch_start_writer_grant_id,
+        writer_device_id:root.epoch_start_writer_device_id,
+        writer_key_id:root.epoch_start_writer_key_id,
+      },
+      source_recovery_transition_id:null,
+    }
+    const migrationUnsigned:RevisionV2<EpochMigrationV2>={
+      record_type:'epoch_migration',
+      record_schema:'epoch-migration-sw-v2',
+      record_id:id(110,16),
+      revision_id:id(111,32),
+      parent_revision_ids:[],
+      record_status:'control',
+      record_data:migration,
+      migration_origin:null,
+      protocol_created_at:createdAt,
+      writer_context:{
+        writer_generation:root.epoch_start_writer_generation,
+        writer_grant_id:root.epoch_start_writer_grant_id,
+        writer_device_id:root.epoch_start_writer_device_id,
+        writer_key_id:root.epoch_start_writer_key_id,
+      },
+      writer_signature:null,
+    }
+    const row1=envelopeRowV2(await seal(root,rootKey,await signedRevision(root,migrationUnsigned,writer.privateKey),112))
+    const target=await generateWriterDeviceKeyV2()
+    const grant:WriterGrantV2={
+      grant_id:id(113,32),
+      writer_generation:2,
+      writer_device_id:id(114,16),
+      writer_key_id:target.writerKeyId,
+      writer_public_key:base64Url(target.publicKeyRaw),
+      previous_grant_id:root.epoch_start_writer_grant_id,
+      previous_writer_generation:1,
+      recovery_generation:0,
+      reason:'handoff',
+      authority_anchor:await createAnchorV2(root.diary_id,root.epoch_id,[row1]),
+      authorization:{kind:'writer_handoff',signer_key_id:writer.writerKeyId,signature:null},
+    }
+    grant.authorization.signature=await signEd25519V2(writer.privateKey,writerGrantSigningBytesV2(root.diary_id,root.epoch_id,grant))
+    const row2=envelopeRowV2(await seal(root,rootKey,grantRevision(grant,115),116))
+    await expect(new TransferableSingleWriterV2Verifier().verifyRotationResume(root,rootKey,[row1,row2],{
+      successor_epoch_id:root.epoch_id,
+      successor_manifest_fingerprint:root.manifest_fingerprint,
+      stage:'copying',
+      mac_authenticated:true,
+    })).rejects.toMatchObject({code:'successor_staging_mismatch'})
   })
 
   it('keeps rotation_resume separate from canonical_full and never upgrades a missing migration to authority', async () => {
