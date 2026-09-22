@@ -76,6 +76,7 @@ export async function deriveActivationLineageCacheKeyV2(rootKey:Uint8Array,epoch
 
 export function envelopeAadV2(diaryId:string,epochId:string,envelopeId:string,paddingBucket:1024|2048|4096|8192|16384):Uint8Array{
   fixedBase64Url(diaryId,16,'diary_id');fixedBase64Url(epochId,16,'epoch_id');fixedBase64Url(envelopeId,32,'envelope_id')
+  if(![1024,2048,4096,8192,16384].includes(paddingBucket))throw new Error('Invalid v2 envelope padding bucket.')
   return canonicalBytes({
     protocol_version:6,
     crypto_suite:'A256GCM-HKDF-SHA256-ED25519-v6',
@@ -151,7 +152,8 @@ export async function verifyEd25519V2(rawPublicKey:Uint8Array,signature:string,m
 
 export function revisionSigningBytesV2(diaryId:string,epochId:string,revision:RevisionV2):Uint8Array{
   fixedBase64Url(diaryId,16,'diary_id');fixedBase64Url(epochId,16,'epoch_id')
-  if(!revision.writer_context||revision.writer_signature===null&&revision.record_schema==='writer-grant-sw-v2')throw new Error('Writer-signed revision requires writer_context.')
+  if(revision.record_schema==='writer-grant-sw-v2')throw new Error('WriterGrantV2 uses grant authorization, not the normal RevisionV2 writer signature.')
+  if(!revision.writer_context)throw new Error('Writer-signed revision requires writer_context.')
   const core={
     sync_profile:SINGLE_WRITER_V2_PROFILE,
     diary_id:diaryId,
