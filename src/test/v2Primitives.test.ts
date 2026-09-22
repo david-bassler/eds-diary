@@ -7,6 +7,7 @@ import {
   deriveEpochSaltV2,
   generateRecoveryTakeoverKeyMaterialV2,
   generateWriterDeviceKeyV2,
+  importRecoveryTakeoverSigningKeyV2,
   recoveryCommitmentV2,
   recoveryTakeoverKeyIdV2,
   recoveryUrsIdV2,
@@ -64,6 +65,10 @@ describe('transferable single-writer v2 primitives',()=>{
     expect(generated.publicKeyRaw).toHaveLength(32)
     expect(generated.privateKeyPkcs8.byteLength).toBeGreaterThan(32)
     expect(generated.recoveryTakeoverKeyId).toBe(await recoveryTakeoverKeyIdV2(generated.publicKeyRaw))
+    const imported=await importRecoveryTakeoverSigningKeyV2(generated.privateKeyPkcs8)
+    expect(imported.extractable).toBe(false)
+    const message=utf8('recovery takeover keypair check'),signature=await signEd25519V2(imported,message)
+    await expect(verifyEd25519V2(generated.publicKeyRaw,signature,message)).resolves.toBe(true)
   })
 
   it('builds and validates an exact writer-signed RevisionV2',async()=>{
