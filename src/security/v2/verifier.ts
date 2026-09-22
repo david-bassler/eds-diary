@@ -371,20 +371,22 @@ function graphHeads(graph: MutableGraph): RevisionV2[] {
 
 async function semanticSnapshot(graph: MutableGraph): Promise<{ hash: string; active: number; tombstone: number }> {
   const heads = graphHeads(graph)
-  const entries = heads.map((head) => ({
-    record_type: head.record_type,
-    record_schema: head.record_schema,
-    record_id: head.record_id,
-    record_status: head.record_status,
-    record_data: head.record_data,
-  }))
-  entries.sort((a, b) => {
-    const aa = canonicalBytes(a as never)
-    const bb = canonicalBytes(b as never)
-    const length = Math.min(aa.length, bb.length)
-    for (let i = 0; i < length; i += 1) if (aa[i] !== bb[i]) return aa[i]! - bb[i]!
-    return aa.length - bb.length
+  const keyedEntries = heads.map((head) => {
+    const entry = {
+      record_type: head.record_type,
+      record_schema: head.record_schema,
+      record_id: head.record_id,
+      record_status: head.record_status,
+      record_data: head.record_data,
+    }
+    return { entry, bytes: canonicalBytes(entry as never) }
   })
+  keyedEntries.sort((a, b) => {
+    const length = Math.min(a.bytes.length, b.bytes.length)
+    for (let i = 0; i < length; i += 1) if (a.bytes[i] !== b.bytes[i]) return a.bytes[i]! - b.bytes[i]!
+    return a.bytes.length - b.bytes.length
+  })
+  const entries = keyedEntries.map(({ entry }) => entry)
   return {
     hash: base64Url(await sha256(canonicalBytes(entries as never))),
     active: heads.filter((head) => head.record_status === 'active').length,
