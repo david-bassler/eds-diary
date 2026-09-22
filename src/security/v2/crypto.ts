@@ -107,6 +107,17 @@ export async function importRecoveryTakeoverSigningKeyV2(privateKeyPkcs8:Uint8Ar
   if(key.extractable)throw new Error('Imported recovery takeover key must be non-extractable.')
   return key
 }
+export function recoveryTakeoverKeyCheckBytesV2(diaryId:string,epochId:string,recoveryGeneration:number,rawPublicKey:Uint8Array):Uint8Array{
+  const diary=fixedBase64Url(diaryId,16,'diary_id'),epoch=fixedBase64Url(epochId,16,'epoch_id');assert32(rawPublicKey,'Recovery takeover public key')
+  if(!Number.isSafeInteger(recoveryGeneration)||recoveryGeneration<0)throw new Error('Recovery generation is outside the safe-integer protocol range.')
+  return concatBytes(utf8('eds-diary/recovery-takeover-key-check/v2'),ZERO,diary,epoch,uint64be(recoveryGeneration),rawPublicKey)
+}
+
+export async function verifyRecoveryTakeoverKeyPairV2(privateKey:CryptoKey,rawPublicKey:Uint8Array,diaryId:string,epochId:string,recoveryGeneration:number):Promise<boolean>{
+  const input=recoveryTakeoverKeyCheckBytesV2(diaryId,epochId,recoveryGeneration,rawPublicKey),signature=await signEd25519V2(privateKey,input)
+  return verifyEd25519V2(rawPublicKey,signature,input)
+}
+
 
 export async function signEd25519V2(privateKey:CryptoKey,message:Uint8Array):Promise<string>{
   assertEd25519Key(privateKey,'private','sign')
