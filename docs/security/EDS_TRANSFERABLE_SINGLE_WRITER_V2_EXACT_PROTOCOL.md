@@ -287,6 +287,17 @@ record_schema_registry_hash =
 ~~~
 
 Die Entries sind nach UTF-8-Bytes von record_schema sortiert und eindeutig.
+Für die in diesem eingefrorenen Profil committed elf Schemaobjekte ist der
+normative `record_schema_registry_hash` exakt:
+
+~~~text
+45WLQG41o-vdMhcWnJR1yhF74km8H55N9wlPnGWdduI
+~~~
+
+Eine Änderung irgendeines gebundenen Schemaobjekts erfordert deshalb eine
+ausdrückliche Protokoll-/Schemaänderung; der Hash darf nicht still neu berechnet
+und als derselbe Profilstand behandelt werden.
+
 Der Registry-Key `record_schema` ist dabei der **Wire-Identifier** aus der obigen
 Allowlist. Das optionale JSON-Schema-Feld `$id` ist ausschließlich der
 Dokument-Identifier des gebündelten Schemas und darf nicht als alternativer
