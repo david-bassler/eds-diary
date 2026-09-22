@@ -62,6 +62,7 @@ export type V2FatalCode =
   | 'recovery_key_mismatch'
   | 'recovery_transition_state_mismatch'
   | 'duplicate_envelope_id_with_different_bytes'
+  | 'revision_id_collision'
   | 'iv_reuse_across_envelope_ids'
   | 'schema_or_canonicalization_failure'
 
@@ -200,11 +201,13 @@ interface ReplayState {
   acceptedConfirmation: SuccessorActivationConfirmationV2 | null
   graph: MutableGraph
   authorityHistory: Map<number, WriterAuthoritySnapshotV2>
+  authorityByTuple: Map<string, WriterAuthoritySnapshotV2>
   recoveryStateHistory: Map<number, RecoveryStateSnapshotV2>
   seenProtocolIds: Map<string, string>
   seenRecoveryUrsIds: Set<string>
   seenRecoveryTakeoverKeyIds: Set<string>
   seenEnvelopeRows: Map<string, string>
+  seenRevisionIds: Map<string, string>
   seenIvOwner: Map<string, string>
   dispositions: EnvelopeDispositionV2[]
   verifiedEnvelopeIds: Set<string>
@@ -214,6 +217,10 @@ interface ReplayState {
 
 function fail(code: V2FatalCode, message?: string): never {
   throw new V2VerifierError(code, message)
+}
+
+function authorityTupleKey(value: Pick<WriterAuthoritySnapshotV2, 'writer_generation' | 'writer_grant_id' | 'writer_device_id' | 'writer_key_id'>): string {
+  return [value.writer_generation, value.writer_grant_id, value.writer_device_id, value.writer_key_id].join('\0')
 }
 
 function sameAuthority(a: WriterAuthoritySnapshotV2, b: Pick<WriterAuthoritySnapshotV2, 'writer_generation' | 'writer_grant_id' | 'writer_device_id' | 'writer_key_id'>): boolean {
@@ -320,6 +327,12 @@ function addDisposition(state: ReplayState, rowIndex: number, envelopeId: string
   if (disposition === 'stale_writer_rejected' || disposition === 'stale_after_seal_rejected' || disposition === 'rekey_rotation_required_rejected') state.staleWriterEnvelopeIds.add(envelopeId)
 }
 
+function reserveRevisionId(state: ReplayState, envelopeId: string, revision: RevisionV2): void {
+  const existingEnvelopeId = state.seenRevisionIds.get(revision.revision_id)
+  if (existingEnvelopeId !== undefined && existingEnvelopeId !== envelopeId) fail('revision_id_collision')
+  state.seenRevisionIds.set(revision.revision_id, envelopeId)
+}
+
 function reserveControlId(state: ReplayState, root: VerifiedManifestTrustRootV2, revision: RevisionV2): void {
   const claim = controlId(revision)
   if (!claim) return
@@ -387,8 +400,7 @@ function readonlyGraph(graph: MutableGraph): AcceptedRevisionGraphV2 {
 }
 
 function findHistoricalAuthority(state: ReplayState, context: NonNullable<RevisionV2['writer_context']>): WriterAuthoritySnapshotV2 | null {
-  for (const authority of state.authorityHistory.values()) if (sameAuthority(authority, context)) return authority
-  return null
+  return state.authorityByTuple.get(authorityTupleKey(context)) ?? null
 }
 
 async function verifyRevisionAuthority(state: ReplayState, root: VerifiedManifestTrustRootV2, revision: RevisionV2): Promise<'current' | 'historical'> {
@@ -477,6 +489,7 @@ async function verifyGrant(
     writer_public_key: grant.writer_public_key,
     source_epoch_sealed: false,
   }
+  state.authorityByTuple.set(authorityTupleKey(state.currentWriter), copyWriter(state.currentWriter))
   return 'accepted'
 }
 
@@ -627,11 +640,13 @@ async function replay(
     acceptedConfirmation: null,
     graph: { revisions: new Map(), children: new Set(), counts: new Map(), depths: new Map() },
     authorityHistory: new Map([[0, copyWriter(currentWriter)]]),
+    authorityByTuple: new Map([[authorityTupleKey(currentWriter), copyWriter(currentWriter)]]),
     recoveryStateHistory: new Map([[0, copyRecovery(currentRecovery)]]),
     seenProtocolIds: new Map([[trustRoot.epoch_start_writer_grant_id, 'grant_id']]),
     seenRecoveryUrsIds: new Set(trustRoot.recovery_credential_history.map((entry) => entry.recovery_urs_id)),
     seenRecoveryTakeoverKeyIds: new Set(trustRoot.recovery_credential_history.map((entry) => entry.recovery_takeover_key_id)),
     seenEnvelopeRows: new Map(),
+    seenRevisionIds: new Map(),
     seenIvOwner: new Map(),
     dispositions: [],
     verifiedEnvelopeIds: new Set(),
@@ -690,6 +705,7 @@ async function replay(
         { envelopeId, iv: row[1]!, ciphertext: row[2]! },
       )
       await validateRevisionV2(revision)
+      reserveRevisionId(state, envelopeId, revision)
       reserveControlId(state, trustRoot, revision)
       validateDomainRecord(revision)
       assertGenesisGate(state, trustRoot, revision)
