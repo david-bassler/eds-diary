@@ -91,7 +91,7 @@ describe('transferable single-writer v2 primitives',()=>{
     const core={grant_id:grant.grant_id,writer_generation:grant.writer_generation,writer_device_id:grant.writer_device_id,writer_key_id:grant.writer_key_id,writer_public_key:grant.writer_public_key,previous_grant_id:grant.previous_grant_id,previous_writer_generation:grant.previous_writer_generation,recovery_generation:grant.recovery_generation,reason:grant.reason,authority_anchor:grant.authority_anchor}
     expect(writerGrantSigningBytesV2(diary,epoch,grant)).toEqual(concatBytes(utf8('eds-diary/writer-grant/v2'),zero,new Uint8Array(16).fill(10),new Uint8Array(16).fill(11),zero,canonicalBytes(core as never)))
     await expect(validateWriterGrantV2({...grant,writer_key_id:b(14,32)})).rejects.toThrow(/does not match/)
-    await expect(validateWriterGrantV2({...grant,reason:'handoff'})).rejects.toThrow(/Initial WriterGrantV2/)
+    await expect(validateWriterGrantV2({...grant,reason:'handoff'})).rejects.toThrow(/WriterGrantV2 .*invariants/)
   })
 
   it('validates TransferDescriptorV2 structure and proof-of-possession bytes',async()=>{
