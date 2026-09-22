@@ -287,6 +287,13 @@ record_schema_registry_hash =
 ~~~
 
 Die Entries sind nach UTF-8-Bytes von record_schema sortiert und eindeutig.
+Der Registry-Key `record_schema` ist dabei der **Wire-Identifier** aus der obigen
+Allowlist. Das optionale JSON-Schema-Feld `$id` ist ausschließlich der
+Dokument-Identifier des gebündelten Schemas und darf nicht als alternativer
+`record_schema`-Wert interpretiert werden. Insbesondere werden die vorhandenen
+Control-Schema-`$id`-Werte wie `writer-grant-sw/v2` unter dem Wire-Key
+`writer-grant-sw-v2` gehasht und registriert. Eine Implementierung darf die
+Registry daher weder aus `$id` umschlüsseln noch beide Namensräume vermischen.
 
 Exakt diese Properties, keine weiteren:
 
@@ -3087,8 +3094,11 @@ crypto.subtle.generateKey(
 )
 ~~~
 
-Der Public Key wird unmittelbar einmal als `raw` exportiert und gemäß §2 an
-writer_signing_key_id gebunden. Der Private Key darf nie exportiert werden.
+Der Public Key wird unmittelbar einmal als `raw` exportiert. Der **Wert** von
+`writer_signing_key_id` ist exakt der gemäß §2 aus diesem Public Key
+abgeleitete `writer_key_id`; `writer_signing_key_id` ist nur der lokale
+State-/Key-Store-Feldname und **kein zweiter Key-ID-Namespace**. Der Private Key
+darf nie exportiert werden.
 Fehlschlag bei Erzeugung/Persistenz => v2-Writerbetrieb nicht verfügbar; kein
 exportierbarer Fallback.
 
@@ -3104,7 +3114,8 @@ Separater IndexedDB-Key-Store-Eintrag exakt:
 ~~~
 
 private_key ist ein non-extractable Ed25519 CryptoKey mit usage=["sign"].
-writer_signing_key_id muss aus writer_public_key gemäß §2 reproduzierbar sein.
+`writer_signing_key_id == writer_key_id(writer_public_key)` muss gemäß §2
+reproduzierbar sein.
 
 Beim Laden wird die Keypair-Bindung durch folgende Challenge geprüft:
 
@@ -4161,10 +4172,26 @@ automatische Umsignierung repariert werden.
 
 ---
 
-## 23. Golden Vectors vor Implementierungsfreigabe
+## 23. Golden-/Negative-Vector-Katalog und phasenweise Implementierungsgates
 
-Vor produktiver v2-Implementierung müssen feste Golden Vectors committed werden
-für mindestens:
+Die folgende Liste ist der **vollständige Assurance-Katalog** für v2. Sie muss
+vor produktiver Freigabe vollständig committed und grün sein. Für die
+Implementierungsreihenfolge aus §24 gilt zusätzlich phasenweise: Ein PR darf
+eine neue Wire-/Krypto-/State-Semantik nur einführen, wenn die dafür bereits
+ausdrückbaren Golden-/Negative-Vektoren im selben oder in einem früheren PR
+fest committed sind. Spätere Vektoren, deren Typen oder State-Machines noch
+nicht implementiert sind, blockieren nicht den Beginn früherer reiner
+Primitivschichten.
+
+Für §24 Schritt 1 sind mindestens die zu diesem Zeitpunkt implementierten
+Primitiven aus 1–5 einschließlich **vollständigem EnvelopeV6-Ciphertext** und
+einer deterministischen Ed25519-PoP-Signatur fest zu pinnen; die in §5.1
+definierte Schema-Allowlist/Registry-Zusammensetzung muss reproduzierbar sein.
+Sobald RevisionV2/WriterSignatureV2 aus §24 Schritt 2 im Branch vorhanden sind,
+gilt zusätzlich Vector 6 als Merge-Gate. Analog werden die übrigen Vektoren
+spätestens mit der jeweils zugehörigen Implementierungsschicht verpflichtend.
+
+Der vollständige Katalog umfasst mindestens:
 
 1. v6 epoch_salt.
 2. K_env.
