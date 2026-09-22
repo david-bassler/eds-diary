@@ -195,6 +195,52 @@ describe('TransferableSingleWriterV2Verifier', () => {
     expect(result.remote_anchor.covered_row_count).toBe(4)
   })
 
+  it('rejects reuse of one revision_id across different envelopes, including stale controls', async () => {
+    const { root, writer } = await trustRoot()
+    const rootKey = bytes(17, 32)
+    const genesis: WriterGrantV2 = {
+      grant_id: root.epoch_start_writer_grant_id,
+      writer_generation: 1,
+      writer_device_id: root.epoch_start_writer_device_id,
+      writer_key_id: root.epoch_start_writer_key_id,
+      writer_public_key: root.epoch_start_writer_public_key,
+      previous_grant_id: null,
+      previous_writer_generation: 0,
+      recovery_generation: 0,
+      reason: 'initial',
+      authority_anchor: await createAnchorV2(root.diary_id, root.epoch_id, []),
+      authorization: { kind: 'manifest_genesis', signer_key_id: null, signature: null },
+    }
+    const row1 = envelopeRowV2(await seal(root, rootKey, grantRevision(genesis, 95), 96))
+    const anchor1 = await createAnchorV2(root.diary_id, root.epoch_id, [row1])
+    const targetB = await generateWriterDeviceKeyV2()
+    const targetC = await generateWriterDeviceKeyV2()
+    const makeGrant = async (grantId:string,deviceId:string,target:typeof targetB):Promise<WriterGrantV2> => {
+      const grant:WriterGrantV2 = {
+        grant_id: grantId,
+        writer_generation: 2,
+        writer_device_id: deviceId,
+        writer_key_id: target.writerKeyId,
+        writer_public_key: base64Url(target.publicKeyRaw),
+        previous_grant_id: genesis.grant_id,
+        previous_writer_generation: 1,
+        recovery_generation: 0,
+        reason: 'handoff',
+        authority_anchor: anchor1,
+        authorization: { kind: 'writer_handoff', signer_key_id: writer.writerKeyId, signature: null },
+      }
+      grant.authorization.signature = await signEd25519V2(writer.privateKey, writerGrantSigningBytesV2(root.diary_id, root.epoch_id, grant))
+      return grant
+    }
+    const sharedRevisionId=id(97,32)
+    const revisionB={...grantRevision(await makeGrant(id(98,32),id(99,16),targetB),100),revision_id:sharedRevisionId}
+    const revisionC={...grantRevision(await makeGrant(id(101,32),id(102,16),targetC),103),revision_id:sharedRevisionId}
+    const row2=envelopeRowV2(await seal(root,rootKey,revisionB,104))
+    const row3=envelopeRowV2(await seal(root,rootKey,revisionC,105))
+    await expect(new TransferableSingleWriterV2Verifier().verifyCanonicalFull(root,rootKey,[row1,row2,row3]))
+      .rejects.toMatchObject({code:'revision_id_collision'})
+  })
+
   it('counts byte-identical retry rows physically but applies their semantics only once', async () => {
     const { root } = await trustRoot()
     const rootKey = bytes(15, 32)
