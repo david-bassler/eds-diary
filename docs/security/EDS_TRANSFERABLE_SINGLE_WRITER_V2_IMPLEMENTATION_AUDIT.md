@@ -33,6 +33,16 @@ Primary review sources:
 - D-001…D-010;
 - the frozen machine-readable v2 schema registry.
 
+## Review rounds
+
+### 2026-09-22 adversarial pass after V2-02 green CI
+
+Re-reviewed the current V2-01/V2-02 stack against Exact Protocol §§4–13,
+16a–16b, inherited v1 wrapper/graph rules and D-001…D-010. New findings from
+this pass are IA-017 and IA-018. Both are implementation mismatches; neither
+changes the threat model or any D-001…D-010 decision. Earlier IA-001…IA-016
+were rechecked against the current branch before adding these entries.
+
 ## Findings and disposition
 
 | ID | Area | Finding | Disposition |
