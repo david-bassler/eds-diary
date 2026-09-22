@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { SINGLE_WRITER_V2_PROFILE } from '../sync/core/contracts'
-import { base64Url, concatBytes, utf8 } from '../security/crypto/bytes'
+import { arrayBuffer, base64Url, concatBytes, utf8 } from '../security/crypto/bytes'
 import { canonicalBytes } from '../security/crypto/canonical'
 import { sha256 } from '../security/crypto/core'
 import {
@@ -33,7 +33,7 @@ const zero=new Uint8Array([0])
 describe('transferable single-writer v2 primitives',()=>{
   it('derives v2 identifiers and recovery commitment with the frozen domains',async()=>{
     const publicKey=new Uint8Array(32).fill(7),urs=new Uint8Array(32).fill(8),diary=new Uint8Array(16).fill(9),epoch=new Uint8Array(16).fill(10)
-    const digest=async(label:string,value:Uint8Array)=>base64Url(new Uint8Array(await crypto.subtle.digest('SHA-256',concatBytes(utf8(label),zero,value))))
+    const digest=async(label:string,value:Uint8Array)=>base64Url(new Uint8Array(await crypto.subtle.digest('SHA-256',arrayBuffer(concatBytes(utf8(label),zero,value)))))
     await expect(writerKeyIdV2(publicKey)).resolves.toBe(await digest('eds-diary/writer-key-id/v2',publicKey))
     await expect(recoveryTakeoverKeyIdV2(publicKey)).resolves.toBe(await digest('eds-diary/recovery-takeover-key-id/v2',publicKey))
     await expect(recoveryUrsIdV2(urs)).resolves.toBe(await digest('eds-diary/recovery-urs-id/v2',urs))
@@ -72,7 +72,7 @@ describe('transferable single-writer v2 primitives',()=>{
     }
     const signingBytes=revisionSigningBytesV2(diary,epoch,unsigned)
     const expectedCore={sync_profile:SINGLE_WRITER_V2_PROFILE,diary_id:diary,epoch_id:epoch,record_type:unsigned.record_type,record_schema:unsigned.record_schema,record_id:unsigned.record_id,revision_id:unsigned.revision_id,parent_revision_ids:[],record_status:'active',record_data:{note:'hello'},migration_origin:null,protocol_created_at:unsigned.protocol_created_at,writer_context:unsigned.writer_context}
-    expect(signingBytes).toEqual(concatBytes(utf8('eds-diary/revision-signature/v2'),zero,canonicalBytes(expectedCore)))
+    expect(signingBytes).toEqual(concatBytes(utf8('eds-diary/revision-signature/v2'),zero,canonicalBytes(expectedCore as never)))
     const revision={...unsigned,writer_signature:await signEd25519V2(writer.privateKey,signingBytes)}
     await expect(validateRevisionV2(revision)).resolves.toBeUndefined()
     await expect(verifyEd25519V2(writer.publicKeyRaw,revision.writer_signature,revisionSigningBytesV2(diary,epoch,revision))).resolves.toBe(true)
@@ -88,8 +88,8 @@ describe('transferable single-writer v2 primitives',()=>{
       authorization:{kind:'manifest_genesis',signer_key_id:null,signature:null},
     }
     await expect(validateWriterGrantV2(grant)).resolves.toEqual(grant)
-    const {authorization:_authorization,...core}=grant
-    expect(writerGrantSigningBytesV2(diary,epoch,grant)).toEqual(concatBytes(utf8('eds-diary/writer-grant/v2'),zero,new Uint8Array(16).fill(10),new Uint8Array(16).fill(11),zero,canonicalBytes(core)))
+    const core={grant_id:grant.grant_id,writer_generation:grant.writer_generation,writer_device_id:grant.writer_device_id,writer_key_id:grant.writer_key_id,writer_public_key:grant.writer_public_key,previous_grant_id:grant.previous_grant_id,previous_writer_generation:grant.previous_writer_generation,recovery_generation:grant.recovery_generation,reason:grant.reason,authority_anchor:grant.authority_anchor}
+    expect(writerGrantSigningBytesV2(diary,epoch,grant)).toEqual(concatBytes(utf8('eds-diary/writer-grant/v2'),zero,new Uint8Array(16).fill(10),new Uint8Array(16).fill(11),zero,canonicalBytes(core as never)))
     await expect(validateWriterGrantV2({...grant,writer_key_id:b(14,32)})).rejects.toThrow(/does not match/)
     await expect(validateWriterGrantV2({...grant,reason:'handoff'})).rejects.toThrow(/Initial WriterGrantV2/)
   })
