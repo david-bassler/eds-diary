@@ -167,6 +167,36 @@ describe('transferable single-writer v2 primitives',()=>{
     await expect(validateRevisionV2({...revision,protocol_created_at:'2026-02-29T12:00:00.000Z'})).rejects.toThrow(/protocol_created_at/)
   })
 
+  it('enforces inherited v1 migration_origin bounds, uniqueness and byte ordering',async()=>{
+    const writer=await generateWriterDeviceKeyV2()
+    const base:RevisionV2={
+      record_type:'pain_entry',
+      record_schema:'pain-entry/v1',
+      record_id:b(80,16),
+      revision_id:b(81,32),
+      parent_revision_ids:[],
+      record_status:'active',
+      record_data:{note:'migration'},
+      migration_origin:{
+        sources:[
+          {source_epoch_id:b(1,16),source_record_id:b(2,16),source_revision_ids:[b(3,32),b(4,32)]},
+          {source_epoch_id:b(1,16),source_record_id:b(5,16),source_revision_ids:[b(6,32)]},
+        ],
+      },
+      protocol_created_at:'2026-09-22T12:10:00.000Z',
+      writer_context:{writer_generation:1,writer_grant_id:b(82,32),writer_device_id:b(83,16),writer_key_id:writer.writerKeyId},
+      writer_signature:b(84,64),
+    }
+    await expect(validateRevisionV2(base)).resolves.toBeUndefined()
+    await expect(validateRevisionV2({...base,migration_origin:{sources:[...base.migration_origin!.sources].reverse()}})).rejects.toThrow(/byte-sorted/)
+    await expect(validateRevisionV2({...base,migration_origin:{sources:[base.migration_origin!.sources[0]!,base.migration_origin!.sources[0]!]}})).rejects.toThrow(/unique|byte-sorted/)
+    await expect(validateRevisionV2({...base,migration_origin:{sources:[{...base.migration_origin!.sources[0]!,source_revision_ids:[b(4,32),b(3,32)]}]}})).rejects.toThrow(/byte-sorted/)
+    const nineSources=Array.from({length:9},(_,index)=>({source_epoch_id:b(10+index,16),source_record_id:b(40+index,16),source_revision_ids:[b(60+index,32)]}))
+    await expect(validateRevisionV2({...base,migration_origin:{sources:nineSources}})).rejects.toThrow(/sources is invalid/)
+    const nineRevisionIds=Array.from({length:9},(_,index)=>b(90+index,32))
+    await expect(validateRevisionV2({...base,migration_origin:{sources:[{source_epoch_id:b(1,16),source_record_id:b(2,16),source_revision_ids:nineRevisionIds}]}})).rejects.toThrow(/source_revision_ids/)
+  })
+
   it('rejects structurally impossible v2 rotation/signing inputs before verifier state',async()=>{
     const epoch=b(60,16),rotation={rotation_id:b(61,32),from_epoch_id:epoch,successor_epoch_id:epoch,successor_creation_locator:b(62,16),successor_manifest_fingerprint:b(63,32),rotation_kind:'normal' as const,source_writer_generation:1,source_writer_grant_id:b(64,32),successor_recovery_generation:0,source_anchor_before_announcement:anchor(1),successor_staging_anchor:anchor(2),recovery_transition_id:null}
     expect(()=>validateRotationAnnouncementV2(rotation)).toThrow(/differ from source/)
