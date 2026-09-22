@@ -17,13 +17,14 @@ import {
   writerGrantSigningBytesV2,
   writerKeyIdV2,
 } from '../security/v2/crypto'
-import type { RevisionV2, TransferDescriptorV2, WriterGrantV2 } from '../security/v2/types'
+import { SINGLE_WRITER_V2_SCHEMA_ALLOWLIST, type RevisionV2, type TransferDescriptorV2, type WriterGrantV2 } from '../security/v2/types'
 import {
   validateRecoveryAuthorityTransitionV2,
   validateRevisionGraphV2,
   validateRevisionV2,
   validateTransferDescriptorV2,
   validateWriterGrantV2,
+  verifyTransferDescriptorV2,
 } from '../security/v2/validators'
 
 const b=(fill:number,length:number)=>base64Url(new Uint8Array(length).fill(fill))
@@ -31,6 +32,10 @@ const anchor=(rows=0)=>({anchor_profile:SINGLE_WRITER_V2_PROFILE,covered_row_cou
 const zero=new Uint8Array([0])
 
 describe('transferable single-writer v2 primitives',()=>{
+  it('freezes the exact v2 schema allowlist order',()=>{
+    expect(SINGLE_WRITER_V2_SCHEMA_ALLOWLIST).toEqual(['activity-entry/v1','activity-type-settings/v1','epoch-migration-sw-v2','medication-entry/v1','medication-prescription/v1','pain-entry/v1','pain-type-settings/v1','recovery-authority-transition-sw-v2','rotation-announcement-sw-v2','successor-activation-confirmation-sw-v2','writer-grant-sw-v2'])
+  })
+
   it('derives v2 identifiers and recovery commitment with the frozen domains',async()=>{
     const publicKey=new Uint8Array(32).fill(7),urs=new Uint8Array(32).fill(8),diary=new Uint8Array(16).fill(9),epoch=new Uint8Array(16).fill(10)
     const digest=async(label:string,value:Uint8Array)=>base64Url(new Uint8Array(await crypto.subtle.digest('SHA-256',arrayBuffer(concatBytes(utf8(label),zero,value)))))
@@ -99,7 +104,11 @@ describe('transferable single-writer v2 primitives',()=>{
     const core:Omit<TransferDescriptorV2,'possession_signature'>={format:'eds-writer-transfer-v2',version:2,sync_profile:SINGLE_WRITER_V2_PROFILE,diary_id:b(20,16),epoch_id:b(21,16),writer_device_id:b(22,16),writer_key_id:writer.writerKeyId,writer_public_key:base64Url(writer.publicKeyRaw),nonce:b(23,32)}
     const signature=await signEd25519V2(writer.privateKey,transferDescriptorPopBytesV2(core)),descriptor={...core,possession_signature:signature}
     expect(validateTransferDescriptorV2(descriptor)).toEqual(descriptor)
+    await expect(verifyTransferDescriptorV2(descriptor)).resolves.toEqual(descriptor)
     await expect(verifyEd25519V2(writer.publicKeyRaw,signature,transferDescriptorPopBytesV2(core))).resolves.toBe(true)
+    await expect(verifyTransferDescriptorV2({...descriptor,writer_key_id:b(24,32)})).rejects.toThrow(/does not match/)
+    const tampered={...descriptor,nonce:b(25,32)}
+    await expect(verifyTransferDescriptorV2(tampered)).rejects.toThrow(/possession signature/)
     expect(()=>validateTransferDescriptorV2({...descriptor,nonce:b(1,16)})).toThrow(/nonce/)
   })
 
