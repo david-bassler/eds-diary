@@ -2,9 +2,9 @@
 
 Die Begründungen stabiler Sicherheitsentscheidungen und verworfener Alternativen stehen ergänzend in `EDS_TRANSFERABLE_SINGLE_WRITER_V2_DECISIONS.md`; spätere Reviews sollen dort zwischen neuer Erkenntnis und bloßem Design-Pendeln unterscheiden.
 
-Status: **ARCHITEKTURRAHMEN DEFINIERT / EXAKTES v2-PROTOKOLL IN EDS_TRANSFERABLE_SINGLE_WRITER_V2_EXACT_PROTOCOL.md EINGEFROREN / NOCH NICHT IMPLEMENTIERT**
+Status: **ARCHITEKTURRAHMEN DEFINIERT / EXAKTES v2-PROTOKOLL IN EDS_TRANSFERABLE_SINGLE_WRITER_V2_EXACT_PROTOCOL.md EINGEFROREN / TEILWEISE IMPLEMENTIERT / PRODUKTIV NICHT FREIGEGEBEN**
 
-Stand: 20.09.2026
+Stand: 22.09.2026
 
 Normative Konkretisierung: Byte-, Wire-, Signatur-, Recovery-Takeover- und State-Details sind in `EDS_TRANSFERABLE_SINGLE_WRITER_V2_EXACT_PROTOCOL.md` festgeschrieben. Wo dieses Architekturpapier noch alternative Konstruktionen oder eine spätere Festlegung erwähnt, gilt die Exact-Protocol-Datei.
 
