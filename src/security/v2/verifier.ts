@@ -209,7 +209,7 @@ interface ReplayState {
   seenProtocolIds: Map<string, string>
   seenRecoveryUrsIds: Set<string>
   seenRecoveryTakeoverKeyIds: Set<string>
-  seenEnvelopeRows: Map<string, string>
+  seenEnvelopeRows: Map<string, readonly [string, string, string]>
   seenRevisionIds: Map<string, string>
   seenIvOwner: Map<string, string>
   dispositions: EnvelopeDispositionV2[]
@@ -686,13 +686,12 @@ async function replay(
       physicalCanonicalBytes += rowBytes.byteLength
       if (physicalCanonicalBytes > MAX_CANONICAL_BYTES) fail('schema_or_canonicalization_failure', 'Physical canonical byte bound exceeded.')
 
-      const rowIdentity = base64Url(await sha256(rowBytes))
       const previous = state.seenEnvelopeRows.get(envelopeId)
       const ivOwner = state.seenIvOwner.get(row[1]!)
       if (ivOwner && ivOwner !== envelopeId) fail('iv_reuse_across_envelope_ids')
       state.seenIvOwner.set(row[1]!, envelopeId)
       if (previous !== undefined) {
-        if (previous !== rowIdentity) fail('duplicate_envelope_id_with_different_bytes')
+        if (previous[0] !== row[0] || previous[1] !== row[1] || previous[2] !== row[2]) fail('duplicate_envelope_id_with_different_bytes')
         const nextHash = await advancePrefixHashV2(prefixHashes[index]!, rowIndex, row)
         prefixHashes.push(nextHash)
         addDisposition(state, rowIndex, envelopeId, null, 'duplicate_retry')
@@ -701,7 +700,7 @@ async function replay(
         continue
       }
       if (state.seenEnvelopeRows.size >= MAX_ROWS) fail('schema_or_canonicalization_failure', 'Unique envelope bound exceeded.')
-      state.seenEnvelopeRows.set(envelopeId, rowIdentity)
+      state.seenEnvelopeRows.set(envelopeId, [row[0]!, row[1]!, row[2]!] as const)
       uniqueCanonicalBytes += rowBytes.byteLength
       if (uniqueCanonicalBytes > MAX_CANONICAL_BYTES) fail('schema_or_canonicalization_failure', 'Unique canonical byte bound exceeded.')
       state.verifiedEnvelopeIds.add(envelopeId)
