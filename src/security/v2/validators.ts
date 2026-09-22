@@ -1,6 +1,6 @@
 import { SINGLE_WRITER_V1_PROFILE, SINGLE_WRITER_V2_PROFILE, type RemoteAnchorState } from '../../sync/core/contracts'
 import { fixedBase64Url } from '../crypto/bytes'
-import { recoveryTakeoverKeyIdV2, writerKeyIdV2 } from './crypto'
+import { recoveryTakeoverKeyIdV2, transferDescriptorPopBytesV2, verifyEd25519V2, writerKeyIdV2 } from './crypto'
 import {
   V2_RECORD_SCHEMA_BY_TYPE,
   type EpochMigrationV2,
@@ -76,6 +76,13 @@ export function validateTransferDescriptorV2(value:unknown):TransferDescriptorV2
   if(descriptor.format!=='eds-writer-transfer-v2'||descriptor.version!==2||descriptor.sync_profile!==SINGLE_WRITER_V2_PROFILE)throw new Error('TransferDescriptorV2 profile mismatch.')
   id(descriptor.diary_id,16,'diary_id');id(descriptor.epoch_id,16,'epoch_id');id(descriptor.writer_device_id,16,'writer_device_id');id(descriptor.writer_key_id,32,'writer_key_id');id(descriptor.writer_public_key,32,'writer_public_key');id(descriptor.nonce,32,'nonce');id(descriptor.possession_signature,64,'possession_signature')
   return value as unknown as TransferDescriptorV2
+}
+export async function verifyTransferDescriptorV2(value:unknown):Promise<TransferDescriptorV2>{
+  const descriptor=validateTransferDescriptorV2(value),publicKey=fixedBase64Url(descriptor.writer_public_key,32,'writer_public_key')
+  if(await writerKeyIdV2(publicKey)!==descriptor.writer_key_id)throw new Error('TransferDescriptorV2 writer_key_id does not match writer_public_key.')
+  const core:Omit<TransferDescriptorV2,'possession_signature'>={format:descriptor.format,version:descriptor.version,sync_profile:descriptor.sync_profile,diary_id:descriptor.diary_id,epoch_id:descriptor.epoch_id,writer_device_id:descriptor.writer_device_id,writer_key_id:descriptor.writer_key_id,writer_public_key:descriptor.writer_public_key,nonce:descriptor.nonce}
+  if(!await verifyEd25519V2(publicKey,descriptor.possession_signature,transferDescriptorPopBytesV2(core)))throw new Error('TransferDescriptorV2 possession signature failed.')
+  return descriptor
 }
 
 export async function validateWriterGrantV2(value:unknown):Promise<WriterGrantV2>{
