@@ -104,7 +104,8 @@ export async function validateRecoveryAuthorityTransitionV2(value:unknown):Promi
   const transition=object(value,'RecoveryAuthorityTransitionV2');exact(transition,['transition_id','transition_kind','from_recovery_generation','from_recovery_urs_id','from_recovery_takeover_key_id','to_recovery_generation','to_recovery_urs_commitment','to_recovery_urs_id','to_recovery_takeover_key_id','to_recovery_takeover_public_key','authority_anchor'],'RecoveryAuthorityTransitionV2')
   id(transition.transition_id,32,'transition_id');if(transition.transition_kind!=='recovery_rekey')throw new Error('transition_kind must be recovery_rekey.')
   const from=safeInteger(transition.from_recovery_generation,0,'from_recovery_generation'),to=safeInteger(transition.to_recovery_generation,1,'to_recovery_generation');if(to!==from+1)throw new Error('Recovery transition generation must increase exactly by one.')
-  id(transition.from_recovery_urs_id,32,'from_recovery_urs_id');id(transition.from_recovery_takeover_key_id,32,'from_recovery_takeover_key_id');id(transition.to_recovery_urs_commitment,32,'to_recovery_urs_commitment');id(transition.to_recovery_urs_id,32,'to_recovery_urs_id');const keyId=id(transition.to_recovery_takeover_key_id,32,'to_recovery_takeover_key_id'),publicKey=id(transition.to_recovery_takeover_public_key,32,'to_recovery_takeover_public_key');validateRemoteAnchorV2(transition.authority_anchor)
+  const fromUrs=id(transition.from_recovery_urs_id,32,'from_recovery_urs_id'),fromTakeover=id(transition.from_recovery_takeover_key_id,32,'from_recovery_takeover_key_id');id(transition.to_recovery_urs_commitment,32,'to_recovery_urs_commitment');const toUrs=id(transition.to_recovery_urs_id,32,'to_recovery_urs_id'),keyId=id(transition.to_recovery_takeover_key_id,32,'to_recovery_takeover_key_id'),publicKey=id(transition.to_recovery_takeover_public_key,32,'to_recovery_takeover_public_key');validateRemoteAnchorV2(transition.authority_anchor)
+  if(toUrs===fromUrs||keyId===fromTakeover)throw new Error('Recovery transition must introduce fresh URS and takeover-key identifiers.')
   if(await recoveryTakeoverKeyIdV2(fixedBase64Url(publicKey,32,'to_recovery_takeover_public_key'))!==keyId)throw new Error('to_recovery_takeover_key_id does not match its public key.')
   return value as unknown as RecoveryAuthorityTransitionV2
 }
@@ -181,6 +182,10 @@ export async function validateRevisionV2<T>(revision:RevisionV2<T>):Promise<void
     id(revision.writer_signature,64,'writer_signature')
   }
   await validateControlData(revision as RevisionV2)
+  if(revision.record_schema==='rotation-announcement-sw-v2'){
+    const rotation=revision.record_data as RotationAnnouncementV2
+    if(!revision.writer_context||rotation.source_writer_generation!==revision.writer_context.writer_generation||rotation.source_writer_grant_id!==revision.writer_context.writer_grant_id)throw new Error('RotationAnnouncementV2 source writer fields must match writer_context.')
+  }
 }
 
 export interface RevisionGraphV2<T=unknown>{revisions:Map<string,RevisionV2<T>>;headsByRecord:Map<string,Set<string>>}
