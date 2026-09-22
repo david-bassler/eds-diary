@@ -93,6 +93,7 @@ new defects unless their assumptions change:
    structure/state; the activation layer must re-read and verify the direct
    Source and bind predecessor, source snapshots, activation proof and exact
    announcement bytes before declaring the Successor active.
+7. **The generic `migration_origin` wrapper remains 1..8 Sources by inherited v1 semantics.** This is not a relaxation of the v2 migration-copy rule. §16a.0/§16a.1 separately requires each copied Successor head to carry exactly one Source with exactly one Source revision and proves the full Source↔Successor bijection during cross-epoch activation. Tightening the generic wrapper itself to exactly one would silently remove inherited wrapper expressiveness rather than enforce the activation rule at the correct layer.
 
 ## Required regression coverage
 
