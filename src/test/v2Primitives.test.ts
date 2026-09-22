@@ -161,6 +161,9 @@ describe('transferable single-writer v2 primitives',()=>{
     const revision:RevisionV2<WriterGrantV2>={record_type:'writer_grant',record_schema:'writer-grant-sw-v2',record_id:b(67,16),revision_id:b(68,32),parent_revision_ids:[],record_status:'control',record_data:grant,migration_origin:null,protocol_created_at:'2026-09-22T12:15:00.000Z',writer_context:null,writer_signature:null}
     expect(()=>revisionSigningBytesV2(b(1,16),b(2,16),revision)).toThrow(/grant authorization/)
     expect(()=>envelopeAadV2(b(1,16),b(2,16),b(3,32),999 as 1024)).toThrow(/padding bucket/)
+    const rotationData={...rotation,successor_epoch_id:b(69,16)}
+    const rotationRevision:RevisionV2<typeof rotationData>={record_type:'rotation_announcement',record_schema:'rotation-announcement-sw-v2',record_id:b(70,16),revision_id:b(71,32),parent_revision_ids:[],record_status:'control',record_data:rotationData,migration_origin:null,protocol_created_at:'2026-09-22T12:16:00.000Z',writer_context:{writer_generation:2,writer_grant_id:b(72,32),writer_device_id:b(73,16),writer_key_id:b(74,32)},writer_signature:b(75,64)}
+    await expect(validateRevisionV2(rotationRevision)).rejects.toThrow(/must match writer_context/)
   })
 
   it('validates genesis WriterGrantV2 and its exact signing core',async()=>{
@@ -202,6 +205,8 @@ describe('transferable single-writer v2 primitives',()=>{
     const transition={transition_id:b(30,32),transition_kind:'recovery_rekey' as const,from_recovery_generation:4,from_recovery_urs_id:b(31,32),from_recovery_takeover_key_id:b(32,32),to_recovery_generation:5,to_recovery_urs_commitment:b(33,32),to_recovery_urs_id:b(34,32),to_recovery_takeover_key_id:takeover.recoveryTakeoverKeyId,to_recovery_takeover_public_key:base64Url(takeover.publicKeyRaw),authority_anchor:anchor(7)}
     await expect(validateRecoveryAuthorityTransitionV2(transition)).resolves.toEqual(transition)
     await expect(validateRecoveryAuthorityTransitionV2({...transition,to_recovery_generation:6})).rejects.toThrow(/exactly by one/)
+    await expect(validateRecoveryAuthorityTransitionV2({...transition,to_recovery_urs_id:transition.from_recovery_urs_id})).rejects.toThrow(/fresh URS/)
+    await expect(validateRecoveryAuthorityTransitionV2({...transition,to_recovery_takeover_key_id:transition.from_recovery_takeover_key_id,to_recovery_takeover_public_key:b(32,32)})).rejects.toThrow(/fresh URS and takeover/)
   })
 
   it('keeps WriterGrantV2 wrapper unsigned while other v2 revisions require writer signatures',async()=>{
