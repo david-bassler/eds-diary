@@ -2,6 +2,7 @@ import type { PreparedEnvelope } from '../../security/envelopes'
 
 export const GOOGLE_DRIVE_SHEETS_PROVIDER = 'google-drive-sheets-v1' as const
 export const SINGLE_WRITER_V1_PROFILE = 'google-sheets-single-writer-v1' as const
+export const SINGLE_WRITER_V2_PROFILE = 'google-sheets-transferable-single-writer-v2' as const
 /** Backwards-compatible alias for existing v1 callers. New code should use SINGLE_WRITER_V1_PROFILE. */
 export const SINGLE_WRITER_PROFILE = SINGLE_WRITER_V1_PROFILE
 export type TransportErrorCode = 'auth_required' | 'permission_denied' | 'not_found' | 'conflict_or_unexpected_remote_change' | 'temporary_failure' | 'rate_limited' | 'unknown_outcome' | 'integrity_failure' | 'provider_incompatible'

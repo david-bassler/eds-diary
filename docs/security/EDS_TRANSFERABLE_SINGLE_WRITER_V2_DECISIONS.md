@@ -1,6 +1,6 @@
 # Transferable Single Writer v2 – Security Decision Ledger
 
-Stand: 21.09.2026
+Stand: 22.09.2026
 
 Status: **NORMATIVE RATIONALE / ANTI-CHURN COMPANION** to
 `EDS_TRANSFERABLE_SINGLE_WRITER_V2_EXACT_PROTOCOL.md`.
@@ -328,15 +328,23 @@ without requiring the staged Artifact to remain current.
 This ledger separates **decision stability** from **implementation status**.
 A recorded decision may be normative before its v2 runtime exists.
 
-| Decision | Status after PR #47 |
+Current implementation branch: `feat/transferable-single-writer-v2`.
+
+The first implementation layer is now present: frozen v2 wire/control types,
+strict context-free validators, Ed25519/KDF/ID primitives, the exact v2 schema
+registry composition and independent deterministic primitive Golden Vectors.
+This does **not** mean that canonical writer authority, v2 persistence, recovery,
+rotation, join or takeover are implemented.
+
+| Decision | Current implementation status |
 | --- | --- |
-| D-001 | Protocol/schema specified; v2 runtime verifier/artifact implementation still pending. |
-| D-002 | Protocol/operation-state semantics specified; v2 runtime still pending. |
+| D-001 | Stable URS-/takeover-key identifier derivation and context-free freshness checks are implemented; diary-wide history enforcement still requires the v2 verifier/artifact layers. |
+| D-002 | Protocol/operation-state semantics specified; v2 recovery-rekey runtime still pending. |
 | D-003 | Shared coordinator retry path implemented and tested; v2 policy implementation still pending. |
 | D-004 | Shared semantic disposition contract implemented; current IndexedDB store remains explicitly v1-only, v2 store/quarantine persistence still pending. |
-| D-005 | Shared WriteAuthority contract and push/retry/readback gates implemented. **The v2 domain-write preparation path does not exist yet**, so `canPrepareDomainWrite` is intentionally not wired into current v1 local writes. Wiring it is a v2 implementation requirement, not completed work in this PR. |
+| D-005 | Shared WriteAuthority contract and push/retry/readback gates implemented. **The v2 domain-write preparation path does not exist yet**, so `canPrepareDomainWrite` is intentionally not wired into current v1 local writes. |
 | D-006 | Protocol/architecture specified; v2 rotation runtime pending. |
-| D-007 | Protocol/architecture specified; v2 recovery/rotation runtime pending. |
+| D-007 | Recovery-takeover key generation/import/keypair-check primitives exist; operation-bound staging and v2 recovery/rotation runtime remain pending. |
 | D-008 | Provider/profile identity split implemented in shared contracts and v1 adapters; v2 adapter pending. |
 | D-009 | Shared canonical-only verifier boundary documented in contracts; separate v2 rotation-resume API/result type still pending with the v2 verifier implementation. |
 | D-010 | Protocol/operation-state and backup semantics specified for post-activation lifecycle supersession; v2 runtime pending. |
