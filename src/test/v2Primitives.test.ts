@@ -2,9 +2,16 @@ import { describe, expect, it } from 'vitest'
 import { SINGLE_WRITER_V2_PROFILE } from '../sync/core/contracts'
 import { arrayBuffer, base64Url, concatBytes, utf8 } from '../security/crypto/bytes'
 import { canonicalBytes } from '../security/crypto/canonical'
-import { sha256 } from '../security/crypto/core'
+import { hkdfSha256, sha256 } from '../security/crypto/core'
 import {
+  deriveActivationLineageCacheKeyV2,
+  deriveBackupKeyV2,
+  deriveEnvelopeKeyV2,
   deriveEpochSaltV2,
+  deriveLocalStateMacKeyV2,
+  deriveManifestKeyV2,
+  deriveRecoveryKeyV2,
+  deriveRecoveryTakeoverStagingKeyV2,
   generateRecoveryTakeoverKeyMaterialV2,
   generateWriterDeviceKeyV2,
   importRecoveryTakeoverSigningKeyV2,
@@ -48,6 +55,18 @@ describe('transferable single-writer v2 primitives',()=>{
     await expect(recoveryUrsIdV2(urs)).resolves.toBe(await digest('eds-diary/recovery-urs-id/v2',urs))
     await expect(deriveEpochSaltV2(diary,epoch)).resolves.toEqual(await sha256(concatBytes(utf8('eds-diary/hkdf-salt/v6'),zero,diary,epoch)))
     expect(await recoveryCommitmentV2(urs,diary,3)).toMatch(/^[A-Za-z0-9_-]{43}$/)
+  })
+
+  it('matches every frozen v2 KDF domain without reusing v5 labels',async()=>{
+    const root=new Uint8Array(32).fill(1),urs=new Uint8Array(32).fill(2),diary=new Uint8Array(16).fill(3),epoch=new Uint8Array(16).fill(4),envelopeId=new Uint8Array(32).fill(5),backupId=new Uint8Array(32).fill(6),recoverySalt=new Uint8Array(32).fill(7),stagingSalt=new Uint8Array(32).fill(8),salt=await deriveEpochSaltV2(diary,epoch)
+    await expect(deriveEnvelopeKeyV2(root,salt,envelopeId)).resolves.toEqual(await hkdfSha256(root,salt,concatBytes(utf8('eds-diary/envelope-key/v6'),zero,envelopeId)))
+    await expect(deriveManifestKeyV2(root,salt)).resolves.toEqual(await hkdfSha256(root,salt,utf8('eds-diary/epoch-manifest/v6')))
+    await expect(deriveLocalStateMacKeyV2(root,salt)).resolves.toEqual(await hkdfSha256(root,salt,utf8('eds-diary/local-state-mac/v6')))
+    await expect(deriveBackupKeyV2(root,salt,backupId)).resolves.toEqual(await hkdfSha256(root,salt,concatBytes(utf8('eds-diary/backup-manifest/v6'),zero,backupId)))
+    await expect(deriveRecoveryKeyV2(urs,recoverySalt)).resolves.toEqual(await hkdfSha256(urs,recoverySalt,utf8('eds-diary/recovery-wrap/v6')))
+    await expect(deriveRecoveryTakeoverStagingKeyV2(urs,stagingSalt)).resolves.toEqual(await hkdfSha256(urs,stagingSalt,utf8('eds-diary/recovery-takeover-staging/v2')))
+    await expect(deriveActivationLineageCacheKeyV2(root,salt)).resolves.toEqual(await hkdfSha256(root,salt,utf8('eds-diary/activation-lineage-cache/v2')))
+    expect(base64Url(await deriveManifestKeyV2(root,salt))).not.toBe(base64Url(await hkdfSha256(root,salt,utf8('eds-diary/epoch-manifest/v5'))))
   })
 
   it('generates a non-extractable writer signing key and verifies Ed25519 signatures',async()=>{
