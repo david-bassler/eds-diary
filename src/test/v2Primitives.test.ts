@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { SINGLE_WRITER_V2_PROFILE } from '../sync/core/contracts'
+import { openRevisionEnvelopeV2, sealRevisionEnvelopeV2 } from '../security/v2/envelopes'
 import { arrayBuffer, base64Url, concatBytes, fromBase64Url, utf8 } from '../security/crypto/bytes'
 import { canonicalBytes } from '../security/crypto/canonical'
 import { aesGcmEncrypt, hkdfSha256, sha256 } from '../security/crypto/core'
@@ -75,6 +76,17 @@ describe('transferable single-writer v2 primitives',()=>{
     const revisionInput=revisionSigningBytesV2(b(1,16),b(2,16),revision)
     await expect(sha256(revisionInput).then(base64Url)).resolves.toBe('MpF2RREShzgcSNcoY1qvxEihM8rtWhlVyb013sCfak0')
     await expect(signEd25519V2(fixedPrivate,revisionInput)).resolves.toBe('0ffDcehUIBpVUyaWs1-Zzix59EjwHRob_uWPcxtVrbk_QkxJYayb3InrRbPt_ZEn7t8XluI1XUYgv9tRayvzBA')
+  })
+
+  it('seals and opens the frozen EnvelopeV6 bytes through the reusable primitive',async()=>{
+    const bytes=(start:number,length:number)=>Uint8Array.from({length},(_,index)=>(start+index)&0xff)
+    const diary='AAECAwQFBgcICQoLDA0ODw',epoch='EBESExQVFhcYGRobHB0eHw',root=bytes(128,32),salt=await deriveEpochSaltV2(fromBase64Url(diary),fromBase64Url(epoch))
+    const revision:RevisionV2={record_type:'pain_entry',record_schema:'pain-entry/v1',record_id:b(3,16),revision_id:b(4,32),parent_revision_ids:[],record_status:'active',record_data:{note:'hello'},migration_origin:null,protocol_created_at:'2026-09-22T12:00:00.000Z',writer_context:{writer_generation:1,writer_grant_id:b(5,32),writer_device_id:b(6,16),writer_key_id:b(7,32)},writer_signature:b(8,64)}
+    const envelope=await sealRevisionEnvelopeV2(root,salt,{diaryId:diary,epochId:epoch},revision,bytes(160,32),bytes(240,12))
+    expect(envelope.envelopeId).toBe(base64Url(bytes(160,32)))
+    expect(envelope.iv).toBe('8PHy8_T19vf4-fr7')
+    await expect(openRevisionEnvelopeV2(root,salt,{diaryId:diary,epochId:epoch},envelope)).resolves.toEqual(revision)
+    await expect(openRevisionEnvelopeV2(root,salt,{diaryId:diary,epochId:epoch},{...envelope,ciphertext:envelope.ciphertext.slice(0,-1)+'A'})).rejects.toBeTruthy()
   })
 
   it('freezes the exact v2 schema allowlist and reproducible registry',async()=>{
