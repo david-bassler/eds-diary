@@ -143,7 +143,19 @@ export const V2_RECORD_SCHEMA_BY_TYPE = {
   successor_activation_confirmation: 'successor-activation-confirmation-sw-v2',
 } as const
 
-export const SINGLE_WRITER_V2_SCHEMA_ALLOWLIST = Object.values(V2_RECORD_SCHEMA_BY_TYPE)
+export const SINGLE_WRITER_V2_SCHEMA_ALLOWLIST = [
+  'activity-entry/v1',
+  'activity-type-settings/v1',
+  'epoch-migration-sw-v2',
+  'medication-entry/v1',
+  'medication-prescription/v1',
+  'pain-entry/v1',
+  'pain-type-settings/v1',
+  'recovery-authority-transition-sw-v2',
+  'rotation-announcement-sw-v2',
+  'successor-activation-confirmation-sw-v2',
+  'writer-grant-sw-v2',
+] as const
 
 export type V2RecordType = keyof typeof V2_RECORD_SCHEMA_BY_TYPE
 export type V2RecordSchema = (typeof V2_RECORD_SCHEMA_BY_TYPE)[V2RecordType]
