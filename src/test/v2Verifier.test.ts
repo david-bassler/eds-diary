@@ -14,10 +14,8 @@ import { createAnchorV2, prefixHashesV2 } from '../security/v2/prefix'
 import type { RecoveryAuthorityTransitionV2, RevisionV2, WriterGrantV2 } from '../security/v2/types'
 import {
   TransferableSingleWriterV2Verifier,
-  V2VerifierError,
   type VerifiedManifestTrustRootV2,
 } from '../security/v2/verifier'
-import { SINGLE_WRITER_V2_PROFILE } from '../sync/core/contracts'
 
 const id = (fill: number, length: number) => base64Url(new Uint8Array(length).fill(fill))
 const bytes = (fill: number, length: number) => new Uint8Array(length).fill(fill)
@@ -321,6 +319,6 @@ describe('TransferableSingleWriterV2Verifier', () => {
 
   it('fails closed on a missing manifest-genesis confirmation', async () => {
     const { root } = await trustRoot()
-    await expect(new TransferableSingleWriterV2Verifier().verifyCanonicalFull(root, bytes(14, 32), [])).rejects.toEqual(expect.objectContaining<V2VerifierError>({ code: 'manifest_genesis_missing' }))
+    await expect(new TransferableSingleWriterV2Verifier().verifyCanonicalFull(root, bytes(14, 32), [])).rejects.toMatchObject({ code: 'manifest_genesis_missing' })
   })
 })
