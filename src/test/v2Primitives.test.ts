@@ -22,6 +22,7 @@ import {
 } from '../security/v2/crypto'
 import { SINGLE_WRITER_V2_SCHEMA_ALLOWLIST, type RevisionV2, type TransferDescriptorV2, type WriterGrantV2 } from '../security/v2/types'
 import {
+  validateEpochMigrationV2,
   validateRecoveryAuthorityTransitionV2,
   validateRevisionGraphV2,
   validateRevisionV2,
@@ -106,6 +107,7 @@ describe('transferable single-writer v2 primitives',()=>{
     const core={grant_id:grant.grant_id,writer_generation:grant.writer_generation,writer_device_id:grant.writer_device_id,writer_key_id:grant.writer_key_id,writer_public_key:grant.writer_public_key,previous_grant_id:grant.previous_grant_id,previous_writer_generation:grant.previous_writer_generation,recovery_generation:grant.recovery_generation,reason:grant.reason,authority_anchor:grant.authority_anchor}
     expect(writerGrantSigningBytesV2(diary,epoch,grant)).toEqual(concatBytes(utf8('eds-diary/writer-grant/v2'),zero,new Uint8Array(16).fill(10),new Uint8Array(16).fill(11),zero,canonicalBytes(core as never)))
     await expect(validateWriterGrantV2({...grant,writer_key_id:b(14,32)})).rejects.toThrow(/does not match/)
+    await expect(validateWriterGrantV2({...grant,authority_anchor:anchor(1)})).rejects.toThrow(/Initial WriterGrantV2/)
     await expect(validateWriterGrantV2({...grant,reason:'handoff'})).rejects.toThrow(/WriterGrantV2 .*invariants/)
   })
 
@@ -120,6 +122,12 @@ describe('transferable single-writer v2 primitives',()=>{
     const tampered={...descriptor,nonce:b(25,32)}
     await expect(verifyTransferDescriptorV2(tampered)).rejects.toThrow(/possession signature/)
     expect(()=>validateTransferDescriptorV2({...descriptor,nonce:b(1,16)})).toThrow(/nonce/)
+  })
+
+  it('rejects a migration whose copied semantic snapshot changes',()=>{
+    const hash=b(29,32),migration={migration_id:b(26,32),migration_kind:'profile_upgrade' as const,source:{source_epoch_id:b(27,16),source_manifest_fingerprint:b(28,32),source_anchor:{anchor_profile:'google-sheets-single-writer-v1',covered_row_count:4,prefix_hash:b(30,32)},source_lineage_snapshot_hash:b(31,32),source_semantic_snapshot_hash:hash},result_semantic_snapshot_hash:hash,active_head_count:2,tombstone_head_count:1,source_writer_authority:null,source_recovery_transition_id:null}
+    expect(validateEpochMigrationV2(migration)).toEqual(migration)
+    expect(()=>validateEpochMigrationV2({...migration,result_semantic_snapshot_hash:b(32,32)})).toThrow(/changed the semantic snapshot/)
   })
 
   it('validates RecoveryAuthorityTransitionV2 key IDs and generation step',async()=>{
