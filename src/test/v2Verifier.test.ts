@@ -11,7 +11,7 @@ import {
 import { deriveEpochSaltV2 } from '../security/v2/crypto'
 import { envelopeRowV2, sealRevisionEnvelopeV2 } from '../security/v2/envelopes'
 import { createAnchorV2, prefixHashesV2 } from '../security/v2/prefix'
-import type { RecoveryAuthorityTransitionV2, RevisionV2, WriterGrantV2 } from '../security/v2/types'
+import type { RecoveryAuthorityTransitionV2, RevisionV2, RotationAnnouncementV2, WriterGrantV2 } from '../security/v2/types'
 import {
   TransferableSingleWriterV2Verifier,
   type VerifiedManifestTrustRootV2,
@@ -152,12 +152,47 @@ describe('TransferableSingleWriterV2Verifier', () => {
     }
     grantC.authorization.signature = await signEd25519V2(writer.privateKey, writerGrantSigningBytesV2(root.diary_id, root.epoch_id, grantC))
     const third = await seal(root, rootKey, grantRevision(grantC, 43), 50)
+    const rowsBeforeHistorical = [row1, envelopeRowV2(second), envelopeRowV2(third)] as const
+    const historicalRotation: RotationAnnouncementV2 = {
+      rotation_id: id(51, 32),
+      from_epoch_id: root.epoch_id,
+      successor_epoch_id: id(52, 16),
+      successor_creation_locator: id(53, 16),
+      successor_manifest_fingerprint: id(54, 32),
+      rotation_kind: 'normal',
+      source_writer_generation: 1,
+      source_writer_grant_id: genesis.grant_id,
+      successor_recovery_generation: 0,
+      source_anchor_before_announcement: await createAnchorV2(root.diary_id, root.epoch_id, rowsBeforeHistorical),
+      successor_staging_anchor: await createAnchorV2(root.diary_id, root.epoch_id, []),
+      recovery_transition_id: null,
+    }
+    const historicalUnsigned: RevisionV2<RotationAnnouncementV2> = {
+      record_type: 'rotation_announcement',
+      record_schema: 'rotation-announcement-sw-v2',
+      record_id: id(55, 16),
+      revision_id: id(56, 32),
+      parent_revision_ids: [],
+      record_status: 'control',
+      record_data: historicalRotation,
+      migration_origin: null,
+      protocol_created_at: createdAt,
+      writer_context: {
+        writer_generation: 1,
+        writer_grant_id: genesis.grant_id,
+        writer_device_id: genesis.writer_device_id,
+        writer_key_id: genesis.writer_key_id,
+      },
+      writer_signature: null,
+    }
+    const historicalRow = envelopeRowV2(await seal(root, rootKey, await signedRevision(root, historicalUnsigned, writer.privateKey), 57))
 
-    const result = await new TransferableSingleWriterV2Verifier().verifyCanonicalFull(root, rootKey, [row1, envelopeRowV2(second), envelopeRowV2(third)])
+    const result = await new TransferableSingleWriterV2Verifier().verifyCanonicalFull(root, rootKey, [...rowsBeforeHistorical, historicalRow])
     expect(result.current_writer.writer_grant_id).toBe(grantB.grant_id)
     expect(result.current_writer.writer_key_id).toBe(targetB.writerKeyId)
-    expect(result.dispositions.map(({ disposition }) => disposition)).toEqual(['accepted', 'accepted', 'stale_grant_rejected'])
-    expect(result.remote_anchor.covered_row_count).toBe(3)
+    expect(result.dispositions.map(({ disposition }) => disposition)).toEqual(['accepted', 'accepted', 'stale_grant_rejected', 'stale_writer_rejected'])
+    expect(result.stale_writer_envelope_ids.has(historicalRow[0])).toBe(true)
+    expect(result.remote_anchor.covered_row_count).toBe(4)
   })
 
   it('counts byte-identical retry rows physically but applies their semantics only once', async () => {
