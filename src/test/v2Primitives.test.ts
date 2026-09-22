@@ -33,6 +33,7 @@ import { SINGLE_WRITER_V2_SCHEMA_ALLOWLIST, type RevisionV2, type TransferDescri
 import {
   validateEpochMigrationV2,
   validateRecoveryAuthorityTransitionV2,
+  validateRotationAnnouncementV2,
   validateRevisionGraphV2,
   validateRevisionV2,
   validateTransferDescriptorV2,
@@ -151,6 +152,15 @@ describe('transferable single-writer v2 primitives',()=>{
     await expect(verifyEd25519V2(writer.publicKeyRaw,revision.writer_signature,revisionSigningBytesV2(diary,epoch,revision))).resolves.toBe(true)
     await expect(validateRevisionV2({...revision,unexpected:true} as unknown as RevisionV2)).rejects.toThrow(/unknown or missing/)
     await expect(validateRevisionV2({...revision,writer_context:null})).rejects.toThrow(/writer_context/)
+  })
+
+  it('rejects structurally impossible v2 rotation/signing inputs before verifier state',async()=>{
+    const epoch=b(60,16),rotation={rotation_id:b(61,32),from_epoch_id:epoch,successor_epoch_id:epoch,successor_creation_locator:b(62,16),successor_manifest_fingerprint:b(63,32),rotation_kind:'normal' as const,source_writer_generation:1,source_writer_grant_id:b(64,32),successor_recovery_generation:0,source_anchor_before_announcement:anchor(1),successor_staging_anchor:anchor(2),recovery_transition_id:null}
+    expect(()=>validateRotationAnnouncementV2(rotation)).toThrow(/differ from source/)
+    const writer=await generateWriterDeviceKeyV2(),grant:WriterGrantV2={grant_id:b(65,32),writer_generation:1,writer_device_id:b(66,16),writer_key_id:writer.writerKeyId,writer_public_key:base64Url(writer.publicKeyRaw),previous_grant_id:null,previous_writer_generation:0,recovery_generation:0,reason:'initial',authority_anchor:anchor(),authorization:{kind:'manifest_genesis',signer_key_id:null,signature:null}}
+    const revision:RevisionV2<WriterGrantV2>={record_type:'writer_grant',record_schema:'writer-grant-sw-v2',record_id:b(67,16),revision_id:b(68,32),parent_revision_ids:[],record_status:'control',record_data:grant,migration_origin:null,protocol_created_at:'2026-09-22T12:15:00.000Z',writer_context:null,writer_signature:null}
+    expect(()=>revisionSigningBytesV2(b(1,16),b(2,16),revision)).toThrow(/grant authorization/)
+    expect(()=>envelopeAadV2(b(1,16),b(2,16),b(3,32),999 as 1024)).toThrow(/padding bucket/)
   })
 
   it('validates genesis WriterGrantV2 and its exact signing core',async()=>{
