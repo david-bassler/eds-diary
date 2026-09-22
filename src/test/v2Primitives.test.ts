@@ -9,12 +9,14 @@ import {
   generateWriterDeviceKeyV2,
   importRecoveryTakeoverSigningKeyV2,
   recoveryCommitmentV2,
+  recoveryTakeoverKeyCheckBytesV2,
   recoveryTakeoverKeyIdV2,
   recoveryUrsIdV2,
   revisionSigningBytesV2,
   signEd25519V2,
   transferDescriptorPopBytesV2,
   verifyEd25519V2,
+  verifyRecoveryTakeoverKeyPairV2,
   writerGrantSigningBytesV2,
   writerKeyIdV2,
 } from '../security/v2/crypto'
@@ -67,8 +69,11 @@ describe('transferable single-writer v2 primitives',()=>{
     expect(generated.recoveryTakeoverKeyId).toBe(await recoveryTakeoverKeyIdV2(generated.publicKeyRaw))
     const imported=await importRecoveryTakeoverSigningKeyV2(generated.privateKeyPkcs8)
     expect(imported.extractable).toBe(false)
-    const message=utf8('recovery takeover keypair check'),signature=await signEd25519V2(imported,message)
-    await expect(verifyEd25519V2(generated.publicKeyRaw,signature,message)).resolves.toBe(true)
+    const diary=b(7,16),epoch=b(8,16),input=recoveryTakeoverKeyCheckBytesV2(diary,epoch,4,generated.publicKeyRaw)
+    expect(input).toEqual(concatBytes(utf8('eds-diary/recovery-takeover-key-check/v2'),zero,new Uint8Array(16).fill(7),new Uint8Array(16).fill(8),new Uint8Array([0,0,0,0,0,0,0,4]),generated.publicKeyRaw))
+    await expect(verifyRecoveryTakeoverKeyPairV2(imported,generated.publicKeyRaw,diary,epoch,4)).resolves.toBe(true)
+    const other=await generateRecoveryTakeoverKeyMaterialV2()
+    await expect(verifyRecoveryTakeoverKeyPairV2(imported,other.publicKeyRaw,diary,epoch,4)).resolves.toBe(false)
   })
 
   it('builds and validates an exact writer-signed RevisionV2',async()=>{
