@@ -43,6 +43,24 @@ const anchor=(rows=0)=>({anchor_profile:SINGLE_WRITER_V2_PROFILE,covered_row_cou
 const zero=new Uint8Array([0])
 
 describe('transferable single-writer v2 primitives',()=>{
+  it('matches independent frozen golden vectors for IDs, KDFs and transfer PoP',async()=>{
+    const bytes=(start:number,length:number)=>Uint8Array.from({length},(_,index)=>(start+index)&0xff),diary=bytes(0,16),epoch=bytes(16,16),writerPublic=bytes(0,32),urs=bytes(96,32),root=bytes(128,32),envelopeId=bytes(160,32),backupId=bytes(192,32),recoverySalt=bytes(224,32),stagingSalt=bytes(0,32)
+    await expect(writerKeyIdV2(writerPublic)).resolves.toBe('rs-mRc1Y2AimOhGNuqlEpdew1LHwFZUMnfzYnP4rqL4')
+    await expect(recoveryTakeoverKeyIdV2(writerPublic)).resolves.toBe('Ee6bA___q8Bdx7TjpDUQrl-Sky7_Dm0MDFJiva7YfOs')
+    await expect(recoveryUrsIdV2(urs)).resolves.toBe('qLjDR1ig9ZkcyOHIAofhvyDGkmcIp0InxJDJ7ZkAgwY')
+    const salt=await deriveEpochSaltV2(diary,epoch)
+    expect(base64Url(salt)).toBe('9pb0gDq3Z9WWfZg7NyYFnEj6o6BMoVluFiY39gPG-Lk')
+    await expect(deriveEnvelopeKeyV2(root,salt,envelopeId).then(base64Url)).resolves.toBe('A3SSM7F6RYtlwQsMM6XWePkPelmfMJtb8V9yUwcshd8')
+    await expect(deriveManifestKeyV2(root,salt).then(base64Url)).resolves.toBe('j9433BmNz_-dziJCTeImnNi5xr8HBRObwwPOL0oR8ew')
+    await expect(deriveLocalStateMacKeyV2(root,salt).then(base64Url)).resolves.toBe('Kbz1Ik2cKRycAfqfg4974XSmwdnUXIQRY2SJ8kHTTMA')
+    await expect(deriveBackupKeyV2(root,salt,backupId).then(base64Url)).resolves.toBe('jlJVKyusA5k_-V9_iyED41GWWJtOUXeAib5jpDN2ZJ0')
+    await expect(deriveRecoveryKeyV2(urs,recoverySalt).then(base64Url)).resolves.toBe('1MqWxcxbxZ0wLaI1_BwqIWzYfjTk1negA9Mu7-3KBkQ')
+    await expect(deriveRecoveryTakeoverStagingKeyV2(urs,stagingSalt).then(base64Url)).resolves.toBe('iUUfiRXRSAb92qfWB0HiyUnR2kFKFZ0Cs8HCz_tWtj4')
+    await expect(deriveActivationLineageCacheKeyV2(root,salt).then(base64Url)).resolves.toBe('mRGU5jw6jG8c4v1Mc_O1x_hD6J7uyGHm96sSrNBOmyc')
+    const core:Omit<TransferDescriptorV2,'possession_signature'>={format:'eds-writer-transfer-v2',version:2,sync_profile:SINGLE_WRITER_V2_PROFILE,diary_id:'AAECAwQFBgcICQoLDA0ODw',epoch_id:'EBESExQVFhcYGRobHB0eHw',writer_device_id:'ICEiIyQlJicoKSorLC0uLw',writer_key_id:'rs-mRc1Y2AimOhGNuqlEpdew1LHwFZUMnfzYnP4rqL4',writer_public_key:'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8',nonce:'QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8'}
+    await expect(sha256(transferDescriptorPopBytesV2(core)).then(base64Url)).resolves.toBe('ZSQqmynmEjlPdgiw9DwX_vIptLoUOvPZAgZiQmkb_bo')
+  })
+
   it('freezes the exact v2 schema allowlist order',()=>{
     expect(SINGLE_WRITER_V2_SCHEMA_ALLOWLIST).toEqual(['activity-entry/v1','activity-type-settings/v1','epoch-migration-sw-v2','medication-entry/v1','medication-prescription/v1','pain-entry/v1','pain-type-settings/v1','recovery-authority-transition-sw-v2','rotation-announcement-sw-v2','successor-activation-confirmation-sw-v2','writer-grant-sw-v2'])
   })
