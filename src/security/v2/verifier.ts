@@ -542,13 +542,16 @@ function handleRotation(
   const anchorRecovery = historicalAnchorState(state.recoveryStateHistory, rotation.source_anchor_before_announcement, prefixHashes, beforeCount)
   if (rotation.from_epoch_id !== root.epoch_id) fail('schema_or_canonicalization_failure')
   if (rotation.successor_recovery_generation !== anchorRecovery.recovery_generation) fail('recovery_generation_mismatch')
-  if (rotation.source_anchor_before_announcement.covered_row_count !== beforeCount) return 'stale_rotation_announcement_rejected'
-  if (state.currentRecovery.recovery_rekey_rotation_required) {
+  // Staleness is only non-fatal for a claim that was otherwise valid at its
+  // bound historical decision prefix. Validate the rotation/rekey mode against
+  // that historical Recovery state before deciding whether the anchor is stale.
+  if (anchorRecovery.recovery_rekey_rotation_required) {
     if (rotation.rotation_kind === 'normal') return 'rekey_rotation_required_rejected'
-    if (rotation.recovery_transition_id !== state.currentRecovery.recovery_rekey_transition_id) fail('recovery_transition_state_mismatch')
+    if (rotation.recovery_transition_id !== anchorRecovery.recovery_rekey_transition_id) fail('recovery_transition_state_mismatch')
   } else if (rotation.rotation_kind !== 'normal' || rotation.recovery_transition_id !== null) {
     fail('recovery_transition_state_mismatch')
   }
+  if (rotation.source_anchor_before_announcement.covered_row_count !== beforeCount) return 'stale_rotation_announcement_rejected'
   state.sealed = true
   state.currentWriter = { ...state.currentWriter, source_epoch_sealed: true }
   return 'accepted'
