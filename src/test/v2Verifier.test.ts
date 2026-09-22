@@ -298,6 +298,55 @@ describe('TransferableSingleWriterV2Verifier', () => {
       .rejects.toMatchObject({ code: 'iv_reuse_across_envelope_ids' })
   })
 
+  it('does not downgrade an invalid historical recovery-rekey announcement to stale', async () => {
+    const { root, writer } = await trustRoot()
+    const rootKey = bytes(19, 32)
+    const genesis: WriterGrantV2 = {
+      grant_id: root.epoch_start_writer_grant_id,
+      writer_generation: 1,
+      writer_device_id: root.epoch_start_writer_device_id,
+      writer_key_id: root.epoch_start_writer_key_id,
+      writer_public_key: root.epoch_start_writer_public_key,
+      previous_grant_id: null,
+      previous_writer_generation: 0,
+      recovery_generation: 0,
+      reason: 'initial',
+      authority_anchor: await createAnchorV2(root.diary_id, root.epoch_id, []),
+      authorization: { kind: 'manifest_genesis', signer_key_id: null, signature: null },
+    }
+    const row1=envelopeRowV2(await seal(root,rootKey,grantRevision(genesis,117),118))
+    const rotation:RotationAnnouncementV2={
+      rotation_id:id(119,32),
+      from_epoch_id:root.epoch_id,
+      successor_epoch_id:id(120,16),
+      successor_creation_locator:id(121,16),
+      successor_manifest_fingerprint:id(122,32),
+      rotation_kind:'recovery_rekey',
+      source_writer_generation:1,
+      source_writer_grant_id:genesis.grant_id,
+      successor_recovery_generation:0,
+      source_anchor_before_announcement:await createAnchorV2(root.diary_id,root.epoch_id,[row1]),
+      successor_staging_anchor:await createAnchorV2(root.diary_id,root.epoch_id,[]),
+      recovery_transition_id:id(123,32),
+    }
+    const unsigned:RevisionV2<RotationAnnouncementV2>={
+      record_type:'rotation_announcement',
+      record_schema:'rotation-announcement-sw-v2',
+      record_id:id(124,16),
+      revision_id:id(125,32),
+      parent_revision_ids:[],
+      record_status:'control',
+      record_data:rotation,
+      migration_origin:null,
+      protocol_created_at:createdAt,
+      writer_context:{writer_generation:1,writer_grant_id:genesis.grant_id,writer_device_id:genesis.writer_device_id,writer_key_id:genesis.writer_key_id},
+      writer_signature:null,
+    }
+    const row3=envelopeRowV2(await seal(root,rootKey,await signedRevision(root,unsigned,writer.privateKey),126))
+    await expect(new TransferableSingleWriterV2Verifier().verifyCanonicalFull(root,rootKey,[row1,row1,row3]))
+      .rejects.toMatchObject({code:'recovery_transition_state_mismatch'})
+  })
+
   it('enforces the pending-rekey fence but still allows a recovery-authorized forced takeover', async () => {
     const { root, writer } = await trustRoot()
     const rootKey = bytes(11, 32)
