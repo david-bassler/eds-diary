@@ -26,7 +26,6 @@ import type {
 import { validateRevisionV2 } from './validators'
 
 const MAX_SAFE = Number.MAX_SAFE_INTEGER
-const MAX_PARENTS = 8
 const MAX_PER_RECORD = 4096
 const MAX_ROWS = 100_000
 const MAX_CANONICAL_BYTES = 134_217_728
@@ -67,7 +66,7 @@ export type V2FatalCode =
   | 'schema_or_canonicalization_failure'
 
 export class V2VerifierError extends Error {
-  constructor(readonly code: V2FatalCode, message = code) {
+  constructor(readonly code: V2FatalCode, message: string = code) {
     super(message)
     this.name = 'V2VerifierError'
   }
@@ -540,7 +539,8 @@ function handleRotation(
 }
 
 async function handleMigration(state: ReplayState, migration: EpochMigrationV2): Promise<V2NonFatalDisposition> {
-  if (state.acceptedMigration) fail('protocol_id_collision', 'A second migration control is not allowed.')
+  if (!state.migrationRequired) fail('schema_or_canonicalization_failure', 'A native epoch must not contain EpochMigrationV2.')
+  if (state.acceptedMigration) fail('schema_or_canonicalization_failure', 'A second migration control is not allowed.')
   const snapshot = await semanticSnapshot(state.graph)
   if (snapshot.hash !== migration.result_semantic_snapshot_hash) fail('migration_snapshot_mismatch')
   if (snapshot.active !== migration.active_head_count || snapshot.tombstone !== migration.tombstone_head_count) fail('migration_head_count_mismatch')
