@@ -211,6 +211,7 @@ interface ReplayState {
   seenRecoveryTakeoverKeyIds: Set<string>
   seenEnvelopeRows: Map<string, readonly [string, string, string]>
   seenRevisionIds: Map<string, string>
+  revisionCountsByRecord: Map<string, number>
   seenIvOwner: Map<string, string>
   dispositions: EnvelopeDispositionV2[]
   verifiedEnvelopeIds: Set<string>
@@ -334,6 +335,12 @@ function reserveRevisionId(state: ReplayState, envelopeId: string, revision: Rev
   const existingEnvelopeId = state.seenRevisionIds.get(revision.revision_id)
   if (existingEnvelopeId !== undefined && existingEnvelopeId !== envelopeId) fail('revision_id_collision')
   state.seenRevisionIds.set(revision.revision_id, envelopeId)
+}
+
+function reserveRevisionRecordBound(state: ReplayState, revision: RevisionV2): void {
+  const count = (state.revisionCountsByRecord.get(revision.record_id) ?? 0) + 1
+  if (count > MAX_PER_RECORD) fail('schema_or_canonicalization_failure', 'Revision count bound exceeded.')
+  state.revisionCountsByRecord.set(revision.record_id, count)
 }
 
 function reserveControlId(state: ReplayState, root: VerifiedManifestTrustRootV2, revision: RevisionV2): void {
@@ -657,6 +664,7 @@ async function replay(
     seenRecoveryTakeoverKeyIds: new Set(trustRoot.recovery_credential_history.map((entry) => entry.recovery_takeover_key_id)),
     seenEnvelopeRows: new Map(),
     seenRevisionIds: new Map(),
+    revisionCountsByRecord: new Map(),
     seenIvOwner: new Map(),
     dispositions: [],
     verifiedEnvelopeIds: new Set(),
@@ -715,6 +723,7 @@ async function replay(
       )
       await validateRevisionV2(revision)
       reserveRevisionId(state, envelopeId, revision)
+      reserveRevisionRecordBound(state, revision)
       reserveControlId(state, trustRoot, revision)
       validateDomainRecord(revision)
       assertGenesisGate(state, trustRoot, revision)
