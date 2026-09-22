@@ -275,7 +275,7 @@ async function validateTrustRoot(root: VerifiedManifestTrustRootV2): Promise<voi
     fixedBase64Url(root.epoch_start_writer_device_id, 16, 'epoch_start_writer_device_id')
     const writerKeyId = fixedBase64Url(root.epoch_start_writer_key_id, 32, 'epoch_start_writer_key_id')
     const writerPublic = fixedBase64Url(root.epoch_start_writer_public_key, 32, 'epoch_start_writer_public_key')
-    if (base64Url(writerKeyId) !== root.epoch_start_writer_key_id || await writerKeyIdV2(writerPublic) !== root.epoch_start_writer_key_id) fail('recovery_key_mismatch', 'Manifest writer key binding is invalid.')
+    if (base64Url(writerKeyId) !== root.epoch_start_writer_key_id || await writerKeyIdV2(writerPublic) !== root.epoch_start_writer_key_id) fail('manifest_genesis_mismatch', 'Manifest writer key binding is invalid.')
     fixedBase64Url(root.recovery_urs_commitment, 32, 'recovery_urs_commitment')
     fixedBase64Url(root.recovery_urs_id, 32, 'recovery_urs_id')
     const takeoverPublic = fixedBase64Url(root.recovery_takeover_public_key, 32, 'recovery_takeover_public_key')
@@ -650,6 +650,10 @@ async function replay(
     try {
       if (row.length !== 3 || row.some((cell) => typeof cell !== 'string' || cell.length === 0)) fail('schema_or_canonicalization_failure', 'Invalid _r row.')
       const envelopeId = row[0]!
+      // Base64URL cells are ASCII and need no JCS escaping. The exact JCS row
+      // overhead for three strings is 10 bytes, so reject oversized input
+      // before Base64 decoding can allocate attacker-controlled buffers.
+      if (row[0]!.length + row[1]!.length + row[2]!.length + 10 > MAX_ROW_BYTES) fail('schema_or_canonicalization_failure', 'Canonical row bound exceeded.')
       fixedBase64Url(envelopeId, 32, 'envelope_id')
       fixedBase64Url(row[1]!, 12, 'iv')
       const ciphertext = fromBase64Url(row[2]!)
