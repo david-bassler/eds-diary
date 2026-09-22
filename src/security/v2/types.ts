@@ -1,4 +1,5 @@
 import { SINGLE_WRITER_V1_PROFILE, SINGLE_WRITER_V2_PROFILE, type RemoteAnchorState } from '../../sync/core/contracts'
+import type { RemoteAnchorV1 } from '../../sync/core/prefix'
 import type { MigrationOrigin, RevisionStatus } from '../revisions'
 
 export interface RemoteAnchorV2 extends RemoteAnchorState {
@@ -96,7 +97,7 @@ export interface SuccessorActivationConfirmationV2 {
   source_profile: typeof SINGLE_WRITER_V1_PROFILE | typeof SINGLE_WRITER_V2_PROFILE
   source_epoch_id: string
   source_manifest_fingerprint: string
-  source_anchor_before_announcement: RemoteAnchorState
+  source_anchor_before_announcement: RemoteAnchorV1 | RemoteAnchorV2
   successor_epoch_id: string
   successor_manifest_fingerprint: string
   successor_staging_anchor: RemoteAnchorV2
@@ -106,7 +107,7 @@ export interface SuccessorActivationConfirmationV2 {
 export interface EpochMigrationSourceV2 {
   source_epoch_id: string
   source_manifest_fingerprint: string
-  source_anchor: RemoteAnchorState | null
+  source_anchor: RemoteAnchorV1 | RemoteAnchorV2 | null
   source_lineage_snapshot_hash: string
   source_semantic_snapshot_hash: string
 }
