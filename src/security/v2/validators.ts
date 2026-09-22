@@ -66,15 +66,33 @@ export function validateWriterContextV2(value:unknown):WriterContextV2{
   safeInteger(context.writer_generation,1,'writer_context.writer_generation');id(context.writer_grant_id,32,'writer_context.writer_grant_id');id(context.writer_device_id,16,'writer_context.writer_device_id');id(context.writer_key_id,32,'writer_context.writer_key_id')
   return value as WriterContextV2
 }
+function compareBytes(left:Uint8Array,right:Uint8Array):number{
+  const length=Math.min(left.byteLength,right.byteLength)
+  for(let index=0;index<length;index+=1)if(left[index]!==right[index])return left[index]!-right[index]!
+  return left.byteLength-right.byteLength
+}
 function validateMigrationOrigin(value:unknown):void{
   if(value===null)return
   const origin=object(value,'migration_origin');exact(origin,['sources'],'migration_origin')
-  if(!Array.isArray(origin.sources)||origin.sources.length<1||origin.sources.length>4096)throw new Error('migration_origin.sources is invalid.')
+  if(!Array.isArray(origin.sources)||origin.sources.length<1||origin.sources.length>8)throw new Error('migration_origin.sources is invalid.')
+  let previousSourceKey:Uint8Array|null=null
+  const seenSources=new Set<string>()
   for(const [index,entry] of origin.sources.entries()){
     const source=object(entry,`migration_origin.sources[${index}]`);exact(source,['source_epoch_id','source_record_id','source_revision_ids'],`migration_origin.sources[${index}]`)
-    id(source.source_epoch_id,16,'source_epoch_id');id(source.source_record_id,16,'source_record_id')
-    if(!Array.isArray(source.source_revision_ids)||source.source_revision_ids.length<1||source.source_revision_ids.length>MAX_PER_RECORD||new Set(source.source_revision_ids).size!==source.source_revision_ids.length)throw new Error('migration_origin source_revision_ids are invalid.')
-    source.source_revision_ids.forEach((revisionId)=>id(revisionId,32,'source_revision_id'))
+    const epochBytes=fixedBase64Url(id(source.source_epoch_id,16,'source_epoch_id'),16,'source_epoch_id')
+    const recordBytes=fixedBase64Url(id(source.source_record_id,16,'source_record_id'),16,'source_record_id')
+    const sourceKey=new Uint8Array(epochBytes.byteLength+recordBytes.byteLength);sourceKey.set(epochBytes);sourceKey.set(recordBytes,epochBytes.byteLength)
+    const sourceIdentity=`${source.source_epoch_id}\0${source.source_record_id}`
+    if(seenSources.has(sourceIdentity))throw new Error('migration_origin sources must be unique.')
+    if(previousSourceKey!==null&&compareBytes(previousSourceKey,sourceKey)>=0)throw new Error('migration_origin sources must be byte-sorted.')
+    seenSources.add(sourceIdentity);previousSourceKey=sourceKey
+    if(!Array.isArray(source.source_revision_ids)||source.source_revision_ids.length<1||source.source_revision_ids.length>8||new Set(source.source_revision_ids).size!==source.source_revision_ids.length)throw new Error('migration_origin source_revision_ids are invalid.')
+    let previousRevision:Uint8Array|null=null
+    for(const revisionId of source.source_revision_ids){
+      const revisionBytes=fixedBase64Url(id(revisionId,32,'source_revision_id'),32,'source_revision_id')
+      if(previousRevision!==null&&compareBytes(previousRevision,revisionBytes)>=0)throw new Error('migration_origin source_revision_ids must be byte-sorted.')
+      previousRevision=revisionBytes
+    }
   }
 }
 
