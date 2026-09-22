@@ -83,7 +83,7 @@ describe('transferable single-writer v2 primitives',()=>{
     const entries=await schemaRegistryEntriesV2()
     expect(entries.map(({record_schema})=>record_schema)).toEqual([...SINGLE_WRITER_V2_SCHEMA_ALLOWLIST].sort())
     expect(entries.every(({schema_sha256})=>/^[A-Za-z0-9_-]{43}$/.test(schema_sha256))).toBe(true)
-    expect(await schemaRegistryHashV2()).toMatch(/^[A-Za-z0-9_-]{43}$/)
+    expect(await schemaRegistryHashV2()).toBe('45WLQG41o-vdMhcWnJR1yhF74km8H55N9wlPnGWdduI')
   })
 
   it('derives v2 identifiers and recovery commitment with the frozen domains',async()=>{
