@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { base64Url } from '../security/crypto/bytes'
+import { base64Url, fromBase64Url } from '../security/crypto/bytes'
 import {
   generateRecoveryTakeoverKeyMaterialV2,
   generateWriterDeviceKeyV2,
@@ -158,6 +158,61 @@ describe('TransferableSingleWriterV2Verifier', () => {
     expect(result.current_writer.writer_key_id).toBe(targetB.writerKeyId)
     expect(result.dispositions.map(({ disposition }) => disposition)).toEqual(['accepted', 'accepted', 'stale_grant_rejected'])
     expect(result.remote_anchor.covered_row_count).toBe(3)
+  })
+
+  it('counts byte-identical retry rows physically but applies their semantics only once', async () => {
+    const { root } = await trustRoot()
+    const rootKey = bytes(15, 32)
+    const genesis: WriterGrantV2 = {
+      grant_id: root.epoch_start_writer_grant_id,
+      writer_generation: 1,
+      writer_device_id: root.epoch_start_writer_device_id,
+      writer_key_id: root.epoch_start_writer_key_id,
+      writer_public_key: root.epoch_start_writer_public_key,
+      previous_grant_id: null,
+      previous_writer_generation: 0,
+      recovery_generation: 0,
+      reason: 'initial',
+      authority_anchor: await createAnchorV2(root.diary_id, root.epoch_id, []),
+      authorization: { kind: 'manifest_genesis', signer_key_id: null, signature: null },
+    }
+    const row = envelopeRowV2(await seal(root, rootKey, grantRevision(genesis, 90), 91))
+    const result = await new TransferableSingleWriterV2Verifier().verifyCanonicalFull(root, rootKey, [row, row])
+    expect(result.dispositions.map(({ disposition }) => disposition)).toEqual(['accepted', 'duplicate_retry'])
+    expect(result.remote_anchor.covered_row_count).toBe(2)
+    expect(result.verified_envelope_ids.size).toBe(1)
+    expect(result.accepted_envelope_ids.size).toBe(1)
+  })
+
+  it('fails closed when one IV is reused by two different envelope IDs', async () => {
+    const { root } = await trustRoot()
+    const rootKey = bytes(16, 32)
+    const genesis: WriterGrantV2 = {
+      grant_id: root.epoch_start_writer_grant_id,
+      writer_generation: 1,
+      writer_device_id: root.epoch_start_writer_device_id,
+      writer_key_id: root.epoch_start_writer_key_id,
+      writer_public_key: root.epoch_start_writer_public_key,
+      previous_grant_id: null,
+      previous_writer_generation: 0,
+      recovery_generation: 0,
+      reason: 'initial',
+      authority_anchor: await createAnchorV2(root.diary_id, root.epoch_id, []),
+      authorization: { kind: 'manifest_genesis', signer_key_id: null, signature: null },
+    }
+    const revision = grantRevision(genesis, 92)
+    const first = await seal(root, rootKey, revision, 93)
+    const salt = await deriveEpochSaltV2(bytes(1, 16), bytes(2, 16))
+    const second = await sealRevisionEnvelopeV2(
+      rootKey,
+      salt,
+      { diaryId: root.diary_id, epochId: root.epoch_id },
+      revision,
+      bytes(94, 32),
+      fromBase64Url(first.iv),
+    )
+    await expect(new TransferableSingleWriterV2Verifier().verifyCanonicalFull(root, rootKey, [envelopeRowV2(first), envelopeRowV2(second)]))
+      .rejects.toMatchObject({ code: 'iv_reuse_across_envelope_ids' })
   })
 
   it('enforces the pending-rekey fence but still allows a recovery-authorized forced takeover', async () => {
