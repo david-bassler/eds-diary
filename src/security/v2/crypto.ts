@@ -1,5 +1,5 @@
 import { SINGLE_WRITER_V2_PROFILE } from '../../sync/core/contracts'
-import { arrayBuffer, base64Url, concatBytes, fixedBase64Url, fromBase64Url, uint64be, utf8 } from '../crypto/bytes'
+import { arrayBuffer, base64Url, concatBytes, fixedBase64Url, uint64be, utf8 } from '../crypto/bytes'
 import { canonicalBytes } from '../crypto/canonical'
 import { hkdfSha256, hmacSha256, randomBytes, sha256 } from '../crypto/core'
 import type { RevisionV2, TransferDescriptorV2, WriterGrantV2 } from './types'
@@ -149,7 +149,7 @@ export function transferDescriptorPopBytesV2(descriptor:Omit<TransferDescriptorV
 
 export function writerGrantSigningBytesV2(diaryId:string,epochId:string,grant:WriterGrantV2):Uint8Array{
   const diary=fixedBase64Url(diaryId,16,'diary_id'),epoch=fixedBase64Url(epochId,16,'epoch_id')
-  const {authorization:_authorization,...core}=grant
+  const core={grant_id:grant.grant_id,writer_generation:grant.writer_generation,writer_device_id:grant.writer_device_id,writer_key_id:grant.writer_key_id,writer_public_key:grant.writer_public_key,previous_grant_id:grant.previous_grant_id,previous_writer_generation:grant.previous_writer_generation,recovery_generation:grant.recovery_generation,reason:grant.reason,authority_anchor:grant.authority_anchor}
   return concatBytes(utf8('eds-diary/writer-grant/v2'),ZERO,diary,epoch,ZERO,canonicalBytes(core as never))
 }
 
@@ -157,4 +157,3 @@ export function rawPublicKeyFromBase64V2(value:string,label='public_key'):Uint8A
 export function signatureFromBase64V2(value:string,label='signature'):Uint8Array{return fixedBase64Url(value,64,label)}
 export function randomProtocolIdV2(bytes:16|32):string{return base64Url(randomBytes(bytes))}
 export function decodeProtocolIdV2(value:string,bytes:16|32,label='id'):Uint8Array{return fixedBase64Url(value,bytes,label)}
-export function decodeSignatureV2(value:string,label='signature'):Uint8Array{return fromBase64Url(value).byteLength===64?fixedBase64Url(value,64,label):fixedBase64Url(value,64,label)}
