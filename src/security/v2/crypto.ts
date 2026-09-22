@@ -74,6 +74,19 @@ export async function deriveActivationLineageCacheKeyV2(rootKey:Uint8Array,epoch
   return hkdfSha256(rootKey,epochSalt,utf8('eds-diary/activation-lineage-cache/v2'))
 }
 
+export function envelopeAadV2(diaryId:string,epochId:string,envelopeId:string,paddingBucket:1024|2048|4096|8192|16384):Uint8Array{
+  fixedBase64Url(diaryId,16,'diary_id');fixedBase64Url(epochId,16,'epoch_id');fixedBase64Url(envelopeId,32,'envelope_id')
+  return canonicalBytes({
+    protocol_version:6,
+    crypto_suite:'A256GCM-HKDF-SHA256-ED25519-v6',
+    sync_profile:SINGLE_WRITER_V2_PROFILE,
+    diary_id:diaryId,
+    epoch_id:epochId,
+    envelope_id:envelopeId,
+    padding_bucket:paddingBucket,
+  })
+}
+
 
 export interface WriterDeviceKeyV2 {
   privateKey:CryptoKey
