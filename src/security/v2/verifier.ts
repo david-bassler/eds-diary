@@ -647,10 +647,9 @@ async function replay(
   for (let index = 0; index < rows.length; index += 1) {
     const rowIndex = index + 1
     const row = rows[index]!
-    let envelopeId = ''
     try {
       if (row.length !== 3 || row.some((cell) => typeof cell !== 'string' || cell.length === 0)) fail('schema_or_canonicalization_failure', 'Invalid _r row.')
-      envelopeId = row[0]!
+      const envelopeId = row[0]!
       fixedBase64Url(envelopeId, 32, 'envelope_id')
       fixedBase64Url(row[1]!, 12, 'iv')
       const ciphertext = fromBase64Url(row[2]!)
