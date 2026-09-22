@@ -171,11 +171,15 @@ Tagebuch eine neue Geräteidentität **und ein eigenes Signaturschlüsselpaar**:
 
 ```text
 writer_device_id
-writer_signing_public_key
-writer_signing_private_key
+writer_key_id
+writer_public_key
+private_key                 # ausschließlich lokaler non-extractable CryptoKey
 ```
 
-Der exakte v2-Wire-Stand legt Ed25519 mit 32-Byte-Raw-Public-Key und 64-Byte-Signatur fest. Anforderungen:
+`writer_key_id` ist exakt der im Exact Protocol definierte Hash von
+`writer_public_key`; es gibt keinen separaten "signing key id"-Wire-Namespace.
+Der exakte v2-Wire-Stand legt Ed25519 mit 32-Byte-Raw-Public-Key und
+64-Byte-Signatur fest. Anforderungen:
 
 - neue zufällige Geräteidentität pro Installation;
 - kein Ableiten aus Hardwaremerkmalen;
