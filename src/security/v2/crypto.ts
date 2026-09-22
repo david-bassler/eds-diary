@@ -69,6 +69,11 @@ export async function deriveRecoveryTakeoverStagingKeyV2(urs:Uint8Array,stagingS
   assert32(urs,'URS');assert32(stagingSalt,'Recovery staging salt')
   return hkdfSha256(urs,stagingSalt,utf8('eds-diary/recovery-takeover-staging/v2'))
 }
+export async function deriveActivationLineageCacheKeyV2(rootKey:Uint8Array,epochSalt:Uint8Array):Promise<Uint8Array>{
+  assert32(rootKey,'Root key');assert32(epochSalt,'Epoch salt')
+  return hkdfSha256(rootKey,epochSalt,utf8('eds-diary/activation-lineage-cache/v2'))
+}
+
 
 export interface WriterDeviceKeyV2 {
   privateKey:CryptoKey
