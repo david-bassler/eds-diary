@@ -5,6 +5,7 @@ import { validateDomainData } from '../domainSchemaValidator'
 import { SINGLE_WRITER_V2_PROFILE } from '../../sync/core/contracts'
 import { openRevisionEnvelopeV2, V2_PADDING_BUCKETS } from './envelopes'
 import {
+  deriveEpochSaltV2,
   recoveryTakeoverKeyIdV2,
   revisionSigningBytesV2,
   verifyEd25519V2,
@@ -638,6 +639,7 @@ async function replay(
     staleWriterEnvelopeIds: new Set(),
   }
 
+  const epochSalt = await deriveEpochSaltV2(fixedBase64Url(trustRoot.diary_id, 16), fixedBase64Url(trustRoot.epoch_id, 16))
   const prefixHashes: Uint8Array[] = [await initialPrefixHashV2(trustRoot.diary_id, trustRoot.epoch_id)]
   let physicalCanonicalBytes = 0
   let uniqueCanonicalBytes = 0
@@ -680,12 +682,13 @@ async function replay(
 
       const revision = await openRevisionEnvelopeV2(
         rootKey,
-        await import('./crypto').then(({ deriveEpochSaltV2 }) => deriveEpochSaltV2(fixedBase64Url(trustRoot.diary_id, 16), fixedBase64Url(trustRoot.epoch_id, 16))),
+        epochSalt,
         { diaryId: trustRoot.diary_id, epochId: trustRoot.epoch_id },
         { envelopeId, iv: row[1]!, ciphertext: row[2]! },
       )
       await validateRevisionV2(revision)
       reserveControlId(state, trustRoot, revision)
+      validateDomainRecord(revision)
       assertGenesisGate(state, trustRoot, revision)
       assertPreMigrationControlFreeze(state, revision)
 
@@ -717,7 +720,6 @@ async function replay(
               disposition = handleConfirmation(state, trustRoot, revision.record_data as SuccessorActivationConfirmationV2, prefixHashes, index)
               break
             default:
-              validateDomainRecord(revision)
               addDomainRevision(state.graph, revision)
               disposition = 'accepted'
           }
