@@ -122,17 +122,16 @@ class V2Session implements TransferableSingleWriterV2ProviderSession {
     const remoteId='successor-v2'
     this.remote=new MemoryTransport(SINGLE_WRITER_V2_PROFILE,remoteId,{manifest:[...manifestCellsArrayV6(args.manifest)],rows:[]})
     this.creates+=1
-    const state:CreationState={
+    const clean:CreationState={
       locator:args.creationLocator,manifestFingerprint:await manifestFingerprintV6(args.manifest),status:'bound',remoteId,
       manifest:[...manifestCellsArrayV6(args.manifest)],manifestBytes:new TextDecoder().decode((await import('../security/crypto/canonical')).canonicalBytes([...manifestCellsArrayV6(args.manifest)])),
-      diaryId:args.diaryId,epochId:args.epochId,operationGeneration:1,
+      diaryId:args.diaryId,epochId:args.epochId,operationGeneration:0,
     }
-    // The production provider owns the exact creation state. This fixture only
-    // persists the identity fields consumed by the profile-upgrade service.
-    const clean={...state,keyId:undefined,expectedProperties:undefined}
-    this.creation.set(args.creationLocator,clean)
     await args.persistence.write(clean)
-    return structuredClone(clean)
+    const persisted=await args.persistence.read(args.creationLocator)
+    if(!persisted)throw new Error('fixture creation persistence readback failed')
+    this.creation.set(args.creationLocator,persisted)
+    return structuredClone(persisted)
   }
   async publishRecoveryArtifact(_urs:Uint8Array,persisted:VerifiedPersistedRecoveryArtifactV6):Promise<string>{this.recovery=structuredClone(persisted.artifact);return'recovery-v6'}
   async findRecoveryArtifact():Promise<RecoveryArtifactV6|null>{return this.recovery?structuredClone(this.recovery):null}
