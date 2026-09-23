@@ -101,6 +101,7 @@ class ProfileUpgradeSourceRaceError extends Error {}
 class ProfileUpgradeSuccessorCutoverRaceError extends Error {}
 export type ProfileUpgradeV2FaultPoint=
   | `after-${RotationOperationStageV2}`
+  | 'before-source-freeze-persist'
   | 'after-genesis-append'
   | 'after-source-append'
   | 'after-confirmation-append'
@@ -283,6 +284,7 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
     }
     this.operationId=operationId
     await this.putArtifact('source-freeze',frozen)
+    await this.fault?.('before-source-freeze-persist')
     const operation:RotationOperationStateV2={
       format:'rotation-operation-v2',version:2,operation_id:operationId,rotation_kind:'profile_upgrade',
       source_epoch_id:material.context.epochId,successor_epoch_id:successorEpochId,stage:'source_frozen_verified',
@@ -291,7 +293,7 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
       activation_lineage_sha256:null,announcement_envelope:null,confirmation_envelope:null,activation_evidence_sha256:null,
       recovery_artifact_id:null,recovery_artifact_locator:null,recovery_artifact_sha256:null,staged_backup_id:null,activated_backup_id:null,
     }
-    await persistProfileUpgradeSourceOperationV2(operation)
+    await persistProfileUpgradeSourceOperationV2(operation,material.state.operation_generation)
     await this.v2Store.initializeRotationOperation(operation)
     await this.hit('source_frozen_verified')
     return operation
