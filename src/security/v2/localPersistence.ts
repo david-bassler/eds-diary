@@ -175,8 +175,8 @@ export class IndexedDbV2LocalSecurityStore {
   }
 
   async persistRecoveryArtifactV6(urs:Uint8Array,diaryId:string,epochId:string,artifact:RecoveryArtifactV6):Promise<VerifiedPersistedRecoveryArtifactV6>{
-    const opened=await openRecoveryArtifactV6(artifact,urs)
-    if(opened.payload.diary_id!==diaryId||opened.payload.epoch_id!==epochId)throw new Error('RecoveryArtifactV6 persistence context mismatch.')
+    const payload=(await openRecoveryArtifactV6(artifact,urs)).payload
+    if(payload.diary_id!==diaryId||payload.epoch_id!==epochId)throw new Error('RecoveryArtifactV6 persistence context mismatch.')
     const artifactSha256=await recoveryArtifactHashV6(artifact)
     const familyLocator=await recoveryFamilyLocatorV6(urs),artifactLocator=await recoveryArtifactLocatorV6(urs,diaryId,epochId)
     const artifactBytes=new TextDecoder().decode(canonicalBytes(artifact as never))
