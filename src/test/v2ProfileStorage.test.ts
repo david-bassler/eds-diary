@@ -13,7 +13,7 @@ import { SINGLE_WRITER_V2_SCHEMA_ALLOWLIST, type RevisionV2, type WriterGrantV2 
 import {
   manifestCellsArrayV6,
   manifestFingerprintV6,
-  manifestTrustRootV6,
+  openManifestTrustRootV6,
   openManifestV6,
   prepareManifestV6,
   V6_PROTOCOL_LIMITS,
@@ -92,7 +92,7 @@ async function nativeFixture(){
   }
   const cells=await prepareManifestV6(rootKey,epochSalt,{diaryId,epochId},manifest,bytes(9,12))
   const fingerprint=await manifestFingerprintV6(cells)
-  const trustRoot=await manifestTrustRootV6(cells,manifest)
+  const trustRoot=(await openManifestTrustRootV6(rootKey,epochSalt,{diaryId,epochId},cells)).trustRoot
   const grant:WriterGrantV2={
     grant_id:grantId,
     writer_generation:1,
@@ -151,7 +151,7 @@ describe('ManifestV6 and v2 Google profile',()=>{
     const f=await nativeFixture()
     const opened=await openManifestV6(f.rootKey,f.epochSalt,{diaryId:f.diaryId,epochId:f.epochId},f.cells)
     expect(opened).toEqual(f.manifest)
-    expect((await manifestTrustRootV6(f.cells,opened)).manifest_fingerprint).toBe(f.fingerprint)
+    expect((await openManifestTrustRootV6(f.rootKey,f.epochSalt,{diaryId:f.diaryId,epochId:f.epochId},f.cells)).trustRoot.manifest_fingerprint).toBe(f.fingerprint)
     await expect(openManifestV6(f.rootKey,f.epochSalt,{diaryId:f.diaryId,epochId:f.epochId},{...f.cells,format:'sync-v6',manifestCiphertext:`${f.cells.manifestCiphertext}A`})).rejects.toBeTruthy()
   })
 
