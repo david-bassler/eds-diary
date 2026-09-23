@@ -205,6 +205,7 @@ export function validateEpochLocalSecurityStateV6(value:unknown):EpochLocalSecur
   if((remoteAnchor!==null)!==verifiedSet)throw new Error('remote_anchor and verified writer cache must become bound together.')
   if(remoteBinding===null&&remoteAnchor!==null)throw new Error('A verified remote_anchor requires a remote_binding.')
   if(state.epoch_status==='active'&&(remoteBinding===null||remoteAnchor===null||!verifiedSet))throw new Error('active v2 epoch requires a bound fully verified remote state.')
+  if(state.epoch_status==='orphaned'&&state.writer_status!=='read_only')throw new Error('orphaned epochs must be read_only.')
   if(state.writer_status==='read_only'){
     if(generation!==null||grantId!==null)throw new Error('read_only state must not carry current writer generation/grant.')
   }else{
@@ -212,7 +213,6 @@ export function validateEpochLocalSecurityStateV6(value:unknown):EpochLocalSecur
     if(generation===null||grantId===null||verifiedDevice===null||verifiedKey===null||verifiedGeneration===null||verifiedGrant===null)throw new Error('writer_active requires a fully verified writer authority.')
     if(state.writer_device_id!==verifiedDevice||state.writer_signing_key_id!==verifiedKey||generation!==verifiedGeneration||grantId!==verifiedGrant)throw new Error('writer_active local authority does not match verified authority.')
   }
-  if(state.epoch_status==='orphaned'&&state.writer_status!=='read_only')throw new Error('orphaned epochs must be read_only.')
   return value as EpochLocalSecurityStateV6
 }
 
