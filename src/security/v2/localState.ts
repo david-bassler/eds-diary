@@ -215,3 +215,13 @@ export async function validateStoredWriterDeviceKeyV2(entry:StoredWriterDeviceKe
   const signature=await signEd25519V2(key,challenge)
   if(!await verifyEd25519V2(raw,signature,challenge))throw new Error('Stored writer keypair binding failed.')
 }
+
+
+export async function withDiaryLockV2<T>(diaryId:string,operation:()=>Promise<T>):Promise<T>{
+  const manager=globalThis.navigator?.locks
+  if(!manager){
+    if(typeof window!=='undefined')throw new Error('Web Locks are required for secure v2 mutations.')
+    return operation()
+  }
+  return manager.request(`eds-diary/security/${diaryId}`,{mode:'exclusive'},operation)
+}
