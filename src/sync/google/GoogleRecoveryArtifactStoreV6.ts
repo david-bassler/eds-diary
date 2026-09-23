@@ -118,7 +118,7 @@ export class GoogleRecoveryArtifactStoreV6 {
         if(!cell)continue
         if(cell.effectiveValue?.errorValue)throw new Error('RecoveryArtifactV6 grid contains an error value.')
         if(!cell.userEnteredValue)continue
-        if(Object.keys(cell.userEnteredValue).length!==1||typeof cell.userEnteredValue.stringValue!=='string')throw new Error('RecoveryArtifactV6 grid requires exact string cells.')
+        if(Object.keys(cell.userEnteredValue).length!==1||typeof cell.userEnteredValue.stringValue!=='string'||cell.userEnteredValue.stringValue==='')throw new Error('RecoveryArtifactV6 grid requires non-empty exact string cells; trailing cells must be truly empty.')
         cells[index]=cell.userEnteredValue.stringValue
       }
     }
@@ -216,7 +216,7 @@ export class GoogleRecoveryArtifactStoreV6 {
       try{
         await this.api.request(`https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(chosen)}:batchUpdate`,{method:'POST',body:JSON.stringify({requests:[{updateCells:{
           range:{sheetId,startRowIndex:0,endRowIndex:RECOVERY_GRID_ROWS_V6,startColumnIndex:0,endColumnIndex:1},
-          rows:cells.map(value=>({values:[{userEnteredValue:{stringValue:value}}]})),
+          rows:cells.map(value=>({values:[value===''?{}:{userEnteredValue:{stringValue:value}}]})),
           fields:'userEnteredValue',
         }}]})})
       }catch{/* full grid readback decides */}
