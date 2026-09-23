@@ -6,10 +6,11 @@ import { openRevisionEnvelopeV2 } from './envelopes'
 import type { PreparedEnvelope } from '../envelopes'
 import { localJournalInitialV2, localJournalNextV2, localStateTagV6, validateEpochLocalSecurityStateV6, validateStoredWriterDeviceKeyV2, verifyLocalStateTagV6, withDiaryLockV2, type EpochLocalSecurityStateV6, type StoredWriterDeviceKeyV2 } from './localState'
 import { isVerifiedRecoveryTakeoverStagingV2, verifyRecoveryTakeoverStagingV2, type RecoveryTakeoverStagingV2, type VerifiedRecoveryTakeoverStagingV2 } from './recoveryStaging'
+import { openRecoveryArtifactV6, recoveryArtifactHashV6, recoveryArtifactLocatorV6, recoveryFamilyLocatorV6, type RecoveryArtifactV6 } from './recovery'
 
 const DATABASE_NAME='eds-diary-v2-security'
-const DATABASE_VERSION=4
-const STORES={states:'epochSecurityStateV6',writerKeys:'writerDeviceKeysV2',reservations:'envelopeReservationsV6',envelopes:'envelopesV6',outbox:'outboxV6',recoveryStaging:'recoveryTakeoverStagingV2'} as const
+const DATABASE_VERSION=5
+const STORES={states:'epochSecurityStateV6',writerKeys:'writerDeviceKeysV2',reservations:'envelopeReservationsV6',envelopes:'envelopesV6',outbox:'outboxV6',recoveryStaging:'recoveryTakeoverStagingV2',recoveryArtifacts:'recoveryArtifactsV6'} as const
 
 export interface EnvelopeReservationV6 {
   id:string
@@ -115,6 +116,7 @@ async function openDatabase():Promise<IDBDatabase>{
       if(!db.objectStoreNames.contains(STORES.envelopes)){const store=db.createObjectStore(STORES.envelopes,{keyPath:'id'});store.createIndex('byEpoch','epoch_id');store.createIndex('bySequence',['epoch_id','local_sequence'],{unique:true})}
       if(!db.objectStoreNames.contains(STORES.outbox)){const store=db.createObjectStore(STORES.outbox,{keyPath:'id'});store.createIndex('byEpoch','epoch_id')}
       if(!db.objectStoreNames.contains(STORES.recoveryStaging))db.createObjectStore(STORES.recoveryStaging,{keyPath:'id'})
+      if(!db.objectStoreNames.contains(STORES.recoveryArtifacts))db.createObjectStore(STORES.recoveryArtifacts,{keyPath:'id'})
     })
     request.addEventListener('success',()=>{
       const db=request.result
@@ -124,6 +126,21 @@ async function openDatabase():Promise<IDBDatabase>{
     request.addEventListener('error',()=>{databasePromise=null;reject(request.error??new Error('V2 security database open failed.'))},{once:true})
   })
   return databasePromise
+}
+
+const VERIFIED_PERSISTED_RECOVERY_ARTIFACTS=new WeakSet<VerifiedPersistedRecoveryArtifactV6>()
+export class VerifiedPersistedRecoveryArtifactV6 {
+  constructor(
+    readonly artifact:RecoveryArtifactV6,
+    readonly artifactSha256:string,
+    readonly familyLocator:string,
+    readonly artifactLocator:string,
+    readonly diaryId:string,
+    readonly epochId:string,
+  ){VERIFIED_PERSISTED_RECOVERY_ARTIFACTS.add(this)}
+}
+export function isVerifiedPersistedRecoveryArtifactV6(value:unknown):value is VerifiedPersistedRecoveryArtifactV6{
+  return typeof value==='object'&&value!==null&&VERIFIED_PERSISTED_RECOVERY_ARTIFACTS.has(value as VerifiedPersistedRecoveryArtifactV6)
 }
 
 export class IndexedDbV2LocalSecurityStore {
@@ -155,6 +172,30 @@ export class IndexedDbV2LocalSecurityStore {
     tx.objectStore(STORES.states).put({id:next.epoch_id,state:structuredClone(next),tag})
     await transactionDone(tx)
     await this.loadState(rootKey,epochSalt,next.epoch_id)
+  }
+
+  async persistRecoveryArtifactV6(urs:Uint8Array,diaryId:string,epochId:string,artifact:RecoveryArtifactV6):Promise<VerifiedPersistedRecoveryArtifactV6>{
+    const opened=await openRecoveryArtifactV6(artifact,urs)
+    if(opened.payload.diary_id!==diaryId||opened.payload.epoch_id!==epochId)throw new Error('RecoveryArtifactV6 persistence context mismatch.')
+    const artifactSha256=await recoveryArtifactHashV6(artifact)
+    const familyLocator=await recoveryFamilyLocatorV6(urs),artifactLocator=await recoveryArtifactLocatorV6(urs,diaryId,epochId)
+    const artifactBytes=new TextDecoder().decode(canonicalBytes(artifact as never))
+    const id=`${epochId}:${artifact.recovery_artifact_id}`
+    const db=await openDatabase(),tx=db.transaction(STORES.recoveryArtifacts,'readwrite')
+    const existing=await requestResult<{id:string;artifactBytes:string;artifactSha256:string;familyLocator:string;artifactLocator:string}|undefined>(tx.objectStore(STORES.recoveryArtifacts).get(id))
+    if(existing){
+      if(existing.artifactBytes!==artifactBytes||existing.artifactSha256!==artifactSha256||existing.familyLocator!==familyLocator||existing.artifactLocator!==artifactLocator){
+        tx.abort()
+        throw new Error('RecoveryArtifactV6 immutable persistence collision.')
+      }
+    }else tx.objectStore(STORES.recoveryArtifacts).add({id,artifactBytes,artifactSha256,familyLocator,artifactLocator})
+    await transactionDone(tx)
+    const readTx=db.transaction(STORES.recoveryArtifacts,'readonly')
+    const readback=await requestResult<{id:string;artifactBytes:string;artifactSha256:string;familyLocator:string;artifactLocator:string}|undefined>(readTx.objectStore(STORES.recoveryArtifacts).get(id))
+    await transactionDone(readTx)
+    if(!readback||readback.artifactBytes!==artifactBytes||readback.artifactSha256!==artifactSha256||readback.familyLocator!==familyLocator||readback.artifactLocator!==artifactLocator)throw new Error('RecoveryArtifactV6 persistent readback mismatch.')
+    await openRecoveryArtifactV6(artifact,urs)
+    return new VerifiedPersistedRecoveryArtifactV6(structuredClone(artifact),artifactSha256,familyLocator,artifactLocator,diaryId,epochId)
   }
 
   async persistRecoveryTakeoverStaging(staging:RecoveryTakeoverStagingV2,urs:Uint8Array):Promise<VerifiedRecoveryTakeoverStagingV2>{
