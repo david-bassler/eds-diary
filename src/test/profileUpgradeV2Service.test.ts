@@ -101,11 +101,13 @@ class V2Session implements TransferableSingleWriterV2ProviderSession {
   recovery:RecoveryArtifactV6|null=null
   creates=0
   private readonly creation=new Map<string,CreationState>()
-  async transportForEpoch():Promise<GoogleSheetsTransferableSingleWriterV2Transport>{
+  async transportForEpoch(diaryId:string,epochId:string):Promise<GoogleSheetsTransferableSingleWriterV2Transport>{
+    void diaryId;void epochId
     return (this.remote??this.preCreationTransport) as unknown as GoogleSheetsTransferableSingleWriterV2Transport
   }
   async remoteIdentityBinding():Promise<string>{return this.account}
-  async codecForEpoch(diaryId:string,epochId:string,rootKey:Uint8Array):Promise<GoogleSheetsTransferableSingleWriterV2ProfileCodec>{
+  async codecForEpoch(diaryId:string,epochId:string,rootKey:Uint8Array,transport:RemoteTransport):Promise<GoogleSheetsTransferableSingleWriterV2ProfileCodec>{
+    void transport
     return new GoogleSheetsTransferableSingleWriterV2ProfileCodec(diaryId,epochId,rootKey,this.account)
   }
   freshCanonicalSource(diaryId:string,epochId:string,rootKey:Uint8Array,remoteId:string):FreshCanonicalV2Source{
