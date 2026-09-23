@@ -58,7 +58,8 @@ export class V2DomainWritePreparer {
     return withDiaryLockV2(remote.diary_id,async()=>{
       await this.store.verifyLocalJournal(rootKey,epochSalt,remote.epoch_id)
       const before=await this.store.loadState(rootKey,epochSalt,remote.epoch_id)
-      const key=await this.store.loadWriterKey(before.writer_signing_key_id,before.diary_id,before.epoch_id)
+      let key=null
+      try{key=await this.store.loadWriterKey(before.writer_signing_key_id,before.diary_id,before.epoch_id)}catch{key=null}
       const keyUsable=key!==null&&key.writer_device_id===before.writer_device_id
       const reconciled=await stateAfterCanonicalVerifyV6(before,remote,verified.snapshot.rows,keyUsable)
       await this.store.replaceState(rootKey,epochSalt,before.operation_generation,reconciled)
