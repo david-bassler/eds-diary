@@ -293,4 +293,5 @@ export const __v2LocalPersistenceTesting={
     await new Promise<void>((resolve,reject)=>{const request=indexedDB.deleteDatabase(DATABASE_NAME);request.addEventListener('success',()=>resolve(),{once:true});request.addEventListener('error',()=>reject(request.error),{once:true});request.addEventListener('blocked',()=>reject(new Error('V2 security database reset blocked.')),{once:true})})
   },
   STORES,
+  openDatabase,
 }
