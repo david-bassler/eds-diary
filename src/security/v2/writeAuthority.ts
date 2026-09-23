@@ -10,12 +10,18 @@ import {
 } from './localState'
 import type { RevisionV2 } from './types'
 import type { CanonicalFullResultV2, WriterAuthoritySnapshotV2 } from './verifier'
+import { assertExtendsAnchorV2, createAnchorV2 } from './prefix'
 
 function canonicalFull(verified:VerifiedRemoteState):CanonicalFullResultV2{
   if(verified.profileId!==SINGLE_WRITER_V2_PROFILE)throw new Error('Verified remote state is not the v2 profile.')
   const profile=verified.profileState as Partial<CanonicalFullResultV2>|null
   if(!profile||profile.kind!=='canonical_full'||profile.profile_id!==SINGLE_WRITER_V2_PROFILE)throw new Error('v2 WriteAuthority requires canonical_full verifier state.')
-  return profile as CanonicalFullResultV2
+  const canonical=profile as CanonicalFullResultV2
+  if(verified.manifestFingerprint!==canonical.manifest_fingerprint)throw new Error('Verified v2 manifest fingerprint mismatch.')
+  const physicalIds=new Set(verified.snapshot.rows.map(row=>row[0]??''))
+  if(physicalIds.size!==verified.verifiedEnvelopeIds.size||[...physicalIds].some(id=>!verified.verifiedEnvelopeIds.has(id)))throw new Error('Verified v2 physical envelope set mismatch.')
+  if([...verified.acceptedEnvelopeIds].some(id=>!verified.verifiedEnvelopeIds.has(id))||[...verified.staleWriterEnvelopeIds].some(id=>!verified.verifiedEnvelopeIds.has(id)||verified.acceptedEnvelopeIds.has(id)))throw new Error('Verified v2 semantic envelope sets are inconsistent.')
+  return canonical
 }
 
 function sameWriter(authority:WriterAuthoritySnapshotV2,state:EpochLocalSecurityStateV6):boolean{
@@ -46,12 +52,15 @@ export async function reconcileLocalStateFromCanonicalV2(
   validateEpochLocalSecurityStateV6(state)
   const canonical=canonicalFull(verified)
   assertBoundIdentity(state,canonical)
-  if(state.remote_anchor){
-    if(canonical.remote_anchor.covered_row_count<state.remote_anchor.covered_row_count)throw new Error('Canonical v2 state rolled back below the persisted local anchor.')
-    if(canonical.remote_anchor.covered_row_count===state.remote_anchor.covered_row_count&&canonical.remote_anchor.prefix_hash!==state.remote_anchor.prefix_hash)throw new Error('Canonical v2 state conflicts with the persisted local anchor.')
-  }
+  await assertExtendsAnchorV2(state.remote_anchor,state.diary_id,state.epoch_id,verified.snapshot.rows)
+  const recomputedAnchor=await createAnchorV2(state.diary_id,state.epoch_id,verified.snapshot.rows)
+  if(recomputedAnchor.covered_row_count!==canonical.remote_anchor.covered_row_count||recomputedAnchor.prefix_hash!==canonical.remote_anchor.prefix_hash)throw new Error('Canonical v2 anchor does not match the verified physical snapshot.')
+  if(state.epoch_status==='active'&&canonical.activation_state==='staged_confirmation_missing')throw new Error('An active local epoch cannot reconcile to an unconfirmed staged successor.')
+  if(state.epoch_status==='active'&&canonical.accepted_epoch_migration!==null&&state.activation_lineage_cache_ref===null)throw new Error('An active non-native v2 epoch requires its authenticated ActivationLineage cache.')
   const current=canonical.current_writer
   const localOwnsCurrent=writerKeyUsable
+    && !canonical.source_epoch_sealed
+    && canonical.activation_state!=='staged_confirmation_missing'
     && state.writer_device_id===current.writer_device_id
     && state.writer_signing_key_id===current.writer_key_id
     && state.epoch_status==='active'
@@ -90,6 +99,8 @@ export class TransferableWriterAuthorityV2 implements WriteAuthority {
   private async localAccess(verified:VerifiedRemoteState,normalDomainWrite:boolean):Promise<WriteAccess>{
     const canonical=canonicalFull(verified),state=validateEpochLocalSecurityStateV6(await this.dependencies.readLocalState())
     assertBoundIdentity(state,canonical)
+    if(state.epoch_status==='active'&&canonical.activation_state==='staged_confirmation_missing')throw new Error('Active StateV6 conflicts with an unconfirmed staged successor.')
+    if(state.epoch_status==='active'&&canonical.accepted_epoch_migration!==null&&state.activation_lineage_cache_ref===null)throw new Error('Active non-native StateV6 lacks its ActivationLineage cache binding.')
     if(state.epoch_status!=='active'||state.writer_status!=='writer_active')return'read_only'
     if(canonical.source_epoch_sealed||state.verified_writer_device_id===null||state.verified_writer_key_id===null||state.verified_writer_generation===null||state.verified_writer_grant_id===null)return'read_only'
     if(!sameWriter(canonical.current_writer,state))return'read_only'
