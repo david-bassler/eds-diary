@@ -157,7 +157,7 @@ describe('EpochLocalSecurityStateV6 and writer gate',()=>{
     await expect(repo.loadBestEffortWrappingKey(b(42,16))).resolves.toBeNull()
 
     const credential=new Uint8Array([1,2,3,4]),prfOutput=new Uint8Array(32).fill(43),evalInput=new Uint8Array(32).fill(44),wrapSalt=new Uint8Array(32).fill(45)
-    const prf=await createPrfRootWrapV6(rootKey,{credentialId:credential,prfEvalInput:evalInput,prfOutput,rpId:'example.test'},identity,new Uint8Array(16).fill(46),wrapSalt,new Uint8Array(12).fill(47))
+    const prf=await createPrfRootWrapV6(rootKey,{credentialId:credential,prfEvalInput:evalInput,prfOutput,rpId:'example.test',verified:true},identity,new Uint8Array(16).fill(46),wrapSalt,new Uint8Array(12).fill(47))
     expect(prf.mode_metadata.prf_profile).toBe('webauthn-prf-v6-1')
     await expect(openPrfRootWrapV6(prf,credential,prfOutput)).resolves.toEqual(rootKey)
     await expect(openPrfRootWrapV6(prf,new Uint8Array([9]),prfOutput)).rejects.toThrow(/credential mismatch/)
