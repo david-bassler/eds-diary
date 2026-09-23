@@ -181,7 +181,7 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     const createdAt='2026-09-23T12:00:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
     const stages:ProfileUpgradeV2FaultPoint[]=[
       'after-source_frozen_verified','after-successor_planned','after-genesis-append','after-successor_bound','after-copying',
-      'after-successor_verified','after-announcement_prepared','after-recovery_artifact_verified','after-staged_backup_verified',
+      'after-successor_verified','after-activation-artifact','after-announcement_prepared','after-recovery_artifact_verified','after-staged_backup_verified',
       'after-source-append','after-announcement_durable','after-confirmation-append','after-confirmation_durable',
       'after-activated_backup_verified','after-local-selection','after-switched',
     ]
