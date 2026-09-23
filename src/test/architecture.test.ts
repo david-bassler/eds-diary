@@ -159,7 +159,7 @@ describe('v2 pre-implementation hardening boundaries',()=>{
     expect(verifier).toMatch(/isVerifiedManifestTrustRootV6\(trustRoot\)/)
     expect(codec).toMatch(/openManifestTrustRootV6/)
     expect(provider).toMatch(/freshCanonicalSource/)
-    expect(provider).toMatch(/verifyNow:async\(\)=>\{[\s\S]*transportForEpoch[\s\S]*transport\.read\(remoteId\)[\s\S]*codec\.verifyRemote/s)
+    expect(provider).toMatch(/verifyNow:async\(\)=>\{[\s\S]*transportForEpoch[\s\S]*codec\.verifyRemote\(await transport\.read\(remoteId\)\)/s)
     for(const file of await files('src')){
       if(file.includes('/test/'))continue
       const source=await readFile(file,'utf8')
