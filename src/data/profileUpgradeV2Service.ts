@@ -94,6 +94,9 @@ import { V2_SCHEMA_REGISTRY_HASH } from '../security/v2/schemaRegistry'
 import { V6_PROTOCOL_LIMITS } from '../security/v2/manifest'
 
 type Row=readonly[string,string,string]
+class ProfileUpgradePreCutoverStaleError extends Error {}
+class ProfileUpgradeSourceRaceError extends Error {}
+class ProfileUpgradeSuccessorCutoverRaceError extends Error {}
 export type ProfileUpgradeV2FaultPoint=
   | `after-${RotationOperationStageV2}`
   | 'after-genesis-append'
@@ -725,11 +728,11 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
     const prefix=snapshot.rows.slice(0,source.artifact.source_anchor.covered_row_count)
     if(!sameJson(await createAnchorV1(source.artifact.diary_id,source.artifact.source_epoch_id,prefix),source.artifact.source_anchor))throw new Error('Frozen v1 Source prefix changed.')
     if(snapshot.rows.length===source.artifact.source_anchor.covered_row_count)return{snapshot,announcementCount:0}
-    if(!allowAnnouncement||!announcement)throw new Error('v1 Source advanced before its one-shot profile-upgrade Announcement.')
+    if(!allowAnnouncement||!announcement)throw new ProfileUpgradePreCutoverStaleError('v1 Source advanced before its one-shot profile-upgrade Announcement.')
     const expected:[string,string,string]=[announcement.envelope_id,announcement.iv,announcement.ciphertext]
     let count=0
     for(const row of snapshot.rows.slice(source.artifact.source_anchor.covered_row_count)){
-      if(!sameJson(row,expected))throw new Error('profile_upgrade_source_race')
+      if(!sameJson(row,expected))throw new ProfileUpgradeSourceRaceError('profile_upgrade_source_race')
       count+=1
     }
     return{snapshot,announcementCount:count}
@@ -751,7 +754,7 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
       if(sameJson(row,expected)){duplicates++;continue}
       break
     }
-    if(duplicates===0)throw new Error('profile_upgrade_successor_cutover_race')
+    if(duplicates===0)throw new ProfileUpgradeSuccessorCutoverRaceError('profile_upgrade_successor_cutover_race')
     const verified=await ctx.codec.verifyRemote(snapshot)
     const activationAnchor=await createAnchorV2(ctx.plan.diary_id,ctx.plan.successor_epoch_id,snapshot.rows.slice(0,operation.successor_staging_anchor.covered_row_count+duplicates))
     return{verified,confirmationCount:duplicates,activationAnchor}
@@ -760,40 +763,50 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
   async publishOrReconcileAnnouncement(state:RotationOperationStateV2):Promise<{kind:'durable'}|{kind:'unknown'}|{kind:'stale'}|{kind:'source_race'}>{
     const operation=await this.load()
     if(!operation.announcement_envelope||!operation.successor_staging_anchor)throw new Error('Profile-upgrade Announcement is not prepared.')
+    let sourceBefore:Awaited<ReturnType<ProductiveProfileUpgradeV2Service['verifySourceAtFrozenPrefix']>>
+    let successorBefore:Awaited<ReturnType<ProductiveProfileUpgradeV2Service['verifySuccessorAtStagingOrConfirmation']>>
     try{
-      const sourceBefore=await this.verifySourceAtFrozenPrefix(true),successorBefore=await this.verifySuccessorAtStagingOrConfirmation()
-      if(sourceBefore.announcementCount===0&&successorBefore.confirmationCount!==0)return{kind:'stale'}
-      if(sourceBefore.announcementCount===0&&!sameJson(canonical(successorBefore.verified).remote_anchor,operation.successor_staging_anchor))return{kind:'stale'}
-      if(sourceBefore.announcementCount>0){
-        const source=await this.frozenSource(),verifier=await this.sourceVerifier(source.material,source.artifact.source_anchor),verified=await verifier.verify(sourceBefore.snapshot)
-        if(!verified.retired)throw new Error('Profile-upgrade v1 Announcement did not retire the Source.')
-        const anchor=await createAnchorV1(source.artifact.diary_id,source.artifact.source_epoch_id,sourceBefore.snapshot.rows),store=new IndexedDbCoordinatorStore(source.artifact.source_epoch_id)
-        await store.commitVerifiedPull(verified,anchor,await store.generation())
-        return{kind:'durable'}
-      }
-      if(state.stage==='announcement_unknown')return{kind:'unknown'}
-      const row:[string,string,string]=[operation.announcement_envelope.envelope_id,operation.announcement_envelope.iv,operation.announcement_envelope.ciphertext]
-      let unknown=false
-      try{await this.sourceTransport.append((await this.frozenSource()).artifact.source_remote_id,row)}catch(error){if(!(error instanceof TransportError)||error.code!=='unknown_outcome')throw error;unknown=true}
-      await this.fault?.('after-source-append')
-      let readback=await this.verifySourceAtFrozenPrefix(true)
-      if(readback.announcementCount===0&&unknown){
-        const source=await this.frozenSource(),verifier=await this.sourceVerifier(source.material,source.artifact.source_anchor)
-        await verifier.verify(readback.snapshot)
-        try{await this.sourceTransport.append(source.artifact.source_remote_id,row)}catch(error){if(!(error instanceof TransportError)||error.code!=='unknown_outcome')throw error}
-        readback=await this.verifySourceAtFrozenPrefix(true)
-      }
-      if(readback.announcementCount===0)return{kind:'unknown'}
-      const source=await this.frozenSource(),verifier=await this.sourceVerifier(source.material,source.artifact.source_anchor),verified=await verifier.verify(readback.snapshot)
-      if(!verified.retired)throw new Error('Profile-upgrade v1 Announcement did not retire the Source.')
-      const anchor=await createAnchorV1(source.artifact.diary_id,source.artifact.source_epoch_id,readback.snapshot.rows),store=new IndexedDbCoordinatorStore(source.artifact.source_epoch_id)
-      await store.commitVerifiedPull(verified,anchor,await store.generation())
-      return{kind:'durable'}
+      sourceBefore=await this.verifySourceAtFrozenPrefix(true)
+      successorBefore=await this.verifySuccessorAtStagingOrConfirmation()
     }catch(error){
-      if(error instanceof Error&&error.message.includes('profile_upgrade_source_race'))return{kind:'source_race'}
-      if(state.stage==='staged_backup_verified')return{kind:'stale'}
+      if(error instanceof ProfileUpgradePreCutoverStaleError
+        ||error instanceof ProfileUpgradeSourceRaceError
+        ||error instanceof ProfileUpgradeSuccessorCutoverRaceError)return{kind:'stale'}
       throw error
     }
+    if(sourceBefore.announcementCount===0&&successorBefore.confirmationCount!==0)return{kind:'stale'}
+    if(sourceBefore.announcementCount===0&&!sameJson(canonical(successorBefore.verified).remote_anchor,operation.successor_staging_anchor))return{kind:'stale'}
+    if(sourceBefore.announcementCount>0){
+      const source=await this.frozenSource(),verifier=await this.sourceVerifier(source.material,source.artifact.source_anchor),verified=await verifier.verify(sourceBefore.snapshot)
+      if(!verified.retired)throw new Error('Profile-upgrade v1 Announcement did not retire the Source.')
+      const anchor=await createAnchorV1(source.artifact.diary_id,source.artifact.source_epoch_id,sourceBefore.snapshot.rows),store=new IndexedDbCoordinatorStore(source.artifact.source_epoch_id)
+      await store.commitVerifiedPull(verified,anchor,await store.generation())
+      return{kind:'durable'}
+    }
+    if(state.stage==='announcement_unknown')return{kind:'unknown'}
+
+    const row:[string,string,string]=[operation.announcement_envelope.envelope_id,operation.announcement_envelope.iv,operation.announcement_envelope.ciphertext]
+    let unknown=false
+    try{await this.sourceTransport.append((await this.frozenSource()).artifact.source_remote_id,row)}
+    catch(error){if(!(error instanceof TransportError)||error.code!=='unknown_outcome')throw error;unknown=true}
+    await this.fault?.('after-source-append')
+    let readback
+    try{readback=await this.verifySourceAtFrozenPrefix(true)}
+    catch(error){if(error instanceof ProfileUpgradeSourceRaceError)return{kind:'source_race'};throw error}
+    if(readback.announcementCount===0&&unknown){
+      const source=await this.frozenSource(),verifier=await this.sourceVerifier(source.material,source.artifact.source_anchor)
+      await verifier.verify(readback.snapshot)
+      try{await this.sourceTransport.append(source.artifact.source_remote_id,row)}
+      catch(error){if(!(error instanceof TransportError)||error.code!=='unknown_outcome')throw error}
+      try{readback=await this.verifySourceAtFrozenPrefix(true)}
+      catch(error){if(error instanceof ProfileUpgradeSourceRaceError)return{kind:'source_race'};throw error}
+    }
+    if(readback.announcementCount===0)return{kind:'unknown'}
+    const source=await this.frozenSource(),verifier=await this.sourceVerifier(source.material,source.artifact.source_anchor),verified=await verifier.verify(readback.snapshot)
+    if(!verified.retired)throw new Error('Profile-upgrade v1 Announcement did not retire the Source.')
+    const anchor=await createAnchorV1(source.artifact.diary_id,source.artifact.source_epoch_id,readback.snapshot.rows),store=new IndexedDbCoordinatorStore(source.artifact.source_epoch_id)
+    await store.commitVerifiedPull(verified,anchor,await store.generation())
+    return{kind:'durable'}
   }
 
   async publishOrReconcileConfirmation(state:RotationOperationStateV2):Promise<{kind:'durable';activationAnchor:CanonicalFullResultV2['remote_anchor']}|{kind:'unknown'}|{kind:'cutover_race'}>{
@@ -827,7 +840,7 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
       await this.commitSuccessorCanonical(successor.verified,result)
       return{kind:'durable',activationAnchor:successor.activationAnchor!}
     }catch(error){
-      if(error instanceof Error&&error.message.includes('profile_upgrade_successor_cutover_race'))return{kind:'cutover_race'}
+      if(error instanceof ProfileUpgradeSuccessorCutoverRaceError)return{kind:'cutover_race'}
       throw error
     }
   }
