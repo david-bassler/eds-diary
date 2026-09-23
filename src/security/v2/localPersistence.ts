@@ -10,10 +10,11 @@ import { openRecoveryArtifactV6, recoveryArtifactHashV6, recoveryArtifactLocator
 import { activationLineageCacheHashV2, openActivationLineageCacheV2, type ActivationLineageCacheV2 } from './activationLineageCache'
 import { advanceRotationOperationStateV2, rotationOperationStateHashV2, validateRotationOperationStateV2, type RotationOperationStateV2, type RotationOperationStageV2 } from './profileUpgrade'
 import { openBestEffortRootWrapV6, validateRootWrapV6, type RootWrapV6 } from './rootWrap'
+import type { CreationPersistence, CreationState } from '../../sync/core/creation'
 
 const DATABASE_NAME='eds-diary-v2-security'
-const DATABASE_VERSION=7
-const STORES={states:'epochSecurityStateV6',writerKeys:'writerDeviceKeysV2',reservations:'envelopeReservationsV6',envelopes:'envelopesV6',outbox:'outboxV6',recoveryStaging:'recoveryTakeoverStagingV2',recoveryArtifacts:'recoveryArtifactsV6',rotationOperations:'rotationOperationsV2',lineageCaches:'activationLineageCachesV2',rootWraps:'rootWrapsV6',rootWrappingKeys:'rootWrappingKeysV6'} as const
+const DATABASE_VERSION=8
+const STORES={states:'epochSecurityStateV6',writerKeys:'writerDeviceKeysV2',reservations:'envelopeReservationsV6',envelopes:'envelopesV6',outbox:'outboxV6',recoveryStaging:'recoveryTakeoverStagingV2',recoveryArtifacts:'recoveryArtifactsV6',rotationOperations:'rotationOperationsV2',lineageCaches:'activationLineageCachesV2',rootWraps:'rootWrapsV6',rootWrappingKeys:'rootWrappingKeysV6',creationOperations:'creationOperationsV2'} as const
 
 export interface EnvelopeReservationV6 {
   id:string
@@ -129,6 +130,7 @@ async function openDatabase():Promise<IDBDatabase>{
       if(!db.objectStoreNames.contains(STORES.lineageCaches))db.createObjectStore(STORES.lineageCaches,{keyPath:'id'})
       if(!db.objectStoreNames.contains(STORES.rootWraps))db.createObjectStore(STORES.rootWraps,{keyPath:'id'})
       if(!db.objectStoreNames.contains(STORES.rootWrappingKeys))db.createObjectStore(STORES.rootWrappingKeys,{keyPath:'id'})
+      if(!db.objectStoreNames.contains(STORES.creationOperations))db.createObjectStore(STORES.creationOperations,{keyPath:'id'})
     })
     request.addEventListener('success',()=>{
       const db=request.result
@@ -161,6 +163,31 @@ export function isVerifiedPersistedRecoveryArtifactV6(value:unknown):value is Ve
 }
 
 export class IndexedDbV2LocalSecurityStore {
+  creationPersistence():CreationPersistence{
+    return{
+      read:async(locator:string)=>{
+        const db=await openDatabase(),tx=db.transaction(STORES.creationOperations,'readonly')
+        const stored=await requestResult<{id:string;state:CreationState;hash:string}|undefined>(tx.objectStore(STORES.creationOperations).get(locator))
+        await transactionDone(tx)
+        if(!stored)return null
+        const hash=base64Url(await crypto.subtle.digest('SHA-256',canonicalBytes(stored.state as never)).then(value=>new Uint8Array(value)))
+        if(hash!==stored.hash)throw new Error('V2 creation operation state hash failed.')
+        return structuredClone(stored.state)
+      },
+      write:async(state:CreationState)=>{
+        const db=await openDatabase(),readTx=db.transaction(STORES.creationOperations,'readonly')
+        const prior=await requestResult<{id:string;state:CreationState;hash:string}|undefined>(readTx.objectStore(STORES.creationOperations).get(state.locator))
+        await transactionDone(readTx)
+        const expected=prior?.state.operationGeneration??0
+        if((state.operationGeneration??0)!==expected)throw new Error('Stale V2 creation operation generation.')
+        const next={...state,operationGeneration:expected+1},hash=base64Url(await crypto.subtle.digest('SHA-256',canonicalBytes(next as never)).then(value=>new Uint8Array(value)))
+        const tx=db.transaction(STORES.creationOperations,'readwrite')
+        tx.objectStore(STORES.creationOperations).put({id:state.locator,state:structuredClone(next),hash})
+        await transactionDone(tx)
+      },
+    }
+  }
+
   async persistRootWrapV6(wrap:RootWrapV6,bestEffortWrappingKey:CryptoKey|null):Promise<void>{
     validateRootWrapV6(wrap)
     if((wrap.mode==='best-effort')!==(bestEffortWrappingKey!==null))throw new Error('RootWrapV6 best-effort key persistence mismatch.')
