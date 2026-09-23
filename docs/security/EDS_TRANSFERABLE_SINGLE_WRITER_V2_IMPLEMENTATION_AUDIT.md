@@ -49,7 +49,7 @@ were rechecked against the current branch before adding these entries.
 
 Implemented and adversarially reviewed StateV6 persistence, WriterDeviceKeyV2,
 normal domain-write preparation and semantic CoordinatorStore behavior. New
-findings from this pass are IA-019…IA-021. They are implementation mismatches/
+findings from this pass are IA-019…IA-022. They are implementation mismatches/
 hardening findings, not changes to D-001…D-010.
 
 ## Findings and disposition
