@@ -230,9 +230,7 @@ export async function withDiaryLockV2<T>(diaryId:string,operation:()=>Promise<T>
     // runtimes can expose navigator too, so navigator presence alone is not a
     // reliable browser test.
     const browserWindow=typeof window!=='undefined'
-    const browserWorker=typeof WorkerGlobalScope!=='undefined'
-      &&typeof self!=='undefined'
-      &&self instanceof WorkerGlobalScope
+    const browserWorker=typeof (globalThis as {importScripts?:unknown}).importScripts==='function'
     if(browserWindow||browserWorker)throw new Error('Web Locks are required for secure v2 mutations.')
     return operation()
   }
