@@ -155,6 +155,22 @@ describe('ManifestV6 and v2 Google profile',()=>{
     await expect(openManifestV6(f.rootKey,f.epochSalt,{diaryId:f.diaryId,epochId:f.epochId},{...f.cells,format:'sync-v6',manifestCiphertext:`${f.cells.manifestCiphertext}A`})).rejects.toBeTruthy()
   })
 
+  it('rejects non-singleton first-v2 recovery history and self-predecessor manifests',async()=>{
+    const f=await nativeFixture()
+    const extra={recovery_generation:1,recovery_urs_id:id(90,32),recovery_takeover_key_id:id(91,32)}
+    await expect(prepareManifestV6(f.rootKey,f.epochSalt,{diaryId:f.diaryId,epochId:f.epochId},{
+      ...f.manifest,
+      recovery_generation:1,
+      recovery_urs_id:extra.recovery_urs_id,
+      recovery_takeover_key_id:extra.recovery_takeover_key_id,
+      recovery_credential_history:[...f.manifest.recovery_credential_history,extra],
+    })).rejects.toThrow(/exactly one Recovery/)
+    await expect(prepareManifestV6(f.rootKey,f.epochSalt,{diaryId:f.diaryId,epochId:f.epochId},{
+      ...f.manifest,
+      predecessor_epochs:[{epoch_id:f.epochId,manifest_fingerprint:id(92,32)}],
+    })).rejects.toThrow(/predecessor cannot equal/)
+  })
+
   it('keeps creation-manifest verification authority-free while canonical_full still requires the genesis grant',async()=>{
     const f=await nativeFixture()
     const codec=new GoogleSheetsTransferableSingleWriterV2ProfileCodec(f.diaryId,f.epochId,f.rootKey,f.accountBinding)
@@ -164,6 +180,25 @@ describe('ManifestV6 and v2 Google profile',()=>{
     const verified=await codec.verifyRemote({manifest:snapshot.manifest,rows:[f.row]})
     expect(verified.profileId).toBe(SINGLE_WRITER_V2_PROFILE)
     expect(verified.manifestFingerprint).toBe(f.fingerprint)
+  })
+
+  it('rejects invalid create/manifest/row mutations before issuing a Google request',async()=>{
+    class Client implements GoogleApiClient{
+      calls:string[]=[]
+      async request<T>(url:string):Promise<T>{
+        this.calls.push(url)
+        if(new URL(url).pathname==='/drive/v3/about')return{user:{permissionId:'permission-owner-v2'}} as T
+        throw new Error(`Unexpected request: ${url}`)
+      }
+      identity():string{return'permission-owner-v2'}
+    }
+    const f=await nativeFixture(),client=new Client();issueControlledTestGoogleClient(client)
+    const transport=await GoogleSheetsTransferableSingleWriterV2Transport.fromAuthenticatedSession(client,f.diaryId,f.epochId)
+    const baseline=client.calls.length
+    await expect(transport.create(f.creationLocator,['sync-v5'])).rejects.toMatchObject({code:'provider_incompatible'})
+    await expect(transport.writeManifest('unused',['sync-v5','5',id(1,12),id(2,16)])).rejects.toMatchObject({code:'integrity_failure'})
+    await expect(transport.append('unused',[id(3,32),id(4,12),'AA'])).rejects.toMatchObject({code:'integrity_failure'})
+    expect(client.calls).toHaveLength(baseline)
   })
 
   it('uses v6 locator/account domains and rejects v1 protocol properties on the v2 transport',async()=>{
