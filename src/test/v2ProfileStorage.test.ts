@@ -221,6 +221,41 @@ describe('ManifestV6 and v2 Google profile',()=>{
   })
 })
 
+describe('V2 creation crash-resume binding',()=>{
+  it('rejects resuming a persisted creation intent with different immutable manifest bytes',async()=>{
+    const f=await nativeFixture()
+    const codec=new GoogleSheetsTransferableSingleWriterV2ProfileCodec(f.diaryId,f.epochId,f.rootKey,f.accountBinding)
+    const states=new Map<string,import('../sync/core/creation').CreationState>()
+    const persistence={
+      async read(locator:string){return structuredClone(states.get(locator)??null)},
+      async write(state:import('../sync/core/creation').CreationState){states.set(state.locator,structuredClone(state))},
+    }
+    const transport={
+      providerId:'google-drive-sheets-v1',
+      profileId:SINGLE_WRITER_V2_PROFILE,
+      async discover(){return[]},
+      async create(){},
+      async read(){return{manifest:[],rows:[]}},
+      async append(){},
+    }
+    const {runCreationStateMachine}=await import('../sync/core/creation')
+    const initial={
+      locator:f.creationLocator,
+      manifestFingerprint:f.fingerprint,
+      status:'planned' as const,
+      remoteId:null,
+      diaryId:f.diaryId,
+      epochId:f.epochId,
+      keyId:f.keyId,
+      operationGeneration:0,
+    }
+    await runCreationStateMachine(initial,manifestCellsArrayV6(f.cells),transport,codec,persistence)
+    const mutated=[...manifestCellsArrayV6(f.cells)] as string[]
+    mutated[3]=`${mutated[3]}A`
+    await expect(runCreationStateMachine(initial,mutated,transport,codec,persistence)).rejects.toThrow(/immutable requested resource/)
+  })
+})
+
 describe('V2 creation one-shot persistence',()=>{
   it('persists and cryptographically readback-verifies Takeover staging and exact RecoveryArtifactV6 bytes',async()=>{
     const f=await nativeFixture(),store=new IndexedDbV2LocalSecurityStore()
