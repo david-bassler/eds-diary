@@ -322,6 +322,20 @@ describe('EpochLocalSecurityStateV6 persistence and writer gate',()=>{
     await expect(authority.verifyBeforePush(prepared.envelope,verified2,'initial')).resolves.toBe('quarantine_stale_writer')
   })
 
+  it('fails closed when canonical writer state belongs to another epoch identity',async()=>{
+    const f=await fixture(),store=new IndexedDbV2LocalSecurityStore()
+    await store.initializeState(rootKey,f.epochSalt,f.initial)
+    const active=await stateAfterCanonicalVerifyV6(f.initial,f.result,[],false)
+    await store.replaceState(rootKey,f.epochSalt,0,{...active,writer_status:'read_only',writer_generation:null,writer_grant_id:null})
+    const authority=new TransferableSingleWriterV2WriteAuthority(()=>store.loadState(rootKey,f.epochSalt,f.epochId),(envelope)=>store.envelopeAuthority(rootKey,f.epochSalt,f.epochId,envelope))
+    const wrongDiary=v2VerifiedRemoteState({...f.result,diary_id:b(55,16)},{manifest:[],rows:[]})
+    await expect(authority.canPrepareDomainWrite(wrongDiary)).resolves.toBe('read_only')
+    const wrongEpoch=v2VerifiedRemoteState({...f.result,epoch_id:b(56,16)},{manifest:[],rows:[]})
+    await expect(authority.canPrepareDomainWrite(wrongEpoch)).resolves.toBe('read_only')
+    const wrongManifest=v2VerifiedRemoteState({...f.result,manifest_fingerprint:b(57,32)},{manifest:[],rows:[]})
+    await expect(authority.canPrepareDomainWrite(wrongManifest)).resolves.toBe('read_only')
+  })
+
   it('refuses push authorization when the supplied envelope bytes differ from the immutable persisted envelope',async()=>{
     const f=await fixture(),store=new IndexedDbV2LocalSecurityStore()
     await store.initializeState(rootKey,f.epochSalt,f.initial)
