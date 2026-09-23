@@ -3,7 +3,7 @@ import { canonicalBytes } from '../crypto/canonical'
 import { hmacSha256 } from '../crypto/core'
 import { deriveLocalStateMacKeyV2 } from './crypto'
 import type { PreparedEnvelope } from '../envelopes'
-import { localJournalNextV2, localStateTagV6, validateEpochLocalSecurityStateV6, validateStoredWriterDeviceKeyV2, verifyLocalStateTagV6, withDiaryLockV2, type EpochLocalSecurityStateV6, type StoredWriterDeviceKeyV2 } from './localState'
+import { localJournalInitialV2, localJournalNextV2, localStateTagV6, validateEpochLocalSecurityStateV6, validateStoredWriterDeviceKeyV2, verifyLocalStateTagV6, withDiaryLockV2, type EpochLocalSecurityStateV6, type StoredWriterDeviceKeyV2 } from './localState'
 
 const DATABASE_NAME='eds-diary-v2-security'
 const DATABASE_VERSION=2
@@ -269,7 +269,7 @@ export class IndexedDbV2LocalSecurityStore {
     const db=await openDatabase(),tx=db.transaction(STORES.envelopes,'readonly')
     const stored=await requestResult<PersistedEnvelopeV6[]>(tx.objectStore(STORES.envelopes).index('byEpoch').getAll(epochId))
     await transactionDone(tx)
-    let hash=await import('./localState').then(({localJournalInitialV2})=>localJournalInitialV2(state.diary_id,state.epoch_id))
+    let hash=await localJournalInitialV2(state.diary_id,state.epoch_id)
     let count=0
     for(const envelope of stored.sort((a,b)=>a.local_sequence-b.local_sequence)){
       count+=1
