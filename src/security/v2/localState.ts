@@ -348,7 +348,7 @@ export function validateRootWrapV6(value:unknown):RootWrapV6{
   if(wrap.local_wrap_version!==6)throw new Error('RootWrapV6 local_wrap_version mismatch.')
   const identity:RootWrapIdentityV6={diary_id:id(wrap.diary_id,16,'diary_id'),epoch_id:id(wrap.epoch_id,16,'epoch_id'),key_id:id(wrap.key_id,16,'key_id'),manifest_fingerprint:id(wrap.manifest_fingerprint,32,'manifest_fingerprint')}
   assertRootWrapIdentityV6(identity);id(wrap.wrap_id,16,'wrap_id');id(wrap.wrap_iv,12,'wrap_iv')
-  if(typeof wrap.wrapped_root_key!=='string'||base64Url(fromBase64Url(wrap.wrapped_root_key))!==wrap.wrapped_root_key)throw new Error('RootWrapV6 wrapped_root_key is not canonical Base64URL.')
+  if(typeof wrap.wrapped_root_key!=='string'){throw new Error('RootWrapV6 wrapped_root_key is invalid.')} const wrappedBytes=fromBase64Url(wrap.wrapped_root_key);if(wrappedBytes.byteLength!==48||base64Url(wrappedBytes)!==wrap.wrapped_root_key)throw new Error('RootWrapV6 wrapped_root_key is not canonical 48-byte ciphertext.')
   const metadata=object(wrap.mode_metadata,'mode_metadata')
   if(wrap.mode==='best-effort'){
     exact(metadata,[],'mode_metadata')
