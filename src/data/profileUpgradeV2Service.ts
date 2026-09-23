@@ -2,7 +2,6 @@ import { base64Url, fixedBase64Url, fromBase64Url, randomBytes } from '../securi
 import { canonicalBytes } from '../security/crypto/canonical'
 import { recoveryCommitment, sha256 } from '../security/crypto/core'
 import type { PreparedEnvelope } from '../security/envelopes'
-import { envelopeRow } from '../security/envelopes'
 import { validateRevisionGraphV1, validateRevisionV1, type RevisionV1 } from '../security/revisions'
 import {
   DOMAIN_SCHEMA_REGISTRY,
@@ -63,7 +62,6 @@ import {
   manifestCellsArrayV6,
   manifestFingerprintV6,
   prepareManifestV6,
-  type ManifestCellsV6,
   type ProtectedManifestV6,
 } from '../security/v2/manifest'
 import {
@@ -78,7 +76,7 @@ import {
   type StoredWriterDeviceKeyV2,
 } from '../security/v2/localState'
 import { createRecoveryTakeoverStagingV2 } from '../security/v2/recoveryStaging'
-import { envelopeRowV2, sealRevisionEnvelopeV2 } from '../security/v2/envelopes'
+import { sealRevisionEnvelopeV2 } from '../security/v2/envelopes'
 import type { RevisionV2, WriterContextV2 } from '../security/v2/types'
 import { stateAfterCanonicalVerifyV6 } from '../security/v2/stateReconciliation'
 import type { CanonicalFullResultV2 } from '../security/v2/verifier'
@@ -96,6 +94,7 @@ import { createAnchorV2 } from '../security/v2/prefix'
 type Row=readonly[string,string,string]
 export type ProfileUpgradeV2FaultPoint=
   | `after-${RotationOperationStageV2}`
+  | 'after-genesis-append'
   | 'after-source-append'
   | 'after-confirmation-append'
   | 'after-local-selection'
@@ -477,7 +476,7 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
     if(snapshot.rows.length!==0)return
     let uncertain=false
     try{await ctx.transport.append(ctx.remoteId,expected)}catch(error){if(!(error instanceof TransportError)||error.code!=='unknown_outcome')throw error;uncertain=true}
-    await this.hit('after-source-append' as ProfileUpgradeV2FaultPoint).catch(()=>{})
+    await this.fault?.('after-genesis-append')
     snapshot=await inspect()
     if(snapshot.rows.length!==0)return
     if(!uncertain)throw new Error('Profile-upgrade Gen-1 append succeeded without durable readback.')
@@ -508,11 +507,11 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
     }else if(!sameJson(state.remote_binding,binding))throw new Error('Profile-upgrade Successor remote binding changed.')
 
     const ctx=await this.successorContext()
-    const genesisRevision=createProfileUpgradeGenesisGrantRevisionV2({
-      diaryId:plan.diary_id,successorEpochId:plan.successor_epoch_id,grantId:plan.writer_grant_id,writerDeviceId:plan.writer_device_id,
+    const genesisRevision=(await createProfileUpgradeGenesisGrantRevisionV2({
+      diaryId:plan.diary_id,epochId:plan.successor_epoch_id,grantId:plan.writer_grant_id,writerDeviceId:plan.writer_device_id,
       writerKeyId:plan.writer_key_id,writerPublicKey:plan.writer_public_key,recoveryGeneration:plan.recovery_generation,protocolCreatedAt:plan.created_at,
       recordId:await deterministicId(plan.operation_id,'genesis-grant-record',16),revisionId:await deterministicId(plan.operation_id,'genesis-grant-revision',32),
-    })
+    })).revision
     const genesis=await this.prepareV2Envelope('genesis-grant',genesisRevision,null,[])
     await this.ensureGenesisRemote(ctx,genesis)
     return{manifestFingerprint:plan.manifest_fingerprint}
@@ -528,7 +527,7 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
       let row=await this.artifact<Row>(`envelope:${role}`)
       if(!row){
         const revision=await copyV1HeadForProfileUpgradeV2({
-          diaryId:plan.diary_id,successorEpochId:plan.successor_epoch_id,sourceEpochId:source.artifact.source_epoch_id,head,
+          diaryId:plan.diary_id,successorEpochId:plan.successor_epoch_id,sourceEpochId:source.artifact.source_epoch_id,sourceHead:head,
           revisionId:await deterministicId(plan.operation_id,`copy-revision:${head.revision_id}`,32),writerContext:this.writerContext(plan),
           writerPrivateKey:writer.private_key,protocolCreatedAt:plan.created_at,
         })
@@ -538,12 +537,12 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
     }
     let migrationRow=await this.artifact<Row>('envelope:migration')
     if(!migrationRow){
-      const revision=await createProfileUpgradeMigrationRevisionV2({
+      const revision=(await createProfileUpgradeMigrationRevisionV2({
         diaryId:plan.diary_id,successorEpochId:plan.successor_epoch_id,sourceEpochId:source.artifact.source_epoch_id,
         sourceManifestFingerprint:source.artifact.source_manifest_fingerprint,sourceAnchor:source.artifact.source_anchor,
         sourceSnapshot:source.snapshot,writerContext:this.writerContext(plan),writerPrivateKey:writer.private_key,protocolCreatedAt:plan.created_at,
         migrationId:plan.operation_id,recordId:await deterministicId(plan.operation_id,'migration-record',16),revisionId:await deterministicId(plan.operation_id,'migration-revision',32),
-      })
+      })).revision
       migrationRow=asRow(await this.prepareV2Envelope('migration',revision,this.writerAuthority(plan),[]))
     }
     planned.push(migrationRow)
@@ -757,7 +756,7 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
   }
 
   async publishOrReconcileAnnouncement(state:RotationOperationStateV2):Promise<{kind:'durable'}|{kind:'unknown'}|{kind:'stale'}|{kind:'source_race'}>{
-    const operation=await this.load(),ctx=await this.successorContext()
+    const operation=await this.load()
     if(!operation.announcement_envelope||!operation.successor_staging_anchor)throw new Error('Profile-upgrade Announcement is not prepared.')
     try{
       const sourceBefore=await this.verifySourceAtFrozenPrefix(true),successorBefore=await this.verifySuccessorAtStagingOrConfirmation()
