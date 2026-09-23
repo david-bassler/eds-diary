@@ -157,6 +157,7 @@ describe('EpochLocalSecurityStateV6 and writer gate',()=>{
     await expect(repo.loadBestEffortWrappingKey(b(42,16))).resolves.toBeNull()
 
     const credential=new Uint8Array([1,2,3,4]),prfOutput=new Uint8Array(32).fill(43),evalInput=new Uint8Array(32).fill(44),wrapSalt=new Uint8Array(32).fill(45)
+    await expect(createPrfRootWrapV6(rootKey,{credentialId:credential,prfEvalInput:evalInput,prfOutput,rpId:'example.test',verified:false} as never,identity,new Uint8Array(16).fill(46),wrapSalt,new Uint8Array(12).fill(47))).rejects.toThrow(/unverified/)
     const prf=await createPrfRootWrapV6(rootKey,{credentialId:credential,prfEvalInput:evalInput,prfOutput,rpId:'example.test',verified:true},identity,new Uint8Array(16).fill(46),wrapSalt,new Uint8Array(12).fill(47))
     expect(prf.mode_metadata.prf_profile).toBe('webauthn-prf-v6-1')
     await expect(openPrfRootWrapV6(prf,credential,prfOutput)).resolves.toEqual(rootKey)
@@ -227,6 +228,19 @@ describe('EpochLocalSecurityStateV6 and writer gate',()=>{
     expect(await repo.listOutbox(epoch)).toEqual([])
   })
 
+  it('rejects divergence between generic VerifiedRemoteState semantics and canonical v2 profile state',async()=>{
+    const repo=store(),key=await repo.createAndPersistWriterKey(diary,epoch,device),anchor=await createAnchorV2(diary,epoch,[])
+    await repo.persistState(rootKey,await stateFor(key.writer_signing_key_id,anchor))
+    const authority:WriterAuthoritySnapshotV2={writer_generation:1,writer_grant_id:grant,writer_device_id:device,writer_key_id:key.writer_signing_key_id,writer_public_key:key.writer_public_key,source_epoch_sealed:false}
+    const gate=new TransferableWriterAuthorityV2({readLocalState:async()=>(await repo.readState(rootKey,epoch))!,inspectPreparedRevision:async()=>{throw new Error('not used')}})
+    const divergent=verified(authority,anchor)
+    divergent.retired=true
+    await expect(gate.canPrepareDomainWrite(divergent)).rejects.toThrow(/seal\/retirement/)
+    const divergentSets=verified(authority,anchor)
+    divergentSets.acceptedEnvelopeIds=new Set([b(37,32)])
+    await expect(gate.canPrepareDomainWrite(divergentSets)).rejects.toThrow(/semantic envelope sets|dispositions/)
+  })
+
   it('never turns an unconfirmed staged successor into normal local writer authority',async()=>{
     const repo=store(),key=await repo.createAndPersistWriterKey(diary,epoch,device),anchor=await createAnchorV2(diary,epoch,[])
     await repo.persistState(rootKey,await stateFor(key.writer_signing_key_id,anchor))
@@ -235,6 +249,21 @@ describe('EpochLocalSecurityStateV6 and writer gate',()=>{
     profile.activation_state='staged_confirmation_missing'
     const service=new V2DomainWriteService(diary,epoch,{store:repo,requireUnlockedRoot:async()=>({rootKey}),providerSessionActive:()=>true,freshCanonicalVerify:async()=>staged})
     await expect(service.prepareDomainWrite({record_type:'pain_entry',record_schema:'pain-entry/v1',record_id:b(36,16),parent_revision_ids:[],record_status:'active',record_data:pain('staged')})).rejects.toThrow(/unconfirmed staged successor/)
+    expect(await repo.listOutbox(epoch)).toEqual([])
+  })
+
+  it('rejects corrupted prepared-envelope metadata before immutable local persistence',async()=>{
+    const repo=store(),key=await repo.createAndPersistWriterKey(diary,epoch,device),anchor=await createAnchorV2(diary,epoch,[])
+    await repo.persistState(rootKey,await stateFor(key.writer_signing_key_id,anchor))
+    const epochSalt=await deriveEpochSaltV2(new Uint8Array(16).fill(1),new Uint8Array(16).fill(2))
+    const revision:RevisionV2={
+      record_type:'pain_entry',record_schema:'pain-entry/v1',record_id:b(38,16),revision_id:b(39,32),parent_revision_ids:[],record_status:'active',record_data:pain('hash mismatch'),migration_origin:null,protocol_created_at:'2026-09-23T07:31:00.000Z',
+      writer_context:{writer_generation:1,writer_grant_id:grant,writer_device_id:device,writer_key_id:key.writer_signing_key_id},writer_signature:null,
+    }
+    revision.writer_signature=await signEd25519V2(key.private_key,revisionSigningBytesV2(diary,epoch,revision))
+    const envelope=await sealRevisionEnvelopeV2(rootKey,epochSalt,{diaryId:diary,epochId:epoch},revision,new Uint8Array(32).fill(48),new Uint8Array(12).fill(49))
+    await repo.reserveEnvelope(epoch,envelope.envelopeId)
+    await expect(repo.persistPreparedEnvelope(rootKey,epoch,{...envelope,bytesHash:b(50,32)},0)).rejects.toThrow(/bytesHash/)
     expect(await repo.listOutbox(epoch)).toEqual([])
   })
 
