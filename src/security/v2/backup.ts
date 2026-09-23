@@ -230,18 +230,29 @@ async function buildManifest(context:BackupContextV6,backupId:string):Promise<Ba
   const manifestPayload=await openManifestV6(context.rootKey,context.epochSalt,{diaryId:context.diaryId,epochId:context.epochId},manifestCells)
   if(manifestPayload.key_id!==context.keyId)throw new Error('BackupV6 key binding mismatch.')
   const trustRoot=await manifestTrustRootV6(manifestCells,manifestPayload)
+  const canonical=await new TransferableSingleWriterV2Verifier().verifyCanonicalFull(trustRoot,context.rootKey,context.recordRows)
+  if(!canonicalEqual(canonical.remote_anchor,context.canonical.remote_anchor)
+    ||!sameWriter(canonical,{
+      writer_generation:context.canonical.current_writer.writer_generation,
+      writer_grant_id:context.canonical.current_writer.writer_grant_id,
+      writer_device_id:context.canonical.current_writer.writer_device_id,
+      writer_key_id:context.canonical.current_writer.writer_key_id,
+      writer_public_key:context.canonical.current_writer.writer_public_key,
+    })
+    ||!canonicalEqual(canonical.current_recovery,context.canonical.current_recovery)
+    ||!canonicalEqual(canonical.recovery_credential_history,context.canonical.recovery_credential_history))throw new Error('BackupV6 supplied canonical state does not match record_rows replay.')
   await verifyBackupLocalRows(context.rootKey,trustRoot,context.recordRows,context.pendingOutboxRows,context.staleWriterPendingRows)
   const artifact=(await openRecoveryArtifactV6(context.recoveryArtifact,context.urs)).payload
-  await validateBackupActivationBoundary(manifestPayload,artifact,context.canonical,context.recordRows,context.activationState)
-  if(artifact.diary_id!==context.diaryId||artifact.epoch_id!==context.epochId||artifact.key_id!==context.keyId||artifact.manifest_fingerprint!==fingerprint)throw new Error('BackupV6 recovery artifact binding mismatch.')
+  await validateBackupActivationBoundary(manifestPayload,artifact,canonical,context.recordRows,context.activationState)
+  if(artifact.diary_id!==context.diaryId||artifact.epoch_id!==context.epochId||artifact.key_id!==context.keyId||artifact.RK_epoch!==base64Url(context.rootKey)||artifact.manifest_fingerprint!==fingerprint||artifact.google_account_binding!==manifestPayload.google_account_binding)throw new Error('BackupV6 recovery artifact binding mismatch.')
   const artifactAdvancedRecovery=artifact.recovery_generation>manifestPayload.recovery_generation
   if(artifact.recovery_generation<manifestPayload.recovery_generation
     ||artifactAdvancedRecovery!==(artifact.recovery_authority_transition_proof!==null))throw new Error('BackupV6 RecoveryArtifactV6 transition-proof requirement mismatch.')
-  const recovery=context.canonical.current_recovery
+  const recovery=canonical.current_recovery
   if(artifact.recovery_generation!==recovery.recovery_generation||artifact.recovery_urs_commitment!==recovery.recovery_urs_commitment||artifact.recovery_urs_id!==recovery.recovery_urs_id||artifact.recovery_takeover_key_id!==recovery.recovery_takeover_key_id||artifact.recovery_takeover_public_key!==recovery.recovery_takeover_public_key)throw new Error('BackupV6 recovery end-state mismatch.')
-  if(!canonicalEqual(artifact.recovery_credential_history,context.canonical.recovery_credential_history))throw new Error('BackupV6 recovery credential history mismatch.')
+  if(!canonicalEqual(artifact.recovery_credential_history,canonical.recovery_credential_history))throw new Error('BackupV6 recovery credential history mismatch.')
   const anchor=await createAnchorV2(context.diaryId,context.epochId,context.recordRows)
-  if(anchor.prefix_hash!==context.canonical.remote_anchor.prefix_hash||anchor.covered_row_count!==context.canonical.remote_anchor.covered_row_count)throw new Error('BackupV6 canonical anchor mismatch.')
+  if(anchor.prefix_hash!==canonical.remote_anchor.prefix_hash||anchor.covered_row_count!==canonical.remote_anchor.covered_row_count)throw new Error('BackupV6 canonical anchor mismatch.')
   if(artifact.remote_anchor.covered_row_count>context.recordRows.length)throw new Error('BackupV6 recovery artifact anchor is ahead of export.')
   const artifactAnchor=await createAnchorV2(context.diaryId,context.epochId,context.recordRows.slice(0,artifact.remote_anchor.covered_row_count))
   if(!canonicalEqual(artifact.remote_anchor,artifactAnchor))throw new Error('BackupV6 recovery artifact anchor is not a prefix of export.')
@@ -249,11 +260,11 @@ async function buildManifest(context:BackupContextV6,backupId:string):Promise<Ba
   if(recordBytes>MAX_BACKUP_V6_CANONICAL_BYTES||pendingBytes>MAX_BACKUP_V6_CANONICAL_BYTES||staleBytes>MAX_BACKUP_V6_CANONICAL_BYTES)throw new Error('BackupV6 category byte bound exceeded.')
   const union=unionStats([context.recordRows,context.pendingOutboxRows,context.staleWriterPendingRows])
   const writer:BackupWriterAuthorityV6={
-    writer_generation:context.canonical.current_writer.writer_generation,
-    writer_grant_id:context.canonical.current_writer.writer_grant_id,
-    writer_device_id:context.canonical.current_writer.writer_device_id,
-    writer_key_id:context.canonical.current_writer.writer_key_id,
-    writer_public_key:context.canonical.current_writer.writer_public_key,
+    writer_generation:canonical.current_writer.writer_generation,
+    writer_grant_id:canonical.current_writer.writer_grant_id,
+    writer_device_id:canonical.current_writer.writer_device_id,
+    writer_key_id:canonical.current_writer.writer_key_id,
+    writer_public_key:canonical.current_writer.writer_public_key,
   }
   return{
     backup_id:backupId,diary_id:context.diaryId,epoch_id:context.epochId,key_id:context.keyId,manifest_fingerprint:fingerprint,
@@ -341,7 +352,18 @@ export async function testRestoreBackupV6(
   if(recovery.recovery_generation!==manifest.recovery_generation||recovery.recovery_urs_commitment!==manifest.recovery_urs_commitment||recovery.recovery_urs_id!==manifest.recovery_urs_id||recovery.recovery_takeover_key_id!==manifest.recovery_takeover_key_id||recovery.recovery_takeover_public_key!==manifest.recovery_takeover_public_key||recovery.recovery_rekey_rotation_required!==manifest.recovery_rekey_rotation_required||recovery.recovery_rekey_transition_id!==manifest.recovery_rekey_transition_id)throw new Error('BackupV6 Recovery state mismatch.')
   const artifact=(await openRecoveryArtifactV6(backup.recovery_artifact,context.urs)).payload
   await validateBackupActivationBoundary(manifestPayload,artifact,canonical,backup.record_rows,manifest.activation_state)
-  if(artifact.diary_id!==context.diaryId||artifact.epoch_id!==context.epochId||artifact.manifest_fingerprint!==fingerprint||artifact.recovery_generation!==recovery.recovery_generation||artifact.recovery_urs_id!==recovery.recovery_urs_id||artifact.recovery_takeover_key_id!==recovery.recovery_takeover_key_id)throw new Error('BackupV6 RecoveryArtifactV6 binding mismatch.')
+  if(artifact.diary_id!==context.diaryId
+    ||artifact.epoch_id!==context.epochId
+    ||artifact.key_id!==context.keyId
+    ||artifact.RK_epoch!==base64Url(context.rootKey)
+    ||artifact.manifest_fingerprint!==fingerprint
+    ||artifact.google_account_binding!==manifestPayload.google_account_binding
+    ||artifact.recovery_generation!==recovery.recovery_generation
+    ||artifact.recovery_urs_commitment!==recovery.recovery_urs_commitment
+    ||artifact.recovery_urs_id!==recovery.recovery_urs_id
+    ||artifact.recovery_takeover_key_id!==recovery.recovery_takeover_key_id
+    ||artifact.recovery_takeover_public_key!==recovery.recovery_takeover_public_key
+    ||!canonicalEqual(artifact.recovery_credential_history,canonical.recovery_credential_history))throw new Error('BackupV6 RecoveryArtifactV6 binding mismatch.')
   const artifactAdvancedRecovery=artifact.recovery_generation>manifestPayload.recovery_generation
   if(artifact.recovery_generation<manifestPayload.recovery_generation
     ||artifactAdvancedRecovery!==(artifact.recovery_authority_transition_proof!==null))throw new Error('BackupV6 RecoveryArtifactV6 transition-proof requirement mismatch.')
