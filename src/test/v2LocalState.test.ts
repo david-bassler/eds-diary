@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { base64Url } from '../security/crypto/bytes'
 import { deriveEpochSaltV2, generateWriterDeviceKeyV2 } from '../security/v2/crypto'
-import { localJournalInitialV2, type EpochLocalSecurityStateV6 } from '../security/v2/localState'
+import { localJournalInitialV2, recoveryCredentialHistoryHashV2, type EpochLocalSecurityStateV6 } from '../security/v2/localState'
 import { IndexedDbV2LocalSecurityStore, __v2LocalPersistenceTesting } from '../security/v2/localPersistence'
 import { stateAfterCanonicalVerifyV6 } from '../security/v2/stateReconciliation'
 import { TransferableSingleWriterV2WriteAuthority, v2VerifiedRemoteState } from '../security/v2/writeAuthority'
@@ -31,6 +31,7 @@ const painData={
 async function fixture(){
   const diaryId=b(1,16),epochId=b(2,16),epochSalt=await deriveEpochSaltV2(new Uint8Array(16).fill(1),new Uint8Array(16).fill(2))
   const writer=await generateWriterDeviceKeyV2(),writerDeviceId=b(3,16),anchor=await createAnchorV2(diaryId,epochId,[])
+  const recoveryHistory=[{recovery_generation:0,recovery_urs_id:b(8,32),recovery_takeover_key_id:b(9,32)}]
   const initial:EpochLocalSecurityStateV6={
     local_state_version:6,
     diary_id:diaryId,
@@ -39,11 +40,11 @@ async function fixture(){
     manifest_fingerprint:b(5,32),
     recovery_generation:0,
     recovery_urs_commitment:b(6,32),
-    recovery_urs_id:null,
+    recovery_urs_id:b(8,32),
     recovery_rekey_rotation_required:false,
     recovery_rekey_transition_id:null,
     remote_binding:{storage_provider_id:'google-drive-sheets-v1',sync_profile:SINGLE_WRITER_V2_PROFILE,remote_resource_id:'remote-1',remote_identity_binding:'subject-1'},
-    remote_anchor:null,
+    remote_anchor:anchor,
     epoch_status:'active',
     operation_generation:0,
     rotation_state_ref:null,
@@ -58,12 +59,12 @@ async function fixture(){
     writer_signing_key_id:writer.writerKeyId,
     writer_generation:null,
     writer_grant_id:null,
-    verified_writer_device_id:null,
-    verified_writer_key_id:null,
-    verified_writer_generation:null,
-    verified_writer_grant_id:null,
-    recovery_takeover_key_id:null,
-    recovery_credential_history_sha256:null,
+    verified_writer_device_id:writerDeviceId,
+    verified_writer_key_id:writer.writerKeyId,
+    verified_writer_generation:1,
+    verified_writer_grant_id:b(7,32),
+    recovery_takeover_key_id:b(9,32),
+    recovery_credential_history_sha256:await recoveryCredentialHistoryHashV2(recoveryHistory),
     stale_writer_pending_count:0,
   }
   const result:CanonicalFullResultV2={
@@ -90,7 +91,7 @@ async function fixture(){
       recovery_rekey_rotation_required:false,
       recovery_rekey_transition_id:null,
     },
-    recovery_credential_history:[{recovery_generation:0,recovery_urs_id:b(8,32),recovery_takeover_key_id:b(9,32)}],
+    recovery_credential_history:recoveryHistory,
     source_epoch_sealed:false,
     accepted_revision_graph:{revisions:new Map(),heads_by_record:new Map()},
     accepted_epoch_migration:null,
