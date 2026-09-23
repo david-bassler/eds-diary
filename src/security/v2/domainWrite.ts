@@ -90,7 +90,7 @@ export class V2DomainWritePreparer {
         validateDomainData(schema,input.data)
       }else if(input.data!==null)throw new Error('Deleted domain revision must use null record_data.')
 
-      const reservation=await this.store.reserveEnvelope(local.epoch_id)
+      const reservation=await this.store.reserveEnvelope(local.epoch_id,verified.snapshot.rows)
       const revision:RevisionV2<T>={
         record_type:input.recordType,
         record_schema:recordSchema,
