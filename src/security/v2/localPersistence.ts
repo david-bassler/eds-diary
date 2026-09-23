@@ -359,17 +359,20 @@ export class IndexedDbV2LocalSecurityStore {
 
   async verifyLocalJournal(rootKey:Uint8Array,epochSalt:Uint8Array,epochId:string):Promise<void>{
     const state=await this.loadState(rootKey,epochSalt,epochId)
-    const db=await openDatabase(),tx=db.transaction([STORES.envelopes,STORES.outbox],'readonly')
+    const db=await openDatabase(),tx=db.transaction([STORES.envelopes,STORES.outbox,STORES.reservations],'readonly')
     const envelopeRequest=tx.objectStore(STORES.envelopes).index('byEpoch').getAll(epochId)
     const outboxRequest=tx.objectStore(STORES.outbox).index('byEpoch').getAll(epochId)
-    const [stored,entries]=await Promise.all([
+    const reservationRequest=tx.objectStore(STORES.reservations).index('byEpoch').getAll(epochId)
+    const [stored,entries,reservations]=await Promise.all([
       requestResult<PersistedEnvelopeV6[]>(envelopeRequest),
       requestResult<V2OutboxEntry[]>(outboxRequest),
+      requestResult<EnvelopeReservationV6[]>(reservationRequest),
     ])
     await transactionDone(tx)
     let hash=await localJournalInitialV2(state.diary_id,state.epoch_id)
     let count=0
     const outboxById=new Map<string,V2OutboxEntry>()
+    const reservationsById=new Map(reservations.map(reservation=>[reservation.id,reservation]))
     for(const entry of entries){
       await verifyOutboxTag(rootKey,epochSalt,entry)
       if(entry.epoch_id!==epochId||entry.id!==`${epochId}:${entry.envelope_id}`||outboxById.has(entry.id))throw new Error('V2 outbox identity is corrupt.')
@@ -381,9 +384,19 @@ export class IndexedDbV2LocalSecurityStore {
       if(envelope.epoch_id!==epochId||envelope.id!==`${epochId}:${envelope.envelopeId}`)throw new Error('V2 local envelope identity is corrupt.')
       const entry=outboxById.get(envelope.id)
       if(!entry||entry.envelope_id!==envelope.envelopeId)throw new Error('V2 immutable envelope/outbox bijection failed.')
+      const reservation=reservationsById.get(envelope.id)
+      if(!reservation
+        ||reservation.state!=='sealed'
+        ||reservation.epoch_id!==epochId
+        ||reservation.envelope_id!==envelope.envelopeId
+        ||reservation.iv!==envelope.iv)throw new Error('V2 sealed envelope/reservation binding failed.')
       hash=await localJournalNextV2(hash,count,envelope)
     }
     if(outboxById.size!==stored.length)throw new Error('V2 immutable envelope/outbox bijection failed.')
+    const envelopeIds=new Set(stored.map(envelope=>envelope.id))
+    for(const reservation of reservations){
+      if(reservation.state==='sealed'&&!envelopeIds.has(reservation.id))throw new Error('V2 sealed reservation references a missing immutable envelope.')
+    }
     const staleCount=entries.filter(entry=>entry.status==='stale_writer_pending').length
     if(staleCount!==state.stale_writer_pending_count)throw new Error('V2 stale-writer quarantine count is inconsistent with authenticated outbox.')
     if(count!==state.local_journal_count||hash!==state.local_journal_hash)throw new Error('V2 local envelope journal hash failed.')
