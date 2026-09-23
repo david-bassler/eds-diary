@@ -35,6 +35,17 @@ import activityTypeSettingsSchema from '../security/schemas/activity-type-settin
 import epochMigrationSchema from '../security/schemas/epoch-migration-sw.v1.schema.json'
 import rotationAnnouncementSchema from '../security/schemas/rotation-announcement-sw.v1.schema.json'
 import { validateRevisionV1 } from '../security/revisions'
+import {
+  createBestEffortRootWrapV6,
+  createPassphraseRootWrapV6,
+  createPrfRootWrapV6,
+  generateBestEffortWrappingKeyV6,
+  openBestEffortRootWrapV6,
+  openPassphraseRootWrapV6,
+  openPrfRootWrapV6,
+  type RootWrapIdentityV6,
+  type RootWrapV6,
+} from '../security/v2/rootWrap'
 
 const DATABASE_NAME = 'eds-diary'
 const SECURE_DATABASE_VERSION_FLOOR = 9
@@ -135,6 +146,29 @@ async function openStoredRoot(db:IDBDatabase,context:EpochContext,wrap:RootWrap)
 async function loadEpoch(db:IDBDatabase):Promise<{context:EpochContext;rootKey:Uint8Array;state:EpochLocalSecurityStateV5;epochSalt:Uint8Array}>{
   const contextTx=db.transaction(STORES.context,'readonly'),context=await result<EpochContext|undefined>(contextTx.objectStore(STORES.context).get(ACTIVE_CONTEXT));await complete(contextTx);if(!context){const made=await initialContext(db);unlockedRoots.set(made.context.epochId,new Uint8Array(made.rootKey));return{...made,epochSalt:await deriveEpochSalt(fromBase64Url(made.context.diaryId),fromBase64Url(made.context.epochId))}}
   const {wrap,stored}=await readEpochRecords(db,context);assertEpochIdentityBindings(context,wrap,stored.state);const rootKey=await openStoredRoot(db,context,wrap),epochSalt=await deriveEpochSalt(fromBase64Url(context.diaryId),fromBase64Url(context.epochId));await verifyStateTag(rootKey,epochSalt,stored.state,stored.tag);return{context,rootKey,state:stored.state,epochSalt}
+}
+export interface PreparedSuccessorRootWrapV6 {wrap:RootWrapV6;bestEffortWrappingKey:CryptoKey|null}
+export async function prepareSuccessorRootWrapV6ForActiveMode(rootKey:Uint8Array,identity:RootWrapIdentityV6,wrapId:Uint8Array):Promise<PreparedSuccessorRootWrapV6>{
+  const db=await openDatabase(),active=await loadEpoch(db),records=await readEpochRecords(db,active.context)
+  if(active.context.diaryId!==identity.diary_id)throw new Error('RootWrapV6 successor diary does not match the active v1 diary.')
+  if(wrapId.byteLength!==16)throw new Error('RootWrapV6 wrap_id must contain 16 bytes.')
+  if(records.wrap.mode==='passphrase'){
+    const factor=unlockFactors.get(identity.diary_id)
+    if(!factor||factor.mode!=='passphrase')throw new LocalUnlockRequiredError('passphrase')
+    const wrap=await createPassphraseRootWrapV6(rootKey,factor.passphrase,identity,wrapId)
+    if(base64Url(await openPassphraseRootWrapV6(wrap,factor.passphrase))!==base64Url(rootKey))throw new Error('RootWrapV6 passphrase readback failed.')
+    return{wrap,bestEffortWrappingKey:null}
+  }
+  if(records.wrap.mode==='prf'){
+    const factor=unlockFactors.get(identity.diary_id)
+    if(!factor||factor.mode!=='prf')throw new LocalUnlockRequiredError('prf')
+    const wrap=await createPrfRootWrapV6(rootKey,{credentialId:factor.credentialId,prfEvalInput:factor.prfEvalInput,prfOutput:factor.prfOutput,rpId:factor.rpId},identity,wrapId)
+    if(base64Url(await openPrfRootWrapV6(wrap,factor.credentialId,factor.prfOutput))!==base64Url(rootKey))throw new Error('RootWrapV6 PRF readback failed.')
+    return{wrap,bestEffortWrappingKey:null}
+  }
+  const key=await generateBestEffortWrappingKeyV6(),wrap=await createBestEffortRootWrapV6(rootKey,key,identity,wrapId)
+  if(base64Url(await openBestEffortRootWrapV6(wrap,key))!==base64Url(rootKey))throw new Error('RootWrapV6 best-effort readback failed.')
+  return{wrap,bestEffortWrappingKey:key}
 }
 export interface LocalRootWrapStatus{initialized:boolean;mode:'best-effort'|'passphrase'|'prf';locked:boolean;credentialId?:string;prfEvalInput?:string;rpId?:string}
 export async function localRootWrapStatus():Promise<LocalRootWrapStatus>{const db=await openDatabase(),tx=db.transaction(STORES.context,'readonly'),done=complete(tx),context=await result<EpochContext|undefined>(tx.objectStore(STORES.context).get(ACTIVE_CONTEXT));await done;if(!context)return{initialized:false,mode:'best-effort',locked:false};const {wrap}=await readEpochRecords(db,context);if(wrap.mode==='prf')return{initialized:true,mode:'prf',locked:!unlockedRoots.has(context.epochId),credentialId:wrap.mode_metadata.credential_id,prfEvalInput:wrap.mode_metadata.prf_eval_input,rpId:wrap.mode_metadata.rp_id};return{initialized:true,mode:wrap.mode,locked:wrap.mode!=='best-effort'&&!unlockedRoots.has(context.epochId)}}
