@@ -105,7 +105,7 @@ class V2Session implements TransferableSingleWriterV2ProviderSession {
     return this.remote as unknown as GoogleSheetsTransferableSingleWriterV2Transport
   }
   async remoteIdentityBinding():Promise<string>{return this.account}
-  async codecForEpoch(diaryId:string,epochId:string,rootKey:Uint8Array):Promise<GoogleSheetsTransferableSingleWriterV2ProfileCodec>{
+  async codecForEpoch(diaryId:string,epochId:string,rootKey:Uint8Array,_transport:RemoteTransport):Promise<GoogleSheetsTransferableSingleWriterV2ProfileCodec>{
     return new GoogleSheetsTransferableSingleWriterV2ProfileCodec(diaryId,epochId,rootKey,this.account)
   }
   freshCanonicalSource(diaryId:string,epochId:string,rootKey:Uint8Array,remoteId:string):FreshCanonicalV2Source{
@@ -125,9 +125,7 @@ class V2Session implements TransferableSingleWriterV2ProviderSession {
     const state:CreationState={
       locator:args.creationLocator,manifestFingerprint:await manifestFingerprintV6(args.manifest),status:'bound',remoteId,
       manifest:[...manifestCellsArrayV6(args.manifest)],manifestBytes:new TextDecoder().decode((await import('../security/crypto/canonical')).canonicalBytes([...manifestCellsArrayV6(args.manifest)])),
-      diaryId:args.diaryId,epochId:args.epochId,keyId:(await import('../security/v2/manifest')).openManifestV6
-        ?undefined:undefined,
-      expectedProperties:{},operationGeneration:1,
+      diaryId:args.diaryId,epochId:args.epochId,operationGeneration:1,
     }
     // The production provider owns the exact creation state. This fixture only
     // persists the identity fields consumed by the profile-upgrade service.
