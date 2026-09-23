@@ -328,7 +328,7 @@ without requiring the staged Artifact to remain current.
 This ledger separates **decision stability** from **implementation status**.
 A recorded decision may be normative before its v2 runtime exists.
 
-Current implementation stack: `feat/transferable-single-writer-v2` (V2-01) -> `feat/transferable-single-writer-v2-verifier` (V2-02). Detailed implementation-review history is recorded in `EDS_TRANSFERABLE_SINGLE_WRITER_V2_IMPLEMENTATION_AUDIT.md`.
+Current implementation stack: `feat/transferable-single-writer-v2` (V2-01) -> `feat/transferable-single-writer-v2-verifier` (V2-02) -> `feat/transferable-single-writer-v2-local-state` (V2-03). Detailed implementation-review history is recorded in `EDS_TRANSFERABLE_SINGLE_WRITER_V2_IMPLEMENTATION_AUDIT.md`.
 
 The first two implementation layers are now present: frozen v2 wire/control types, strict validators, Ed25519/KDF/ID and EnvelopeV6 primitives, the exact v2 schema registry, RemoteAnchorV2 hashing, and the product-neutral canonical replay verifier including the separately typed `rotation_resume` path. This does **not** mean that StateV6 persistence/write gates, ManifestV6/Google v2 storage, cross-epoch activation, recovery services, migration orchestration, join, handoff UI or takeover UI are complete.
 
@@ -337,8 +337,8 @@ The first two implementation layers are now present: frozen v2 wire/control type
 | D-001 | Stable URS-/takeover-key identifiers and diary-wide `recovery_credential_history` replay/freshness enforcement are implemented in V2-01/V2-02. Secret-aware URS recomputation and Artifact enforcement remain V2-04+/recovery-service work. |
 | D-002 | Protocol/operation-state semantics specified; v2 recovery-rekey runtime still pending. |
 | D-003 | Shared coordinator retry path implemented and tested; v2 policy implementation still pending. |
-| D-004 | Shared semantic disposition contract implemented; current IndexedDB store remains explicitly v1-only, v2 store/quarantine persistence still pending. |
-| D-005 | Shared WriteAuthority contract and push/retry/readback gates implemented. **The v2 domain-write preparation path does not exist yet**, so `canPrepareDomainWrite` is intentionally not wired into current v1 local writes. |
+| D-004 | **V2-03 implemented.** The v2 CoordinatorStore persists semantic dispositions: only verifier-accepted envelopes become durable; stale-writer envelopes enter authenticated `stale_writer_pending` quarantine and increment StateV6 `stale_writer_pending_count`. Physical row presence alone is never treated as semantic durability. |
+| D-005 | **V2-03 core implemented.** Normal v2 domain preparation owns an explicit `FreshCanonicalV2Source.verifyNow()` call on every attempt, reconciles StateV6, validates the local WriterDeviceKeyV2 and persists the immutable envelope only after authority passes. `verifyBeforePush` additionally binds the exact persisted prepared-envelope Writer provenance to the freshly verified current authority. V2-04 must wire `verifyNow()` to the real provider read + canonical_full codec; until then this path is not product-reachable. |
 | D-006 | Protocol/architecture specified; v2 rotation runtime pending. |
 | D-007 | Recovery-takeover key generation/import/keypair-check primitives exist; operation-bound staging and v2 recovery/rotation runtime remain pending. |
 | D-008 | Provider/profile identity split implemented in shared contracts and v1 adapters; v2 adapter pending. |
