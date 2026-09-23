@@ -10,6 +10,8 @@ import {
   LOCAL_STORES,
   __localDatabaseTesting,
   activeProtocolSelectionV2,
+  loadProfileUpgradeSourceOperationV2,
+  persistProfileUpgradeSourceOperationV2,
   putRecord,
 } from '../data/localDatabase'
 import { __v2LocalPersistenceTesting, type VerifiedPersistedRecoveryArtifactV6 } from '../security/v2/localPersistence'
@@ -179,6 +181,23 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     await deleteDatabase('eds-diary')
     await deleteDatabase('eds-diary-v2-security')
     globalThis.localStorage?.clear?.()
+  })
+
+  it('rejects direct v1 persistence attempts that skip the closed profile-upgrade stage machine',async()=>{
+    const createdAt='2026-09-23T11:15:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    let stopped=false
+    await expect(new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt,point=>{
+      if(point==='after-source_frozen_verified'&&!stopped){stopped=true;throw new Error('freeze-only')}
+    }).upgrade()).rejects.toThrow('freeze-only')
+    const current=await loadProfileUpgradeSourceOperationV2()
+    if(!current)throw new Error('profile-upgrade operation missing in test')
+    const skipped={
+      ...current,
+      stage:'successor_bound' as const,
+      successor_creation_locator:base64Url(new Uint8Array(16).fill(101)),
+      successor_manifest_fingerprint:base64Url(new Uint8Array(32).fill(102)),
+    }
+    await expect(persistProfileUpgradeSourceOperationV2(skipped)).rejects.toThrow(/Illegal RotationOperationStateV2 transition/)
   })
 
   it('rejects a local v1 write racing the final source freeze and succeeds only after a new full verify',async()=>{
