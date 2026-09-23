@@ -6,9 +6,14 @@ import { generateWriterDeviceKeyV2, revisionSigningBytesV2, signEd25519V2 } from
 import { V2DomainWriteService } from '../security/v2/domainWrite'
 import { openRevisionEnvelopeV2, sealRevisionEnvelopeV2 } from '../security/v2/envelopes'
 import {
+  createBestEffortRootWrapV6,
+  createPrfRootWrapV6,
   journalInitialV2,
+  openBestEffortRootWrapV6,
+  openPrfRootWrapV6,
   recoveryCredentialHistoryHashV2,
   validateEpochLocalSecurityStateV6,
+  validateRootWrapV6,
   type EpochLocalSecurityStateV6,
 } from '../security/v2/localState'
 import { createAnchorV2 } from '../security/v2/prefix'
@@ -138,6 +143,25 @@ describe('EpochLocalSecurityStateV6 and writer gate',()=>{
     expect(()=>validateEpochLocalSecurityStateV6({...s,writer_status:'read_only',writer_generation:1})).toThrow(/read_only/)
     expect(()=>validateEpochLocalSecurityStateV6({...s,epoch_status:'orphaned'})).toThrow(/orphaned/)
     expect(()=>validateEpochLocalSecurityStateV6({...s,unexpected:true})).toThrow(/unknown or missing/)
+  })
+
+  it('keeps RootWrapV6 one-shot material and v6 PRF domain separate from v5 state',async()=>{
+    const repo=store(),wrapIdBytes=new Uint8Array(16).fill(40),wrapId=base64Url(wrapIdBytes)
+    const bestKey=await repo.createBestEffortWrappingKey(wrapId)
+    const identity={diary_id:diary,epoch_id:epoch,key_id:keyId,manifest_fingerprint:fingerprint}
+    const best=await createBestEffortRootWrapV6(rootKey,bestKey,identity,wrapIdBytes,new Uint8Array(12).fill(41))
+    expect(validateRootWrapV6(best)).toEqual(best)
+    await repo.persistRootWrap(epoch,best)
+    expect(await repo.readRootWrap(epoch)).toEqual(best)
+    await expect(openBestEffortRootWrapV6(best,bestKey)).resolves.toEqual(rootKey)
+    await expect(repo.loadBestEffortWrappingKey(b(42,16))).resolves.toBeNull()
+
+    const credential=new Uint8Array([1,2,3,4]),prfOutput=new Uint8Array(32).fill(43),evalInput=new Uint8Array(32).fill(44),wrapSalt=new Uint8Array(32).fill(45)
+    const prf=await createPrfRootWrapV6(rootKey,{credentialId:credential,prfEvalInput:evalInput,prfOutput,rpId:'example.test'},identity,new Uint8Array(16).fill(46),wrapSalt,new Uint8Array(12).fill(47))
+    expect(prf.mode_metadata.prf_profile).toBe('webauthn-prf-v6-1')
+    await expect(openPrfRootWrapV6(prf,credential,prfOutput)).resolves.toEqual(rootKey)
+    await expect(openPrfRootWrapV6(prf,new Uint8Array([9]),prfOutput)).rejects.toThrow(/credential mismatch/)
+    expect(()=>validateRootWrapV6({...prf,mode_metadata:{...prf.mode_metadata,prf_profile:'webauthn-prf-v5-1'}})).toThrow(/profile|metadata/)
   })
 
   it('persists a non-extractable writer CryptoKey and verifies its diary/epoch/device binding on load',async()=>{
