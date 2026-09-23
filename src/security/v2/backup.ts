@@ -144,12 +144,53 @@ function sameWriter(result:CanonicalFullResultV2,writer:BackupWriterAuthorityV6)
   return current.writer_generation===writer.writer_generation&&current.writer_grant_id===writer.writer_grant_id&&current.writer_device_id===writer.writer_device_id&&current.writer_key_id===writer.writer_key_id&&current.writer_public_key===writer.writer_public_key
 }
 
+const STALE_DISPOSITIONS=new Set([
+  'stale_writer_rejected',
+  'stale_grant_rejected',
+  'stale_recovery_transition_rejected',
+  'stale_rotation_announcement_rejected',
+  'rekey_rotation_required_rejected',
+  'stale_after_seal_rejected',
+])
+async function verifyBackupLocalRows(
+  rootKey:Uint8Array,
+  trustRoot:Awaited<ReturnType<typeof manifestTrustRootV6>>,
+  recordRows:readonly Row[],
+  pendingRows:readonly Row[],
+  staleRows:readonly Row[],
+):Promise<void>{
+  const verifier=new TransferableSingleWriterV2Verifier()
+  const remoteById=new Map<string,string>()
+  for(const row of recordRows)remoteById.set(row[0],JSON.stringify(row))
+  for(const row of pendingRows){
+    if(remoteById.has(row[0]))throw new Error('BackupV6 pending row is already present in the remote record set.')
+    const result=await verifier.verifyCanonicalFull(trustRoot,rootKey,[...recordRows,row])
+    const disposition=result.dispositions.at(-1)?.disposition
+    if(disposition!=='accepted')throw new Error('BackupV6 pending row is not valid under current Writer authority.')
+  }
+  for(const row of staleRows){
+    const remote=remoteById.get(row[0])
+    if(remote!==undefined){
+      if(remote!==JSON.stringify(row))throw new Error('Duplicate envelope_id has different bytes.')
+      const remoteResult=await verifier.verifyCanonicalFull(trustRoot,rootKey,recordRows)
+      const disposition=remoteResult.dispositions.find(item=>item.envelope_id===row[0])?.disposition
+      if(!disposition||!STALE_DISPOSITIONS.has(disposition))throw new Error('BackupV6 stale row is not quarantined by canonical remote semantics.')
+      continue
+    }
+    const result=await verifier.verifyCanonicalFull(trustRoot,rootKey,[...recordRows,row])
+    const disposition=result.dispositions.at(-1)?.disposition
+    if(!disposition||!STALE_DISPOSITIONS.has(disposition))throw new Error('BackupV6 stale row is not a valid stale/quarantined v2 envelope.')
+  }
+}
+
 async function buildManifest(context:BackupContextV6,backupId:string):Promise<BackupManifestV6>{
   if(context.canonical.diary_id!==context.diaryId||context.canonical.epoch_id!==context.epochId)throw new Error('BackupV6 canonical identity mismatch.')
   const manifestCells=parseManifestCellsV6(context.epochManifestPublic),fingerprint=await manifestFingerprintV6(manifestCells)
   if(fingerprint!==context.canonical.manifest_fingerprint)throw new Error('BackupV6 manifest fingerprint mismatch.')
   const manifestPayload=await openManifestV6(context.rootKey,context.epochSalt,{diaryId:context.diaryId,epochId:context.epochId},manifestCells)
   if(manifestPayload.key_id!==context.keyId)throw new Error('BackupV6 key binding mismatch.')
+  const trustRoot=await manifestTrustRootV6(manifestCells,manifestPayload)
+  await verifyBackupLocalRows(context.rootKey,trustRoot,context.recordRows,context.pendingOutboxRows,context.staleWriterPendingRows)
   const recovered=await openRecoveryArtifactV6(context.recoveryArtifact,context.urs),artifact=recovered.payload
   if(artifact.diary_id!==context.diaryId||artifact.epoch_id!==context.epochId||artifact.key_id!==context.keyId||artifact.manifest_fingerprint!==fingerprint)throw new Error('BackupV6 recovery artifact binding mismatch.')
   const recovery=context.canonical.current_recovery
@@ -249,6 +290,7 @@ export async function testRestoreBackupV6(
   const union=unionStats([backup.record_rows,backup.pending_outbox_rows,backup.stale_writer_pending_rows])
   if(manifest.unique_union_count!==union.count||manifest.unique_union_canonical_bytes!==union.bytes)throw new Error('BackupV6 unique union mismatch.')
   const trustRoot=await manifestTrustRootV6(manifestCells,manifestPayload),canonical=await verifier.verifyCanonicalFull(trustRoot,context.rootKey,backup.record_rows)
+  await verifyBackupLocalRows(context.rootKey,trustRoot,backup.record_rows,backup.pending_outbox_rows,backup.stale_writer_pending_rows)
   if(JSON.stringify(canonical.remote_anchor)!==JSON.stringify(manifest.remote_anchor_at_export)||canonical.remote_anchor.prefix_hash!==manifest.record_prefix_hash)throw new Error('BackupV6 RemoteAnchorV2 mismatch.')
   if(!sameWriter(canonical,manifest.writer_authority_at_export))throw new Error('BackupV6 Writer authority mismatch.')
   const recovery=canonical.current_recovery
