@@ -9,7 +9,8 @@ import { V2_SCHEMA_REGISTRY } from './schemaRegistry'
 import { V2_RECORD_SCHEMA_BY_TYPE, type RevisionV2 } from './types'
 import { validateRevisionV2 } from './validators'
 import { withDiaryLock } from '../localState'
-import type { BoundCanonicalFullV2 } from './writeAuthority'
+import type { CanonicalFullResultV2 } from './verifier'
+import { stateAfterCanonicalVerifyV6 } from './stateReconciliation'
 
 export type DomainRecordTypeV2='pain_entry'|'activity_entry'|'medication_entry'|'medication_prescription'|'pain_type_settings'|'activity_type_settings'
 export interface PrepareDomainRevisionV2Input<T=unknown>{
@@ -20,36 +21,50 @@ export interface PrepareDomainRevisionV2Input<T=unknown>{
   data:T|null
   protocolCreatedAt?:string
 }
-
 export interface PreparedDomainWriteV2<T=unknown>{
   revision:RevisionV2<T>
   envelope:{envelopeId:string;iv:string;ciphertext:string;bytesHash:string}
+}
+export interface FreshCanonicalV2Source {
+  /** Must perform a new provider read plus canonical_full verification on every call. */
+  verifyNow():Promise<VerifiedRemoteState>
+}
+
+function canonicalResult(verified:VerifiedRemoteState):CanonicalFullResultV2{
+  if(verified.profileId!==SINGLE_WRITER_V2_PROFILE)throw new Error('Fresh canonical v2 verification is required before domain-write preparation.')
+  const result=verified.profileState as CanonicalFullResultV2
+  if(!result||result.kind!=='canonical_full'||result.profile_id!==SINGLE_WRITER_V2_PROFILE)throw new Error('Fresh source returned a non-canonical v2 state.')
+  return result
 }
 
 export class V2DomainWritePreparer {
   constructor(
     private readonly store:IndexedDbV2LocalSecurityStore,
     private readonly authority:WriteAuthority,
+    private readonly freshSource:FreshCanonicalV2Source,
   ){
     if(authority.profileId!==SINGLE_WRITER_V2_PROFILE)throw new Error('V2DomainWritePreparer requires v2 WriteAuthority.')
   }
 
   async prepareAndPersist<T>(
-    verified:VerifiedRemoteState,
     rootKey:Uint8Array,
     epochSalt:Uint8Array,
     input:PrepareDomainRevisionV2Input<T>,
   ):Promise<PreparedDomainWriteV2<T>>{
-    if(verified.profileId!==SINGLE_WRITER_V2_PROFILE)throw new Error('Fresh canonical v2 verification is required before domain-write preparation.')
-    const bound=verified.profileState as BoundCanonicalFullV2
-    if(!bound?.canonical?.epoch_id)throw new Error('Fresh locally bound canonical v2 verification is required before domain-write preparation.')
-    return withDiaryLock(bound.canonical.diary_id,async()=>{
-      if(await this.authority.canPrepareDomainWrite(verified)!=='writer')throw new Error('Fresh canonical v2 authority does not permit domain-write preparation.')
+    // Freshness is an invocation property, not a time lease: every normal
+    // domain-write attempt performs a new full remote read/verify here.
+    const verified=await this.freshSource.verifyNow()
+    const remote=canonicalResult(verified)
+    return withDiaryLock(remote.diary_id,async()=>{
+      const before=await this.store.loadState(rootKey,epochSalt,remote.epoch_id)
+      const key=await this.store.loadWriterKey(before.writer_signing_key_id,before.diary_id,before.epoch_id)
+      const keyUsable=key!==null
+      const reconciled=await stateAfterCanonicalVerifyV6(before,remote,verified.snapshot.rows,keyUsable)
+      await this.store.replaceState(rootKey,epochSalt,before.operation_generation,reconciled)
 
-      const local=await this.store.loadState(rootKey,epochSalt,bound.canonical.epoch_id)
-      if(local.operation_generation!==bound.local_operation_generation)throw new Error('Fresh canonical v2 verification has already been consumed.')
+      if(await this.authority.canPrepareDomainWrite(verified)!=='writer')throw new Error('Fresh canonical v2 authority does not permit domain-write preparation.')
+      const local=await this.store.loadState(rootKey,epochSalt,remote.epoch_id)
       if(local.writer_status!=='writer_active'||local.writer_generation===null||local.writer_grant_id===null)throw new Error('Local StateV6 is not writer_active.')
-      const key=await this.store.loadWriterKey(local.writer_signing_key_id,local.diary_id,local.epoch_id)
       if(!key)throw new Error('Local WriterDeviceKeyV2 is missing; writer operation is read-only.')
 
       const recordSchema=V2_RECORD_SCHEMA_BY_TYPE[input.recordType]
