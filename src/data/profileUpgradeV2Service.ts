@@ -505,7 +505,7 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
     if(creation.status!=='bound'||!creation.remoteId)throw new Error('Profile-upgrade Successor creation did not reach a unique bound resource.')
     await this.putArtifact('successor-remote',{remote_id:creation.remoteId} satisfies SuccessorRemoteArtifactV2)
     const salt=await deriveEpochSaltV2(fixedBase64Url(plan.diary_id,16),fixedBase64Url(plan.successor_epoch_id,16))
-    let state=await this.v2Store.loadState(rootKey,salt,plan.successor_epoch_id)
+    const state=await this.v2Store.loadState(rootKey,salt,plan.successor_epoch_id)
     const binding={storage_provider_id:GOOGLE_DRIVE_SHEETS_PROVIDER,sync_profile:SINGLE_WRITER_V2_PROFILE,remote_resource_id:creation.remoteId,remote_identity_binding:plan.google_account_binding} as const
     if(state.remote_binding===null){
       await this.v2Store.replaceState(rootKey,salt,state.operation_generation,{...state,operation_generation:state.operation_generation+1,remote_binding:binding,epoch_status:'remote_bound'})
@@ -555,7 +555,8 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
 
     let retryBudget=1
     for(;;){
-      let snapshot=await ctx.transport.read(ctx.remoteId),present=requirePrefix(snapshot.rows,planned)
+      let snapshot=await ctx.transport.read(ctx.remoteId)
+      const present=requirePrefix(snapshot.rows,planned)
       if(present===planned.length){
         const verified=await ctx.codec.verifyRemote(snapshot),result=canonical(verified)
         await verifyProfileUpgradeMigrationIntegrityV2({
@@ -901,7 +902,7 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
         rootKey:ctx.rootKey,epochSalt:ctx.epochSalt,diaryId:ctx.plan.diary_id,epochId:ctx.plan.successor_epoch_id,
         manifestFingerprint:ctx.plan.manifest_fingerprint,activationLineage:activation.lineage,
       })
-      state=await this.v2Store.persistActivationLineageCache(ctx.rootKey,ctx.epochSalt,cache,state.operation_generation)
+      await this.v2Store.persistActivationLineageCache(ctx.rootKey,ctx.epochSalt,cache,state.operation_generation)
     }else await this.v2Store.loadActivationLineageCache(ctx.rootKey,ctx.epochSalt,ctx.plan.successor_epoch_id)
 
     const verified=await ctx.codec.verifyRemote(await ctx.transport.read(ctx.remoteId)),result=canonical(verified)
@@ -921,7 +922,7 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
       await this.fault?.('after-local-selection')
     }else if(selected.operation_id!==state.operation_id||selected.epoch_id!==ctx.plan.successor_epoch_id)throw new Error('A different v2 profile selection already won locally.')
 
-    let local=await this.v2Store.loadState(ctx.rootKey,ctx.epochSalt,ctx.plan.successor_epoch_id)
+    const local=await this.v2Store.loadState(ctx.rootKey,ctx.epochSalt,ctx.plan.successor_epoch_id)
     if(local.epoch_status!=='active'){
       if(local.epoch_status!=='remote_bound'||local.remote_anchor===null||local.verified_writer_generation===null||local.verified_writer_grant_id===null)throw new Error('Profile-upgrade Successor is not safely promotable to active.')
       const localWriter=local.verified_writer_device_id===ctx.plan.writer_device_id&&local.verified_writer_key_id===ctx.plan.writer_key_id
@@ -929,7 +930,7 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
         writer_status:localWriter?'writer_active':'read_only',
         writer_generation:localWriter?local.verified_writer_generation:null,writer_grant_id:localWriter?local.verified_writer_grant_id:null}
       await this.v2Store.replaceState(ctx.rootKey,ctx.epochSalt,local.operation_generation,next)
-      local=next
+      void next
     }
   }
 
