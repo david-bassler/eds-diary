@@ -1,6 +1,8 @@
-import { base64Url, concatBytes, fixedBase64Url, utf8 } from '../../security/crypto/bytes'
+import { base64Url, concatBytes, fixedBase64Url, fromBase64Url, utf8 } from '../../security/crypto/bytes'
 import { sha256 } from '../../security/crypto/core'
 import { canonicalBytes } from '../../security/crypto/canonical'
+import { parseManifestCellsV6 } from '../../security/v2/manifest'
+import { V2_PADDING_BUCKETS } from '../../security/v2/envelopes'
 import { GOOGLE_DRIVE_SHEETS_PROVIDER, SINGLE_WRITER_V2_PROFILE, TransportError, type RemoteCandidate, type RemoteSnapshot, type RemoteTransport } from '../core/contracts'
 import { isAuthenticatedGoogleApiClient } from './GoogleAuthProvider'
 
@@ -121,7 +123,7 @@ export class GoogleSheetsTransferableSingleWriterV2Transport implements RemoteTr
   }
 
   async writeManifest(remoteId:string,manifest:readonly string[]):Promise<void>{
-    if(manifest.length!==4)throw new TransportError('integrity_failure','Manifest must contain four exact cells.')
+    try{parseManifestCellsV6(manifest)}catch(error){throw new TransportError('integrity_failure',error instanceof Error?error.message:'ManifestV6 cells are invalid.')}
     try{const data=await this.api.request<Spreadsheet>(`https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(remoteId)}?fields=${encodeURIComponent('sheets(properties(sheetId,title))')}`),sheetId=data.sheets?.find(sheet=>sheet.properties?.title==='_m')?.properties?.sheetId;if(sheetId===undefined)throw new TransportError('integrity_failure','Manifest sheet missing.');await this.api.request(`https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(remoteId)}:batchUpdate`,{method:'POST',body:JSON.stringify({requests:[{updateCells:{range:{sheetId,startRowIndex:0,endRowIndex:1,startColumnIndex:0,endColumnIndex:4},rows:[{values:manifest.map(value=>({userEnteredValue:{stringValue:value}}))}],fields:'userEnteredValue'}}]})})}catch(error){throw normalize(error,true)}
   }
 
@@ -215,6 +217,9 @@ export class GoogleSheetsTransferableSingleWriterV2Transport implements RemoteTr
 
   async append(remoteId: string, row: readonly [string, string, string]): Promise<void> {
     try {
+      fixedBase64Url(row[0],32,'envelope_id');fixedBase64Url(row[1],12,'iv')
+      const bucket=fromBase64Url(row[2]).byteLength-16
+      if(!V2_PADDING_BUCKETS.includes(bucket as (typeof V2_PADDING_BUCKETS)[number])||canonicalBytes([...row]).byteLength>MAX_CANONICAL_ROW_BYTES)throw new TransportError('integrity_failure','EnvelopeV6 row is invalid.')
       const sheetId = this.sheetIds.get(remoteId)
       if (sheetId === undefined) throw new TransportError('conflict_or_unexpected_remote_change', 'A strict read is required before append.')
       const body = JSON.stringify({requests: [{appendCells: {sheetId, fields: 'userEnteredValue', rows: [{values: row.map((value) => ({userEnteredValue: {stringValue: value}}))}]}}]})
