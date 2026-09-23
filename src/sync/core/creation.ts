@@ -16,7 +16,20 @@ export type CandidateClass='empty'|'expected-manifest'|'partial'|'conflicting'
 
 function isEmpty(snapshot:RemoteSnapshot):boolean{return snapshot.manifest.length===0&&snapshot.rows.length===0}
 async function classify(remoteId:string,state:CreationState,transport:RemoteTransport,codec:TransportProfileCodec):Promise<{remoteId:string;kind:CandidateClass;snapshot:RemoteSnapshot;verified?:VerifiedRemoteState}>{
-  try{const snapshot=await (transport.inspectCandidate?.(remoteId)??transport.read(remoteId));if(isEmpty(snapshot))return{remoteId,kind:'empty',snapshot};if(snapshot.rows.length)return{remoteId,kind:'conflicting',snapshot};codec.validate(snapshot);const verified=await codec.verifyRemote(snapshot);if(verified.manifestFingerprint!==state.manifestFingerprint)return{remoteId,kind:'conflicting',snapshot};if(!transport.readProperties||state.expectedProperties===undefined)return{remoteId,kind:'expected-manifest',snapshot,verified};const properties=await transport.readProperties(remoteId);return{remoteId,kind:Object.keys(properties).length?propertiesEqual(properties,state.expectedProperties)?'expected-manifest':'conflicting':'partial',snapshot,verified}}catch{return{remoteId,kind:'conflicting',snapshot:{manifest:[],rows:[]}}}
+  try{
+    const snapshot=await (transport.inspectCandidate?.(remoteId)??transport.read(remoteId))
+    if(isEmpty(snapshot))return{remoteId,kind:'empty',snapshot}
+    if(snapshot.rows.length)return{remoteId,kind:'conflicting',snapshot}
+    codec.validate(snapshot)
+    let verified:VerifiedRemoteState|undefined
+    let fingerprint:string
+    if(codec.verifyCreationCandidate)fingerprint=(await codec.verifyCreationCandidate(snapshot)).manifestFingerprint
+    else{verified=await codec.verifyRemote(snapshot);fingerprint=verified.manifestFingerprint}
+    if(fingerprint!==state.manifestFingerprint)return{remoteId,kind:'conflicting',snapshot}
+    if(!transport.readProperties||state.expectedProperties===undefined)return{remoteId,kind:'expected-manifest',snapshot,verified}
+    const properties=await transport.readProperties(remoteId)
+    return{remoteId,kind:Object.keys(properties).length?propertiesEqual(properties,state.expectedProperties)?'expected-manifest':'conflicting':'partial',snapshot,verified}
+  }catch{return{remoteId,kind:'conflicting',snapshot:{manifest:[],rows:[]}}}
 }
 function propertiesEqual(actual:Readonly<Record<string,string>>,expected:Readonly<Record<string,string>>):boolean{const a=Object.entries(actual).sort(),b=Object.entries(expected).sort();return JSON.stringify(a)===JSON.stringify(b)}
 async function persist(store:CreationPersistence,state:CreationState):Promise<CreationState>{await store.write(state);const read=await store.read(state.locator);if(!read)throw new Error('Creation state readback failed.');const generation=read.operationGeneration;if(generation!==undefined&&(!Number.isSafeInteger(generation)||generation<(state.operationGeneration??0)))throw new Error('Creation state readback failed.');const expected=generation===undefined?state:{...state,operationGeneration:generation};if(decodeURIComponent(JSON.stringify(read))!==decodeURIComponent(JSON.stringify(expected)))throw new Error('Creation state readback failed.');return read}
