@@ -43,6 +43,10 @@ this pass are IA-017 and IA-018. Both are implementation mismatches; neither
 changes the threat model or any D-001…D-010 decision. Earlier IA-001…IA-016
 were rechecked against the current branch before adding these entries.
 
+### 2026-09-23 V2-03 local security pass
+
+Reviewed StateV6, RootWrapV6, WriterDeviceKeyV2 persistence, RevisionV2 domain preparation and the shared WriteAuthority boundary against Exact Protocol §§13–14 and §18–18.2 plus D-003…D-005/D-009. New findings from this implementation pass are IA-019 and IA-020; both are implementation mismatches and do not change D-001…D-010.
+
 ## Findings and disposition
 
 | ID | Area | Finding | Disposition |
@@ -65,6 +69,8 @@ were rechecked against the current branch before adding these entries.
 | IA-016 | V2-02 / snapshot complexity | Migration semantic-snapshot sorting recomputed JCS bytes inside every sort comparison, multiplying serialization work under large valid head sets. | **Fixed.** Sort bytes are precomputed once per semantic head entry, then compared lexicographically; normative ordering and final hash bytes are unchanged. |
 | IA-017 | V2-01 / migration_origin | `validateMigrationOrigin` did not implement the inherited v1 canonical wrapper rules: it allowed up to 4096 Sources and 4096 source revision IDs, did not require Sources to be unique/byte-sorted, and did not require each `source_revision_ids` list to be byte-sorted. v2 §5 explicitly inherits the v1 migration-origin semantics (1..8 Sources; 1..8 unique revision IDs per Source; canonical decoded-byte ordering). | **Fixed in PR #49 and propagated to PR #50.** Runtime validation now enforces the 8/8 bounds, Source uniqueness, Source ordering by decoded `(source_epoch_id, source_record_id)` bytes, and decoded-byte ordering of `source_revision_ids`. Negative vectors cover oversize, duplicate and unsorted forms. |
 | IA-018 | V2-02 / per-record bounds | The replay verifier enforced the inherited 4096-revisions-per-`record_id` limit only inside the accepted domain graph. Unique stale-writer/stale-grant/control revisions could therefore bypass the per-record bound even though v2 §5 inherits the v1 common-wrapper/graph limit and byte-identical retry rows are the only repetition that should be a semantic no-op. | **Fixed.** Replay now counts every unique validated RevisionV2 by `record_id` before authority/control disposition, so stale/control rows cannot evade the 4096 bound; physical byte-identical retries still bypass semantic counting as intended. |
+| IA-019 | V2-03 / ActivationLineage cache ref | The first StateV6 implementation validated `activation_lineage_cache_ref.cache_id` as 32 bytes. Exact Protocol §2 defines `cache_id` as a 16-byte CSPRNG identifier; only operation/control IDs are 32 bytes. | **Fixed.** StateV6 now enforces a 16-byte `cache_id`; the remaining StateV6 identifiers were rechecked against §2. |
+| IA-020 | V2-03 / activation authority boundary | The first local-authority adapter could reconcile a locally `active` StateV6 to a `canonical_full` result whose activation state was only `staged_confirmation_missing`. That would violate IA-010/D-009 by allowing successor-local replay state to become a normal writer gate without completed cross-epoch activation. | **Fixed.** Reconciliation and WriteAuthority now fail closed if an active local epoch sees `staged_confirmation_missing`; active non-native states additionally require an authenticated ActivationLineage cache reference. The adapter also recomputes/extends RemoteAnchorV2 from the supplied physical snapshot before caching authority. |
 
 ## Reviewed points that are not findings
 
