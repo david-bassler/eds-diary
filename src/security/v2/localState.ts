@@ -226,10 +226,14 @@ export async function validateStoredWriterDeviceKeyV2(entry:StoredWriterDeviceKe
 export async function withDiaryLockV2<T>(diaryId:string,operation:()=>Promise<T>):Promise<T>{
   const manager=globalThis.navigator?.locks
   if(!manager){
-    // Browser main-thread and Worker contexts both expose navigator. A missing
-    // LockManager in either context must fail closed; the fallback exists only
-    // for non-browser test/server runtimes where navigator is absent.
-    if(typeof navigator!=='undefined')throw new Error('Web Locks are required for secure v2 mutations.')
+    // Browser main-thread and Worker contexts must fail closed. Modern Node
+    // runtimes can expose navigator too, so navigator presence alone is not a
+    // reliable browser test.
+    const browserWindow=typeof window!=='undefined'
+    const browserWorker=typeof WorkerGlobalScope!=='undefined'
+      &&typeof self!=='undefined'
+      &&self instanceof WorkerGlobalScope
+    if(browserWindow||browserWorker)throw new Error('Web Locks are required for secure v2 mutations.')
     return operation()
   }
   return manager.request(`eds-diary/security/${diaryId}`,{mode:'exclusive'},operation)
