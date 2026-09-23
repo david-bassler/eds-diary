@@ -1,8 +1,8 @@
 import { GOOGLE_DRIVE_SHEETS_PROVIDER, SINGLE_WRITER_V2_PROFILE } from '../../sync/core/contracts'
 import type { RemoteAnchorV2 } from './types'
-import { base64Url, concatBytes, fixedBase64Url, uint64be, utf8 } from '../crypto/bytes'
+import { arrayBuffer, base64Url, concatBytes, fixedBase64Url, fromBase64Url, randomBytes, uint64be, utf8 } from '../crypto/bytes'
 import { canonicalBytes } from '../crypto/canonical'
-import { hmacSha256, sha256 } from '../crypto/core'
+import { aesGcmDecrypt, aesGcmEncrypt, derivePassphraseMaterial, hkdfSha256, hmacSha256, sha256, validatePassphrase } from '../crypto/core'
 import { deriveLocalStateMacKeyV2 } from './crypto'
 import type { RecoveryCredentialHistoryEntryV2 } from './verifier'
 
@@ -26,6 +26,32 @@ export interface RemoteBindingV2 {
   remote_resource_id:string
   remote_identity_binding:string
 }
+
+export interface RootWrapIdentityV6 {
+  diary_id:string
+  epoch_id:string
+  key_id:string
+  manifest_fingerprint:string
+}
+interface RootWrapBaseV6 extends RootWrapIdentityV6 {
+  local_wrap_version:6
+  wrap_id:string
+  wrap_iv:string
+  wrapped_root_key:string
+}
+export interface BestEffortRootWrapV6 extends RootWrapBaseV6 {
+  mode:'best-effort'
+  mode_metadata:Record<string,never>
+}
+export interface PassphraseRootWrapV6 extends RootWrapBaseV6 {
+  mode:'passphrase'
+  mode_metadata:{passphrase_profile:'argon2id-v6-1';passphrase_salt:string}
+}
+export interface PrfRootWrapV6 extends RootWrapBaseV6 {
+  mode:'prf'
+  mode_metadata:{prf_profile:'webauthn-prf-v6-1';credential_id:string;prf_eval_input:string;prf_wrap_salt:string;rp_id:string}
+}
+export type RootWrapV6=BestEffortRootWrapV6|PassphraseRootWrapV6|PrfRootWrapV6
 
 export interface EpochLocalSecurityStateV6 {
   local_state_version:6
@@ -223,4 +249,119 @@ export async function verifyLocalStateTagV6(rootKey:Uint8Array,epochSalt:Uint8Ar
   const expected=await localStateTagV6(rootKey,epochSalt,state)
   fixedBase64Url(tag,32,'local_state_tag')
   if(expected!==tag)throw new Error('EpochLocalSecurityStateV6 MAC verification failed.')
+}
+
+
+function assertRootWrapIdentityV6(identity:RootWrapIdentityV6):void{
+  fixedBase64Url(identity.diary_id,16,'diary_id')
+  fixedBase64Url(identity.epoch_id,16,'epoch_id')
+  fixedBase64Url(identity.key_id,16,'key_id')
+  fixedBase64Url(identity.manifest_fingerprint,32,'manifest_fingerprint')
+}
+function assertRootKeyV6(rootKey:Uint8Array):void{if(rootKey.byteLength!==32)throw new Error('RootWrapV6 root key must contain exactly 32 bytes.')}
+function assertBestEffortWrapKeyV6(key:CryptoKey):void{
+  const usages=[...key.usages].sort().join(',')
+  if(key.type!=='secret'||key.algorithm.name!=='AES-GCM'||key.extractable||usages!=='decrypt,encrypt')throw new Error('Invalid RootWrapV6 best-effort wrapping key.')
+}
+function rootWrapHeaderV6(wrap:RootWrapV6):Record<string,unknown>{
+  return{
+    local_wrap_version:wrap.local_wrap_version,
+    mode:wrap.mode,
+    diary_id:wrap.diary_id,
+    epoch_id:wrap.epoch_id,
+    key_id:wrap.key_id,
+    manifest_fingerprint:wrap.manifest_fingerprint,
+    wrap_id:wrap.wrap_id,
+    mode_metadata:wrap.mode_metadata,
+  }
+}
+function rootWrapAadV6(wrap:RootWrapV6):Uint8Array{return canonicalBytes(rootWrapHeaderV6(wrap) as never)}
+async function passphraseKekV6(passphrase:string,salt:Uint8Array,identity:RootWrapIdentityV6):Promise<Uint8Array>{
+  validatePassphrase(passphrase)
+  if(salt.byteLength!==16)throw new Error('RootWrapV6 passphrase salt must contain 16 bytes.')
+  assertRootWrapIdentityV6(identity)
+  const zero=new Uint8Array([0]),diary=fixedBase64Url(identity.diary_id,16),epoch=fixedBase64Url(identity.epoch_id,16),key=fixedBase64Url(identity.key_id,16)
+  const argonBase=await derivePassphraseMaterial(passphrase,salt)
+  const hkdfSalt=await sha256(concatBytes(utf8('eds-diary/local-passphrase-salt/v6'),zero,diary,epoch))
+  const context=concatBytes(utf8('eds-diary/local-passphrase-wrap/v6'),zero,diary,epoch,key)
+  return hkdfSha256(argonBase,hkdfSalt,context)
+}
+async function prfKekV6(prfOutput:Uint8Array,wrapSalt:Uint8Array,identity:RootWrapIdentityV6,credentialId:Uint8Array):Promise<Uint8Array>{
+  if(prfOutput.byteLength!==32||wrapSalt.byteLength!==32||!credentialId.byteLength)throw new Error('Invalid RootWrapV6 PRF material.')
+  assertRootWrapIdentityV6(identity)
+  const zero=new Uint8Array([0]),diary=fixedBase64Url(identity.diary_id,16),epoch=fixedBase64Url(identity.epoch_id,16),key=fixedBase64Url(identity.key_id,16),credentialHash=await sha256(credentialId)
+  const context=concatBytes(utf8('eds-diary/local-prf-wrap/v6'),zero,diary,epoch,key,credentialHash)
+  return hkdfSha256(prfOutput,wrapSalt,context)
+}
+
+export async function createBestEffortRootWrapV6(rootKey:Uint8Array,wrappingKey:CryptoKey,identity:RootWrapIdentityV6,wrapId=randomBytes(16),iv=randomBytes(12)):Promise<BestEffortRootWrapV6>{
+  assertRootKeyV6(rootKey);assertBestEffortWrapKeyV6(wrappingKey);assertRootWrapIdentityV6(identity)
+  if(wrapId.byteLength!==16||iv.byteLength!==12)throw new Error('Invalid RootWrapV6 randomness.')
+  const draft:BestEffortRootWrapV6={local_wrap_version:6,mode:'best-effort',...identity,wrap_id:base64Url(wrapId),wrap_iv:base64Url(iv),wrapped_root_key:'',mode_metadata:{}}
+  const encrypted=await aesGcmEncrypt(new Uint8Array(await crypto.subtle.exportKey('raw',await crypto.subtle.importKey('raw',arrayBuffer(new Uint8Array(32)),{name:'AES-GCM'},true,['encrypt']))).slice(0,0),rootKey,new Uint8Array())
+  void encrypted
+  const ciphertext=await crypto.subtle.encrypt({name:'AES-GCM',iv:arrayBuffer(iv),additionalData:arrayBuffer(rootWrapAadV6(draft)),tagLength:128},wrappingKey,arrayBuffer(rootKey))
+  return{...draft,wrapped_root_key:base64Url(new Uint8Array(ciphertext))}
+}
+
+export async function openBestEffortRootWrapV6(wrap:RootWrapV6,wrappingKey:CryptoKey):Promise<Uint8Array>{
+  if(wrap.mode!=='best-effort'||Object.keys(wrap.mode_metadata).length!==0)throw new Error('RootWrapV6 is not best-effort mode.')
+  assertBestEffortWrapKeyV6(wrappingKey);validateRootWrapV6(wrap)
+  const plaintext=new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv:arrayBuffer(fixedBase64Url(wrap.wrap_iv,12,'wrap_iv')),additionalData:arrayBuffer(rootWrapAadV6(wrap)),tagLength:128},wrappingKey,arrayBuffer(fromBase64Url(wrap.wrapped_root_key))))
+  assertRootKeyV6(plaintext);return plaintext
+}
+
+export async function createPassphraseRootWrapV6(rootKey:Uint8Array,passphrase:string,identity:RootWrapIdentityV6,wrapId=randomBytes(16),passphraseSalt=randomBytes(16),iv=randomBytes(12)):Promise<PassphraseRootWrapV6>{
+  assertRootKeyV6(rootKey);assertRootWrapIdentityV6(identity)
+  if(wrapId.byteLength!==16||passphraseSalt.byteLength!==16||iv.byteLength!==12)throw new Error('Invalid RootWrapV6 passphrase randomness.')
+  const draft:PassphraseRootWrapV6={local_wrap_version:6,mode:'passphrase',...identity,wrap_id:base64Url(wrapId),wrap_iv:base64Url(iv),wrapped_root_key:'',mode_metadata:{passphrase_profile:'argon2id-v6-1',passphrase_salt:base64Url(passphraseSalt)}}
+  const encrypted=await aesGcmEncrypt(await passphraseKekV6(passphrase,passphraseSalt,identity),rootKey,rootWrapAadV6(draft),iv)
+  return{...draft,wrapped_root_key:base64Url(encrypted.ciphertext)}
+}
+
+export async function openPassphraseRootWrapV6(wrap:RootWrapV6,passphrase:string):Promise<Uint8Array>{
+  if(wrap.mode!=='passphrase'||wrap.mode_metadata.passphrase_profile!=='argon2id-v6-1')throw new Error('RootWrapV6 is not passphrase mode.')
+  validateRootWrapV6(wrap)
+  const plaintext=await aesGcmDecrypt(await passphraseKekV6(passphrase,fixedBase64Url(wrap.mode_metadata.passphrase_salt,16,'passphrase_salt'),wrap),fromBase64Url(wrap.wrapped_root_key),rootWrapAadV6(wrap),fixedBase64Url(wrap.wrap_iv,12,'wrap_iv'))
+  assertRootKeyV6(plaintext);return plaintext
+}
+
+export interface PrfWrapEnrollmentMaterialV6 {credentialId:Uint8Array;prfEvalInput:Uint8Array;prfOutput:Uint8Array;rpId:string}
+export async function createPrfRootWrapV6(rootKey:Uint8Array,material:PrfWrapEnrollmentMaterialV6,identity:RootWrapIdentityV6,wrapId=randomBytes(16),wrapSalt=randomBytes(32),iv=randomBytes(12)):Promise<PrfRootWrapV6>{
+  assertRootKeyV6(rootKey);assertRootWrapIdentityV6(identity)
+  if(wrapId.byteLength!==16||material.prfEvalInput.byteLength!==32||material.prfOutput.byteLength!==32||wrapSalt.byteLength!==32||iv.byteLength!==12||!material.credentialId.byteLength||!material.rpId)throw new Error('Invalid RootWrapV6 PRF enrollment material.')
+  const draft:PrfRootWrapV6={local_wrap_version:6,mode:'prf',...identity,wrap_id:base64Url(wrapId),wrap_iv:base64Url(iv),wrapped_root_key:'',mode_metadata:{prf_profile:'webauthn-prf-v6-1',credential_id:base64Url(material.credentialId),prf_eval_input:base64Url(material.prfEvalInput),prf_wrap_salt:base64Url(wrapSalt),rp_id:material.rpId}}
+  const encrypted=await aesGcmEncrypt(await prfKekV6(material.prfOutput,wrapSalt,identity,material.credentialId),rootKey,rootWrapAadV6(draft),iv)
+  return{...draft,wrapped_root_key:base64Url(encrypted.ciphertext)}
+}
+
+export async function openPrfRootWrapV6(wrap:RootWrapV6,assertedCredentialId:Uint8Array,prfOutput:Uint8Array):Promise<Uint8Array>{
+  if(wrap.mode!=='prf'||wrap.mode_metadata.prf_profile!=='webauthn-prf-v6-1')throw new Error('RootWrapV6 is not PRF mode.')
+  validateRootWrapV6(wrap)
+  const expected=fromBase64Url(wrap.mode_metadata.credential_id)
+  if(expected.byteLength!==assertedCredentialId.byteLength||expected.some((byte,index)=>byte!==assertedCredentialId[index]))throw new Error('RootWrapV6 WebAuthn credential mismatch.')
+  const plaintext=await aesGcmDecrypt(await prfKekV6(prfOutput,fixedBase64Url(wrap.mode_metadata.prf_wrap_salt,32,'prf_wrap_salt'),wrap,expected),fromBase64Url(wrap.wrapped_root_key),rootWrapAadV6(wrap),fixedBase64Url(wrap.wrap_iv,12,'wrap_iv'))
+  assertRootKeyV6(plaintext);return plaintext
+}
+
+export function validateRootWrapV6(value:unknown):RootWrapV6{
+  const wrap=object(value,'RootWrapV6')
+  exact(wrap,['local_wrap_version','mode','diary_id','epoch_id','key_id','manifest_fingerprint','wrap_id','wrap_iv','wrapped_root_key','mode_metadata'],'RootWrapV6')
+  if(wrap.local_wrap_version!==6)throw new Error('RootWrapV6 local_wrap_version mismatch.')
+  const identity:RootWrapIdentityV6={diary_id:id(wrap.diary_id,16,'diary_id'),epoch_id:id(wrap.epoch_id,16,'epoch_id'),key_id:id(wrap.key_id,16,'key_id'),manifest_fingerprint:id(wrap.manifest_fingerprint,32,'manifest_fingerprint')}
+  assertRootWrapIdentityV6(identity);id(wrap.wrap_id,16,'wrap_id');id(wrap.wrap_iv,12,'wrap_iv')
+  if(typeof wrap.wrapped_root_key!=='string'||base64Url(fromBase64Url(wrap.wrapped_root_key))!==wrap.wrapped_root_key)throw new Error('RootWrapV6 wrapped_root_key is not canonical Base64URL.')
+  const metadata=object(wrap.mode_metadata,'mode_metadata')
+  if(wrap.mode==='best-effort'){
+    exact(metadata,[],'mode_metadata')
+  }else if(wrap.mode==='passphrase'){
+    exact(metadata,['passphrase_profile','passphrase_salt'],'mode_metadata')
+    if(metadata.passphrase_profile!=='argon2id-v6-1')throw new Error('RootWrapV6 passphrase profile mismatch.')
+    id(metadata.passphrase_salt,16,'passphrase_salt')
+  }else if(wrap.mode==='prf'){
+    exact(metadata,['prf_profile','credential_id','prf_eval_input','prf_wrap_salt','rp_id'],'mode_metadata')
+    if(metadata.prf_profile!=='webauthn-prf-v6-1'||typeof metadata.credential_id!=='string'||!fromBase64Url(metadata.credential_id).byteLength||base64Url(fromBase64Url(metadata.credential_id))!==metadata.credential_id||typeof metadata.rp_id!=='string'||!metadata.rp_id)throw new Error('RootWrapV6 PRF metadata mismatch.')
+    id(metadata.prf_eval_input,32,'prf_eval_input');id(metadata.prf_wrap_salt,32,'prf_wrap_salt')
+  }else throw new Error('Invalid RootWrapV6 mode.')
+  return value as RootWrapV6
 }
