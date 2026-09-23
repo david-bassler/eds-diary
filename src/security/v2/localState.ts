@@ -141,7 +141,7 @@ function validateOperationRef(value:unknown,label:string):SecurityStateRefV2|nul
 function validateCacheRef(value:unknown):ActivationLineageCacheRefV2|null{
   if(value===null)return null
   const ref=object(value,'activation_lineage_cache_ref');exact(ref,['cache_id','cache_record_hash'],'activation_lineage_cache_ref')
-  id(ref.cache_id,32,'activation_lineage_cache_ref.cache_id')
+  id(ref.cache_id,16,'activation_lineage_cache_ref.cache_id')
   id(ref.cache_record_hash,32,'activation_lineage_cache_ref.cache_record_hash')
   return value as ActivationLineageCacheRefV2
 }
