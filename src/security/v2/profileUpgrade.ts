@@ -524,17 +524,13 @@ export async function runProfileUpgradeStateMachineV2(
     switch(state.stage){
       case 'source_frozen_verified':{
         const planned=await deps.planSuccessor(state)
-        return runProfileUpgradeStateMachineV2({
-          ...deps,
-          load:async()=>transitionProfileUpgrade(deps,state,withStage(state,'successor_planned',{successor_creation_locator:planned.creationLocator})),
-        })
+        await transitionProfileUpgrade(deps,state,withStage(state,'successor_planned',{successor_creation_locator:planned.creationLocator}))
+        continue
       }
       case 'successor_planned':{
         const bound=await deps.createOrReconcileSuccessor(state)
-        return runProfileUpgradeStateMachineV2({
-          ...deps,
-          load:async()=>transitionProfileUpgrade(deps,state,withStage(state,'successor_bound',{successor_manifest_fingerprint:bound.manifestFingerprint})),
-        })
+        await transitionProfileUpgrade(deps,state,withStage(state,'successor_bound',{successor_manifest_fingerprint:bound.manifestFingerprint}))
+        continue
       }
       case 'successor_bound':{
         const copying=await transitionProfileUpgrade(deps,state,withStage(state,'copying'))
@@ -584,7 +580,7 @@ export async function runProfileUpgradeStateMachineV2(
           return stale
         }
         if(outcome.kind==='source_race'){
-          const raced=await transitionProfileUpgrade(deps,state,withStage(state,'cutover_race'))
+          const raced=await transitionProfileUpgrade(deps,state,withStage(state,'stale'))
           await deps.markSourceRace(raced)
           return raced
         }
