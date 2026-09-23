@@ -172,6 +172,23 @@ export async function prepareSuccessorRootWrapV6ForActiveMode(rootKey:Uint8Array
   if(base64Url(await openBestEffortRootWrapV6(wrap,key))!==base64Url(rootKey))throw new Error('RootWrapV6 best-effort readback failed.')
   return{wrap,bestEffortWrappingKey:key}
 }
+export async function openSuccessorRootWrapV6WithActiveMode(prepared:PreparedSuccessorRootWrapV6):Promise<Uint8Array>{
+  const wrap=prepared.wrap
+  if(wrap.mode==='best-effort'){
+    if(!prepared.bestEffortWrappingKey)throw new Error('RootWrapV6 best-effort wrapping key is missing.')
+    return openBestEffortRootWrapV6(wrap,prepared.bestEffortWrappingKey)
+  }
+  const factor=unlockFactors.get(wrap.diary_id)
+  if(wrap.mode==='passphrase'){
+    if(!factor||factor.mode!=='passphrase')throw new LocalUnlockRequiredError('passphrase')
+    return openPassphraseRootWrapV6(wrap,factor.passphrase)
+  }
+  if(!factor||factor.mode!=='prf')throw new LocalUnlockRequiredError('prf')
+  const expectedInput=fromBase64Url(wrap.mode_metadata.prf_eval_input)
+  if(!sameBytes(expectedInput,factor.prfEvalInput)||wrap.mode_metadata.rp_id!==factor.rpId)throw new LocalUnlockRequiredError('prf')
+  return openPrfRootWrapV6(wrap,factor.credentialId,factor.prfOutput)
+}
+
 export interface LocalRootWrapStatus{initialized:boolean;mode:'best-effort'|'passphrase'|'prf';locked:boolean;credentialId?:string;prfEvalInput?:string;rpId?:string}
 export async function localRootWrapStatus():Promise<LocalRootWrapStatus>{const db=await openDatabase(),tx=db.transaction(STORES.context,'readonly'),done=complete(tx),context=await result<EpochContext|undefined>(tx.objectStore(STORES.context).get(ACTIVE_CONTEXT));await done;if(!context)return{initialized:false,mode:'best-effort',locked:false};const {wrap}=await readEpochRecords(db,context);if(wrap.mode==='prf')return{initialized:true,mode:'prf',locked:!unlockedRoots.has(context.epochId),credentialId:wrap.mode_metadata.credential_id,prfEvalInput:wrap.mode_metadata.prf_eval_input,rpId:wrap.mode_metadata.rp_id};return{initialized:true,mode:wrap.mode,locked:wrap.mode!=='best-effort'&&!unlockedRoots.has(context.epochId)}}
 export async function unlockActiveRootWithPassphrase(passphrase:string):Promise<void>{const db=await openDatabase(),tx=db.transaction(STORES.context,'readonly'),context=await result<EpochContext|undefined>(tx.objectStore(STORES.context).get(ACTIVE_CONTEXT));await complete(tx);if(!context)throw new Error('No active epoch exists.');const{wrap,stored}=await readEpochRecords(db,context);if(wrap.mode!=='passphrase')throw new Error('Active root wrap is not passphrase mode.');const rootKey=await openPassphraseRootWrap(wrap,passphrase),salt=await deriveEpochSalt(fromBase64Url(context.diaryId),fromBase64Url(context.epochId));await verifyStateTag(rootKey,salt,stored.state,stored.tag);unlockFactors.set(context.diaryId,{mode:'passphrase',passphrase});unlockedRoots.set(context.epochId,new Uint8Array(rootKey));readyPromise=null}
