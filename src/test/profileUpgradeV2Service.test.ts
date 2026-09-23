@@ -97,12 +97,12 @@ class V2Session implements TransferableSingleWriterV2ProviderSession {
   readonly profileId=SINGLE_WRITER_V2_PROFILE
   readonly account=base64Url(new Uint8Array(32).fill(91))
   remote:MemoryTransport|null=null
+  private readonly preCreationTransport=new MemoryTransport(SINGLE_WRITER_V2_PROFILE,'successor-v2',{manifest:[],rows:[]})
   recovery:RecoveryArtifactV6|null=null
   creates=0
   private readonly creation=new Map<string,CreationState>()
   async transportForEpoch(_diaryId:string,_epochId:string):Promise<GoogleSheetsTransferableSingleWriterV2Transport>{
-    if(!this.remote)throw new Error('Successor remote is not created yet.')
-    return this.remote as unknown as GoogleSheetsTransferableSingleWriterV2Transport
+    return (this.remote??this.preCreationTransport) as unknown as GoogleSheetsTransferableSingleWriterV2Transport
   }
   async remoteIdentityBinding():Promise<string>{return this.account}
   async codecForEpoch(diaryId:string,epochId:string,rootKey:Uint8Array,_transport:RemoteTransport):Promise<GoogleSheetsTransferableSingleWriterV2ProfileCodec>{
