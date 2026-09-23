@@ -7,6 +7,11 @@ import { V2_SCHEMA_REGISTRY_HASH, schemaRegistryHashV2 } from './schemaRegistry'
 import { SINGLE_WRITER_V2_SCHEMA_ALLOWLIST } from './types'
 import type { VerifiedManifestTrustRootV2 } from './verifier'
 
+const VERIFIED_MANIFEST_TRUST_ROOTS_V6=new WeakSet<object>()
+export function isVerifiedManifestTrustRootV6(value:unknown):value is VerifiedManifestTrustRootV2{
+  return typeof value==='object'&&value!==null&&VERIFIED_MANIFEST_TRUST_ROOTS_V6.has(value)
+}
+
 export interface ManifestContextV6 {diaryId:string;epochId:string}
 export interface ManifestCellsV6 {
   format:'sync-v6'
@@ -207,9 +212,9 @@ export async function manifestFingerprintV6(cells:ManifestCellsV6):Promise<strin
     manifest_ciphertext:cells.manifestCiphertext,
   })))
 }
-export async function manifestTrustRootV6(cells:ManifestCellsV6,payload:ProtectedManifestV6):Promise<VerifiedManifestTrustRootV2>{
+async function trustRootFromOpenedManifestV6(cells:ManifestCellsV6,payload:ProtectedManifestV6):Promise<VerifiedManifestTrustRootV2>{
   await validateProtectedManifestV6(payload,{diaryId:payload.diary_id,epochId:payload.epoch_id})
-  return{
+  const trustRoot:VerifiedManifestTrustRootV2={
     diary_id:payload.diary_id,
     epoch_id:payload.epoch_id,
     manifest_fingerprint:await manifestFingerprintV6(cells),
@@ -227,4 +232,22 @@ export async function manifestTrustRootV6(cells:ManifestCellsV6,payload:Protecte
     recovery_takeover_key_id:payload.recovery_takeover_key_id,
     recovery_takeover_public_key:payload.recovery_takeover_public_key,
   }
+  VERIFIED_MANIFEST_TRUST_ROOTS_V6.add(trustRoot)
+  return trustRoot
+}
+export async function openManifestTrustRootV6(
+  rootKey:Uint8Array,
+  epochSalt:Uint8Array,
+  context:ManifestContextV6,
+  cells:ManifestCellsV6,
+):Promise<{payload:ProtectedManifestV6;trustRoot:VerifiedManifestTrustRootV2}>{
+  const payload=await openManifestV6(rootKey,epochSalt,context,cells)
+  return{payload,trustRoot:await trustRootFromOpenedManifestV6(cells,payload)}
+}
+export function __brandManifestTrustRootV2ForTests(value:VerifiedManifestTrustRootV2):VerifiedManifestTrustRootV2{
+  const mode=(globalThis as {process?:{env?:{NODE_ENV?:string}}}).process?.env?.NODE_ENV
+  if(mode!=='test')throw new Error('Test-only ManifestV6 trust-root branding is unavailable outside tests.')
+  const branded=structuredClone(value)
+  VERIFIED_MANIFEST_TRUST_ROOTS_V6.add(branded)
+  return branded
 }
