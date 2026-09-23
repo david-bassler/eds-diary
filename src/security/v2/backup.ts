@@ -192,7 +192,7 @@ async function buildManifest(context:BackupContextV6,backupId:string):Promise<Ba
   if(manifestPayload.key_id!==context.keyId)throw new Error('BackupV6 key binding mismatch.')
   const trustRoot=await manifestTrustRootV6(manifestCells,manifestPayload)
   await verifyBackupLocalRows(context.rootKey,trustRoot,context.recordRows,context.pendingOutboxRows,context.staleWriterPendingRows)
-  const recovered=await openRecoveryArtifactV6(context.recoveryArtifact,context.urs),artifact=recovered.payload
+  const artifact=(await openRecoveryArtifactV6(context.recoveryArtifact,context.urs)).payload
   if(artifact.diary_id!==context.diaryId||artifact.epoch_id!==context.epochId||artifact.key_id!==context.keyId||artifact.manifest_fingerprint!==fingerprint)throw new Error('BackupV6 recovery artifact binding mismatch.')
   const artifactAdvancedRecovery=artifact.recovery_generation>manifestPayload.recovery_generation
   if(artifact.recovery_generation<manifestPayload.recovery_generation
