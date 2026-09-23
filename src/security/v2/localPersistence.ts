@@ -5,10 +5,11 @@ import { deriveLocalStateMacKeyV2 } from './crypto'
 import { openRevisionEnvelopeV2 } from './envelopes'
 import type { PreparedEnvelope } from '../envelopes'
 import { localJournalInitialV2, localJournalNextV2, localStateTagV6, validateEpochLocalSecurityStateV6, validateStoredWriterDeviceKeyV2, verifyLocalStateTagV6, withDiaryLockV2, type EpochLocalSecurityStateV6, type StoredWriterDeviceKeyV2 } from './localState'
+import { isVerifiedRecoveryTakeoverStagingV2, verifyRecoveryTakeoverStagingV2, type RecoveryTakeoverStagingV2, type VerifiedRecoveryTakeoverStagingV2 } from './recoveryStaging'
 
 const DATABASE_NAME='eds-diary-v2-security'
-const DATABASE_VERSION=3
-const STORES={states:'epochSecurityStateV6',writerKeys:'writerDeviceKeysV2',reservations:'envelopeReservationsV6',envelopes:'envelopesV6',outbox:'outboxV6'} as const
+const DATABASE_VERSION=4
+const STORES={states:'epochSecurityStateV6',writerKeys:'writerDeviceKeysV2',reservations:'envelopeReservationsV6',envelopes:'envelopesV6',outbox:'outboxV6',recoveryStaging:'recoveryTakeoverStagingV2'} as const
 
 export interface EnvelopeReservationV6 {
   id:string
@@ -113,6 +114,7 @@ async function openDatabase():Promise<IDBDatabase>{
       }
       if(!db.objectStoreNames.contains(STORES.envelopes)){const store=db.createObjectStore(STORES.envelopes,{keyPath:'id'});store.createIndex('byEpoch','epoch_id');store.createIndex('bySequence',['epoch_id','local_sequence'],{unique:true})}
       if(!db.objectStoreNames.contains(STORES.outbox)){const store=db.createObjectStore(STORES.outbox,{keyPath:'id'});store.createIndex('byEpoch','epoch_id')}
+      if(!db.objectStoreNames.contains(STORES.recoveryStaging))db.createObjectStore(STORES.recoveryStaging,{keyPath:'id'})
     })
     request.addEventListener('success',()=>{
       const db=request.result
@@ -153,6 +155,26 @@ export class IndexedDbV2LocalSecurityStore {
     tx.objectStore(STORES.states).put({id:next.epoch_id,state:structuredClone(next),tag})
     await transactionDone(tx)
     await this.loadState(rootKey,epochSalt,next.epoch_id)
+  }
+
+  async persistRecoveryTakeoverStaging(staging:RecoveryTakeoverStagingV2,urs:Uint8Array):Promise<VerifiedRecoveryTakeoverStagingV2>{
+    const verified=await verifyRecoveryTakeoverStagingV2(staging,urs)
+    if(!isVerifiedRecoveryTakeoverStagingV2(verified))throw new Error('RecoveryTakeoverStagingV2 verification failed.')
+    const id=`${staging.epoch_id}:${staging.recovery_generation}:${staging.recovery_takeover_key_id}:${staging.manifest_fingerprint}`
+    const db=await openDatabase(),tx=db.transaction(STORES.recoveryStaging,'readwrite')
+    const existing=await requestResult<{id:string;staging:RecoveryTakeoverStagingV2}|undefined>(tx.objectStore(STORES.recoveryStaging).get(id))
+    if(existing){
+      if(new TextDecoder().decode(canonicalBytes(existing.staging as never))!==new TextDecoder().decode(canonicalBytes(staging as never))){
+        tx.abort()
+        throw new Error('RecoveryTakeoverStagingV2 immutable identity collision.')
+      }
+    }else tx.objectStore(STORES.recoveryStaging).add({id,staging:structuredClone(staging)})
+    await transactionDone(tx)
+    const readTx=db.transaction(STORES.recoveryStaging,'readonly')
+    const readback=await requestResult<{id:string;staging:RecoveryTakeoverStagingV2}|undefined>(readTx.objectStore(STORES.recoveryStaging).get(id))
+    await transactionDone(readTx)
+    if(!readback||new TextDecoder().decode(canonicalBytes(readback.staging as never))!==new TextDecoder().decode(canonicalBytes(staging as never)))throw new Error('RecoveryTakeoverStagingV2 persistent readback mismatch.')
+    return verifyRecoveryTakeoverStagingV2(readback.staging,urs)
   }
 
   async persistWriterKey(entry:StoredWriterDeviceKeyV2,diaryId:string,epochId:string):Promise<void>{
