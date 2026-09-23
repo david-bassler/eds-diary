@@ -71,6 +71,12 @@ export class V2DomainWritePreparer {
       const recordSchema=V2_RECORD_SCHEMA_BY_TYPE[input.recordType]
       const schema=V2_SCHEMA_REGISTRY[recordSchema]
       if(!schema)throw new Error('Domain schema is not registered in v2.')
+      const parentRevisionIds=[...(input.parentRevisionIds??[])]
+      for(const parentId of parentRevisionIds){
+        const parent=remote.accepted_revision_graph.revisions.get(parentId)
+        if(!parent)throw new Error('Domain revision parent is not in the freshly verified accepted graph.')
+        if(parent.record_id!==input.recordId||parent.record_type!==input.recordType||parent.record_schema!==recordSchema)throw new Error('Domain revision parent belongs to a different record.')
+      }
       if(input.status==='active'){
         if(input.data===null)throw new Error('Active domain revision requires record_data.')
         validateDomainData(schema,input.data)
@@ -82,7 +88,7 @@ export class V2DomainWritePreparer {
         record_schema:recordSchema,
         record_id:input.recordId,
         revision_id:base64Url(randomBytes(32)),
-        parent_revision_ids:[...(input.parentRevisionIds??[])],
+        parent_revision_ids:parentRevisionIds,
         record_status:input.status,
         record_data:input.data,
         migration_origin:null,
