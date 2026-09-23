@@ -28,6 +28,12 @@ export interface PreparedEnvelopeAuthorityV2 {
   writer_device_id:string
   writer_key_id:string
 }
+export interface VerifiedDispositionContextV2 {
+  remote_rows:ReadonlyArray<readonly string[]>
+  current_writer:PreparedEnvelopeAuthorityV2
+  source_epoch_sealed:boolean
+  recovery_rekey_rotation_required:boolean
+}
 export type V2OutboxStatus='prepared'|'pending'|'durable'|'stale_writer_pending'
 export interface V2OutboxEntryCore {
   id:string
@@ -243,19 +249,36 @@ export class IndexedDbV2LocalSecurityStore {
     nextState:EpochLocalSecurityStateV6,
     acceptedEnvelopeIds:ReadonlySet<string>,
     staleWriterEnvelopeIds:ReadonlySet<string>,
+    context:VerifiedDispositionContextV2,
   ):Promise<EpochLocalSecurityStateV6>{
     return withDiaryLockV2(nextState.diary_id,async()=>{
+      await this.verifyLocalJournal(rootKey,epochSalt,nextState.epoch_id)
       const current=await this.loadState(rootKey,epochSalt,nextState.epoch_id)
       if(current.operation_generation!==expectedOperationGeneration||nextState.operation_generation!==expectedOperationGeneration+1)throw new Error('Stale StateV6 generation during verified disposition commit.')
-      const entries=await this.outbox(rootKey,epochSalt,nextState.epoch_id)
+      assertStateTransition(current,nextState)
+      const [entries,envelopes]=await Promise.all([
+        this.outbox(rootKey,epochSalt,nextState.epoch_id),
+        this.envelopes(nextState.epoch_id),
+      ])
+      const localById=new Map(envelopes.map(envelope=>[envelope.envelopeId,envelope]))
+      for(const row of context.remote_rows){
+        const local=localById.get(row[0]??'')
+        if(local&&(row.length!==3||row[1]!==local.iv||row[2]!==local.ciphertext))throw new Error('Remote envelope_id collides with different immutable local bytes.')
+      }
       const updated=entries.map(entry=>{
-        if(acceptedEnvelopeIds.has(entry.envelope_id))return{...entry,status:'durable' as const}
-        if(staleWriterEnvelopeIds.has(entry.envelope_id))return{...entry,status:'stale_writer_pending' as const}
-        return entry
+        let status:V2OutboxStatus=entry.status
+        if(acceptedEnvelopeIds.has(entry.envelope_id))status='durable'
+        else if(staleWriterEnvelopeIds.has(entry.envelope_id))status='stale_writer_pending'
+        else if(entry.status!=='durable'&&(context.source_epoch_sealed
+          ||context.recovery_rekey_rotation_required
+          ||!sameAuthority(entry.authority,context.current_writer)))status='stale_writer_pending'
+        assertOutboxTransition(entry.status,status)
+        return{...entry,status}
       })
       const staleCount=updated.filter(entry=>entry.status==='stale_writer_pending').length
       const finalState={...nextState,stale_writer_pending_count:staleCount}
       validateEpochLocalSecurityStateV6(finalState)
+      assertStateTransition(current,finalState)
       const tag=await localStateTagV6(rootKey,epochSalt,finalState),db=await openDatabase()
       const authenticatedUpdated:V2OutboxEntry[]=[]
       for(const entry of updated){
@@ -280,12 +303,15 @@ export class IndexedDbV2LocalSecurityStore {
   ):Promise<EpochLocalSecurityStateV6>{
     const current=await this.loadState(rootKey,epochSalt,epochId)
     return withDiaryLockV2(current.diary_id,async()=>{
+      await this.verifyLocalJournal(rootKey,epochSalt,epochId)
       const fresh=await this.loadState(rootKey,epochSalt,epochId)
       if(fresh.operation_generation!==expectedOperationGeneration)throw new Error('Stale StateV6 generation during outbox update.')
       const db=await openDatabase(),readTx=db.transaction(STORES.outbox,'readonly')
       const entry=await requestResult<V2OutboxEntry|undefined>(readTx.objectStore(STORES.outbox).get(`${epochId}:${envelopeId}`))
       await transactionDone(readTx)
       if(!entry)throw new Error('V2 outbox envelope is missing.')
+      await verifyOutboxTag(rootKey,epochSalt,entry)
+      assertOutboxTransition(entry.status,status)
       const entries=await this.outbox(rootKey,epochSalt,epochId)
       const nextEntries=entries.map(item=>item.id===entry.id?{...item,status}:item)
       const staleCount=nextEntries.filter(item=>item.status==='stale_writer_pending').length
@@ -318,6 +344,8 @@ export class IndexedDbV2LocalSecurityStore {
       ||stored.iv!==envelope.iv
       ||stored.ciphertext!==envelope.ciphertext
       ||stored.bytesHash!==envelope.bytesHash)throw new Error('Prepared envelope bytes do not match immutable local persistence.')
+    const state=await this.loadState(rootKey,epochSalt,epochId)
+    await assertAuthorityMatchesEnvelope(rootKey,epochSalt,state.diary_id,epochId,envelope,entry.authority)
     return structuredClone(entry.authority)
   }
 
@@ -331,16 +359,33 @@ export class IndexedDbV2LocalSecurityStore {
 
   async verifyLocalJournal(rootKey:Uint8Array,epochSalt:Uint8Array,epochId:string):Promise<void>{
     const state=await this.loadState(rootKey,epochSalt,epochId)
-    const db=await openDatabase(),tx=db.transaction(STORES.envelopes,'readonly')
-    const stored=await requestResult<PersistedEnvelopeV6[]>(tx.objectStore(STORES.envelopes).index('byEpoch').getAll(epochId))
+    const db=await openDatabase(),tx=db.transaction([STORES.envelopes,STORES.outbox],'readonly')
+    const envelopeRequest=tx.objectStore(STORES.envelopes).index('byEpoch').getAll(epochId)
+    const outboxRequest=tx.objectStore(STORES.outbox).index('byEpoch').getAll(epochId)
+    const [stored,entries]=await Promise.all([
+      requestResult<PersistedEnvelopeV6[]>(envelopeRequest),
+      requestResult<V2OutboxEntry[]>(outboxRequest),
+    ])
     await transactionDone(tx)
     let hash=await localJournalInitialV2(state.diary_id,state.epoch_id)
     let count=0
+    const outboxById=new Map<string,V2OutboxEntry>()
+    for(const entry of entries){
+      await verifyOutboxTag(rootKey,epochSalt,entry)
+      if(entry.epoch_id!==epochId||entry.id!==`${epochId}:${entry.envelope_id}`||outboxById.has(entry.id))throw new Error('V2 outbox identity is corrupt.')
+      outboxById.set(entry.id,entry)
+    }
     for(const envelope of stored.sort((a,b)=>a.local_sequence-b.local_sequence)){
       count+=1
       if(envelope.local_sequence!==count)throw new Error('V2 local envelope journal sequence is corrupt.')
+      if(envelope.epoch_id!==epochId||envelope.id!==`${epochId}:${envelope.envelopeId}`)throw new Error('V2 local envelope identity is corrupt.')
+      const entry=outboxById.get(envelope.id)
+      if(!entry||entry.envelope_id!==envelope.envelopeId)throw new Error('V2 immutable envelope/outbox bijection failed.')
       hash=await localJournalNextV2(hash,count,envelope)
     }
+    if(outboxById.size!==stored.length)throw new Error('V2 immutable envelope/outbox bijection failed.')
+    const staleCount=entries.filter(entry=>entry.status==='stale_writer_pending').length
+    if(staleCount!==state.stale_writer_pending_count)throw new Error('V2 stale-writer quarantine count is inconsistent with authenticated outbox.')
     if(count!==state.local_journal_count||hash!==state.local_journal_hash)throw new Error('V2 local envelope journal hash failed.')
   }
 
