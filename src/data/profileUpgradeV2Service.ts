@@ -57,6 +57,8 @@ import {
   generateWriterDeviceKeyV2,
   recoveryCommitmentV2,
   recoveryUrsIdV2,
+  revisionSigningBytesV2,
+  verifyEd25519V2,
 } from '../security/v2/crypto'
 import {
   manifestCellsArrayV6,
@@ -746,6 +748,12 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
       ]),
     )
     if(openedConfirmation.record_schema!=='successor-activation-confirmation-sw-v2'
+      ||openedConfirmation.writer_signature===null
+      ||!await verifyEd25519V2(
+        fixedBase64Url(plan.writer_public_key,32),
+        openedConfirmation.writer_signature,
+        revisionSigningBytesV2(plan.diary_id,plan.successor_epoch_id,openedConfirmation),
+      )
       ||!sameJson(openedConfirmation.record_data,{
         confirmation_id:await deterministicId(plan.operation_id,'confirmation-id',32),
         activation_kind:'profile_upgrade',
