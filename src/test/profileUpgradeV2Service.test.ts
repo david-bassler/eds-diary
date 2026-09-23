@@ -54,12 +54,14 @@ class MemoryTransport implements RemoteTransport {
   appendCounts=new Map<string,number>()
   unknownAfterAppend=false
   unknownWithoutAppend=0
+  injectBeforeNextAppend:Row|null=null
   async discover(locator:string):Promise<readonly RemoteCandidate[]>{return[{remoteId:this.remoteId,locator}]}
   async create():Promise<void>{}
   async read(id:string):Promise<RemoteSnapshot>{if(id!==this.remoteId)throw new Error('wrong remote');return structuredClone(this.snapshot)}
   async append(id:string,row:readonly[string,string,string]):Promise<void>{
     if(id!==this.remoteId)throw new Error('wrong remote')
     if(this.unknownWithoutAppend>0){this.unknownWithoutAppend-=1;throw new TransportError('unknown_outcome','simulated unresolved append')}
+    if(this.injectBeforeNextAppend){this.snapshot.rows.push([...this.injectBeforeNextAppend]);this.injectBeforeNextAppend=null}
     this.snapshot.rows.push([...row])
     this.appendCounts.set(row[0],(this.appendCounts.get(row[0])??0)+1)
     if(this.unknownAfterAppend){this.unknownAfterAppend=false;throw new TransportError('unknown_outcome','simulated append-after-commit')}
@@ -205,6 +207,36 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     expect(selection).toMatchObject({sync_profile:SINGLE_WRITER_V2_PROFILE,epoch_id:final.successor_epoch_id,operation_id:final.operation_id})
     expect(v2.recovery).not.toBeNull()
   },120_000)
+
+  it('enters terminal source-race when a v1 row lands between the final read and one-shot Announcement append',async()=>{
+    const createdAt='2026-09-23T14:00:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    let armed=false
+    await expect(new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt,point=>{
+      if(point==='after-staged_backup_verified'&&!armed){armed=true;throw new Error('armed-source-race')}
+    }).upgrade()).rejects.toThrow('armed-source-race')
+    const existing=source.transport.snapshot.rows[0]!
+    source.transport.injectBeforeNextAppend=[...existing] as Row
+    const result=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    expect(result.stage).toBe('stale')
+    expect(await activeProtocolSelectionV2()).toBeNull()
+    expect(result.activated_backup_id).toBeNull()
+    expect(v2.remote).not.toBeNull()
+  },90_000)
+
+  it('enters terminal successor cutover-race when another row becomes first after the staging anchor',async()=>{
+    const createdAt='2026-09-23T15:00:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    let armed=false
+    await expect(new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt,point=>{
+      if(point==='after-announcement_durable'&&!armed){armed=true;throw new Error('armed-successor-race')}
+    }).upgrade()).rejects.toThrow('armed-successor-race')
+    if(!v2.remote)throw new Error('successor missing in test fixture')
+    const existing=v2.remote.snapshot.rows.at(-1)!
+    v2.remote.injectBeforeNextAppend=[...existing] as Row
+    const result=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    expect(result.stage).toBe('cutover_race')
+    expect(await activeProtocolSelectionV2()).toBeNull()
+    expect(result.activated_backup_id).toBeNull()
+  },90_000)
 
   it('reconciles append-after-commit unknown outcomes without generating a second semantic control row',async()=>{
     const createdAt='2026-09-23T13:00:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
