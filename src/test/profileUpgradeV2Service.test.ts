@@ -181,6 +181,22 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     globalThis.localStorage?.clear?.()
   })
 
+  it('rejects a local v1 write racing the final source freeze and succeeds only after a new full verify',async()=>{
+    const createdAt='2026-09-23T11:30:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    let injected=false
+    const racing=new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt,async point=>{
+      if(point==='before-source-freeze-persist'&&!injected){
+        injected=true
+        await putRecord(LOCAL_STORES.painEntries,pain('freeze-race-write'))
+      }
+    })
+    await expect(racing.upgrade()).rejects.toThrow(/changed after final profile-upgrade verification/)
+    expect(await activeProtocolSelectionV2()).toBeNull()
+    const final=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    expect(final.stage).toBe('switched')
+    expect(await activeProtocolSelectionV2()).toMatchObject({epoch_id:final.successor_epoch_id})
+  },120_000)
+
   it('survives the productive v1->v2 crash matrix without changing one-shot bytes or duplicating semantic appends',async()=>{
     const createdAt='2026-09-23T12:00:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
     const stages:ProfileUpgradeV2FaultPoint[]=[
