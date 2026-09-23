@@ -193,6 +193,9 @@ async function buildManifest(context:BackupContextV6,backupId:string):Promise<Ba
   await verifyBackupLocalRows(context.rootKey,trustRoot,context.recordRows,context.pendingOutboxRows,context.staleWriterPendingRows)
   const recovered=await openRecoveryArtifactV6(context.recoveryArtifact,context.urs),artifact=recovered.payload
   if(artifact.diary_id!==context.diaryId||artifact.epoch_id!==context.epochId||artifact.key_id!==context.keyId||artifact.manifest_fingerprint!==fingerprint)throw new Error('BackupV6 recovery artifact binding mismatch.')
+  const artifactAdvancedRecovery=artifact.recovery_generation>manifestPayload.recovery_generation
+  if(artifact.recovery_generation<manifestPayload.recovery_generation
+    ||artifactAdvancedRecovery!==(artifact.recovery_authority_transition_proof!==null))throw new Error('BackupV6 RecoveryArtifactV6 transition-proof requirement mismatch.')
   const recovery=context.canonical.current_recovery
   if(artifact.recovery_generation!==recovery.recovery_generation||artifact.recovery_urs_commitment!==recovery.recovery_urs_commitment||artifact.recovery_urs_id!==recovery.recovery_urs_id||artifact.recovery_takeover_key_id!==recovery.recovery_takeover_key_id||artifact.recovery_takeover_public_key!==recovery.recovery_takeover_public_key)throw new Error('BackupV6 recovery end-state mismatch.')
   if(JSON.stringify(artifact.recovery_credential_history)!==JSON.stringify(context.canonical.recovery_credential_history))throw new Error('BackupV6 recovery credential history mismatch.')
@@ -297,6 +300,9 @@ export async function testRestoreBackupV6(
   if(recovery.recovery_generation!==manifest.recovery_generation||recovery.recovery_urs_commitment!==manifest.recovery_urs_commitment||recovery.recovery_urs_id!==manifest.recovery_urs_id||recovery.recovery_takeover_key_id!==manifest.recovery_takeover_key_id||recovery.recovery_takeover_public_key!==manifest.recovery_takeover_public_key||recovery.recovery_rekey_rotation_required!==manifest.recovery_rekey_rotation_required||recovery.recovery_rekey_transition_id!==manifest.recovery_rekey_transition_id)throw new Error('BackupV6 Recovery state mismatch.')
   const artifact=(await openRecoveryArtifactV6(backup.recovery_artifact,context.urs)).payload
   if(artifact.diary_id!==context.diaryId||artifact.epoch_id!==context.epochId||artifact.manifest_fingerprint!==fingerprint||artifact.recovery_generation!==recovery.recovery_generation||artifact.recovery_urs_id!==recovery.recovery_urs_id||artifact.recovery_takeover_key_id!==recovery.recovery_takeover_key_id)throw new Error('BackupV6 RecoveryArtifactV6 binding mismatch.')
+  const artifactAdvancedRecovery=artifact.recovery_generation>manifestPayload.recovery_generation
+  if(artifact.recovery_generation<manifestPayload.recovery_generation
+    ||artifactAdvancedRecovery!==(artifact.recovery_authority_transition_proof!==null))throw new Error('BackupV6 RecoveryArtifactV6 transition-proof requirement mismatch.')
   if(manifest.recovery_artifact_sha256!==await recoveryArtifactHashV6(backup.recovery_artifact)||manifest.recovery_credential_history_sha256!==await digest(artifact.recovery_credential_history)||manifest.activation_lineage_sha256!==await digest(artifact.activation_lineage)||(artifact.recovery_authority_transition_proof===null?manifest.recovery_authority_transition_proof_sha256!==null:manifest.recovery_authority_transition_proof_sha256!==await digest(artifact.recovery_authority_transition_proof)))throw new Error('BackupV6 RecoveryArtifactV6 hashes mismatch.')
   if(artifact.remote_anchor.covered_row_count>backup.record_rows.length||JSON.stringify(artifact.remote_anchor)!==JSON.stringify(await createAnchorV2(context.diaryId,context.epochId,backup.record_rows.slice(0,artifact.remote_anchor.covered_row_count))))throw new Error('BackupV6 RecoveryArtifactV6 anchor mismatch.')
   // Local rows are restored only as local material. Full external activation
