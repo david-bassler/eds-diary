@@ -235,10 +235,18 @@ export class IndexedDbV2LocalSecurityStore {
     const outbox:StoredOutboxV6={id:envelope.envelopeId,epoch_id:epochId,envelope_id:envelope.envelopeId,status:'prepared'}
 
     const tx=db.transaction([STORES.state,STORES.reservations,STORES.envelopes,STORES.outbox],'readwrite')
+    const stateStore=tx.objectStore(STORES.state),reservationStore=tx.objectStore(STORES.reservations)
+    const currentStateReq=stateStore.get(epochId),currentReservationReq=reservationStore.get(envelope.envelopeId)
+    const [currentState,currentReservation]=await Promise.all([
+      requestResult<StoredStateV6|undefined>(currentStateReq),
+      requestResult<StoredReservationV6|undefined>(currentReservationReq),
+    ])
+    if(!currentState||currentState.state.operation_generation!==expectedGeneration){tx.abort();throw new Error('Stale v2 local security generation during envelope commit.')}
+    if(!currentReservation||currentReservation.epoch_id!==epochId||currentReservation.status!=='reserved'){tx.abort();throw new Error('EnvelopeV6 reservation changed before commit.')}
     tx.objectStore(STORES.envelopes).add(storedEnvelope)
     tx.objectStore(STORES.outbox).add(outbox)
-    tx.objectStore(STORES.reservations).put({...reservation,status:'consumed'} satisfies StoredReservationV6)
-    tx.objectStore(STORES.state).put({id:epochId,state:nextState,tag:nextTag} satisfies StoredStateV6)
+    reservationStore.put({...currentReservation,status:'consumed'} satisfies StoredReservationV6)
+    stateStore.put({id:epochId,state:nextState,tag:nextTag} satisfies StoredStateV6)
     await transactionDone(tx)
     return nextState.operation_generation
   }
@@ -265,8 +273,16 @@ export class IndexedDbV2LocalSecurityStore {
     const next={...state,stale_writer_pending_count:state.stale_writer_pending_count+1,operation_generation:state.operation_generation+1}
     const tag=await localStateTagV6(rootKey,salt,next)
     const tx=db.transaction([STORES.state,STORES.outbox],'readwrite')
-    tx.objectStore(STORES.outbox).put({...outbox,status:'stale_writer_pending'} satisfies StoredOutboxV6)
-    tx.objectStore(STORES.state).put({id:epochId,state:next,tag} satisfies StoredStateV6)
+    const stateStore=tx.objectStore(STORES.state),outboxStore=tx.objectStore(STORES.outbox)
+    const currentStateReq=stateStore.get(epochId),currentOutboxReq=outboxStore.get(envelopeId)
+    const [currentState,currentOutbox]=await Promise.all([
+      requestResult<StoredStateV6|undefined>(currentStateReq),
+      requestResult<StoredOutboxV6|undefined>(currentOutboxReq),
+    ])
+    if(!currentState||currentState.state.operation_generation!==expectedGeneration){tx.abort();throw new Error('Stale v2 local security generation during quarantine.')}
+    if(!currentOutbox||currentOutbox.epoch_id!==epochId||currentOutbox.status==='stale_writer_pending'){tx.abort();throw new Error('Stale-writer outbox changed before quarantine commit.')}
+    outboxStore.put({...currentOutbox,status:'stale_writer_pending'} satisfies StoredOutboxV6)
+    stateStore.put({id:epochId,state:next,tag} satisfies StoredStateV6)
     await transactionDone(tx)
     return next.operation_generation
   }
