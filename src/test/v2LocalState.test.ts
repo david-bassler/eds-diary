@@ -7,6 +7,8 @@ import { IndexedDbV2LocalSecurityStore, __v2LocalPersistenceTesting } from '../s
 import { stateAfterCanonicalVerifyV6 } from '../security/v2/stateReconciliation'
 import { TransferableSingleWriterV2WriteAuthority, v2VerifiedRemoteState } from '../security/v2/writeAuthority'
 import { V2DomainWritePreparer } from '../security/v2/domainWrite'
+import { IndexedDbV2CoordinatorStore } from '../security/v2/coordinatorStore'
+import { envelopeRowV2 } from '../security/v2/envelopes'
 import { createAnchorV2 } from '../security/v2/prefix'
 import type { CanonicalFullResultV2 } from '../security/v2/verifier'
 import { SINGLE_WRITER_V2_PROFILE } from '../sync/core/contracts'
@@ -194,6 +196,61 @@ describe('EpochLocalSecurityStateV6 persistence and writer gate',()=>{
     const operationBlocked:EpochLocalSecurityStateV6={...pending,recovery_rekey_rotation_required:false,recovery_rekey_transition_id:null,rotation_state_ref:{operation_id:'rotation-1',state:'copying',state_record_hash:b(13,32)},operation_generation:pending.operation_generation+1}
     await store.replaceState(rootKey,f.epochSalt,pending.operation_generation,operationBlocked)
     await expect(authority.canPrepareDomainWrite(verified)).resolves.toBe('read_only')
+  })
+
+
+  it('uses verifier dispositions rather than physical row presence for v2 durability',async()=>{
+    const f=await fixture(),store=new IndexedDbV2LocalSecurityStore()
+    await store.initializeState(rootKey,f.epochSalt,f.initial)
+    await store.persistWriterKey({
+      writer_signing_key_id:f.writer.writerKeyId,
+      writer_device_id:f.writerDeviceId,
+      writer_public_key:base64Url(f.writer.publicKeyRaw),
+      private_key:f.writer.privateKey,
+    },f.diaryId,f.epochId)
+    const initialVerified=v2VerifiedRemoteState(f.result,{manifest:[],rows:[]})
+    const authority=new TransferableSingleWriterV2WriteAuthority(()=>store.loadState(rootKey,f.epochSalt,f.epochId),(envelopeId)=>store.envelopeAuthority(f.epochId,envelopeId))
+    const preparer=new V2DomainWritePreparer(store,authority,{verifyNow:async()=>initialVerified})
+    const prepared=await preparer.prepareAndPersist(rootKey,f.epochSalt,{recordType:'pain_entry',recordId:b(20,16),status:'active',data:painData,protocolCreatedAt:'2026-09-23T08:10:00.000Z'})
+    const row=envelopeRowV2(prepared.envelope),remoteAnchor=await createAnchorV2(f.diaryId,f.epochId,[row])
+    const staleResult:CanonicalFullResultV2={
+      ...f.result,
+      remote_anchor:remoteAnchor,
+      dispositions:[{row_index:1,envelope_id:prepared.envelope.envelopeId,revision_id:prepared.revision.revision_id,disposition:'stale_writer_rejected'}],
+      verified_envelope_ids:new Set([prepared.envelope.envelopeId]),
+      accepted_envelope_ids:new Set(),
+      stale_writer_envelope_ids:new Set([prepared.envelope.envelopeId]),
+    }
+    const verified=v2VerifiedRemoteState(staleResult,{manifest:[],rows:[row]})
+    const coordinatorStore=new IndexedDbV2CoordinatorStore(f.epochId,rootKey,f.epochSalt,store)
+    const generation=await coordinatorStore.generation()
+    await coordinatorStore.commitVerifiedPull(verified,remoteAnchor,generation)
+    expect(await coordinatorStore.pending(verified)).toEqual([])
+    expect((await store.outbox(f.epochId))[0]?.status).toBe('stale_writer_pending')
+    expect((await store.loadState(rootKey,f.epochSalt,f.epochId)).stale_writer_pending_count).toBe(1)
+  })
+
+  it('quarantines a prepared envelope when its persisted writer provenance is no longer current',async()=>{
+    const f=await fixture(),store=new IndexedDbV2LocalSecurityStore()
+    await store.initializeState(rootKey,f.epochSalt,f.initial)
+    await store.persistWriterKey({
+      writer_signing_key_id:f.writer.writerKeyId,
+      writer_device_id:f.writerDeviceId,
+      writer_public_key:base64Url(f.writer.publicKeyRaw),
+      private_key:f.writer.privateKey,
+    },f.diaryId,f.epochId)
+    const verified1=v2VerifiedRemoteState(f.result,{manifest:[],rows:[]})
+    const authority=new TransferableSingleWriterV2WriteAuthority(()=>store.loadState(rootKey,f.epochSalt,f.epochId),(envelopeId)=>store.envelopeAuthority(f.epochId,envelopeId))
+    const preparer=new V2DomainWritePreparer(store,authority,{verifyNow:async()=>verified1})
+    const prepared=await preparer.prepareAndPersist(rootKey,f.epochSalt,{recordType:'pain_entry',recordId:b(21,16),status:'active',data:painData,protocolCreatedAt:'2026-09-23T08:11:00.000Z'})
+
+    const generation2={...f.result,current_writer:{...f.result.current_writer,writer_generation:2,writer_grant_id:b(22,32)}}
+    const current=await store.loadState(rootKey,f.epochSalt,f.epochId)
+    const reconciled=await stateAfterCanonicalVerifyV6(current,generation2,[],true)
+    await store.replaceState(rootKey,f.epochSalt,current.operation_generation,reconciled)
+    const verified2=v2VerifiedRemoteState(generation2,{manifest:[],rows:[]})
+    await expect(authority.canPrepareDomainWrite(verified2)).resolves.toBe('writer')
+    await expect(authority.verifyBeforePush(prepared.envelope,verified2,'initial')).resolves.toBe('quarantine_stale_writer')
   })
 
   it('rejects rollback and same-height prefix replacement during StateV6 reconciliation',async()=>{
