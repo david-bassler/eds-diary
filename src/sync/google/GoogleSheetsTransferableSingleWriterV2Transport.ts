@@ -45,11 +45,16 @@ export async function epochLocatorV2(diaryId:string,epochId:string): Promise<str
 
 async function expectedEpochLocator(binding: GoogleTransportBinding): Promise<string> { return epochLocatorV2(binding.diaryId,binding.epochId) }
 
-async function expectedAccountBinding(binding: GoogleTransportBinding): Promise<string> {
+export async function googleAccountBindingV2(diaryId:string,ownerPermissionId:string):Promise<string>{
+  fixedBase64Url(diaryId,16,'diary_id')
+  if(!ownerPermissionId)throw new Error('Google owner permission ID is required.')
   return base64Url(await sha256(concatBytes(
-    utf8('eds-diary/google-account/v6'), new Uint8Array([0]),
-    fixedBase64Url(binding.diaryId, 16), new Uint8Array([0]), utf8(binding.ownerPermissionId),
+    utf8('eds-diary/google-account/v6'),new Uint8Array([0]),
+    fixedBase64Url(diaryId,16),new Uint8Array([0]),utf8(ownerPermissionId),
   )))
+}
+async function expectedAccountBinding(binding: GoogleTransportBinding): Promise<string> {
+  return googleAccountBindingV2(binding.diaryId,binding.ownerPermissionId)
 }
 
 const AUTHENTICATED_TRANSPORTS=new WeakSet<GoogleSheetsTransferableSingleWriterV2Transport>()
