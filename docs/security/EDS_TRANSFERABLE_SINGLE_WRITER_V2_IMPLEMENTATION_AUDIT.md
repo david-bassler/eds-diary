@@ -134,7 +134,8 @@ Later changes must retain explicit vectors for at least:
 - outbox provenance/status MAC tamper rejection;
 - no WebCrypto/long async gaps inside v2 IndexedDB readwrite transactions;
 - persisted EnvelopeV6 journal tamper detection before normal prepare/push;
-- domain RevisionV2 parent existence/record binding against the fresh accepted graph.
+- domain RevisionV2 parent existence/record binding against the fresh accepted graph;
+- active StateV6 requires remote binding/anchor plus complete verified Writer authority.
 
 ## Anti-churn rule for later reviews
 
