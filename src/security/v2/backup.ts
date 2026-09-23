@@ -115,6 +115,7 @@ function validTimestamp(value:string):boolean{
 }
 function backupAad(id:string):Uint8Array{return canonicalBytes({format:'sync-backup-v6',backup_format_version:6,backup_id:id})}
 async function digest(value:unknown):Promise<string>{return base64Url(await sha256(canonicalBytes(value as never)))}
+function canonicalEqual(left:unknown,right:unknown):boolean{return new TextDecoder().decode(canonicalBytes(left as never))===new TextDecoder().decode(canonicalBytes(right as never))}
 function rowBytes(rows:readonly Row[]):number{return rows.reduce((sum,row)=>sum+canonicalBytes([...row]).byteLength,0)}
 function validateRow(row:readonly string[],label:string):asserts row is Row{
   if(row.length!==3||row.some(cell=>typeof cell!=='string'||cell.length===0))throw new Error(`${label} row schema mismatch.`)
@@ -198,12 +199,12 @@ async function buildManifest(context:BackupContextV6,backupId:string):Promise<Ba
     ||artifactAdvancedRecovery!==(artifact.recovery_authority_transition_proof!==null))throw new Error('BackupV6 RecoveryArtifactV6 transition-proof requirement mismatch.')
   const recovery=context.canonical.current_recovery
   if(artifact.recovery_generation!==recovery.recovery_generation||artifact.recovery_urs_commitment!==recovery.recovery_urs_commitment||artifact.recovery_urs_id!==recovery.recovery_urs_id||artifact.recovery_takeover_key_id!==recovery.recovery_takeover_key_id||artifact.recovery_takeover_public_key!==recovery.recovery_takeover_public_key)throw new Error('BackupV6 recovery end-state mismatch.')
-  if(JSON.stringify(artifact.recovery_credential_history)!==JSON.stringify(context.canonical.recovery_credential_history))throw new Error('BackupV6 recovery credential history mismatch.')
+  if(!canonicalEqual(artifact.recovery_credential_history,context.canonical.recovery_credential_history))throw new Error('BackupV6 recovery credential history mismatch.')
   const anchor=await createAnchorV2(context.diaryId,context.epochId,context.recordRows)
   if(anchor.prefix_hash!==context.canonical.remote_anchor.prefix_hash||anchor.covered_row_count!==context.canonical.remote_anchor.covered_row_count)throw new Error('BackupV6 canonical anchor mismatch.')
   if(artifact.remote_anchor.covered_row_count>context.recordRows.length)throw new Error('BackupV6 recovery artifact anchor is ahead of export.')
   const artifactAnchor=await createAnchorV2(context.diaryId,context.epochId,context.recordRows.slice(0,artifact.remote_anchor.covered_row_count))
-  if(JSON.stringify(artifact.remote_anchor)!==JSON.stringify(artifactAnchor))throw new Error('BackupV6 recovery artifact anchor is not a prefix of export.')
+  if(!canonicalEqual(artifact.remote_anchor,artifactAnchor))throw new Error('BackupV6 recovery artifact anchor is not a prefix of export.')
   const recordBytes=rowBytes(context.recordRows),pendingBytes=rowBytes(context.pendingOutboxRows),staleBytes=rowBytes(context.staleWriterPendingRows)
   if(recordBytes>MAX_BACKUP_V6_CANONICAL_BYTES||pendingBytes>MAX_BACKUP_V6_CANONICAL_BYTES||staleBytes>MAX_BACKUP_V6_CANONICAL_BYTES)throw new Error('BackupV6 category byte bound exceeded.')
   const union=unionStats([context.recordRows,context.pendingOutboxRows,context.staleWriterPendingRows])
@@ -294,7 +295,7 @@ export async function testRestoreBackupV6(
   if(manifest.unique_union_count!==union.count||manifest.unique_union_canonical_bytes!==union.bytes)throw new Error('BackupV6 unique union mismatch.')
   const trustRoot=await manifestTrustRootV6(manifestCells,manifestPayload),canonical=await verifier.verifyCanonicalFull(trustRoot,context.rootKey,backup.record_rows)
   await verifyBackupLocalRows(context.rootKey,trustRoot,backup.record_rows,backup.pending_outbox_rows,backup.stale_writer_pending_rows)
-  if(JSON.stringify(canonical.remote_anchor)!==JSON.stringify(manifest.remote_anchor_at_export)||canonical.remote_anchor.prefix_hash!==manifest.record_prefix_hash)throw new Error('BackupV6 RemoteAnchorV2 mismatch.')
+  if(!canonicalEqual(canonical.remote_anchor,manifest.remote_anchor_at_export)||canonical.remote_anchor.prefix_hash!==manifest.record_prefix_hash)throw new Error('BackupV6 RemoteAnchorV2 mismatch.')
   if(!sameWriter(canonical,manifest.writer_authority_at_export))throw new Error('BackupV6 Writer authority mismatch.')
   const recovery=canonical.current_recovery
   if(recovery.recovery_generation!==manifest.recovery_generation||recovery.recovery_urs_commitment!==manifest.recovery_urs_commitment||recovery.recovery_urs_id!==manifest.recovery_urs_id||recovery.recovery_takeover_key_id!==manifest.recovery_takeover_key_id||recovery.recovery_takeover_public_key!==manifest.recovery_takeover_public_key||recovery.recovery_rekey_rotation_required!==manifest.recovery_rekey_rotation_required||recovery.recovery_rekey_transition_id!==manifest.recovery_rekey_transition_id)throw new Error('BackupV6 Recovery state mismatch.')
@@ -304,7 +305,7 @@ export async function testRestoreBackupV6(
   if(artifact.recovery_generation<manifestPayload.recovery_generation
     ||artifactAdvancedRecovery!==(artifact.recovery_authority_transition_proof!==null))throw new Error('BackupV6 RecoveryArtifactV6 transition-proof requirement mismatch.')
   if(manifest.recovery_artifact_sha256!==await recoveryArtifactHashV6(backup.recovery_artifact)||manifest.recovery_credential_history_sha256!==await digest(artifact.recovery_credential_history)||manifest.activation_lineage_sha256!==await digest(artifact.activation_lineage)||(artifact.recovery_authority_transition_proof===null?manifest.recovery_authority_transition_proof_sha256!==null:manifest.recovery_authority_transition_proof_sha256!==await digest(artifact.recovery_authority_transition_proof)))throw new Error('BackupV6 RecoveryArtifactV6 hashes mismatch.')
-  if(artifact.remote_anchor.covered_row_count>backup.record_rows.length||JSON.stringify(artifact.remote_anchor)!==JSON.stringify(await createAnchorV2(context.diaryId,context.epochId,backup.record_rows.slice(0,artifact.remote_anchor.covered_row_count))))throw new Error('BackupV6 RecoveryArtifactV6 anchor mismatch.')
+  if(artifact.remote_anchor.covered_row_count>backup.record_rows.length||!canonicalEqual(artifact.remote_anchor,await createAnchorV2(context.diaryId,context.epochId,backup.record_rows.slice(0,artifact.remote_anchor.covered_row_count))))throw new Error('BackupV6 RecoveryArtifactV6 anchor mismatch.')
   // Local rows are restored only as local material. Full external activation
   // proof is deliberately not inferred from an "activated" bit in the backup.
   for(const row of [...backup.pending_outbox_rows,...backup.stale_writer_pending_rows]){
