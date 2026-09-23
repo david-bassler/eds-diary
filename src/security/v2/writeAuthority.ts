@@ -21,6 +21,11 @@ function canonicalFull(verified:VerifiedRemoteState):CanonicalFullResultV2{
   const physicalIds=new Set(verified.snapshot.rows.map(row=>row[0]??''))
   if(physicalIds.size!==verified.verifiedEnvelopeIds.size||[...physicalIds].some(id=>!verified.verifiedEnvelopeIds.has(id)))throw new Error('Verified v2 physical envelope set mismatch.')
   if([...verified.acceptedEnvelopeIds].some(id=>!verified.verifiedEnvelopeIds.has(id))||[...verified.staleWriterEnvelopeIds].some(id=>!verified.verifiedEnvelopeIds.has(id)||verified.acceptedEnvelopeIds.has(id)))throw new Error('Verified v2 semantic envelope sets are inconsistent.')
+  const sameSet=(left:ReadonlySet<string>,right:ReadonlySet<string>)=>left.size===right.size&&[...left].every(id=>right.has(id))
+  if(!sameSet(verified.verifiedEnvelopeIds,canonical.verified_envelope_ids)
+    ||!sameSet(verified.acceptedEnvelopeIds,canonical.accepted_envelope_ids)
+    ||!sameSet(verified.staleWriterEnvelopeIds,canonical.stale_writer_envelope_ids))throw new Error('Generic and canonical v2 envelope dispositions diverge.')
+  if(verified.retired!==canonical.source_epoch_sealed)throw new Error('Generic and canonical v2 seal/retirement state diverge.')
   return canonical
 }
 
