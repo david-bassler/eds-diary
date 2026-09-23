@@ -84,6 +84,7 @@ import {
   createRecoveryArtifactV6,
   openRecoveryArtifactV6,
   recoveryArtifactHashV6,
+  recoveryArtifactLocatorV6,
   type ProfileUpgradeActivationEntryV2,
   type RecoveryArtifactV6,
 } from '../security/v2/recovery'
@@ -103,6 +104,7 @@ export type ProfileUpgradeV2FaultPoint=
   | 'after-genesis-append'
   | 'after-source-append'
   | 'after-confirmation-append'
+  | 'after-activation-artifact'
   | 'after-local-selection'
 
 interface FrozenSourceArtifactV2 {
@@ -625,11 +627,15 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
   }>{
     const existing=await this.artifact<ActivationArtifactV2>('activation')
     if(existing){
-      const operation=await this.load()
+      const plan=await this.plan()
       return{
-        announcementEnvelope:operation.announcement_envelope!,confirmationEnvelope:operation.confirmation_envelope!,
-        activationEvidenceSha256:operation.activation_evidence_sha256!,activationLineageSha256:operation.activation_lineage_sha256!,
-        recoveryArtifactId:operation.recovery_artifact_id!,recoveryArtifactLocator:operation.recovery_artifact_locator!,recoveryArtifactSha256:operation.recovery_artifact_sha256!,
+        announcementEnvelope:structuredClone(existing.entry.announcement_envelope),
+        confirmationEnvelope:structuredClone(existing.entry.successor_confirmation_envelope),
+        activationEvidenceSha256:await profileUpgradeActivationEvidenceHashV2(existing.entry),
+        activationLineageSha256:await activationLineageHashV2(existing.lineage),
+        recoveryArtifactId:existing.recovery_artifact.recovery_artifact_id,
+        recoveryArtifactLocator:await recoveryArtifactLocatorV6(this.urs,plan.diary_id,plan.successor_epoch_id),
+        recoveryArtifactSha256:await recoveryArtifactHashV6(existing.recovery_artifact),
       }
     }
     const operation=await this.load(),plan=await this.plan(),ctx=await this.successorContext(),source=await this.frozenSource()
@@ -669,6 +675,7 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
     },this.urs,fromBase64Url(artifactId))
     stagingMaterial.privateKeyPkcs8.fill(0)
     await this.putArtifact('activation',{entry,lineage,recovery_artifact:artifact} satisfies ActivationArtifactV2)
+    await this.fault?.('after-activation-artifact')
     const persisted=await this.v2Store.persistRecoveryArtifactV6(this.urs,plan.diary_id,plan.successor_epoch_id,artifact)
     return{
       announcementEnvelope:{envelope_id:announcement.envelopeId,iv:announcement.iv,ciphertext:announcement.ciphertext},
