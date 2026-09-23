@@ -74,6 +74,17 @@ export class IndexedDbV2CoordinatorStore implements CoordinatorStore {
       next,
       verified.acceptedEnvelopeIds,
       verified.staleWriterEnvelopeIds,
+      {
+        remote_rows:verified.snapshot.rows,
+        current_writer:{
+          writer_generation:remote.current_writer.writer_generation,
+          writer_grant_id:remote.current_writer.writer_grant_id,
+          writer_device_id:remote.current_writer.writer_device_id,
+          writer_key_id:remote.current_writer.writer_key_id,
+        },
+        source_epoch_sealed:remote.source_epoch_sealed,
+        recovery_rekey_rotation_required:remote.current_recovery.recovery_rekey_rotation_required,
+      },
     )
     return persisted.operation_generation
   }
