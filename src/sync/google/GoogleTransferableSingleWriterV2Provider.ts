@@ -21,6 +21,7 @@ import {
 import type { RecoveryArtifactV6 } from '../../security/v2/recovery'
 import { isVerifiedRecoveryTakeoverStagingV2, type VerifiedRecoveryTakeoverStagingV2 } from '../../security/v2/recoveryStaging'
 import type { VerifiedPersistedRecoveryArtifactV6 } from '../../security/v2/localPersistence'
+import type { FreshCanonicalV2Source } from '../../security/v2/domainWrite'
 
 export interface TransferableSingleWriterV2ProviderSession {
   readonly providerId:typeof GOOGLE_DRIVE_SHEETS_PROVIDER
@@ -28,6 +29,7 @@ export interface TransferableSingleWriterV2ProviderSession {
   transportForEpoch(diaryId:string,epochId:string):Promise<GoogleSheetsTransferableSingleWriterV2Transport>
   remoteIdentityBinding(transport:RemoteTransport):Promise<string>
   codecForEpoch(diaryId:string,epochId:string,rootKey:Uint8Array,transport:RemoteTransport):Promise<TransportProfileCodec>
+  freshCanonicalSource(diaryId:string,epochId:string,rootKey:Uint8Array,remoteId:string):FreshCanonicalV2Source
   creationProperties(diaryId:string,epochId:string):Promise<Readonly<Record<string,string>>>
   createOrReconcileEpoch(args:{
     diaryId:string
@@ -61,6 +63,19 @@ class GoogleTransferableSingleWriterV2ProviderSession implements TransferableSin
   async codecForEpoch(diaryId:string,epochId:string,rootKey:Uint8Array,transport:RemoteTransport):Promise<TransportProfileCodec>{
     if(!isAuthenticatedGoogleV2Transport(transport)||transport.profileId!==SINGLE_WRITER_V2_PROFILE)throw new Error('Google v2 codec requires the authenticated v2 transport.')
     return new GoogleSheetsTransferableSingleWriterV2ProfileCodec(diaryId,epochId,rootKey,await transport.authenticatedAccountBinding())
+  }
+  freshCanonicalSource(diaryId:string,epochId:string,rootKey:Uint8Array,remoteId:string):FreshCanonicalV2Source{
+    fixedBase64Url(diaryId,16,'diary_id')
+    fixedBase64Url(epochId,16,'epoch_id')
+    if(rootKey.byteLength!==32)throw new Error('V2 fresh canonical source requires a 32-byte root key.')
+    if(!remoteId)throw new Error('V2 fresh canonical source requires a bound remote resource ID.')
+    return Object.freeze({
+      verifyNow:async()=>{
+        const transport=await this.transportForEpoch(diaryId,epochId)
+        const codec=await this.codecForEpoch(diaryId,epochId,rootKey,transport)
+        return codec.verifyRemote(await transport.read(remoteId))
+      },
+    })
   }
   async creationProperties(diaryId:string,epochId:string):Promise<Readonly<Record<string,string>>>{
     return{app_format:'sync-v6',epoch_locator:await epochLocatorV2(diaryId,epochId)}
