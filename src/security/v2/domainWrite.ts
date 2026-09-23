@@ -64,15 +64,33 @@ export class V2DomainWritePreparer {
     // domain-write attempt performs a new full remote read/verify here.
     const verified=await this.freshSource.verifyNow()
     const remote=canonicalResult(verified)
+    const before=await this.store.loadState(rootKey,epochSalt,remote.epoch_id)
+    const key=await usableWriterKey(this.store,before.writer_signing_key_id,before.diary_id,before.epoch_id)
+    const reconciled=await stateAfterCanonicalVerifyV6(before,remote,verified.snapshot.rows,key!==null&&key.writer_device_id===before.writer_device_id)
+    const committed=await this.store.commitVerifiedDispositions(
+      rootKey,
+      epochSalt,
+      before.operation_generation,
+      reconciled,
+      verified.acceptedEnvelopeIds,
+      verified.staleWriterEnvelopeIds,
+      {
+        remote_rows:verified.snapshot.rows,
+        current_writer:{
+          writer_generation:remote.current_writer.writer_generation,
+          writer_grant_id:remote.current_writer.writer_grant_id,
+          writer_device_id:remote.current_writer.writer_device_id,
+          writer_key_id:remote.current_writer.writer_key_id,
+        },
+        source_epoch_sealed:remote.source_epoch_sealed,
+        recovery_rekey_rotation_required:remote.current_recovery.recovery_rekey_rotation_required,
+      },
+    )
+    if(await this.authority.canPrepareDomainWrite(verified)!=='writer')throw new Error('Fresh canonical v2 authority does not permit domain-write preparation.')
     return withDiaryLockV2(remote.diary_id,async()=>{
-      await this.store.verifyLocalJournal(rootKey,epochSalt,remote.epoch_id)
-      const before=await this.store.loadState(rootKey,epochSalt,remote.epoch_id)
-      const key=await usableWriterKey(this.store,before.writer_signing_key_id,before.diary_id,before.epoch_id)
-      const reconciled=await stateAfterCanonicalVerifyV6(before,remote,verified.snapshot.rows,key!==null&&key.writer_device_id===before.writer_device_id)
-      await this.store.replaceState(rootKey,epochSalt,before.operation_generation,reconciled)
-
-      if(await this.authority.canPrepareDomainWrite(verified)!=='writer')throw new Error('Fresh canonical v2 authority does not permit domain-write preparation.')
       const local=await this.store.loadState(rootKey,epochSalt,remote.epoch_id)
+      if(local.operation_generation!==committed.operation_generation)throw new Error('Local v2 security state changed after fresh canonical verification; retry with a new full verify.')
+      if(await this.authority.canPrepareDomainWrite(verified)!=='writer')throw new Error('Fresh canonical v2 authority changed before domain-write preparation.')
       if(local.writer_status!=='writer_active'||local.writer_generation===null||local.writer_grant_id===null)throw new Error('Local StateV6 is not writer_active.')
       if(!key||key.writer_device_id!==local.writer_device_id)throw new Error('Local WriterDeviceKeyV2 is missing or not bound to the local device; writer operation is read-only.')
 
