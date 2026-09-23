@@ -930,7 +930,6 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
         writer_status:localWriter?'writer_active':'read_only',
         writer_generation:localWriter?local.verified_writer_generation:null,writer_grant_id:localWriter?local.verified_writer_grant_id:null}
       await this.v2Store.replaceState(ctx.rootKey,ctx.epochSalt,local.operation_generation,next)
-      void next
     }
   }
 
