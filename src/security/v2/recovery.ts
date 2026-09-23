@@ -150,6 +150,7 @@ function safe(value:number,min=0):void{if(!Number.isSafeInteger(value)||value<mi
 function validateRow(row:PreparedEnvelopeRowV2,label:string):void{
   if(!row||typeof row!=='object')throw new Error(`${label} schema mismatch.`)
   exact(row,['envelope_id','iv','ciphertext'],label)
+  if(row.envelope_id.length+row.iv.length+row.ciphertext.length+10>21_936)throw new Error(`${label} canonical row bound exceeded.`)
   fixedBase64Url(row.envelope_id,32,`${label}.envelope_id`);fixedBase64Url(row.iv,12,`${label}.iv`)
   const bucket=fromBase64Url(row.ciphertext).byteLength-16
   if(!V2_PADDING_BUCKETS.includes(bucket as (typeof V2_PADDING_BUCKETS)[number]))throw new Error(`${label} ciphertext bucket mismatch.`)
