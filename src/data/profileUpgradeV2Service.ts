@@ -717,11 +717,11 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
       source.material.rootKey,
       sourceSalt,
       {diaryId:plan.diary_id,epochId:source.artifact.source_epoch_id},
-      {
-        envelopeId:activation.entry.announcement_envelope.envelope_id,
-        iv:activation.entry.announcement_envelope.iv,
-        ciphertext:activation.entry.announcement_envelope.ciphertext,
-      },
+      preparedFromRow([
+        activation.entry.announcement_envelope.envelope_id,
+        activation.entry.announcement_envelope.iv,
+        activation.entry.announcement_envelope.ciphertext,
+      ]),
     )
     if(openedAnnouncement.record_schema!=='rotation-announcement-sw-v1'
       ||!sameJson(openedAnnouncement.record_data,{
@@ -737,15 +737,15 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
       recovered.rootKey,
       ctx.epochSalt,
       {diaryId:plan.diary_id,epochId:plan.successor_epoch_id},
-      {
-        envelopeId:activation.entry.successor_confirmation_envelope.envelope_id,
-        iv:activation.entry.successor_confirmation_envelope.iv,
-        ciphertext:activation.entry.successor_confirmation_envelope.ciphertext,
-      },
+      preparedFromRow([
+        activation.entry.successor_confirmation_envelope.envelope_id,
+        activation.entry.successor_confirmation_envelope.iv,
+        activation.entry.successor_confirmation_envelope.ciphertext,
+      ]),
     )
     if(openedConfirmation.record_schema!=='successor-activation-confirmation-sw-v2'
       ||!sameJson(openedConfirmation.record_data,{
-        confirmation_id:(openedConfirmation.record_data as {confirmation_id:string}).confirmation_id,
+        confirmation_id:await deterministicId(plan.operation_id,'confirmation-id',32),
         activation_kind:'profile_upgrade',
         source_profile:SINGLE_WRITER_V1_PROFILE,
         source_epoch_id:source.artifact.source_epoch_id,
