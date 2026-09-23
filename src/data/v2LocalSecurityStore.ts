@@ -1,6 +1,4 @@
 import { base64Url, fixedBase64Url, randomBytes } from '../security/crypto/bytes'
-import { canonicalBytes } from '../security/crypto/canonical'
-import { sha256 } from '../security/crypto/core'
 import type { PreparedEnvelope } from '../security/envelopes'
 import {
   deriveEpochSaltV2,
@@ -14,6 +12,8 @@ import {
   validateEpochLocalSecurityStateV6,
   verifyLocalStateTagV6,
   type EpochLocalSecurityStateV6,
+  type RootWrapV6,
+  validateRootWrapV6,
 } from '../security/v2/localState'
 
 const DEFAULT_DATABASE_NAME='eds-diary-v2-security'
@@ -21,6 +21,8 @@ const DATABASE_VERSION=1
 const STORES={
   state:'epochSecurityStateV6',
   writerKeys:'writerDeviceKeysV2',
+  rootWraps:'rootWrapsV6',
+  wrappingKeys:'wrappingKeysV6',
   reservations:'envelopeReservationsV6',
   envelopes:'envelopesV6',
   outbox:'outboxV6',
@@ -71,6 +73,8 @@ export class IndexedDbV2LocalSecurityStore {
         const db=request.result
         if(!db.objectStoreNames.contains(STORES.state))db.createObjectStore(STORES.state,{keyPath:'id'})
         if(!db.objectStoreNames.contains(STORES.writerKeys))db.createObjectStore(STORES.writerKeys,{keyPath:'writer_signing_key_id'})
+        if(!db.objectStoreNames.contains(STORES.rootWraps))db.createObjectStore(STORES.rootWraps,{keyPath:'id'})
+        if(!db.objectStoreNames.contains(STORES.wrappingKeys))db.createObjectStore(STORES.wrappingKeys,{keyPath:'id'})
         if(!db.objectStoreNames.contains(STORES.reservations)){const store=db.createObjectStore(STORES.reservations,{keyPath:'id'});store.createIndex('byEpoch','epoch_id')}
         if(!db.objectStoreNames.contains(STORES.envelopes)){const store=db.createObjectStore(STORES.envelopes,{keyPath:'id'});store.createIndex('byEpoch','epoch_id');store.createIndex('byEpochSeq',['epoch_id','local_seq'],{unique:true})}
         if(!db.objectStoreNames.contains(STORES.outbox)){const store=db.createObjectStore(STORES.outbox,{keyPath:'id'});store.createIndex('byEpoch','epoch_id')}
@@ -80,6 +84,46 @@ export class IndexedDbV2LocalSecurityStore {
       request.addEventListener('blocked',()=>{this.dbPromise=null;reject(new Error('v2 local security database upgrade is blocked.'))},{once:true})
     })
     return this.dbPromise
+  }
+
+  async persistRootWrap(epochId:string,wrap:RootWrapV6):Promise<void>{
+    fixedBase64Url(epochId,16,'epoch_id')
+    const checked=validateRootWrapV6(wrap)
+    if(checked.epoch_id!==epochId)throw new Error('RootWrapV6 epoch binding mismatch.')
+    const db=await this.open(),tx=db.transaction(STORES.rootWraps,'readwrite')
+    tx.objectStore(STORES.rootWraps).put({id:epochId,wrap:structuredClone(checked)})
+    await transactionDone(tx)
+    const read=db.transaction(STORES.rootWraps,'readonly'),stored=await requestResult<{id:string;wrap:RootWrapV6}|undefined>(read.objectStore(STORES.rootWraps).get(epochId));await transactionDone(read)
+    if(!stored)throw new Error('RootWrapV6 persistence readback failed.')
+    validateRootWrapV6(stored.wrap)
+  }
+
+  async readRootWrap(epochId:string):Promise<RootWrapV6|null>{
+    fixedBase64Url(epochId,16,'epoch_id')
+    const db=await this.open(),tx=db.transaction(STORES.rootWraps,'readonly')
+    const stored=await requestResult<{id:string;wrap:RootWrapV6}|undefined>(tx.objectStore(STORES.rootWraps).get(epochId));await transactionDone(tx)
+    return stored?validateRootWrapV6(stored.wrap):null
+  }
+
+  async createBestEffortWrappingKey(wrapId:string):Promise<CryptoKey>{
+    fixedBase64Url(wrapId,16,'wrap_id')
+    const key=await crypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt'])
+    const db=await this.open(),tx=db.transaction(STORES.wrappingKeys,'readwrite')
+    tx.objectStore(STORES.wrappingKeys).add({id:wrapId,key})
+    await transactionDone(tx)
+    const checked=await this.loadBestEffortWrappingKey(wrapId)
+    if(!checked)throw new Error('RootWrapV6 best-effort key persistence readback failed.')
+    return checked
+  }
+
+  async loadBestEffortWrappingKey(wrapId:string):Promise<CryptoKey|null>{
+    fixedBase64Url(wrapId,16,'wrap_id')
+    const db=await this.open(),tx=db.transaction(STORES.wrappingKeys,'readonly')
+    const stored=await requestResult<{id:string;key:CryptoKey}|undefined>(tx.objectStore(STORES.wrappingKeys).get(wrapId));await transactionDone(tx)
+    if(!stored)return null
+    const usages=[...stored.key.usages].sort().join(',')
+    if(stored.key.type!=='secret'||stored.key.algorithm.name!=='AES-GCM'||stored.key.extractable||usages!=='decrypt,encrypt')throw new Error('Stored RootWrapV6 best-effort key is invalid.')
+    return stored.key
   }
 
   async persistState(rootKey:Uint8Array,state:EpochLocalSecurityStateV6):Promise<void>{
