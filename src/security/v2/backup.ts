@@ -3,7 +3,7 @@ import { canonicalBytes, parseCanonicalJson } from '../crypto/canonical'
 import { aesGcmDecrypt, aesGcmEncrypt, randomBytes, sha256 } from '../crypto/core'
 import { deriveBackupKeyV2 } from './crypto'
 import { createAnchorV2 } from './prefix'
-import { manifestFingerprintV6, manifestTrustRootV6, openManifestV6, parseManifestCellsV6, type ProtectedManifestV6 } from './manifest'
+import { manifestFingerprintV6, openManifestTrustRootV6, openManifestV6, parseManifestCellsV6, type ProtectedManifestV6 } from './manifest'
 import { openRecoveryArtifactV6, recoveryArtifactHashV6, validateRecoveryArtifactV6, type PreparedEnvelopeRowV2, type RecoveryArtifactV6, type RecoveryPayloadV6 } from './recovery'
 import { openRevisionEnvelopeV2, V2_PADDING_BUCKETS } from './envelopes'
 import { TransferableSingleWriterV2Verifier, type CanonicalFullResultV2 } from './verifier'
@@ -194,7 +194,7 @@ async function validateBackupActivationBoundary(
 
 async function verifyBackupLocalRows(
   rootKey:Uint8Array,
-  trustRoot:Awaited<ReturnType<typeof manifestTrustRootV6>>,
+  trustRoot:Awaited<ReturnType<typeof openManifestTrustRootV6>>['trustRoot'],
   recordRows:readonly Row[],
   pendingRows:readonly Row[],
   staleRows:readonly Row[],
@@ -227,9 +227,10 @@ async function buildManifest(context:BackupContextV6,backupId:string):Promise<Ba
   if(context.canonical.diary_id!==context.diaryId||context.canonical.epoch_id!==context.epochId)throw new Error('BackupV6 canonical identity mismatch.')
   const manifestCells=parseManifestCellsV6(context.epochManifestPublic),fingerprint=await manifestFingerprintV6(manifestCells)
   if(fingerprint!==context.canonical.manifest_fingerprint)throw new Error('BackupV6 manifest fingerprint mismatch.')
-  const manifestPayload=await openManifestV6(context.rootKey,context.epochSalt,{diaryId:context.diaryId,epochId:context.epochId},manifestCells)
+  const openedManifest=await openManifestTrustRootV6(context.rootKey,context.epochSalt,{diaryId:context.diaryId,epochId:context.epochId},manifestCells)
+  const manifestPayload=openedManifest.payload
   if(manifestPayload.key_id!==context.keyId)throw new Error('BackupV6 key binding mismatch.')
-  const trustRoot=await manifestTrustRootV6(manifestCells,manifestPayload)
+  const trustRoot=openedManifest.trustRoot
   const canonical=await new TransferableSingleWriterV2Verifier().verifyCanonicalFull(trustRoot,context.rootKey,context.recordRows)
   if(!canonicalEqual(canonical.remote_anchor,context.canonical.remote_anchor)
     ||!sameWriter(canonical,{
@@ -341,13 +342,14 @@ export async function testRestoreBackupV6(
   if(manifest.backup_id!==backup.backup_id||manifest.diary_id!==context.diaryId||manifest.epoch_id!==context.epochId||manifest.key_id!==context.keyId)throw new Error('BackupV6 identity binding mismatch.')
   const manifestCells=parseManifestCellsV6(backup.epoch_manifest_public),fingerprint=await manifestFingerprintV6(manifestCells)
   if(fingerprint!==manifest.manifest_fingerprint)throw new Error('BackupV6 ManifestV6 fingerprint mismatch.')
-  const manifestPayload=await openManifestV6(context.rootKey,context.epochSalt,{diaryId:context.diaryId,epochId:context.epochId},manifestCells)
+  const openedManifest=await openManifestTrustRootV6(context.rootKey,context.epochSalt,{diaryId:context.diaryId,epochId:context.epochId},manifestCells)
+  const manifestPayload=openedManifest.payload
   if(manifestPayload.key_id!==context.keyId)throw new Error('BackupV6 ManifestV6 key mismatch.')
   if(manifest.epoch_manifest_public_sha256!==await digest(backup.epoch_manifest_public)||manifest.record_rows_jcs_sha256!==await digest(backup.record_rows)||manifest.pending_outbox_rows_jcs_sha256!==await digest(backup.pending_outbox_rows)||manifest.stale_writer_pending_rows_jcs_sha256!==await digest(backup.stale_writer_pending_rows))throw new Error('BackupV6 category hash mismatch.')
   if(manifest.record_row_count!==backup.record_rows.length||manifest.record_rows_canonical_bytes!==rowBytes(backup.record_rows)||manifest.pending_outbox_count!==backup.pending_outbox_rows.length||manifest.pending_outbox_rows_canonical_bytes!==rowBytes(backup.pending_outbox_rows)||manifest.stale_writer_pending_count!==backup.stale_writer_pending_rows.length||manifest.stale_writer_pending_rows_canonical_bytes!==rowBytes(backup.stale_writer_pending_rows))throw new Error('BackupV6 category count/byte mismatch.')
   const union=unionStats([backup.record_rows,backup.pending_outbox_rows,backup.stale_writer_pending_rows])
   if(manifest.unique_union_count!==union.count||manifest.unique_union_canonical_bytes!==union.bytes)throw new Error('BackupV6 unique union mismatch.')
-  const trustRoot=await manifestTrustRootV6(manifestCells,manifestPayload),canonical=await verifier.verifyCanonicalFull(trustRoot,context.rootKey,backup.record_rows)
+  const trustRoot=openedManifest.trustRoot,canonical=await verifier.verifyCanonicalFull(trustRoot,context.rootKey,backup.record_rows)
   await verifyBackupLocalRows(context.rootKey,trustRoot,backup.record_rows,backup.pending_outbox_rows,backup.stale_writer_pending_rows)
   if(!canonicalEqual(canonical.remote_anchor,manifest.remote_anchor_at_export)||canonical.remote_anchor.prefix_hash!==manifest.record_prefix_hash)throw new Error('BackupV6 RemoteAnchorV2 mismatch.')
   if(!sameWriter(canonical,manifest.writer_authority_at_export))throw new Error('BackupV6 Writer authority mismatch.')
