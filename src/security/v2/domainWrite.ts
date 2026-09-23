@@ -8,7 +8,7 @@ import { IndexedDbV2LocalSecurityStore } from './localPersistence'
 import { V2_SCHEMA_REGISTRY } from './schemaRegistry'
 import { V2_RECORD_SCHEMA_BY_TYPE, type RevisionV2 } from './types'
 import { validateRevisionV2 } from './validators'
-import { withDiaryLockV2 } from './localState'
+import { withDiaryLockV2, type StoredWriterDeviceKeyV2 } from './localState'
 import type { CanonicalFullResultV2 } from './verifier'
 import { stateAfterCanonicalVerifyV6 } from './stateReconciliation'
 
@@ -58,7 +58,7 @@ export class V2DomainWritePreparer {
     return withDiaryLockV2(remote.diary_id,async()=>{
       await this.store.verifyLocalJournal(rootKey,epochSalt,remote.epoch_id)
       const before=await this.store.loadState(rootKey,epochSalt,remote.epoch_id)
-      let key=null
+      let key:StoredWriterDeviceKeyV2|null=null
       try{key=await this.store.loadWriterKey(before.writer_signing_key_id,before.diary_id,before.epoch_id)}catch{key=null}
       const keyUsable=key!==null&&key.writer_device_id===before.writer_device_id
       const reconciled=await stateAfterCanonicalVerifyV6(before,remote,verified.snapshot.rows,keyUsable)
