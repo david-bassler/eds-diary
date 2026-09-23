@@ -247,12 +247,23 @@ export class IndexedDbV2LocalSecurityStore {
     })
   }
 
-  async envelopeAuthority(rootKey:Uint8Array,epochSalt:Uint8Array,epochId:string,envelopeId:string):Promise<PreparedEnvelopeAuthorityV2|null>{
-    const db=await openDatabase(),tx=db.transaction(STORES.outbox,'readonly')
-    const entry=await requestResult<V2OutboxEntry|undefined>(tx.objectStore(STORES.outbox).get(`${epochId}:${envelopeId}`))
+  async envelopeAuthority(rootKey:Uint8Array,epochSalt:Uint8Array,epochId:string,envelope:PreparedEnvelope):Promise<PreparedEnvelopeAuthorityV2|null>{
+    const db=await openDatabase(),tx=db.transaction([STORES.outbox,STORES.envelopes],'readonly')
+    const id=`${epochId}:${envelope.envelopeId}`
+    const entryRequest=tx.objectStore(STORES.outbox).get(id)
+    const storedRequest=tx.objectStore(STORES.envelopes).get(id)
+    const [entry,stored]=await Promise.all([
+      requestResult<V2OutboxEntry|undefined>(entryRequest),
+      requestResult<PersistedEnvelopeV6|undefined>(storedRequest),
+    ])
     await transactionDone(tx)
-    if(!entry)return null
+    if(!entry&&!stored)return null
+    if(!entry||!stored)throw new Error('V2 prepared envelope binding is incomplete.')
     await verifyOutboxTag(rootKey,epochSalt,entry)
+    if(stored.envelopeId!==envelope.envelopeId
+      ||stored.iv!==envelope.iv
+      ||stored.ciphertext!==envelope.ciphertext
+      ||stored.bytesHash!==envelope.bytesHash)throw new Error('Prepared envelope bytes do not match immutable local persistence.')
     return structuredClone(entry.authority)
   }
 
