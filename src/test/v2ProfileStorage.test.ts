@@ -31,7 +31,7 @@ import {
 } from '../security/v2/recovery'
 import { recoveryArtifactFromGridV6, recoveryArtifactToGridV6 } from '../security/v2/recoveryGrid'
 import { createBackupV6, testRestoreBackupV6 } from '../security/v2/backup'
-import { createRecoveryTakeoverStagingV2, VerifiedRecoveryTakeoverStagingV2 } from '../security/v2/recoveryStaging'
+import { createRecoveryTakeoverStagingV2, VerifiedRecoveryTakeoverStagingV2, type RecoveryTakeoverStagingV2 } from '../security/v2/recoveryStaging'
 import { IndexedDbV2LocalSecurityStore, VerifiedPersistedRecoveryArtifactV6, __v2LocalPersistenceTesting, isVerifiedPersistedRecoveryArtifactV6 } from '../security/v2/localPersistence'
 import { GoogleSheetsTransferableSingleWriterV2ProfileCodec } from '../sync/google/GoogleSheetsTransferableSingleWriterV2ProfileCodec'
 import {
@@ -325,7 +325,7 @@ describe('V2 creation one-shot persistence',()=>{
       salt:bytes(30,32),
       iv:bytes(31,12),
     })
-    expect(()=>new (VerifiedRecoveryTakeoverStagingV2 as unknown as {new(staging:typeof staging,token:symbol):VerifiedRecoveryTakeoverStagingV2})(staging,Symbol('forged')))
+    expect(()=>new (VerifiedRecoveryTakeoverStagingV2 as unknown as {new(staging:RecoveryTakeoverStagingV2,token:symbol):VerifiedRecoveryTakeoverStagingV2})(staging,Symbol('forged')))
       .toThrow(/only be created by the verifier/)
     expect(()=>new (VerifiedPersistedRecoveryArtifactV6 as unknown as {new(
       artifact:RecoveryArtifactV6,
