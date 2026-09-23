@@ -142,6 +142,8 @@ describe('EpochLocalSecurityStateV6 and writer gate',()=>{
     expect(()=>validateEpochLocalSecurityStateV6({...s,recovery_rekey_rotation_required:true,recovery_rekey_transition_id:null})).toThrow(/Pending-Rekey/)
     expect(()=>validateEpochLocalSecurityStateV6({...s,writer_status:'read_only',writer_generation:1})).toThrow(/read_only/)
     expect(()=>validateEpochLocalSecurityStateV6({...s,epoch_status:'orphaned'})).toThrow(/orphaned/)
+    const offlineRestore={...s,epoch_status:'offline_restored' as const,remote_binding:null,writer_status:'read_only' as const,writer_generation:null,writer_grant_id:null,verified_writer_device_id:null,verified_writer_key_id:null,verified_writer_generation:null,verified_writer_grant_id:null}
+    expect(validateEpochLocalSecurityStateV6(offlineRestore).remote_anchor).toEqual(anchor)
     expect(()=>validateEpochLocalSecurityStateV6({...s,unexpected:true})).toThrow(/unknown or missing/)
   })
 
