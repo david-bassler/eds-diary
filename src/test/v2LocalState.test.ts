@@ -130,7 +130,7 @@ describe('EpochLocalSecurityStateV6 persistence and writer gate',()=>{
     const staged={...f.result,activation_state:'staged_confirmation_missing' as const}
     const reconciled=await stateAfterCanonicalVerifyV6(f.initial,staged,[],true)
     await store.replaceState(rootKey,f.epochSalt,0,reconciled)
-    const verified=v2VerifiedRemoteState(staged,{manifest:[],rows:[]})
+    const verified=v2VerifiedRemoteState(staged,{manifest:[],rows:[]},reconciled.operation_generation)
     const authority=new TransferableSingleWriterV2WriteAuthority(()=>store.loadState(rootKey,f.epochSalt,f.epochId))
     await expect(authority.canPrepareDomainWrite(verified)).resolves.toBe('read_only')
 
@@ -150,7 +150,7 @@ describe('EpochLocalSecurityStateV6 persistence and writer gate',()=>{
     },f.diaryId,f.epochId)
     const authority=new TransferableSingleWriterV2WriteAuthority(()=>store.loadState(rootKey,f.epochSalt,f.epochId))
     const preparer=new V2DomainWritePreparer(store,authority)
-    const verified=v2VerifiedRemoteState(f.result,{manifest:[],rows:[]})
+    const verified=v2VerifiedRemoteState(f.result,{manifest:[],rows:[]},reconciled.operation_generation)
 
     await expect(preparer.prepareAndPersist(verified,rootKey,f.epochSalt,{recordType:'pain_entry',recordId:b(11,16),status:'active',data:painData}))
       .rejects.toThrow(/authority|writer/i)
@@ -167,7 +167,11 @@ describe('EpochLocalSecurityStateV6 persistence and writer gate',()=>{
     })
     expect(prepared.revision.writer_signature).toMatch(/^[A-Za-z0-9_-]{86}$/)
     expect(await store.envelopes(f.epochId)).toHaveLength(1)
-    expect((await store.loadState(rootKey,f.epochSalt,f.epochId)).local_journal_count).toBe(1)
+    const committed=await store.loadState(rootKey,f.epochSalt,f.epochId)
+    expect(committed.local_journal_count).toBe(1)
+    await expect(preparer.prepareAndPersist(verified,rootKey,f.epochSalt,{recordType:'pain_entry',recordId:b(12,16),status:'active',data:painData}))
+      .rejects.toThrow(/consumed|authority/i)
+    expect(await store.envelopes(f.epochId)).toHaveLength(1)
   })
 
   it('fails closed on Pending-Rekey and on any non-terminal mutation ref',async()=>{
@@ -176,13 +180,13 @@ describe('EpochLocalSecurityStateV6 persistence and writer gate',()=>{
     const active=await stateAfterCanonicalVerifyV6(f.initial,f.result,[],true)
     await store.replaceState(rootKey,f.epochSalt,0,active)
     const authority=new TransferableSingleWriterV2WriteAuthority(()=>store.loadState(rootKey,f.epochSalt,f.epochId))
-    const verified=v2VerifiedRemoteState(f.result,{manifest:[],rows:[]})
+    const verified=v2VerifiedRemoteState(f.result,{manifest:[],rows:[]},active.operation_generation)
     await expect(authority.canPrepareDomainWrite(verified)).resolves.toBe('writer')
 
     const pendingRemote={...f.result,current_recovery:{...f.result.current_recovery,recovery_rekey_rotation_required:true,recovery_rekey_transition_id:b(12,32)}}
     const pending=await stateAfterCanonicalVerifyV6(active,pendingRemote,[],true)
     await store.replaceState(rootKey,f.epochSalt,active.operation_generation,pending)
-    await expect(authority.canPrepareDomainWrite(v2VerifiedRemoteState(pendingRemote,{manifest:[],rows:[]}))).resolves.toBe('read_only')
+    await expect(authority.canPrepareDomainWrite(v2VerifiedRemoteState(pendingRemote,{manifest:[],rows:[]},pending.operation_generation))).resolves.toBe('read_only')
 
     const operationBlocked:EpochLocalSecurityStateV6={...pending,recovery_rekey_rotation_required:false,recovery_rekey_transition_id:null,rotation_state_ref:{operation_id:'rotation-1',state:'copying',state_record_hash:b(13,32)},operation_generation:pending.operation_generation+1}
     await store.replaceState(rootKey,f.epochSalt,pending.operation_generation,operationBlocked)
