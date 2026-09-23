@@ -94,7 +94,8 @@ function nullableId(value:unknown,bytes:number,label:string):string|null{
 function stateRef(value:unknown,label:string):SecurityStateRefV2|null{
   if(value===null)return null
   const ref=exactObject(value,['operation_id','state','state_record_hash'],label)
-  if(typeof ref.operation_id!=='string'||!ref.operation_id||typeof ref.state!=='string'||!ref.state)throw new Error(`${label} identity is invalid.`)
+  if(typeof ref.operation_id!=='string'||typeof ref.state!=='string'||!ref.state)throw new Error(`${label} identity is invalid.`)
+  fixedBase64Url(ref.operation_id,32,`${label}.operation_id`)
   if(typeof ref.state_record_hash!=='string')throw new Error(`${label}.state_record_hash is invalid.`)
   fixedBase64Url(ref.state_record_hash,32,`${label}.state_record_hash`)
   return value as SecurityStateRefV2
@@ -139,7 +140,8 @@ export function validateEpochLocalSecurityStateV6(value:unknown):EpochLocalSecur
   stateRef(state.recovery_operation_state_ref,'recovery_operation_state_ref')
   if(state.activation_lineage_cache_ref!==null){
     const ref=exactObject(state.activation_lineage_cache_ref,['cache_id','cache_record_hash'],'activation_lineage_cache_ref')
-    if(typeof ref.cache_id!=='string'||!ref.cache_id||typeof ref.cache_record_hash!=='string')throw new Error('activation_lineage_cache_ref is invalid.')
+    if(typeof ref.cache_id!=='string'||typeof ref.cache_record_hash!=='string')throw new Error('activation_lineage_cache_ref is invalid.')
+    fixedBase64Url(ref.cache_id,16,'activation_lineage_cache_ref.cache_id')
     fixedBase64Url(ref.cache_record_hash,32,'activation_lineage_cache_ref.cache_record_hash')
   }
 
