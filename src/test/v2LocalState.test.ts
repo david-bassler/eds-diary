@@ -179,6 +179,24 @@ describe('EpochLocalSecurityStateV6 persistence and writer gate',()=>{
     expect((await store.loadState(rootKey,f.epochSalt,f.epochId)).local_journal_count).toBe(2)
   })
 
+  it('treats a valid keypair stored under the wrong local device binding as read-only',async()=>{
+    const f=await fixture(),store=new IndexedDbV2LocalSecurityStore()
+    await store.initializeState(rootKey,f.epochSalt,f.initial)
+    await store.persistWriterKey({
+      writer_signing_key_id:f.writer.writerKeyId,
+      writer_device_id:b(44,16),
+      writer_public_key:base64Url(f.writer.publicKeyRaw),
+      private_key:f.writer.privateKey,
+    },f.diaryId,f.epochId)
+    const verified=v2VerifiedRemoteState(f.result,{manifest:[],rows:[]})
+    const authority=new TransferableSingleWriterV2WriteAuthority(()=>store.loadState(rootKey,f.epochSalt,f.epochId),(envelopeId)=>store.envelopeAuthority(rootKey,f.epochSalt,f.epochId,envelopeId))
+    const preparer=new V2DomainWritePreparer(store,authority,{verifyNow:async()=>verified})
+    await expect(preparer.prepareAndPersist(rootKey,f.epochSalt,{recordType:'pain_entry',recordId:b(45,16),status:'active',data:painData}))
+      .rejects.toThrow(/authority|writer|read-only/i)
+    expect((await store.loadState(rootKey,f.epochSalt,f.epochId)).writer_status).toBe('read_only')
+    expect(await store.envelopes(f.epochId)).toHaveLength(0)
+  })
+
   it('fails closed on Pending-Rekey and on any non-terminal mutation ref',async()=>{
     const f=await fixture(),store=new IndexedDbV2LocalSecurityStore()
     await store.initializeState(rootKey,f.epochSalt,f.initial)
