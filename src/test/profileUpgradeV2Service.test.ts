@@ -40,6 +40,8 @@ import type { RecoveryArtifactV6 } from '../security/v2/recovery'
 import type { CreationPersistence, CreationState } from '../sync/core/creation'
 import type { FreshCanonicalV2Source } from '../security/v2/domainWrite'
 
+type Row=readonly[string,string,string]
+
 const pain=(id:string)=>({id,startedAt:'2026-09-23T10:00:00.000Z',endedAt:'',locations:[],intensity:4,qualities:[],cause:'',occursWhen:'',note:'v2 profile upgrade fixture',createdAt:'2026-09-23T10:00:00.000Z',updatedAt:'2026-09-23T10:00:00.000Z'})
 function transactionComplete(tx:IDBTransaction):Promise<void>{return new Promise((resolve,reject)=>{tx.oncomplete=()=>resolve();tx.onabort=()=>reject(tx.error);tx.onerror=()=>reject(tx.error)})}
 function deleteDatabase(name:string):Promise<void>{return new Promise((resolve,reject)=>{const request=indexedDB.deleteDatabase(name);request.onsuccess=()=>resolve();request.onerror=()=>reject(request.error);request.onblocked=()=>reject(new Error(`Test database deletion blocked: ${name}`))})}
