@@ -68,8 +68,7 @@ export class V2DomainWritePreparer {
       await this.store.verifyLocalJournal(rootKey,epochSalt,remote.epoch_id)
       const before=await this.store.loadState(rootKey,epochSalt,remote.epoch_id)
       const key=await usableWriterKey(this.store,before.writer_signing_key_id,before.diary_id,before.epoch_id)
-      const keyUsable=key!==null&&key.writer_device_id===before.writer_device_id
-      const reconciled=await stateAfterCanonicalVerifyV6(before,remote,verified.snapshot.rows,keyUsable)
+      const reconciled=await stateAfterCanonicalVerifyV6(before,remote,verified.snapshot.rows,key!==null&&key.writer_device_id===before.writer_device_id)
       await this.store.replaceState(rootKey,epochSalt,before.operation_generation,reconciled)
 
       if(await this.authority.canPrepareDomainWrite(verified)!=='writer')throw new Error('Fresh canonical v2 authority does not permit domain-write preparation.')
