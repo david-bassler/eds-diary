@@ -19,6 +19,7 @@ import {
   type ManifestCellsV6,
 } from '../../security/v2/manifest'
 import type { RecoveryArtifactV6 } from '../../security/v2/recovery'
+import { isVerifiedRecoveryTakeoverStagingV2, type VerifiedRecoveryTakeoverStagingV2 } from '../../security/v2/recoveryStaging'
 
 export interface TransferableSingleWriterV2ProviderSession {
   readonly providerId:typeof GOOGLE_DRIVE_SHEETS_PROVIDER
@@ -35,6 +36,7 @@ export interface TransferableSingleWriterV2ProviderSession {
     manifest:ManifestCellsV6
     transport:GoogleSheetsTransferableSingleWriterV2Transport
     persistence:CreationPersistence
+    recoveryStaging:VerifiedRecoveryTakeoverStagingV2
   }):Promise<CreationState>
   publishRecoveryArtifact(urs:Uint8Array,diaryId:string,epochId:string,artifact:RecoveryArtifactV6):Promise<string>
   findRecoveryArtifact(urs:Uint8Array,diaryId:string,epochId:string):Promise<RecoveryArtifactV6|null>
@@ -63,15 +65,25 @@ class GoogleTransferableSingleWriterV2ProviderSession implements TransferableSin
     return{app_format:'sync-v6',epoch_locator:await epochLocatorV2(diaryId,epochId)}
   }
   async createOrReconcileEpoch(args:{
-    diaryId:string;epochId:string;rootKey:Uint8Array;creationLocator:string;manifest:ManifestCellsV6;transport:GoogleSheetsTransferableSingleWriterV2Transport;persistence:CreationPersistence
+    diaryId:string;epochId:string;rootKey:Uint8Array;creationLocator:string;manifest:ManifestCellsV6;transport:GoogleSheetsTransferableSingleWriterV2Transport;persistence:CreationPersistence;recoveryStaging:VerifiedRecoveryTakeoverStagingV2
   }):Promise<CreationState>{
     fixedBase64Url(args.creationLocator,16,'creation_locator')
     const epochSalt=await deriveEpochSaltV2(fixedBase64Url(args.diaryId,16),fixedBase64Url(args.epochId,16))
     const payload=await openManifestV6(args.rootKey,epochSalt,{diaryId:args.diaryId,epochId:args.epochId},args.manifest)
+    const fingerprint=await manifestFingerprintV6(args.manifest)
+    if(!isVerifiedRecoveryTakeoverStagingV2(args.recoveryStaging))throw new Error('Verified persistent RecoveryTakeoverStagingV2 is required before remote creation.')
+    const staging=args.recoveryStaging.staging
+    if(staging.diary_id!==args.diaryId
+      ||staging.epoch_id!==args.epochId
+      ||staging.manifest_fingerprint!==fingerprint
+      ||staging.recovery_generation!==payload.recovery_generation
+      ||staging.recovery_takeover_key_id!==payload.recovery_takeover_key_id
+      ||staging.recovery_takeover_public_key!==payload.recovery_takeover_public_key)throw new Error('RecoveryTakeoverStagingV2 does not bind the planned ManifestV6.')
     if(payload.creation_locator!==args.creationLocator)throw new Error('Creation locator does not match protected ManifestV6.')
     if(payload.google_account_binding!==await args.transport.authenticatedAccountBinding())throw new Error('Creation ManifestV6 Google account binding mismatch.')
     const codec=await this.codecForEpoch(args.diaryId,args.epochId,args.rootKey,args.transport)
-    const cells=manifestCellsArrayV6(args.manifest),fingerprint=await manifestFingerprintV6(parseManifestCellsV6(cells))
+    const cells=manifestCellsArrayV6(args.manifest)
+    if(await manifestFingerprintV6(parseManifestCellsV6(cells))!==fingerprint)throw new Error('ManifestV6 fingerprint changed during creation preparation.')
     const initial:CreationState={
       locator:args.creationLocator,
       manifestFingerprint:fingerprint,
