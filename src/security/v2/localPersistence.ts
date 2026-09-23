@@ -1,4 +1,7 @@
-import { base64Url, randomBytes } from '../crypto/bytes'
+import { base64Url, equalBytes, fixedBase64Url, fromBase64Url, randomBytes } from '../crypto/bytes'
+import { canonicalBytes } from '../crypto/canonical'
+import { hmacSha256 } from '../crypto/core'
+import { deriveLocalStateMacKeyV2 } from './crypto'
 import type { PreparedEnvelope } from '../envelopes'
 import { localJournalNextV2, localStateTagV6, validateEpochLocalSecurityStateV6, validateStoredWriterDeviceKeyV2, verifyLocalStateTagV6, withDiaryLockV2, type EpochLocalSecurityStateV6, type StoredWriterDeviceKeyV2 } from './localState'
 
@@ -25,12 +28,20 @@ export interface PreparedEnvelopeAuthorityV2 {
   writer_key_id:string
 }
 export type V2OutboxStatus='prepared'|'pending'|'durable'|'stale_writer_pending'
-export interface V2OutboxEntry {
+export interface V2OutboxEntryCore {
   id:string
   epoch_id:string
   envelope_id:string
   status:V2OutboxStatus
   authority:PreparedEnvelopeAuthorityV2
+}
+export interface V2OutboxEntry extends V2OutboxEntryCore {tag:string}
+async function outboxTag(rootKey:Uint8Array,epochSalt:Uint8Array,entry:V2OutboxEntryCore):Promise<string>{
+  return base64Url(await hmacSha256(await deriveLocalStateMacKeyV2(rootKey,epochSalt),canonicalBytes(entry as never)))
+}
+async function verifyOutboxTag(rootKey:Uint8Array,epochSalt:Uint8Array,entry:V2OutboxEntry):Promise<void>{
+  const {tag,...core}=entry,expected=fromBase64Url(await outboxTag(rootKey,epochSalt,core))
+  if(!equalBytes(fixedBase64Url(tag,32,'outbox_tag'),expected))throw new Error('V2 outbox MAC failed.')
 }
 
 function requestResult<T>(request:IDBRequest<T>):Promise<T>{
@@ -158,7 +169,8 @@ export class IndexedDbV2LocalSecurityStore {
     const tx=db.transaction([STORES.reservations,STORES.envelopes,STORES.outbox,STORES.states],'readwrite')
     tx.objectStore(STORES.reservations).put({...storedReservation,state:'sealed'} satisfies EnvelopeReservationV6)
     tx.objectStore(STORES.envelopes).add({...envelope,id:reservationId,epoch_id:reservation.epoch_id,local_sequence:sequence} satisfies PersistedEnvelopeV6)
-    tx.objectStore(STORES.outbox).add({id:reservationId,epoch_id:reservation.epoch_id,envelope_id:envelope.envelopeId,status:'prepared',authority:structuredClone(authority)} satisfies V2OutboxEntry)
+    const outboxCore:V2OutboxEntryCore={id:reservationId,epoch_id:reservation.epoch_id,envelope_id:envelope.envelopeId,status:'prepared',authority:structuredClone(authority)}
+    tx.objectStore(STORES.outbox).add({...outboxCore,tag:await outboxTag(rootKey,epochSalt,outboxCore)} satisfies V2OutboxEntry)
     tx.objectStore(STORES.states).put({id:reservation.epoch_id,state:structuredClone(nextState),tag})
     await transactionDone(tx)
     return this.loadState(rootKey,epochSalt,reservation.epoch_id)
@@ -176,7 +188,7 @@ export class IndexedDbV2LocalSecurityStore {
     return withDiaryLockV2(nextState.diary_id,async()=>{
       const current=await this.loadState(rootKey,epochSalt,nextState.epoch_id)
       if(current.operation_generation!==expectedOperationGeneration||nextState.operation_generation!==expectedOperationGeneration+1)throw new Error('Stale StateV6 generation during verified disposition commit.')
-      const entries=await this.outbox(nextState.epoch_id)
+      const entries=await this.outbox(rootKey,epochSalt,nextState.epoch_id)
       const updated=entries.map(entry=>{
         if(acceptedEnvelopeIds.has(entry.envelope_id))return{...entry,status:'durable' as const}
         if(staleWriterEnvelopeIds.has(entry.envelope_id))return{...entry,status:'stale_writer_pending' as const}
@@ -186,7 +198,10 @@ export class IndexedDbV2LocalSecurityStore {
       const finalState={...nextState,stale_writer_pending_count:staleCount}
       validateEpochLocalSecurityStateV6(finalState)
       const tag=await localStateTagV6(rootKey,epochSalt,finalState),db=await openDatabase(),tx=db.transaction([STORES.outbox,STORES.states],'readwrite')
-      for(const entry of updated)tx.objectStore(STORES.outbox).put(entry)
+      for(const entry of updated){
+        const {tag: _tag,...core}=entry
+        tx.objectStore(STORES.outbox).put({...core,tag:await outboxTag(rootKey,epochSalt,core)})
+      }
       tx.objectStore(STORES.states).put({id:finalState.epoch_id,state:structuredClone(finalState),tag})
       await transactionDone(tx)
       return this.loadState(rootKey,epochSalt,finalState.epoch_id)
@@ -209,29 +224,33 @@ export class IndexedDbV2LocalSecurityStore {
       const entry=await requestResult<V2OutboxEntry|undefined>(readTx.objectStore(STORES.outbox).get(`${epochId}:${envelopeId}`))
       await transactionDone(readTx)
       if(!entry)throw new Error('V2 outbox envelope is missing.')
-      const entries=await this.outbox(epochId)
+      const entries=await this.outbox(rootKey,epochSalt,epochId)
       const nextEntries=entries.map(item=>item.id===entry.id?{...item,status}:item)
       const staleCount=nextEntries.filter(item=>item.status==='stale_writer_pending').length
       const nextState={...fresh,operation_generation:fresh.operation_generation+1,stale_writer_pending_count:staleCount}
       const tag=await localStateTagV6(rootKey,epochSalt,nextState),tx=db.transaction([STORES.outbox,STORES.states],'readwrite')
-      tx.objectStore(STORES.outbox).put({...entry,status})
+      const {tag: _tag,...entryCore}=entry,nextCore={...entryCore,status}
+      tx.objectStore(STORES.outbox).put({...nextCore,tag:await outboxTag(rootKey,epochSalt,nextCore)})
       tx.objectStore(STORES.states).put({id:epochId,state:structuredClone(nextState),tag})
       await transactionDone(tx)
       return this.loadState(rootKey,epochSalt,epochId)
     })
   }
 
-  async envelopeAuthority(epochId:string,envelopeId:string):Promise<PreparedEnvelopeAuthorityV2|null>{
+  async envelopeAuthority(rootKey:Uint8Array,epochSalt:Uint8Array,epochId:string,envelopeId:string):Promise<PreparedEnvelopeAuthorityV2|null>{
     const db=await openDatabase(),tx=db.transaction(STORES.outbox,'readonly')
     const entry=await requestResult<V2OutboxEntry|undefined>(tx.objectStore(STORES.outbox).get(`${epochId}:${envelopeId}`))
     await transactionDone(tx)
-    return entry?structuredClone(entry.authority):null
+    if(!entry)return null
+    await verifyOutboxTag(rootKey,epochSalt,entry)
+    return structuredClone(entry.authority)
   }
 
-  async outbox(epochId:string):Promise<V2OutboxEntry[]>{
+  async outbox(rootKey:Uint8Array,epochSalt:Uint8Array,epochId:string):Promise<V2OutboxEntry[]>{
     const db=await openDatabase(),tx=db.transaction(STORES.outbox,'readonly')
     const entries=await requestResult<V2OutboxEntry[]>(tx.objectStore(STORES.outbox).index('byEpoch').getAll(epochId))
     await transactionDone(tx)
+    for(const entry of entries)await verifyOutboxTag(rootKey,epochSalt,entry)
     return entries.map(entry=>structuredClone(entry))
   }
 
