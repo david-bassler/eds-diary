@@ -264,6 +264,21 @@ export class IndexedDbV2LocalSecurityStore {
     return entries.map(entry=>structuredClone(entry))
   }
 
+  async verifyLocalJournal(rootKey:Uint8Array,epochSalt:Uint8Array,epochId:string):Promise<void>{
+    const state=await this.loadState(rootKey,epochSalt,epochId)
+    const db=await openDatabase(),tx=db.transaction(STORES.envelopes,'readonly')
+    const stored=await requestResult<PersistedEnvelopeV6[]>(tx.objectStore(STORES.envelopes).index('byEpoch').getAll(epochId))
+    await transactionDone(tx)
+    let hash=await import('./localState').then(({localJournalInitialV2})=>localJournalInitialV2(state.diary_id,state.epoch_id))
+    let count=0
+    for(const envelope of stored.sort((a,b)=>a.local_sequence-b.local_sequence)){
+      count+=1
+      if(envelope.local_sequence!==count)throw new Error('V2 local envelope journal sequence is corrupt.')
+      hash=await localJournalNextV2(hash,count,envelope)
+    }
+    if(count!==state.local_journal_count||hash!==state.local_journal_hash)throw new Error('V2 local envelope journal hash failed.')
+  }
+
   async envelopes(epochId:string):Promise<PreparedEnvelope[]>{
     const db=await openDatabase(),tx=db.transaction(STORES.envelopes,'readonly')
     const stored=await requestResult<PersistedEnvelopeV6[]>(tx.objectStore(STORES.envelopes).index('byEpoch').getAll(epochId))
