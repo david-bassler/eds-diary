@@ -1,6 +1,6 @@
 import { base64Url, randomBytes } from '../crypto/bytes'
 import type { PreparedEnvelope } from '../envelopes'
-import { localJournalNextV2, localStateTagV6, validateEpochLocalSecurityStateV6, validateStoredWriterDeviceKeyV2, verifyLocalStateTagV6, type EpochLocalSecurityStateV6, type StoredWriterDeviceKeyV2 } from './localState'
+import { localJournalNextV2, localStateTagV6, validateEpochLocalSecurityStateV6, validateStoredWriterDeviceKeyV2, verifyLocalStateTagV6, withDiaryLockV2, type EpochLocalSecurityStateV6, type StoredWriterDeviceKeyV2 } from './localState'
 
 const DATABASE_NAME='eds-diary-v2-security'
 const DATABASE_VERSION=2
@@ -164,6 +164,62 @@ export class IndexedDbV2LocalSecurityStore {
     return this.loadState(rootKey,epochSalt,reservation.epoch_id)
   }
 
+
+  async commitVerifiedDispositions(
+    rootKey:Uint8Array,
+    epochSalt:Uint8Array,
+    expectedOperationGeneration:number,
+    nextState:EpochLocalSecurityStateV6,
+    acceptedEnvelopeIds:ReadonlySet<string>,
+    staleWriterEnvelopeIds:ReadonlySet<string>,
+  ):Promise<EpochLocalSecurityStateV6>{
+    return withDiaryLockV2(nextState.diary_id,async()=>{
+      const current=await this.loadState(rootKey,epochSalt,nextState.epoch_id)
+      if(current.operation_generation!==expectedOperationGeneration||nextState.operation_generation!==expectedOperationGeneration+1)throw new Error('Stale StateV6 generation during verified disposition commit.')
+      const entries=await this.outbox(nextState.epoch_id)
+      const updated=entries.map(entry=>{
+        if(acceptedEnvelopeIds.has(entry.envelope_id))return{...entry,status:'durable' as const}
+        if(staleWriterEnvelopeIds.has(entry.envelope_id))return{...entry,status:'stale_writer_pending' as const}
+        return entry
+      })
+      const staleCount=updated.filter(entry=>entry.status==='stale_writer_pending').length
+      const finalState={...nextState,stale_writer_pending_count:staleCount}
+      validateEpochLocalSecurityStateV6(finalState)
+      const tag=await localStateTagV6(rootKey,epochSalt,finalState),db=await openDatabase(),tx=db.transaction([STORES.outbox,STORES.states],'readwrite')
+      for(const entry of updated)tx.objectStore(STORES.outbox).put(entry)
+      tx.objectStore(STORES.states).put({id:finalState.epoch_id,state:structuredClone(finalState),tag})
+      await transactionDone(tx)
+      return this.loadState(rootKey,epochSalt,finalState.epoch_id)
+    })
+  }
+
+  async updateOutboxStatus(
+    rootKey:Uint8Array,
+    epochSalt:Uint8Array,
+    epochId:string,
+    envelopeId:string,
+    expectedOperationGeneration:number,
+    status:'pending'|'stale_writer_pending',
+  ):Promise<EpochLocalSecurityStateV6>{
+    const current=await this.loadState(rootKey,epochSalt,epochId)
+    return withDiaryLockV2(current.diary_id,async()=>{
+      const fresh=await this.loadState(rootKey,epochSalt,epochId)
+      if(fresh.operation_generation!==expectedOperationGeneration)throw new Error('Stale StateV6 generation during outbox update.')
+      const db=await openDatabase(),readTx=db.transaction(STORES.outbox,'readonly')
+      const entry=await requestResult<V2OutboxEntry|undefined>(readTx.objectStore(STORES.outbox).get(`${epochId}:${envelopeId}`))
+      await transactionDone(readTx)
+      if(!entry)throw new Error('V2 outbox envelope is missing.')
+      const entries=await this.outbox(epochId)
+      const nextEntries=entries.map(item=>item.id===entry.id?{...item,status}:item)
+      const staleCount=nextEntries.filter(item=>item.status==='stale_writer_pending').length
+      const nextState={...fresh,operation_generation:fresh.operation_generation+1,stale_writer_pending_count:staleCount}
+      const tag=await localStateTagV6(rootKey,epochSalt,nextState),tx=db.transaction([STORES.outbox,STORES.states],'readwrite')
+      tx.objectStore(STORES.outbox).put({...entry,status})
+      tx.objectStore(STORES.states).put({id:epochId,state:structuredClone(nextState),tag})
+      await transactionDone(tx)
+      return this.loadState(rootKey,epochSalt,epochId)
+    })
+  }
 
   async envelopeAuthority(epochId:string,envelopeId:string):Promise<PreparedEnvelopeAuthorityV2|null>{
     const db=await openDatabase(),tx=db.transaction(STORES.outbox,'readonly')
