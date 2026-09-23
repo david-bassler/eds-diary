@@ -27,10 +27,7 @@ const VERIFIED_STAGING=new WeakSet<VerifiedRecoveryTakeoverStagingV2>()
 
 export class VerifiedRecoveryTakeoverStagingV2 {
   private readonly brand=true
-  constructor(
-    readonly staging:RecoveryTakeoverStagingV2,
-    readonly privateKey:CryptoKey,
-  ){VERIFIED_STAGING.add(this)}
+  constructor(readonly staging:RecoveryTakeoverStagingV2){VERIFIED_STAGING.add(this)}
   _brandForModule():boolean{return this.brand}
 }
 export function isVerifiedRecoveryTakeoverStagingV2(value:unknown):value is VerifiedRecoveryTakeoverStagingV2{
@@ -107,5 +104,5 @@ export async function verifyRecoveryTakeoverStagingV2(staging:RecoveryTakeoverSt
     staging.epoch_id,
     staging.recovery_generation,
   ))throw new Error('RecoveryTakeoverStagingV2 keypair check failed.')
-  return new VerifiedRecoveryTakeoverStagingV2(structuredClone(staging),privateKey)
+  return new VerifiedRecoveryTakeoverStagingV2(structuredClone(staging))
 }
