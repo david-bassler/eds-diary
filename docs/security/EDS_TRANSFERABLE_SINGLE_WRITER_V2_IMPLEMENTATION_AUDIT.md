@@ -131,7 +131,8 @@ Later changes must retain explicit vectors for at least:
 - one fresh canonical verify invocation for every normal domain-write attempt;
 - prepared-envelope Writer provenance mismatch => pre-push quarantine;
 - accepted vs stale-writer semantic durability and authenticated stale quarantine;
-- outbox provenance/status MAC tamper rejection.
+- outbox provenance/status MAC tamper rejection;
+- no WebCrypto/long async gaps inside v2 IndexedDB readwrite transactions.
 
 ## Anti-churn rule for later reviews
 
