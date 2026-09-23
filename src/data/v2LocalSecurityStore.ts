@@ -78,7 +78,7 @@ export class IndexedDbV2LocalSecurityStore {
         if(!db.objectStoreNames.contains(STORES.rootWraps))db.createObjectStore(STORES.rootWraps,{keyPath:'id'})
         if(!db.objectStoreNames.contains(STORES.wrappingKeys))db.createObjectStore(STORES.wrappingKeys,{keyPath:'id'})
         if(!db.objectStoreNames.contains(STORES.reservations)){const store=db.createObjectStore(STORES.reservations,{keyPath:'id'});store.createIndex('byEpoch','epoch_id')}
-        if(!db.objectStoreNames.contains(STORES.envelopes)){const store=db.createObjectStore(STORES.envelopes,{keyPath:'id'});store.createIndex('byEpoch','epoch_id');store.createIndex('byEpochSeq',['epoch_id','local_seq'],{unique:true});store.createIndex('byIv','iv',{unique:true})}
+        if(!db.objectStoreNames.contains(STORES.envelopes)){const store=db.createObjectStore(STORES.envelopes,{keyPath:'id'});store.createIndex('byEpoch','epoch_id');store.createIndex('byEpochSeq',['epoch_id','local_seq'],{unique:true});store.createIndex('byEpochIv',['epoch_id','iv'],{unique:true})}
         if(!db.objectStoreNames.contains(STORES.outbox)){const store=db.createObjectStore(STORES.outbox,{keyPath:'id'});store.createIndex('byEpoch','epoch_id')}
       })
       request.addEventListener('success',()=>resolve(request.result),{once:true})
@@ -225,7 +225,7 @@ export class IndexedDbV2LocalSecurityStore {
     fixedBase64Url(envelope.envelopeId,32,'envelope_id');fixedBase64Url(envelope.iv,12,'iv')
     const expectedBytesHash=base64Url(await sha256(canonicalBytes(row as unknown as string[])))
     if(envelope.bytesHash!==expectedBytesHash)throw new Error('Prepared EnvelopeV6 bytesHash mismatch.')
-    const ivTx=db.transaction(STORES.envelopes,'readonly'),ivOwner=await requestResult<StoredEnvelopeV6|undefined>(ivTx.objectStore(STORES.envelopes).index('byIv').get(envelope.iv));await transactionDone(ivTx)
+    const ivTx=db.transaction(STORES.envelopes,'readonly'),ivOwner=await requestResult<StoredEnvelopeV6|undefined>(ivTx.objectStore(STORES.envelopes).index('byEpochIv').get([epochId,envelope.iv]));await transactionDone(ivTx)
     if(ivOwner&&ivOwner.envelopeId!==envelope.envelopeId)throw new Error('EnvelopeV6 IV reuse across envelope IDs is forbidden.')
     const nextCount=state.local_journal_count+1
     const nextHash=await journalNextV2(state.local_journal_hash,nextCount,row)
