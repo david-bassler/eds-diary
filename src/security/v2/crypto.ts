@@ -138,6 +138,17 @@ export async function verifyRecoveryTakeoverKeyPairV2(privateKey:CryptoKey,rawPu
 }
 
 
+export function writerDeviceKeyCheckBytesV2(diaryId:string,epochId:string,writerDeviceId:string,rawPublicKey:Uint8Array):Uint8Array{
+  const diary=fixedBase64Url(diaryId,16,'diary_id'),epoch=fixedBase64Url(epochId,16,'epoch_id'),device=fixedBase64Url(writerDeviceId,16,'writer_device_id')
+  assert32(rawPublicKey,'Writer public key')
+  return concatBytes(utf8('eds-diary/writer-device-key-check/v2'),ZERO,diary,epoch,device,rawPublicKey)
+}
+
+export async function verifyWriterDeviceKeyPairV2(privateKey:CryptoKey,rawPublicKey:Uint8Array,diaryId:string,epochId:string,writerDeviceId:string):Promise<boolean>{
+  const input=writerDeviceKeyCheckBytesV2(diaryId,epochId,writerDeviceId,rawPublicKey),signature=await signEd25519V2(privateKey,input)
+  return verifyEd25519V2(rawPublicKey,signature,input)
+}
+
 export async function signEd25519V2(privateKey:CryptoKey,message:Uint8Array):Promise<string>{
   assertEd25519Key(privateKey,'private','sign')
   return base64Url(new Uint8Array(await crypto.subtle.sign(ED25519,privateKey,arrayBuffer(message))))
