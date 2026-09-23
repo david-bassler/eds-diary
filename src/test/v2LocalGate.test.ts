@@ -227,6 +227,17 @@ describe('EpochLocalSecurityStateV6 and writer gate',()=>{
     expect(await repo.listOutbox(epoch)).toEqual([])
   })
 
+  it('never turns an unconfirmed staged successor into normal local writer authority',async()=>{
+    const repo=store(),key=await repo.createAndPersistWriterKey(diary,epoch,device),anchor=await createAnchorV2(diary,epoch,[])
+    await repo.persistState(rootKey,await stateFor(key.writer_signing_key_id,anchor))
+    const authority:WriterAuthoritySnapshotV2={writer_generation:1,writer_grant_id:grant,writer_device_id:device,writer_key_id:key.writer_signing_key_id,writer_public_key:key.writer_public_key,source_epoch_sealed:false}
+    const staged=verified(authority,anchor),profile=staged.profileState as CanonicalFullResultV2
+    profile.activation_state='staged_confirmation_missing'
+    const service=new V2DomainWriteService(diary,epoch,{store:repo,requireUnlockedRoot:async()=>({rootKey}),providerSessionActive:()=>true,freshCanonicalVerify:async()=>staged})
+    await expect(service.prepareDomainWrite({record_type:'pain_entry',record_schema:'pain-entry/v1',record_id:b(36,16),parent_revision_ids:[],record_status:'active',record_data:pain('staged')})).rejects.toThrow(/unconfirmed staged successor/)
+    expect(await repo.listOutbox(epoch)).toEqual([])
+  })
+
   it('binds verifyBeforePush to the exact prepared RevisionV2 signature and quarantines stale authority',async()=>{
     const repo=store(),key=await repo.createAndPersistWriterKey(diary,epoch,device),anchor=await createAnchorV2(diary,epoch,[])
     await repo.persistState(rootKey,await stateFor(key.writer_signing_key_id,anchor))
