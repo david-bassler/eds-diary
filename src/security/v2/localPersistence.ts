@@ -45,7 +45,7 @@ export interface V2OutboxEntryCore {
   epoch_id:string
   envelope_id:string
   status:V2OutboxStatus
-  authority:PreparedEnvelopeAuthorityV2
+  authority:PreparedEnvelopeAuthorityV2|null
 }
 export interface V2OutboxEntry extends V2OutboxEntryCore {tag:string}
 async function outboxTag(rootKey:Uint8Array,epochSalt:Uint8Array,entry:V2OutboxEntryCore):Promise<string>{
@@ -56,8 +56,9 @@ async function verifyOutboxTag(rootKey:Uint8Array,epochSalt:Uint8Array,entry:V2O
   if(!equalBytes(fixedBase64Url(tag,32,'outbox_tag'),expected))throw new Error('V2 outbox MAC failed.')
 }
 
-function sameAuthority(left:PreparedEnvelopeAuthorityV2,right:PreparedEnvelopeAuthorityV2):boolean{
-  return left.writer_generation===right.writer_generation
+function sameAuthority(left:PreparedEnvelopeAuthorityV2|null,right:PreparedEnvelopeAuthorityV2):boolean{
+  return left!==null
+    &&left.writer_generation===right.writer_generation
     &&left.writer_grant_id===right.writer_grant_id
     &&left.writer_device_id===right.writer_device_id
     &&left.writer_key_id===right.writer_key_id
@@ -75,10 +76,14 @@ async function assertAuthorityMatchesEnvelope(
   diaryId:string,
   epochId:string,
   envelope:PreparedEnvelope,
-  authority:PreparedEnvelopeAuthorityV2,
+  authority:PreparedEnvelopeAuthorityV2|null,
 ):Promise<void>{
   const revision=await openRevisionEnvelopeV2(rootKey,epochSalt,{diaryId,epochId},envelope)
   const context=revision.writer_context
+  if(authority===null){
+    if(revision.record_schema!=='writer-grant-sw-v2'||context!==null||revision.writer_signature!==null)throw new Error('Only WriterGrantV2 may omit persisted Writer provenance.')
+    return
+  }
   if(!context
     ||context.writer_generation!==authority.writer_generation
     ||context.writer_grant_id!==authority.writer_grant_id
@@ -441,7 +446,7 @@ export class IndexedDbV2LocalSecurityStore {
     expectedOperationGeneration:number,
     reservation:EnvelopeReservationV6,
     envelope:PreparedEnvelope,
-    authority:PreparedEnvelopeAuthorityV2,
+    authority:PreparedEnvelopeAuthorityV2|null,
   ):Promise<EpochLocalSecurityStateV6>{
     if(reservation.state!=='reserved'||reservation.envelope_id!==envelope.envelopeId||reservation.iv!==envelope.iv)throw new Error('Prepared envelope does not match its one-shot reservation.')
     const db=await openDatabase(),current=await this.loadState(rootKey,epochSalt,reservation.epoch_id)
@@ -501,7 +506,7 @@ export class IndexedDbV2LocalSecurityStore {
         let status:V2OutboxStatus=entry.status
         if(acceptedEnvelopeIds.has(entry.envelope_id))status='durable'
         else if(staleWriterEnvelopeIds.has(entry.envelope_id))status='stale_writer_pending'
-        else if(entry.status!=='durable'&&(context.source_epoch_sealed
+        else if(entry.status!=='durable'&&entry.authority!==null&&(context.source_epoch_sealed
           ||context.recovery_rekey_rotation_required
           ||!sameAuthority(entry.authority,context.current_writer)))status='stale_writer_pending'
         assertOutboxTransition(entry.status,status)
@@ -578,7 +583,7 @@ export class IndexedDbV2LocalSecurityStore {
       ||stored.bytesHash!==envelope.bytesHash)throw new Error('Prepared envelope bytes do not match immutable local persistence.')
     const state=await this.loadState(rootKey,epochSalt,epochId)
     await assertAuthorityMatchesEnvelope(rootKey,epochSalt,state.diary_id,epochId,envelope,entry.authority)
-    return structuredClone(entry.authority)
+    return entry.authority===null?null:structuredClone(entry.authority)
   }
 
   async outbox(rootKey:Uint8Array,epochSalt:Uint8Array,epochId:string):Promise<V2OutboxEntry[]>{
