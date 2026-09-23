@@ -150,14 +150,15 @@ describe('EpochLocalSecurityStateV6 persistence and writer gate',()=>{
     },f.diaryId,f.epochId)
     const authority=new TransferableSingleWriterV2WriteAuthority(()=>store.loadState(rootKey,f.epochSalt,f.epochId))
     const preparer=new V2DomainWritePreparer(store,authority)
-    const verified=v2VerifiedRemoteState(f.result,{manifest:[],rows:[]},reconciled.operation_generation)
+    const staleVerified=v2VerifiedRemoteState(f.result,{manifest:[],rows:[]},f.initial.operation_generation)
 
-    await expect(preparer.prepareAndPersist(verified,rootKey,f.epochSalt,{recordType:'pain_entry',recordId:b(11,16),status:'active',data:painData}))
+    await expect(preparer.prepareAndPersist(staleVerified,rootKey,f.epochSalt,{recordType:'pain_entry',recordId:b(11,16),status:'active',data:painData}))
       .rejects.toThrow(/authority|writer/i)
     expect(await store.envelopes(f.epochId)).toHaveLength(0)
 
     const reconciled=await stateAfterCanonicalVerifyV6(f.initial,f.result,[],true)
     await store.replaceState(rootKey,f.epochSalt,0,reconciled)
+    const verified=v2VerifiedRemoteState(f.result,{manifest:[],rows:[]},reconciled.operation_generation)
     const prepared=await preparer.prepareAndPersist(verified,rootKey,f.epochSalt,{recordType:'pain_entry',recordId:b(11,16),status:'active',data:painData,protocolCreatedAt:'2026-09-23T08:05:00.000Z'})
     expect(prepared.revision.writer_context).toEqual({
       writer_generation:1,
