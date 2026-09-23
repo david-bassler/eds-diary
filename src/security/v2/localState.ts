@@ -202,8 +202,9 @@ export function validateEpochLocalSecurityStateV6(value:unknown):EpochLocalSecur
   const remoteBinding=validateRemoteBinding(state.remote_binding)
   const remoteAnchor=validateRemoteAnchor(state.remote_anchor)
   const verifiedSet=verifiedNullCount===0
-  if((remoteAnchor!==null)!==verifiedSet)throw new Error('remote_anchor and verified writer cache must become bound together.')
-  if(remoteBinding===null&&remoteAnchor!==null)throw new Error('A verified remote_anchor requires a remote_binding.')
+  // Non-active restore/staging states may legitimately carry an authenticated
+  // backup/recovery freshness anchor without a live remote binding. Only an
+  // active epoch requires all three pieces to be present together.
   if(state.epoch_status==='active'&&(remoteBinding===null||remoteAnchor===null||!verifiedSet))throw new Error('active v2 epoch requires a bound fully verified remote state.')
   if(state.epoch_status==='orphaned'&&state.writer_status!=='read_only')throw new Error('orphaned epochs must be read_only.')
   if(state.writer_status==='read_only'){
