@@ -44,6 +44,7 @@ export async function profileUpgradeSourceSnapshotV2(revisions:readonly Revision
   const heads=[...graph.headsByRecord.values()]
     .flatMap(ids=>[...ids].map(id=>graph.revisions.get(id)!))
     .filter(revision=>revision.record_status!=='control')
+    .sort((a,b)=>byteCompare(fixedBase64Url(a.revision_id,32),fixedBase64Url(b.revision_id,32)))
 
   const semanticEntries=heads.map(revision=>({
     record_type:revision.record_type,
@@ -455,4 +456,173 @@ export function advanceRotationOperationStateV2(current:RotationOperationStateV2
 export async function rotationOperationStateHashV2(state:RotationOperationStateV2):Promise<string>{
   validateRotationOperationStateV2(state)
   return base64Url(await sha256(canonicalBytes(state as never)))
+}
+
+
+export type ProfileUpgradeAnnouncementOutcomeV2 =
+  | {kind:'durable'}
+  | {kind:'unknown'}
+  | {kind:'stale'}
+  | {kind:'source_race'}
+export type ProfileUpgradeConfirmationOutcomeV2 =
+  | {kind:'durable';activationAnchor:RemoteAnchorV2}
+  | {kind:'unknown'}
+  | {kind:'cutover_race'}
+export type ProfileUpgradePostActivationOutcomeV2 =
+  | {kind:'ready';activatedBackupId:string}
+  | {kind:'superseded'}
+
+export interface ProfileUpgradeOrchestratorV2Dependencies {
+  load():Promise<RotationOperationStateV2>
+  persist(current:RotationOperationStateV2,next:RotationOperationStateV2):Promise<RotationOperationStateV2>
+  planSuccessor(state:RotationOperationStateV2):Promise<{creationLocator:string}>
+  createOrReconcileSuccessor(state:RotationOperationStateV2):Promise<{manifestFingerprint:string}>
+  copyAndVerifySuccessor(state:RotationOperationStateV2):Promise<{stagingAnchor:RemoteAnchorV2}>
+  prepareActivation(state:RotationOperationStateV2):Promise<{
+    announcementEnvelope:PreparedEnvelopeRowV2
+    confirmationEnvelope:PreparedEnvelopeRowV2
+    activationEvidenceSha256:string
+    activationLineageSha256:string
+    recoveryArtifactId:string
+    recoveryArtifactLocator:string
+    recoveryArtifactSha256:string
+  }>
+  publishAndVerifyRecoveryArtifact(state:RotationOperationStateV2):Promise<void>
+  createAndVerifyStagedBackup(state:RotationOperationStateV2):Promise<{backupId:string}>
+  publishOrReconcileAnnouncement(state:RotationOperationStateV2):Promise<ProfileUpgradeAnnouncementOutcomeV2>
+  publishOrReconcileConfirmation(state:RotationOperationStateV2):Promise<ProfileUpgradeConfirmationOutcomeV2>
+  createAndVerifyActivatedBackup(state:RotationOperationStateV2):Promise<ProfileUpgradePostActivationOutcomeV2>
+  persistLineageAndReverifyBeforeSwitch(state:RotationOperationStateV2):Promise<'ready'|'superseded'>
+  switchLocally(state:RotationOperationStateV2):Promise<void>
+  orphanPreAnnouncementSuccessor(state:RotationOperationStateV2):Promise<void>
+  markSourceRace(state:RotationOperationStateV2):Promise<void>
+}
+
+function withStage(state:RotationOperationStateV2,stage:RotationOperationStageV2,patch:Partial<RotationOperationStateV2>={}):RotationOperationStateV2{
+  return validateRotationOperationStateV2({...state,...patch,stage})
+}
+async function transitionProfileUpgrade(
+  deps:ProfileUpgradeOrchestratorV2Dependencies,
+  current:RotationOperationStateV2,
+  next:RotationOperationStateV2,
+):Promise<RotationOperationStateV2>{
+  advanceRotationOperationStateV2(current,next)
+  return deps.persist(current,next)
+}
+
+/**
+ * Closed crash/resume state machine for the v1 -> v2 profile-upgrade cutover.
+ * All remote mutation is delegated to idempotent dependency methods whose
+ * prepared bytes are already persisted in RotationOperationStateV2/artifacts.
+ * A retry always begins by loading and validating the durable stage.
+ */
+export async function runProfileUpgradeStateMachineV2(
+  deps:ProfileUpgradeOrchestratorV2Dependencies,
+):Promise<RotationOperationStateV2>{
+  for(;;){
+    const state=validateRotationOperationStateV2(await deps.load())
+    switch(state.stage){
+      case 'source_frozen_verified':{
+        const planned=await deps.planSuccessor(state)
+        return runProfileUpgradeStateMachineV2({
+          ...deps,
+          load:async()=>transitionProfileUpgrade(deps,state,withStage(state,'successor_planned',{successor_creation_locator:planned.creationLocator})),
+        })
+      }
+      case 'successor_planned':{
+        const bound=await deps.createOrReconcileSuccessor(state)
+        return runProfileUpgradeStateMachineV2({
+          ...deps,
+          load:async()=>transitionProfileUpgrade(deps,state,withStage(state,'successor_bound',{successor_manifest_fingerprint:bound.manifestFingerprint})),
+        })
+      }
+      case 'successor_bound':{
+        const copying=await transitionProfileUpgrade(deps,state,withStage(state,'copying'))
+        const verified=await deps.copyAndVerifySuccessor(copying)
+        await transitionProfileUpgrade(deps,copying,withStage(copying,'successor_verified',{successor_staging_anchor:verified.stagingAnchor}))
+        continue
+      }
+      case 'copying':{
+        const verified=await deps.copyAndVerifySuccessor(state)
+        await transitionProfileUpgrade(deps,state,withStage(state,'successor_verified',{successor_staging_anchor:verified.stagingAnchor}))
+        continue
+      }
+      case 'successor_verified':{
+        const prepared=await deps.prepareActivation(state)
+        await transitionProfileUpgrade(deps,state,withStage(state,'announcement_prepared',{
+          announcement_envelope:prepared.announcementEnvelope,
+          confirmation_envelope:prepared.confirmationEnvelope,
+          activation_evidence_sha256:prepared.activationEvidenceSha256,
+          activation_lineage_sha256:prepared.activationLineageSha256,
+          recovery_artifact_id:prepared.recoveryArtifactId,
+          recovery_artifact_locator:prepared.recoveryArtifactLocator,
+          recovery_artifact_sha256:prepared.recoveryArtifactSha256,
+        }))
+        continue
+      }
+      case 'announcement_prepared':
+        await deps.publishAndVerifyRecoveryArtifact(state)
+        await transitionProfileUpgrade(deps,state,withStage(state,'recovery_artifact_verified'))
+        continue
+      case 'recovery_artifact_verified':{
+        const backup=await deps.createAndVerifyStagedBackup(state)
+        await transitionProfileUpgrade(deps,state,withStage(state,'staged_backup_verified',{staged_backup_id:backup.backupId}))
+        continue
+      }
+      case 'staged_backup_verified':
+      case 'announcement_unknown':{
+        const outcome=await deps.publishOrReconcileAnnouncement(state)
+        if(outcome.kind==='unknown'){
+          if(state.stage==='staged_backup_verified'){
+            return transitionProfileUpgrade(deps,state,withStage(state,'announcement_unknown'))
+          }
+          return state
+        }
+        if(outcome.kind==='stale'){
+          const stale=await transitionProfileUpgrade(deps,state,withStage(state,'stale'))
+          await deps.orphanPreAnnouncementSuccessor(stale)
+          return stale
+        }
+        if(outcome.kind==='source_race'){
+          const raced=await transitionProfileUpgrade(deps,state,withStage(state,'cutover_race'))
+          await deps.markSourceRace(raced)
+          return raced
+        }
+        await transitionProfileUpgrade(deps,state,withStage(state,'announcement_durable'))
+        continue
+      }
+      case 'announcement_durable':
+      case 'confirmation_unknown':{
+        const outcome=await deps.publishOrReconcileConfirmation(state)
+        if(outcome.kind==='unknown'){
+          if(state.stage==='announcement_durable')return transitionProfileUpgrade(deps,state,withStage(state,'confirmation_unknown'))
+          return state
+        }
+        if(outcome.kind==='cutover_race')return transitionProfileUpgrade(deps,state,withStage(state,'cutover_race'))
+        await transitionProfileUpgrade(deps,state,withStage(state,'confirmation_durable',{successor_activation_anchor:outcome.activationAnchor}))
+        continue
+      }
+      case 'confirmation_durable':{
+        const outcome=await deps.createAndVerifyActivatedBackup(state)
+        if(outcome.kind==='superseded')return transitionProfileUpgrade(deps,state,withStage(state,'post_activation_superseded'))
+        await transitionProfileUpgrade(deps,state,withStage(state,'activated_backup_verified',{activated_backup_id:outcome.activatedBackupId}))
+        continue
+      }
+      case 'activated_backup_verified':{
+        const status=await deps.persistLineageAndReverifyBeforeSwitch(state)
+        if(status==='superseded')return transitionProfileUpgrade(deps,state,withStage(state,'post_activation_superseded'))
+        await deps.switchLocally(state)
+        return transitionProfileUpgrade(deps,state,withStage(state,'switched'))
+      }
+      case 'switched':
+      case 'stale':
+      case 'cutover_race':
+      case 'post_activation_superseded':
+        return state
+      default:{
+        const impossible:never=state.stage
+        throw new Error(`Unhandled profile-upgrade stage: ${impossible}`)
+      }
+    }
+  }
 }
