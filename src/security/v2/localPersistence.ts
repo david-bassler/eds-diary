@@ -173,14 +173,28 @@ export class IndexedDbV2LocalSecurityStore {
     return entry
   }
 
-  async reserveEnvelope(epochId:string):Promise<EnvelopeReservationV6>{
+  async reserveEnvelope(epochId:string,remoteRows:ReadonlyArray<readonly string[]> = []):Promise<EnvelopeReservationV6>{
     const db=await openDatabase()
-    for(let attempt=0;attempt<4;attempt+=1){
-      const envelopeId=base64Url(randomBytes(32)),reservation:EnvelopeReservationV6={id:`${epochId}:${envelopeId}`,epoch_id:epochId,envelope_id:envelopeId,iv:base64Url(randomBytes(12)),state:'reserved'}
-      const tx=db.transaction(STORES.reservations,'readwrite')
-      try{tx.objectStore(STORES.reservations).add(reservation);await transactionDone(tx);return reservation}catch(error){if(attempt===3)throw error}
+    const envelopeId=base64Url(randomBytes(32)),iv=base64Url(randomBytes(12))
+    if(remoteRows.some(row=>row[1]===iv))throw new Error('EnvelopeV6 IV reuse against verified remote history is a security anomaly.')
+    const reservation:EnvelopeReservationV6={id:`${epochId}:${envelopeId}`,epoch_id:epochId,envelope_id:envelopeId,iv,state:'reserved'}
+    const checkTx=db.transaction(STORES.reservations,'readonly')
+    const idRequest=checkTx.objectStore(STORES.reservations).get(reservation.id)
+    const ivRequest=checkTx.objectStore(STORES.reservations).index('byEpochIv').get([epochId,iv])
+    const [existingId,existingIv]=await Promise.all([
+      requestResult<EnvelopeReservationV6|undefined>(idRequest),
+      requestResult<EnvelopeReservationV6|undefined>(ivRequest),
+    ])
+    await transactionDone(checkTx)
+    if(existingId)throw new Error('EnvelopeV6 envelope_id collision is a security anomaly.')
+    if(existingIv)throw new Error('EnvelopeV6 IV reuse across envelope IDs is a security anomaly.')
+    const tx=db.transaction(STORES.reservations,'readwrite')
+    try{tx.objectStore(STORES.reservations).add(reservation);await transactionDone(tx)}
+    catch(error){
+      if(error instanceof DOMException&&error.name==='ConstraintError')throw new Error('EnvelopeV6 reservation collision is a security anomaly.',{cause:error})
+      throw error
     }
-    throw new Error('Envelope reservation failed.')
+    return reservation
   }
 
   async commitReservedEnvelope(
