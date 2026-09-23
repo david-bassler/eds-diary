@@ -85,8 +85,8 @@ class V1Session implements SingleWriterProviderSession {
   async creationProperties(){return{}}
   async recoveryLocator(){return''}
   async recoveryAuthority():Promise<IndependentBootstrapAuthority>{throw new Error('not used')}
-  async prepareRecoveryArtifactSlot(_secret:Uint8Array,_artifact:RecoveryArtifact):Promise<void>{}
-  async publishRecoveryArtifact(_secret:Uint8Array,_artifact:RecoveryArtifact):Promise<void>{}
+  async prepareRecoveryArtifactSlot():Promise<void>{}
+  async publishRecoveryArtifact():Promise<void>{}
   async findRecoveryArtifact():Promise<RecoveryArtifact|null>{return null}
   async loadRecoveryArtifact():Promise<RecoveryArtifact>{throw new Error('not used')}
   async disconnect():Promise<void>{}
@@ -101,11 +101,11 @@ class V2Session implements TransferableSingleWriterV2ProviderSession {
   recovery:RecoveryArtifactV6|null=null
   creates=0
   private readonly creation=new Map<string,CreationState>()
-  async transportForEpoch(_diaryId:string,_epochId:string):Promise<GoogleSheetsTransferableSingleWriterV2Transport>{
+  async transportForEpoch():Promise<GoogleSheetsTransferableSingleWriterV2Transport>{
     return (this.remote??this.preCreationTransport) as unknown as GoogleSheetsTransferableSingleWriterV2Transport
   }
   async remoteIdentityBinding():Promise<string>{return this.account}
-  async codecForEpoch(diaryId:string,epochId:string,rootKey:Uint8Array,_transport:RemoteTransport):Promise<GoogleSheetsTransferableSingleWriterV2ProfileCodec>{
+  async codecForEpoch(diaryId:string,epochId:string,rootKey:Uint8Array):Promise<GoogleSheetsTransferableSingleWriterV2ProfileCodec>{
     return new GoogleSheetsTransferableSingleWriterV2ProfileCodec(diaryId,epochId,rootKey,this.account)
   }
   freshCanonicalSource(diaryId:string,epochId:string,rootKey:Uint8Array,remoteId:string):FreshCanonicalV2Source{
