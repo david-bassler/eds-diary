@@ -175,9 +175,9 @@ export class GoogleRecoveryArtifactStoreV6 {
   async publish(urs:Uint8Array,persisted:VerifiedPersistedRecoveryArtifactV6):Promise<string>{
     if(!isVerifiedPersistedRecoveryArtifactV6(persisted))throw new Error('Persistent/readback-verified RecoveryArtifactV6 is required before remote publish.')
     const {artifact,diaryId,epochId}=persisted
-    const opened=await openRecoveryArtifactV6(artifact,urs)
-    if(opened.payload.diary_id!==diaryId||opened.payload.epoch_id!==epochId)throw new Error('RecoveryArtifactV6 publish context mismatch.')
-    if(opened.payload.google_account_binding!==await googleAccountBindingV2(diaryId,this.api.identity()))throw new Error('RecoveryArtifactV6 Google account binding mismatch.')
+    const payload=(await openRecoveryArtifactV6(artifact,urs)).payload
+    if(payload.diary_id!==diaryId||payload.epoch_id!==epochId)throw new Error('RecoveryArtifactV6 publish context mismatch.')
+    if(payload.google_account_binding!==await googleAccountBindingV2(diaryId,this.api.identity()))throw new Error('RecoveryArtifactV6 Google account binding mismatch.')
     const family=await recoveryFamilyLocatorV6(urs),locator=await recoveryArtifactLocatorV6(urs,diaryId,epochId)
     if(family!==persisted.familyLocator||locator!==persisted.artifactLocator||await recoveryArtifactHashV6(artifact)!==persisted.artifactSha256)throw new Error('Persisted RecoveryArtifactV6 identity no longer matches publish input.')
     const expected=this.expectedProperties(family,locator)
@@ -236,8 +236,8 @@ export class GoogleRecoveryArtifactStoreV6 {
     await this.verifyFile(candidates[0].id,expected,false)
     const artifact=await this.readArtifact(candidates[0].id)
     if(!artifact)return null
-    const opened=await openRecoveryArtifactV6(artifact,urs)
-    if(opened.payload.diary_id!==diaryId||opened.payload.epoch_id!==epochId||opened.payload.google_account_binding!==await googleAccountBindingV2(diaryId,this.api.identity()))throw new Error('RecoveryArtifactV6 discovered payload binding mismatch.')
+    const payload=(await openRecoveryArtifactV6(artifact,urs)).payload
+    if(payload.diary_id!==diaryId||payload.epoch_id!==epochId||payload.google_account_binding!==await googleAccountBindingV2(diaryId,this.api.identity()))throw new Error('RecoveryArtifactV6 discovered payload binding mismatch.')
     return artifact
   }
 
