@@ -1,6 +1,6 @@
 import { base64Url, equalBytes, fixedBase64Url, fromBase64Url, randomBytes } from '../crypto/bytes'
 import { canonicalBytes } from '../crypto/canonical'
-import { hmacSha256 } from '../crypto/core'
+import { hmacSha256, sha256 } from '../crypto/core'
 import { deriveLocalStateMacKeyV2 } from './crypto'
 import { openRevisionEnvelopeV2 } from './envelopes'
 import type { PreparedEnvelope } from '../envelopes'
@@ -13,8 +13,8 @@ import { openBestEffortRootWrapV6, validateRootWrapV6, type RootWrapV6 } from '.
 import type { CreationPersistence, CreationState } from '../../sync/core/creation'
 
 const DATABASE_NAME='eds-diary-v2-security'
-const DATABASE_VERSION=8
-const STORES={states:'epochSecurityStateV6',writerKeys:'writerDeviceKeysV2',reservations:'envelopeReservationsV6',envelopes:'envelopesV6',outbox:'outboxV6',recoveryStaging:'recoveryTakeoverStagingV2',recoveryArtifacts:'recoveryArtifactsV6',rotationOperations:'rotationOperationsV2',lineageCaches:'activationLineageCachesV2',rootWraps:'rootWrapsV6',rootWrappingKeys:'rootWrappingKeysV6',creationOperations:'creationOperationsV2'} as const
+const DATABASE_VERSION=9
+const STORES={states:'epochSecurityStateV6',writerKeys:'writerDeviceKeysV2',reservations:'envelopeReservationsV6',envelopes:'envelopesV6',outbox:'outboxV6',recoveryStaging:'recoveryTakeoverStagingV2',recoveryArtifacts:'recoveryArtifactsV6',rotationOperations:'rotationOperationsV2',lineageCaches:'activationLineageCachesV2',rootWraps:'rootWrapsV6',rootWrappingKeys:'rootWrappingKeysV6',creationOperations:'creationOperationsV2',operationArtifacts:'operationArtifactsV2'} as const
 
 export interface EnvelopeReservationV6 {
   id:string
@@ -131,6 +131,7 @@ async function openDatabase():Promise<IDBDatabase>{
       if(!db.objectStoreNames.contains(STORES.rootWraps))db.createObjectStore(STORES.rootWraps,{keyPath:'id'})
       if(!db.objectStoreNames.contains(STORES.rootWrappingKeys))db.createObjectStore(STORES.rootWrappingKeys,{keyPath:'id'})
       if(!db.objectStoreNames.contains(STORES.creationOperations))db.createObjectStore(STORES.creationOperations,{keyPath:'id'})
+      if(!db.objectStoreNames.contains(STORES.operationArtifacts))db.createObjectStore(STORES.operationArtifacts,{keyPath:'id'})
     })
     request.addEventListener('success',()=>{
       const db=request.result
@@ -170,7 +171,7 @@ export class IndexedDbV2LocalSecurityStore {
         const stored=await requestResult<{id:string;state:CreationState;hash:string}|undefined>(tx.objectStore(STORES.creationOperations).get(locator))
         await transactionDone(tx)
         if(!stored)return null
-        const hash=base64Url(await crypto.subtle.digest('SHA-256',canonicalBytes(stored.state as never)).then(value=>new Uint8Array(value)))
+        const hash=base64Url(await sha256(canonicalBytes(stored.state as never)))
         if(hash!==stored.hash)throw new Error('V2 creation operation state hash failed.')
         return structuredClone(stored.state)
       },
@@ -180,12 +181,42 @@ export class IndexedDbV2LocalSecurityStore {
         await transactionDone(readTx)
         const expected=prior?.state.operationGeneration??0
         if((state.operationGeneration??0)!==expected)throw new Error('Stale V2 creation operation generation.')
-        const next={...state,operationGeneration:expected+1},hash=base64Url(await crypto.subtle.digest('SHA-256',canonicalBytes(next as never)).then(value=>new Uint8Array(value)))
+        const next={...state,operationGeneration:expected+1},hash=base64Url(await sha256(canonicalBytes(next as never)))
         const tx=db.transaction(STORES.creationOperations,'readwrite')
         tx.objectStore(STORES.creationOperations).put({id:state.locator,state:structuredClone(next),hash})
         await transactionDone(tx)
       },
     }
+  }
+
+  async putImmutableOperationArtifact(id:string,value:unknown):Promise<string>{
+    if(!id)throw new Error('V2 operation artifact ID is required.')
+    const bytes=new TextDecoder().decode(canonicalBytes(value as never)),hash=base64Url(await sha256(canonicalBytes(value as never))),db=await openDatabase()
+    const readTx=db.transaction(STORES.operationArtifacts,'readonly')
+    const existing=await requestResult<{id:string;value:unknown;bytes:string;hash:string}|undefined>(readTx.objectStore(STORES.operationArtifacts).get(id))
+    await transactionDone(readTx)
+    if(existing){
+      if(existing.bytes!==bytes||existing.hash!==hash)throw new Error('V2 immutable operation artifact collision.')
+      return hash
+    }
+    const tx=db.transaction(STORES.operationArtifacts,'readwrite')
+    tx.objectStore(STORES.operationArtifacts).add({id,value:structuredClone(value),bytes,hash})
+    await transactionDone(tx)
+    const verifyTx=db.transaction(STORES.operationArtifacts,'readonly')
+    const readback=await requestResult<{id:string;value:unknown;bytes:string;hash:string}|undefined>(verifyTx.objectStore(STORES.operationArtifacts).get(id))
+    await transactionDone(verifyTx)
+    if(!readback||readback.bytes!==bytes||readback.hash!==hash)throw new Error('V2 operation artifact persistent readback mismatch.')
+    return hash
+  }
+
+  async operationArtifact<T>(id:string):Promise<T|null>{
+    const db=await openDatabase(),tx=db.transaction(STORES.operationArtifacts,'readonly')
+    const stored=await requestResult<{id:string;value:T;bytes:string;hash:string}|undefined>(tx.objectStore(STORES.operationArtifacts).get(id))
+    await transactionDone(tx)
+    if(!stored)return null
+    const bytes=new TextDecoder().decode(canonicalBytes(stored.value as never)),hash=base64Url(await sha256(canonicalBytes(stored.value as never)))
+    if(bytes!==stored.bytes||hash!==stored.hash)throw new Error('V2 operation artifact integrity failed.')
+    return structuredClone(stored.value)
   }
 
   async persistRootWrapV6(wrap:RootWrapV6,bestEffortWrappingKey:CryptoKey|null):Promise<void>{
