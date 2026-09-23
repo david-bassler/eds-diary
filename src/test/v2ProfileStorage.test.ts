@@ -157,13 +157,13 @@ describe('ManifestV6 and v2 Google profile',()=>{
 
   it('rejects non-singleton first-v2 recovery history and self-predecessor manifests',async()=>{
     const f=await nativeFixture()
-    const extra={recovery_generation:1,recovery_urs_id:id(90,32),recovery_takeover_key_id:id(91,32)}
+    const prior={recovery_generation:0,recovery_urs_id:id(90,32),recovery_takeover_key_id:id(91,32)}
+    const current={recovery_generation:1,recovery_urs_id:f.manifest.recovery_urs_id,recovery_takeover_key_id:f.manifest.recovery_takeover_key_id}
     await expect(prepareManifestV6(f.rootKey,f.epochSalt,{diaryId:f.diaryId,epochId:f.epochId},{
       ...f.manifest,
       recovery_generation:1,
-      recovery_urs_id:extra.recovery_urs_id,
-      recovery_takeover_key_id:extra.recovery_takeover_key_id,
-      recovery_credential_history:[...f.manifest.recovery_credential_history,extra],
+      recovery_urs_commitment:id(93,32),
+      recovery_credential_history:[prior,current],
     })).rejects.toThrow(/exactly one Recovery/)
     await expect(prepareManifestV6(f.rootKey,f.epochSalt,{diaryId:f.diaryId,epochId:f.epochId},{
       ...f.manifest,
