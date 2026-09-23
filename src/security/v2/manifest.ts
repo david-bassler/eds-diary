@@ -136,6 +136,7 @@ export async function validateProtectedManifestV6(payload:ProtectedManifestV6,co
     if(!predecessor||typeof predecessor!=='object')throw new Error('ManifestV6 predecessor schema mismatch.')
     exactKeys(predecessor,['epoch_id','manifest_fingerprint'],'ManifestV6 predecessor')
     fixedBase64Url(predecessor.epoch_id,16,'predecessor_epoch_id')
+    if(predecessor.epoch_id===payload.epoch_id)throw new Error('ManifestV6 predecessor cannot equal the current epoch.')
     fixedBase64Url(predecessor.manifest_fingerprint,32,'predecessor_manifest_fingerprint')
   }
   if(payload.predecessor_epochs.length===0&&payload.epoch_start_authority_mode!=='genesis_grant_required')throw new Error('ManifestV6 native genesis authority mode mismatch.')
@@ -155,6 +156,7 @@ export async function validateProtectedManifestV6(payload:ProtectedManifestV6,co
   }
   const last=payload.recovery_credential_history.at(-1)!
   if(last.recovery_generation!==payload.recovery_generation||last.recovery_urs_id!==payload.recovery_urs_id||last.recovery_takeover_key_id!==payload.recovery_takeover_key_id)throw new Error('ManifestV6 recovery credential history tail mismatch.')
+  if(payload.epoch_start_authority_mode==='genesis_grant_required'&&payload.recovery_credential_history.length!==1)throw new Error('ManifestV6 first-v2 activation must start with exactly one Recovery credential-history entry.')
 }
 
 export function parseManifestCellsV6(cells:readonly string[]):ManifestCellsV6{
