@@ -24,10 +24,14 @@ export interface RecoveryTakeoverStagingV2 {
 const STAGING_KEYS=['format','version','diary_id','epoch_id','recovery_generation','recovery_takeover_key_id','recovery_takeover_public_key','manifest_fingerprint','salt','iv','ciphertext'] as const
 const PLAINTEXT_KEYS=['recovery_takeover_private_key_pkcs8'] as const
 const VERIFIED_STAGING=new WeakSet<VerifiedRecoveryTakeoverStagingV2>()
+const VERIFIED_STAGING_TOKEN=Symbol('VerifiedRecoveryTakeoverStagingV2')
 
 export class VerifiedRecoveryTakeoverStagingV2 {
   private readonly brand=true
-  constructor(readonly staging:RecoveryTakeoverStagingV2){VERIFIED_STAGING.add(this)}
+  constructor(readonly staging:RecoveryTakeoverStagingV2,token:symbol){
+    if(token!==VERIFIED_STAGING_TOKEN)throw new Error('VerifiedRecoveryTakeoverStagingV2 can only be created by the verifier.')
+    VERIFIED_STAGING.add(this)
+  }
   _brandForModule():boolean{return this.brand}
 }
 export function isVerifiedRecoveryTakeoverStagingV2(value:unknown):value is VerifiedRecoveryTakeoverStagingV2{
@@ -104,5 +108,5 @@ export async function verifyRecoveryTakeoverStagingV2(staging:RecoveryTakeoverSt
     staging.epoch_id,
     staging.recovery_generation,
   ))throw new Error('RecoveryTakeoverStagingV2 keypair check failed.')
-  return new VerifiedRecoveryTakeoverStagingV2(structuredClone(staging))
+  return new VerifiedRecoveryTakeoverStagingV2(structuredClone(staging),VERIFIED_STAGING_TOKEN)
 }
