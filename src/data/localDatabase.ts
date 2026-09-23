@@ -364,7 +364,8 @@ export async function loadProfileUpgradeSourceOperationV2():Promise<RotationOper
   validateRotationOperationStateV2(stored.state)
   if(stored.hash!==await rotationOperationStateHashV2(stored.state))throw new Error('Profile-upgrade operation-state hash failed.')
   const ref=loaded.state.rotation_state_ref
-  if(!ref||ref.operation_id!==stored.state.operation_id||ref.state!==stored.state.stage||ref.state_record_hash!==stored.hash)throw new Error('v1 Source profile-upgrade state binding failed.')
+  const sourceRaceRef=stored.state.stage==='stale'&&ref?.state==='profile_upgrade_source_race'
+  if(!ref||ref.operation_id!==stored.state.operation_id||(!sourceRaceRef&&ref.state!==stored.state.stage)||ref.state_record_hash!==stored.hash)throw new Error('v1 Source profile-upgrade state binding failed.')
   return structuredClone(stored.state)
 }
 export async function activeProtocolSelectionV2():Promise<ActiveProtocolSelectionV2|null>{
