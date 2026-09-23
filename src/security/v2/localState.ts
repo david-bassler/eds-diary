@@ -56,7 +56,6 @@ export interface EpochLocalSecurityStateV6 {
 }
 
 export interface StoredWriterDeviceKeyV2 {
-  diary_id:string
   writer_signing_key_id:string
   writer_device_id:string
   writer_public_key:string
@@ -210,10 +209,8 @@ export function writerDeviceKeyCheckBytesV2(diaryId:string,epochId:string,writer
 }
 
 export async function validateStoredWriterDeviceKeyV2(entry:StoredWriterDeviceKeyV2,diaryId:string,epochId:string):Promise<void>{
-  const exact=exactObject(entry,['diary_id','writer_signing_key_id','writer_device_id','writer_public_key','private_key'],'StoredWriterDeviceKeyV2')
-  if(typeof exact.diary_id!=='string'||typeof exact.writer_signing_key_id!=='string'||typeof exact.writer_device_id!=='string'||typeof exact.writer_public_key!=='string')throw new Error('Stored writer-key identifiers are invalid.')
-  fixedBase64Url(entry.diary_id,16,'writer_key.diary_id')
-  if(entry.diary_id!==diaryId)throw new Error('Stored writer key is bound to a different diary.')
+  const exact=exactObject(entry,['writer_signing_key_id','writer_device_id','writer_public_key','private_key'],'StoredWriterDeviceKeyV2')
+  if(typeof exact.writer_signing_key_id!=='string'||typeof exact.writer_device_id!=='string'||typeof exact.writer_public_key!=='string')throw new Error('Stored writer-key identifiers are invalid.')
   fixedBase64Url(entry.writer_signing_key_id,32,'writer_signing_key_id')
   fixedBase64Url(entry.writer_device_id,16,'writer_device_id')
   const raw=fixedBase64Url(entry.writer_public_key,32,'writer_public_key')
