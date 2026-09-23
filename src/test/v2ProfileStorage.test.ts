@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest'
+import 'fake-indexeddb/auto'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { base64Url } from '../security/crypto/bytes'
 import {
   deriveEpochSaltV2,
@@ -30,6 +31,8 @@ import {
 } from '../security/v2/recovery'
 import { recoveryArtifactFromGridV6, recoveryArtifactToGridV6 } from '../security/v2/recoveryGrid'
 import { createBackupV6, testRestoreBackupV6 } from '../security/v2/backup'
+import { createRecoveryTakeoverStagingV2 } from '../security/v2/recoveryStaging'
+import { IndexedDbV2LocalSecurityStore, __v2LocalPersistenceTesting, isVerifiedPersistedRecoveryArtifactV6 } from '../security/v2/localPersistence'
 import { GoogleSheetsTransferableSingleWriterV2ProfileCodec } from '../sync/google/GoogleSheetsTransferableSingleWriterV2ProfileCodec'
 import {
   epochLocatorV2,
@@ -141,6 +144,8 @@ async function nativeFixture(){
   return{diaryId,epochId,keyId,creationLocator,rootKey,urs,epochSalt,writer,recovery,manifest,cells,fingerprint,trustRoot,row,canonical,recoveryArtifact,accountBinding}
 }
 
+beforeEach(async()=>{await __v2LocalPersistenceTesting.reset()})
+
 describe('ManifestV6 and v2 Google profile',()=>{
   it('round-trips the exact protected ManifestV6 and derives the verifier trust root',async()=>{
     const f=await nativeFixture()
@@ -178,6 +183,30 @@ describe('ManifestV6 and v2 Google profile',()=>{
     expect(await epochLocatorV2(f.diaryId,f.epochId)).not.toBe(await epochLocator(f.diaryId,f.epochId))
     expect(await transport.authenticatedAccountBinding()).toBe(await googleAccountBindingV2(f.diaryId,'permission-owner-v2'))
     await expect(transport.patchProperties('unused',{app_format:'sync-v5',epoch_locator:await epochLocatorV2(f.diaryId,f.epochId)})).rejects.toMatchObject({code:'integrity_failure'})
+  })
+})
+
+describe('V2 creation one-shot persistence',()=>{
+  it('persists and cryptographically readback-verifies Takeover staging and exact RecoveryArtifactV6 bytes',async()=>{
+    const f=await nativeFixture(),store=new IndexedDbV2LocalSecurityStore()
+    const staging=await createRecoveryTakeoverStagingV2({
+      diaryId:f.diaryId,
+      epochId:f.epochId,
+      recoveryGeneration:0,
+      recoveryTakeoverKeyId:f.recovery.recoveryTakeoverKeyId,
+      recoveryTakeoverPublicKey:base64Url(f.recovery.publicKeyRaw),
+      recoveryTakeoverPrivateKeyPkcs8:f.recovery.privateKeyPkcs8,
+      manifestFingerprint:f.fingerprint,
+      urs:f.urs,
+      salt:bytes(30,32),
+      iv:bytes(31,12),
+    })
+    const verifiedStaging=await store.persistRecoveryTakeoverStaging(staging,f.urs)
+    expect(verifiedStaging.staging.manifest_fingerprint).toBe(f.fingerprint)
+    const persisted=await store.persistRecoveryArtifactV6(f.urs,f.diaryId,f.epochId,f.recoveryArtifact)
+    expect(isVerifiedPersistedRecoveryArtifactV6(persisted)).toBe(true)
+    expect(persisted.artifact).toEqual(f.recoveryArtifact)
+    await expect(store.persistRecoveryArtifactV6(f.urs,f.diaryId,f.epochId,{...f.recoveryArtifact,wrapped_payload:`${f.recoveryArtifact.wrapped_payload}A`})).rejects.toBeTruthy()
   })
 })
 
