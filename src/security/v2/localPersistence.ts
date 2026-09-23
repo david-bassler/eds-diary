@@ -112,13 +112,17 @@ export class IndexedDbV2LocalSecurityStore {
 
   async persistWriterKey(entry:StoredWriterDeviceKeyV2,diaryId:string,epochId:string):Promise<void>{
     await validateStoredWriterDeviceKeyV2(entry,diaryId,epochId)
-    const db=await openDatabase(),tx=db.transaction(STORES.writerKeys,'readwrite'),store=tx.objectStore(STORES.writerKeys)
-    const existing=await requestResult<StoredWriterDeviceKeyV2|undefined>(store.get(entry.writer_signing_key_id))
+    const db=await openDatabase(),readTx=db.transaction(STORES.writerKeys,'readonly')
+    const existing=await requestResult<StoredWriterDeviceKeyV2|undefined>(readTx.objectStore(STORES.writerKeys).get(entry.writer_signing_key_id))
+    await transactionDone(readTx)
     if(existing){
       await validateStoredWriterDeviceKeyV2(existing,diaryId,epochId)
       if(existing.writer_device_id!==entry.writer_device_id||existing.writer_public_key!==entry.writer_public_key)throw new Error('Writer key ID collision in local key store.')
-    }else store.add(entry)
-    await transactionDone(tx)
+      return
+    }
+    const writeTx=db.transaction(STORES.writerKeys,'readwrite')
+    writeTx.objectStore(STORES.writerKeys).add(entry)
+    await transactionDone(writeTx)
   }
 
   async loadWriterKey(writerSigningKeyId:string,diaryId:string,epochId:string):Promise<StoredWriterDeviceKeyV2|null>{
@@ -166,11 +170,12 @@ export class IndexedDbV2LocalSecurityStore {
     }
     validateEpochLocalSecurityStateV6(nextState)
     const tag=await localStateTagV6(rootKey,epochSalt,nextState)
+    const outboxCore:V2OutboxEntryCore={id:reservationId,epoch_id:reservation.epoch_id,envelope_id:envelope.envelopeId,status:'prepared',authority:structuredClone(authority)}
+    const outboxEntry:V2OutboxEntry={...outboxCore,tag:await outboxTag(rootKey,epochSalt,outboxCore)}
     const tx=db.transaction([STORES.reservations,STORES.envelopes,STORES.outbox,STORES.states],'readwrite')
     tx.objectStore(STORES.reservations).put({...storedReservation,state:'sealed'} satisfies EnvelopeReservationV6)
     tx.objectStore(STORES.envelopes).add({...envelope,id:reservationId,epoch_id:reservation.epoch_id,local_sequence:sequence} satisfies PersistedEnvelopeV6)
-    const outboxCore:V2OutboxEntryCore={id:reservationId,epoch_id:reservation.epoch_id,envelope_id:envelope.envelopeId,status:'prepared',authority:structuredClone(authority)}
-    tx.objectStore(STORES.outbox).add({...outboxCore,tag:await outboxTag(rootKey,epochSalt,outboxCore)} satisfies V2OutboxEntry)
+    tx.objectStore(STORES.outbox).add(outboxEntry)
     tx.objectStore(STORES.states).put({id:reservation.epoch_id,state:structuredClone(nextState),tag})
     await transactionDone(tx)
     return this.loadState(rootKey,epochSalt,reservation.epoch_id)
@@ -197,11 +202,14 @@ export class IndexedDbV2LocalSecurityStore {
       const staleCount=updated.filter(entry=>entry.status==='stale_writer_pending').length
       const finalState={...nextState,stale_writer_pending_count:staleCount}
       validateEpochLocalSecurityStateV6(finalState)
-      const tag=await localStateTagV6(rootKey,epochSalt,finalState),db=await openDatabase(),tx=db.transaction([STORES.outbox,STORES.states],'readwrite')
+      const tag=await localStateTagV6(rootKey,epochSalt,finalState),db=await openDatabase()
+      const authenticatedUpdated:V2OutboxEntry[]=[]
       for(const entry of updated){
-        const {tag: _tag,...core}=entry
-        tx.objectStore(STORES.outbox).put({...core,tag:await outboxTag(rootKey,epochSalt,core)})
+        const core:V2OutboxEntryCore={id:entry.id,epoch_id:entry.epoch_id,envelope_id:entry.envelope_id,status:entry.status,authority:structuredClone(entry.authority)}
+        authenticatedUpdated.push({...core,tag:await outboxTag(rootKey,epochSalt,core)})
       }
+      const tx=db.transaction([STORES.outbox,STORES.states],'readwrite')
+      for(const entry of authenticatedUpdated)tx.objectStore(STORES.outbox).put(entry)
       tx.objectStore(STORES.states).put({id:finalState.epoch_id,state:structuredClone(finalState),tag})
       await transactionDone(tx)
       return this.loadState(rootKey,epochSalt,finalState.epoch_id)
@@ -228,9 +236,11 @@ export class IndexedDbV2LocalSecurityStore {
       const nextEntries=entries.map(item=>item.id===entry.id?{...item,status}:item)
       const staleCount=nextEntries.filter(item=>item.status==='stale_writer_pending').length
       const nextState={...fresh,operation_generation:fresh.operation_generation+1,stale_writer_pending_count:staleCount}
-      const tag=await localStateTagV6(rootKey,epochSalt,nextState),tx=db.transaction([STORES.outbox,STORES.states],'readwrite')
-      const {tag: _tag,...entryCore}=entry,nextCore={...entryCore,status}
-      tx.objectStore(STORES.outbox).put({...nextCore,tag:await outboxTag(rootKey,epochSalt,nextCore)})
+      const tag=await localStateTagV6(rootKey,epochSalt,nextState)
+      const nextCore:V2OutboxEntryCore={id:entry.id,epoch_id:entry.epoch_id,envelope_id:entry.envelope_id,status,authority:structuredClone(entry.authority)}
+      const nextEntry:V2OutboxEntry={...nextCore,tag:await outboxTag(rootKey,epochSalt,nextCore)}
+      const tx=db.transaction([STORES.outbox,STORES.states],'readwrite')
+      tx.objectStore(STORES.outbox).put(nextEntry)
       tx.objectStore(STORES.states).put({id:epochId,state:structuredClone(nextState),tag})
       await transactionDone(tx)
       return this.loadState(rootKey,epochSalt,epochId)
