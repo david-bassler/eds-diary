@@ -212,7 +212,7 @@ async function verifiedEnvelopeRevisions(db:IDBDatabase):Promise<RevisionV1[]>{
   return revisions
 }
 async function persistRevision(db:IDBDatabase,store:LocalStoreName,value:Record<string,unknown>,fixedRevisionId?:string,writeMode:'normal'|'merge'|'merge-stage'|'test-branch'='normal',explicitParents:readonly string[]=[]):Promise<void>{
-  const loaded=await loadEpoch(db),rotationStep=loaded.state.rotation_state_ref?.state,frozen=rotationStep!==undefined&&['source_frozen_verified','recovery_secret_verified','successor_planned','successor_bound','copying','successor_verified','recovery_verified','backup_verified','announcement_pending','announcement_prepared','recovery_artifact_verified','staged_backup_verified','announcement_unknown','announcement_durable','confirmation_unknown','confirmation_durable','activated_backup_verified'].includes(rotationStep);if(loaded.state.epoch_status==='retired'||frozen)throw new Error('Epoch is frozen for rotation.')
+  const loaded=await loadEpoch(db),rotationStep=loaded.state.rotation_state_ref?.state,frozen=rotationStep!==undefined&&['source_frozen_verified','recovery_secret_verified','successor_planned','successor_bound','copying','successor_verified','recovery_verified','backup_verified','announcement_pending','announcement_prepared','recovery_artifact_verified','staged_backup_verified','announcement_unknown','announcement_durable','confirmation_unknown','confirmation_durable','activated_backup_verified','cutover_race','post_activation_superseded','profile_upgrade_source_race'].includes(rotationStep);if(loaded.state.epoch_status==='retired'||frozen)throw new Error('Epoch is frozen for rotation.')
   const id=String(value.id??'');if(!id)throw new Error('Record id is required.');const revisions=await verifiedEnvelopeRevisions(db),profile=profileFor(store,id),canonicalInput=revisions.some(revision=>revision.record_id===id&&revision.record_type===profile.recordType&&revision.record_schema===profile.recordSchema),recordId=canonicalInput?id:await recordIdentity(loaded.context,store,id);if(!canonicalInput)await rememberMapping(db,store,recordId,id)
   const graph=validateRevisionGraphV1(revisions),heads=sortedRevisionIds(graph.headsByRecord.get(recordId)??[]),revisionId=fixedRevisionId??base64Url(randomBytes(32));if(writeMode==='normal'&&heads.length>1)throw new UnresolvedRecordConflictError(recordId,heads);if(writeMode==='merge'&&heads.length<2)throw new Error('Record does not have multiple heads to merge.');if((writeMode==='merge'||writeMode==='merge-stage')&&value.status==='deleted')throw new Error('Explicit merge requires an active merged value.');if(writeMode==='test-branch'&&import.meta.env.MODE!=='test')throw new Error('Test branch writes are unavailable in production.');const parents=writeMode==='test-branch'||writeMode==='merge-stage'?sortedRevisionIds(explicitParents):heads
   if(writeMode==='merge-stage'&&(parents.length<2||parents.length>8||parents.some(parent=>!heads.includes(parent))))throw new Error('Staged merge parents must be current heads of the record.')
@@ -373,6 +373,22 @@ export async function activeProtocolSelectionV2():Promise<ActiveProtocolSelectio
   await complete(tx)
   return value??null
 }
+export async function markV1ProfileUpgradeSourceRace(operation:RotationOperationStateV2):Promise<void>{
+  if(operation.stage!=='stale')throw new Error('Profile-upgrade Source race terminal state must be stale.')
+  const db=await openDatabase(),initial=await loadEpoch(db)
+  await withDiaryLock(initial.context.diaryId,async()=>{
+    const current=await loadEpoch(db)
+    if(current.context.epochId!==operation.source_epoch_id)throw new Error('Profile-upgrade Source race epoch mismatch.')
+    const hash=await rotationOperationStateHashV2(operation)
+    const ref={operation_id:operation.operation_id,state:'profile_upgrade_source_race',state_record_hash:hash}
+    const next={...current.state,epoch_status:'retired' as const,rotation_state_ref:ref,operation_generation:current.state.operation_generation+1}
+    const tag=await stateTag(current.rootKey,current.epochSalt,next),tx=db.transaction([STORES.operations,STORES.state],'readwrite')
+    tx.objectStore(STORES.operations).put({id:`profile-upgrade-v2:${current.context.diaryId}`,state:structuredClone(operation),hash})
+    tx.objectStore(STORES.state).put({id:current.context.epochId,state:next,tag} satisfies StoredState)
+    await complete(tx)
+  })
+}
+
 export async function atomicSelectV2AndRetireV1(args:{
   operation:RotationOperationStateV2
   diaryId:string
