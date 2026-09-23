@@ -3,8 +3,8 @@ import { canonicalBytes, parseCanonicalJson } from '../crypto/canonical'
 import { aesGcmDecrypt, aesGcmEncrypt, randomBytes, sha256 } from '../crypto/core'
 import { deriveBackupKeyV2 } from './crypto'
 import { createAnchorV2 } from './prefix'
-import { manifestFingerprintV6, manifestTrustRootV6, openManifestV6, parseManifestCellsV6 } from './manifest'
-import { openRecoveryArtifactV6, recoveryArtifactHashV6, type RecoveryArtifactV6 } from './recovery'
+import { manifestFingerprintV6, manifestTrustRootV6, openManifestV6, parseManifestCellsV6, type ProtectedManifestV6 } from './manifest'
+import { openRecoveryArtifactV6, recoveryArtifactHashV6, type PreparedEnvelopeRowV2, type RecoveryArtifactV6, type RecoveryPayloadV6 } from './recovery'
 import { openRevisionEnvelopeV2, V2_PADDING_BUCKETS } from './envelopes'
 import { TransferableSingleWriterV2Verifier, type CanonicalFullResultV2 } from './verifier'
 import type { RemoteAnchorV2 } from './types'
@@ -153,6 +153,45 @@ const STALE_DISPOSITIONS=new Set([
   'rekey_rotation_required_rejected',
   'stale_after_seal_rejected',
 ])
+function lineageLeaf(payload:RecoveryPayloadV6):{staging:RemoteAnchorV2;confirmation:PreparedEnvelopeRowV2}|null{
+  const entry=payload.activation_lineage.at(-1)
+  if(!entry)return null
+  return entry.kind==='profile_upgrade'
+    ?{staging:entry.successor_staging_anchor,confirmation:entry.successor_confirmation_envelope}
+    :{staging:entry.proof.successor_staging_anchor,confirmation:entry.proof.successor_confirmation_envelope}
+}
+function sameRow(left:readonly string[],right:PreparedEnvelopeRowV2):boolean{
+  return left.length===3&&left[0]===right.envelope_id&&left[1]===right.iv&&left[2]===right.ciphertext
+}
+async function validateBackupActivationBoundary(
+  manifest:ProtectedManifestV6,
+  artifact:RecoveryPayloadV6,
+  canonical:CanonicalFullResultV2,
+  rows:readonly Row[],
+  activationState:'staged'|'activated',
+):Promise<void>{
+  const nonNative=manifest.predecessor_epochs.length===1
+  const leaf=lineageLeaf(artifact)
+  if(!nonNative){
+    if(artifact.activation_lineage.length!==0)throw new Error('Native BackupV6 must not contain ActivationLineageV2.')
+    if(activationState!=='activated'||canonical.activation_state!=='native_active')throw new Error('Native BackupV6 activation state mismatch.')
+    return
+  }
+  if(!leaf)throw new Error('Non-native BackupV6 requires ActivationLineageV2.')
+  if(!canonicalEqual(artifact.remote_anchor,leaf.staging))throw new Error('RecoveryArtifactV6 anchor must equal the Successor staging anchor.')
+  if(activationState==='staged'){
+    if(!canonicalEqual(canonical.remote_anchor,leaf.staging)||canonical.accepted_activation_confirmation!==null||canonical.activation_state!=='staged_confirmation_missing')throw new Error('Staged BackupV6 does not end exactly at the Successor staging anchor.')
+    return
+  }
+  if(canonical.accepted_activation_confirmation===null||canonical.activation_state!=='cross_epoch_evidence_present')throw new Error('Activated BackupV6 is missing canonical SuccessorActivationConfirmationV2 evidence.')
+  const firstAfterStaging=rows[leaf.staging.covered_row_count]
+  if(!firstAfterStaging||!sameRow(firstAfterStaging,leaf.confirmation))throw new Error('Activated BackupV6 does not contain the prepared Confirmation immediately after staging.')
+  let activationCount=leaf.staging.covered_row_count+1
+  while(activationCount<rows.length&&sameRow(rows[activationCount]!,leaf.confirmation))activationCount+=1
+  const activationAnchor=await createAnchorV2(manifest.diary_id,manifest.epoch_id,rows.slice(0,activationCount))
+  if(canonical.remote_anchor.covered_row_count<activationAnchor.covered_row_count)throw new Error('Activated BackupV6 remote prefix does not cover its activation anchor.')
+}
+
 async function verifyBackupLocalRows(
   rootKey:Uint8Array,
   trustRoot:Awaited<ReturnType<typeof manifestTrustRootV6>>,
@@ -193,6 +232,7 @@ async function buildManifest(context:BackupContextV6,backupId:string):Promise<Ba
   const trustRoot=await manifestTrustRootV6(manifestCells,manifestPayload)
   await verifyBackupLocalRows(context.rootKey,trustRoot,context.recordRows,context.pendingOutboxRows,context.staleWriterPendingRows)
   const artifact=(await openRecoveryArtifactV6(context.recoveryArtifact,context.urs)).payload
+  await validateBackupActivationBoundary(manifestPayload,artifact,context.canonical,context.recordRows,context.activationState)
   if(artifact.diary_id!==context.diaryId||artifact.epoch_id!==context.epochId||artifact.key_id!==context.keyId||artifact.manifest_fingerprint!==fingerprint)throw new Error('BackupV6 recovery artifact binding mismatch.')
   const artifactAdvancedRecovery=artifact.recovery_generation>manifestPayload.recovery_generation
   if(artifact.recovery_generation<manifestPayload.recovery_generation
@@ -300,6 +340,7 @@ export async function testRestoreBackupV6(
   const recovery=canonical.current_recovery
   if(recovery.recovery_generation!==manifest.recovery_generation||recovery.recovery_urs_commitment!==manifest.recovery_urs_commitment||recovery.recovery_urs_id!==manifest.recovery_urs_id||recovery.recovery_takeover_key_id!==manifest.recovery_takeover_key_id||recovery.recovery_takeover_public_key!==manifest.recovery_takeover_public_key||recovery.recovery_rekey_rotation_required!==manifest.recovery_rekey_rotation_required||recovery.recovery_rekey_transition_id!==manifest.recovery_rekey_transition_id)throw new Error('BackupV6 Recovery state mismatch.')
   const artifact=(await openRecoveryArtifactV6(backup.recovery_artifact,context.urs)).payload
+  await validateBackupActivationBoundary(manifestPayload,artifact,canonical,backup.record_rows,manifest.activation_state)
   if(artifact.diary_id!==context.diaryId||artifact.epoch_id!==context.epochId||artifact.manifest_fingerprint!==fingerprint||artifact.recovery_generation!==recovery.recovery_generation||artifact.recovery_urs_id!==recovery.recovery_urs_id||artifact.recovery_takeover_key_id!==recovery.recovery_takeover_key_id)throw new Error('BackupV6 RecoveryArtifactV6 binding mismatch.')
   const artifactAdvancedRecovery=artifact.recovery_generation>manifestPayload.recovery_generation
   if(artifact.recovery_generation<manifestPayload.recovery_generation
