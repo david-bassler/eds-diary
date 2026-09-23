@@ -56,10 +56,19 @@ async function convergeOwnedCandidates(state:CreationState,transport:RemoteTrans
  */
 export async function runCreationStateMachine(initial:CreationState,manifest:readonly string[],transport:RemoteTransport,codec:TransportProfileCodec,store:CreationPersistence):Promise<CreationState>{
   let state=(await store.read(initial.locator))??initial
+  const suppliedManifestBytes=new TextDecoder().decode(canonicalBytes([...manifest]))
+  if(state.locator!==initial.locator
+    ||state.manifestFingerprint!==initial.manifestFingerprint
+    ||(state.diaryId!==undefined&&initial.diaryId!==undefined&&state.diaryId!==initial.diaryId)
+    ||(state.epochId!==undefined&&initial.epochId!==undefined&&state.epochId!==initial.epochId)
+    ||(state.keyId!==undefined&&initial.keyId!==undefined&&state.keyId!==initial.keyId)
+    ||(state.expectedProperties!==undefined&&initial.expectedProperties!==undefined&&!propertiesEqual(state.expectedProperties,initial.expectedProperties))
+    ||(state.manifestBytes!==undefined&&state.manifestBytes!==suppliedManifestBytes)
+    ||(state.manifest!==undefined&&new TextDecoder().decode(canonicalBytes([...state.manifest]))!==suppliedManifestBytes))throw new Error('Persisted creation intent does not match the immutable requested resource.')
   if(state.status==='creation_pending')state=next(state,'planned')
   if(state.status==='bound')return state
   if(state.status==='ambiguous')state=next(state,'planned',{remoteId:null})
-  if(!state.manifest){const bytes=new TextDecoder().decode(canonicalBytes([...manifest]));state=await persist(store,{...state,status:'planned',manifest:[...manifest],manifestBytes:bytes,operationGeneration:state.operationGeneration??0})}
+  if(!state.manifest){state=await persist(store,{...state,status:'planned',manifest:[...manifest],manifestBytes:suppliedManifestBytes,operationGeneration:state.operationGeneration??0})}
   if(state.status==='planned'){const {candidates,choice}=await convergeOwnedCandidates(state,transport,codec);if(choice.ambiguous)return persist(store,next(state,'ambiguous',{remoteId:null,candidateIds:candidates.map(c=>c.remoteId)}));state=await persist(store,next(state,'discovery_verified',{remoteId:choice.id,candidateIds:candidates.map(c=>c.remoteId)}))}
   if(state.status==='discovery_verified'&&!state.remoteId)state=await persist(store,next(state,'create_pending'))
   if(state.status==='create_pending'){
