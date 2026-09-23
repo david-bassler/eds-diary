@@ -105,7 +105,12 @@ export class V2DomainWritePreparer {
         fromBase64Url(reservation.envelope_id),
         fromBase64Url(reservation.iv),
       )
-      const after=await this.store.commitReservedEnvelope(rootKey,epochSalt,local.operation_generation,reservation,envelope)
+      const after=await this.store.commitReservedEnvelope(rootKey,epochSalt,local.operation_generation,reservation,envelope,{
+        writer_generation:local.writer_generation,
+        writer_grant_id:local.writer_grant_id,
+        writer_device_id:local.writer_device_id,
+        writer_key_id:local.writer_signing_key_id,
+      })
       if(after.local_journal_count!==local.local_journal_count+1)throw new Error('V2 domain envelope journal commit did not advance exactly once.')
       return{revision,envelope}
     })
