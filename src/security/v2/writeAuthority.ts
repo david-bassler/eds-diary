@@ -49,7 +49,7 @@ export class TransferableSingleWriterV2WriteAuthority implements WriteAuthority 
   readonly profileId=SINGLE_WRITER_V2_PROFILE
   constructor(
     private readonly loadLocalState:()=>Promise<EpochLocalSecurityStateV6>|EpochLocalSecurityStateV6,
-    private readonly loadEnvelopeAuthority:(envelopeId:string)=>Promise<PreparedEnvelopeAuthorityV2|null>|PreparedEnvelopeAuthorityV2|null,
+    private readonly loadEnvelopeAuthority:(envelope:PreparedEnvelope)=>Promise<PreparedEnvelopeAuthorityV2|null>|PreparedEnvelopeAuthorityV2|null,
   ){}
 
   private async access(verified:VerifiedRemoteState):Promise<WriteAccess>{
@@ -62,7 +62,7 @@ export class TransferableSingleWriterV2WriteAuthority implements WriteAuthority 
 
   async verifyBeforePush(envelope:PreparedEnvelope,verified:VerifiedRemoteState,_phase:WritePushPhase):Promise<WritePushDecision>{
     if(!envelope.envelopeId||!envelope.iv||!envelope.ciphertext)throw new Error('Prepared envelope is incomplete.')
-    const remote=canonicalState(verified),local=await this.loadLocalState(),prepared=await this.loadEnvelopeAuthority(envelope.envelopeId)
+    const remote=canonicalState(verified),local=await this.loadLocalState(),prepared=await this.loadEnvelopeAuthority(envelope)
     if(!prepared)return 'quarantine_stale_writer'
     if(mutationBlocked(local,remote))return 'quarantine_stale_writer'
     const current=remote.current_writer
