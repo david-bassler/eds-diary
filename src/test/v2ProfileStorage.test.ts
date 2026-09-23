@@ -31,8 +31,8 @@ import {
 } from '../security/v2/recovery'
 import { recoveryArtifactFromGridV6, recoveryArtifactToGridV6 } from '../security/v2/recoveryGrid'
 import { createBackupV6, testRestoreBackupV6 } from '../security/v2/backup'
-import { createRecoveryTakeoverStagingV2 } from '../security/v2/recoveryStaging'
-import { IndexedDbV2LocalSecurityStore, __v2LocalPersistenceTesting, isVerifiedPersistedRecoveryArtifactV6 } from '../security/v2/localPersistence'
+import { createRecoveryTakeoverStagingV2, VerifiedRecoveryTakeoverStagingV2 } from '../security/v2/recoveryStaging'
+import { IndexedDbV2LocalSecurityStore, VerifiedPersistedRecoveryArtifactV6, __v2LocalPersistenceTesting, isVerifiedPersistedRecoveryArtifactV6 } from '../security/v2/localPersistence'
 import { GoogleSheetsTransferableSingleWriterV2ProfileCodec } from '../sync/google/GoogleSheetsTransferableSingleWriterV2ProfileCodec'
 import {
   epochLocatorV2,
@@ -43,6 +43,7 @@ import {
 import { epochLocator } from '../sync/google/GoogleSheetsSingleWriterTransport'
 import { issueControlledTestGoogleClient } from '../sync/google/GoogleAuthProvider'
 import { SINGLE_WRITER_V2_PROFILE } from '../sync/core/contracts'
+import { googleV2ProviderSessionFromAuthenticatedClient } from '../sync/google/GoogleTransferableSingleWriterV2Provider'
 
 const id=(fill:number,length:number)=>base64Url(new Uint8Array(length).fill(fill))
 const bytes=(fill:number,length:number)=>new Uint8Array(length).fill(fill)
@@ -155,6 +156,13 @@ describe('ManifestV6 and v2 Google profile',()=>{
     await expect(openManifestV6(f.rootKey,f.epochSalt,{diaryId:f.diaryId,epochId:f.epochId},{...f.cells,format:'sync-v6',manifestCiphertext:`${f.cells.manifestCiphertext}A`})).rejects.toBeTruthy()
   })
 
+  it('rejects a structurally valid but provenance-free ManifestV6 trust root',async()=>{
+    const f=await nativeFixture()
+    const unbranded=structuredClone(f.trustRoot)
+    await expect(new TransferableSingleWriterV2Verifier().verifyCanonicalFull(unbranded,f.rootKey,[f.row]))
+      .rejects.toThrow(/authenticated cell provenance/)
+  })
+
   it('rejects non-singleton first-v2 recovery history and self-predecessor manifests',async()=>{
     const f=await nativeFixture()
     const prior={recovery_generation:0,recovery_urs_id:id(90,32),recovery_takeover_key_id:id(91,32)}
@@ -221,6 +229,52 @@ describe('ManifestV6 and v2 Google profile',()=>{
   })
 })
 
+describe('V2 provider fresh canonical source',()=>{
+  it('performs a new authenticated provider read and canonical_full verification on every verifyNow call',async()=>{
+    const f=await nativeFixture(),remoteId='remote-v2-fresh-source'
+    const locator=await epochLocatorV2(f.diaryId,f.epochId)
+    class Client implements GoogleApiClient{
+      readonly calls:string[]=[]
+      async request<T>(url:string):Promise<T>{
+        this.calls.push(url)
+        const parsed=new URL(url)
+        if(parsed.origin==='https://www.googleapis.com'&&parsed.pathname==='/drive/v3/about')return{user:{permissionId:'permission-owner-v2'}} as T
+        if(parsed.origin==='https://www.googleapis.com'&&parsed.pathname===`/drive/v3/files/${remoteId}`){
+          return{id:remoteId,mimeType:'application/vnd.google-apps.spreadsheet',trashed:false,ownedByMe:true,shared:false,isAppAuthorized:true,appProperties:{app_format:'sync-v6',epoch_locator:locator}} as T
+        }
+        if(parsed.origin==='https://www.googleapis.com'&&parsed.pathname===`/drive/v3/files/${remoteId}/permissions`){
+          return{permissions:[{id:'permission-owner-v2',type:'user',role:'owner',deleted:false}]} as T
+        }
+        if(parsed.origin==='https://sheets.googleapis.com'&&parsed.pathname===`/v4/spreadsheets/${remoteId}`){
+          const range=parsed.searchParams.get('ranges')??''
+          if(range.includes("'_m'!A1:D1")){
+            return{sheets:[{properties:{sheetId:1,title:'_m'},data:[{startRow:0,rowData:[{values:manifestCellsArrayV6(f.cells).map(value=>({userEnteredValue:{stringValue:value}}))}]}]}]} as T
+          }
+          if(range.includes("'_r'!A1:C1")){
+            return{sheets:[{properties:{sheetId:2,title:'_r'},data:[{startRow:0,rowData:[{values:f.row.map(value=>({userEnteredValue:{stringValue:value}}))}]}]}]} as T
+          }
+          return{sheets:[
+            {properties:{sheetId:1,title:'_m',sheetType:'GRID',gridProperties:{rowCount:1,columnCount:4}},merges:[]},
+            {properties:{sheetId:2,title:'_r',sheetType:'GRID',gridProperties:{rowCount:1,columnCount:3}},merges:[]},
+          ]} as T
+        }
+        throw new Error(`Unexpected request: ${url}`)
+      }
+      identity():string{return'permission-owner-v2'}
+    }
+    const client=new Client();issueControlledTestGoogleClient(client)
+    const session=googleV2ProviderSessionFromAuthenticatedClient(client)
+    const source=session.freshCanonicalSource(f.diaryId,f.epochId,f.rootKey,remoteId)
+    await expect(source.verifyNow()).resolves.toMatchObject({profileId:SINGLE_WRITER_V2_PROFILE,manifestFingerprint:f.fingerprint})
+    const firstReadCount=client.calls.filter(url=>url.includes(`/v4/spreadsheets/${remoteId}`)).length
+    await expect(source.verifyNow()).resolves.toMatchObject({profileId:SINGLE_WRITER_V2_PROFILE,manifestFingerprint:f.fingerprint})
+    const secondReadCount=client.calls.filter(url=>url.includes(`/v4/spreadsheets/${remoteId}`)).length
+    expect(firstReadCount).toBeGreaterThan(0)
+    expect(secondReadCount).toBe(firstReadCount*2)
+    expect(client.calls.filter(url=>url.includes('/drive/v3/about'))).toHaveLength(2)
+  })
+})
+
 describe('V2 creation crash-resume binding',()=>{
   it('rejects resuming a persisted creation intent with different immutable manifest bytes',async()=>{
     const f=await nativeFixture()
@@ -271,6 +325,19 @@ describe('V2 creation one-shot persistence',()=>{
       salt:bytes(30,32),
       iv:bytes(31,12),
     })
+    expect(()=>new (VerifiedRecoveryTakeoverStagingV2 as unknown as {new(staging:typeof staging,token:symbol):VerifiedRecoveryTakeoverStagingV2})(staging,Symbol('forged')))
+      .toThrow(/only be created by the verifier/)
+    expect(()=>new (VerifiedPersistedRecoveryArtifactV6 as unknown as {new(
+      artifact:RecoveryArtifactV6,
+      artifactSha256:string,
+      familyLocator:string,
+      artifactLocator:string,
+      diaryId:string,
+      epochId:string,
+      token:symbol,
+    ):VerifiedPersistedRecoveryArtifactV6})(
+      f.recoveryArtifact,id(80,32),id(81,16),id(82,16),f.diaryId,f.epochId,Symbol('forged'),
+    )).toThrow(/only be created after persistent readback verification/)
     const verifiedStaging=await store.persistRecoveryTakeoverStaging(staging,f.urs)
     expect(verifiedStaging.staging.manifest_fingerprint).toBe(f.fingerprint)
     const persisted=await store.persistRecoveryArtifactV6(f.urs,f.diaryId,f.epochId,f.recoveryArtifact)
