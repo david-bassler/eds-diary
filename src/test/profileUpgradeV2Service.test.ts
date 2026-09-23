@@ -252,7 +252,7 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
       if(point==='after-staged_backup_verified'&&!armed){armed=true;throw new Error('armed-source-race')}
     }).upgrade()).rejects.toThrow('armed-source-race')
     const existing=source.transport.snapshot.rows[0]!
-    source.transport.injectBeforeNextAppend=[...existing] as Row
+    source.transport.injectBeforeNextAppend=[existing[0]!,existing[1]!,existing[2]!]
     const result=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
     expect(result.stage).toBe('stale')
     expect(await activeProtocolSelectionV2()).toBeNull()
@@ -268,7 +268,7 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     }).upgrade()).rejects.toThrow('armed-successor-race')
     if(!v2.remote)throw new Error('successor missing in test fixture')
     const existing=v2.remote.snapshot.rows.at(-1)!
-    v2.remote.injectBeforeNextAppend=[...existing] as Row
+    v2.remote.injectBeforeNextAppend=[existing[0]!,existing[1]!,existing[2]!]
     const result=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
     expect(result.stage).toBe('cutover_race')
     expect(await activeProtocolSelectionV2()).toBeNull()
