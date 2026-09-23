@@ -9,6 +9,7 @@ import {
 } from '../../security/v2/recovery'
 import { isAuthenticatedGoogleApiClient } from './GoogleAuthProvider'
 import { googleAccountBindingV2, type GoogleApiClient } from './GoogleSheetsTransferableSingleWriterV2Transport'
+import { isVerifiedPersistedRecoveryArtifactV6, type VerifiedPersistedRecoveryArtifactV6 } from '../../security/v2/localPersistence'
 
 interface DriveFile {
   id?:string
@@ -171,11 +172,14 @@ export class GoogleRecoveryArtifactStoreV6 {
     return result.sort((a,b)=>a.id.localeCompare(b.id))
   }
 
-  async publish(urs:Uint8Array,diaryId:string,epochId:string,artifact:RecoveryArtifactV6):Promise<string>{
+  async publish(urs:Uint8Array,persisted:VerifiedPersistedRecoveryArtifactV6):Promise<string>{
+    if(!isVerifiedPersistedRecoveryArtifactV6(persisted))throw new Error('Persistent/readback-verified RecoveryArtifactV6 is required before remote publish.')
+    const {artifact,diaryId,epochId}=persisted
     const opened=await openRecoveryArtifactV6(artifact,urs)
     if(opened.payload.diary_id!==diaryId||opened.payload.epoch_id!==epochId)throw new Error('RecoveryArtifactV6 publish context mismatch.')
     if(opened.payload.google_account_binding!==await googleAccountBindingV2(diaryId,this.api.identity()))throw new Error('RecoveryArtifactV6 Google account binding mismatch.')
     const family=await recoveryFamilyLocatorV6(urs),locator=await recoveryArtifactLocatorV6(urs,diaryId,epochId)
+    if(family!==persisted.familyLocator||locator!==persisted.artifactLocator||await recoveryArtifactHashV6(artifact)!==persisted.artifactSha256)throw new Error('Persisted RecoveryArtifactV6 identity no longer matches publish input.')
     const expected=this.expectedProperties(family,locator)
     const converge=async():Promise<{chosen:string|null;classified:Awaited<ReturnType<GoogleRecoveryArtifactStoreV6['classify']>>}>=>{
       const classified=await this.classify(await this.candidates(locator),expected,artifact)
