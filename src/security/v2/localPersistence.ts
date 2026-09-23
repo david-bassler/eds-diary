@@ -3,8 +3,8 @@ import type { PreparedEnvelope } from '../envelopes'
 import { localJournalNextV2, localStateTagV6, validateEpochLocalSecurityStateV6, validateStoredWriterDeviceKeyV2, verifyLocalStateTagV6, type EpochLocalSecurityStateV6, type StoredWriterDeviceKeyV2 } from './localState'
 
 const DATABASE_NAME='eds-diary-v2-security'
-const DATABASE_VERSION=1
-const STORES={states:'epochSecurityStateV6',writerKeys:'writerDeviceKeysV2',reservations:'envelopeReservationsV6',envelopes:'envelopesV6'} as const
+const DATABASE_VERSION=2
+const STORES={states:'epochSecurityStateV6',writerKeys:'writerDeviceKeysV2',reservations:'envelopeReservationsV6',envelopes:'envelopesV6',outbox:'outboxV6'} as const
 
 export interface EnvelopeReservationV6 {
   id:string
@@ -17,6 +17,20 @@ export interface PersistedEnvelopeV6 extends PreparedEnvelope {
   id:string
   epoch_id:string
   local_sequence:number
+}
+export interface PreparedEnvelopeAuthorityV2 {
+  writer_generation:number
+  writer_grant_id:string
+  writer_device_id:string
+  writer_key_id:string
+}
+export type V2OutboxStatus='prepared'|'pending'|'durable'|'stale_writer_pending'
+export interface V2OutboxEntry {
+  id:string
+  epoch_id:string
+  envelope_id:string
+  status:V2OutboxStatus
+  authority:PreparedEnvelopeAuthorityV2
 }
 
 function requestResult<T>(request:IDBRequest<T>):Promise<T>{
@@ -43,6 +57,7 @@ async function openDatabase():Promise<IDBDatabase>{
       if(!db.objectStoreNames.contains(STORES.writerKeys))db.createObjectStore(STORES.writerKeys,{keyPath:'writer_signing_key_id'})
       if(!db.objectStoreNames.contains(STORES.reservations)){const store=db.createObjectStore(STORES.reservations,{keyPath:'id'});store.createIndex('byEpoch','epoch_id')}
       if(!db.objectStoreNames.contains(STORES.envelopes)){const store=db.createObjectStore(STORES.envelopes,{keyPath:'id'});store.createIndex('byEpoch','epoch_id');store.createIndex('bySequence',['epoch_id','local_sequence'],{unique:true})}
+      if(!db.objectStoreNames.contains(STORES.outbox)){const store=db.createObjectStore(STORES.outbox,{keyPath:'id'});store.createIndex('byEpoch','epoch_id')}
     })
     request.addEventListener('success',()=>{
       const db=request.result
@@ -120,6 +135,7 @@ export class IndexedDbV2LocalSecurityStore {
     expectedOperationGeneration:number,
     reservation:EnvelopeReservationV6,
     envelope:PreparedEnvelope,
+    authority:PreparedEnvelopeAuthorityV2,
   ):Promise<EpochLocalSecurityStateV6>{
     if(reservation.state!=='reserved'||reservation.envelope_id!==envelope.envelopeId||reservation.iv!==envelope.iv)throw new Error('Prepared envelope does not match its one-shot reservation.')
     const db=await openDatabase(),current=await this.loadState(rootKey,epochSalt,reservation.epoch_id)
@@ -139,12 +155,28 @@ export class IndexedDbV2LocalSecurityStore {
     }
     validateEpochLocalSecurityStateV6(nextState)
     const tag=await localStateTagV6(rootKey,epochSalt,nextState)
-    const tx=db.transaction([STORES.reservations,STORES.envelopes,STORES.states],'readwrite')
+    const tx=db.transaction([STORES.reservations,STORES.envelopes,STORES.outbox,STORES.states],'readwrite')
     tx.objectStore(STORES.reservations).put({...storedReservation,state:'sealed'} satisfies EnvelopeReservationV6)
     tx.objectStore(STORES.envelopes).add({...envelope,id:reservationId,epoch_id:reservation.epoch_id,local_sequence:sequence} satisfies PersistedEnvelopeV6)
+    tx.objectStore(STORES.outbox).add({id:reservationId,epoch_id:reservation.epoch_id,envelope_id:envelope.envelopeId,status:'prepared',authority:structuredClone(authority)} satisfies V2OutboxEntry)
     tx.objectStore(STORES.states).put({id:reservation.epoch_id,state:structuredClone(nextState),tag})
     await transactionDone(tx)
     return this.loadState(rootKey,epochSalt,reservation.epoch_id)
+  }
+
+
+  async envelopeAuthority(epochId:string,envelopeId:string):Promise<PreparedEnvelopeAuthorityV2|null>{
+    const db=await openDatabase(),tx=db.transaction(STORES.outbox,'readonly')
+    const entry=await requestResult<V2OutboxEntry|undefined>(tx.objectStore(STORES.outbox).get(`${epochId}:${envelopeId}`))
+    await transactionDone(tx)
+    return entry?structuredClone(entry.authority):null
+  }
+
+  async outbox(epochId:string):Promise<V2OutboxEntry[]>{
+    const db=await openDatabase(),tx=db.transaction(STORES.outbox,'readonly')
+    const entries=await requestResult<V2OutboxEntry[]>(tx.objectStore(STORES.outbox).index('byEpoch').getAll(epochId))
+    await transactionDone(tx)
+    return entries.map(entry=>structuredClone(entry))
   }
 
   async envelopes(epochId:string):Promise<PreparedEnvelope[]>{
