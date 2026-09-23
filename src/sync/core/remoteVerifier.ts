@@ -48,7 +48,7 @@ function validateControl(revision: RevisionV1, currentEpochId: string): void {
     exact(['rotation_id','from_epoch_id','successor_epoch_id','successor_creation_locator','successor_manifest_fingerprint','rotation_kind'])
     id(data.rotation_id, 32, 'rotation_id'); id(data.from_epoch_id, 16, 'from_epoch_id'); if (data.from_epoch_id !== currentEpochId) throw new Error('Rotation announcement is not for the current epoch.'); id(data.successor_epoch_id, 16, 'successor_epoch_id')
     id(data.successor_creation_locator, 16, 'successor_creation_locator'); id(data.successor_manifest_fingerprint, 32, 'successor_manifest_fingerprint')
-    if (data.rotation_kind !== 'normal') throw new Error('Invalid rotation kind.')
+    if (data.rotation_kind !== 'normal' && data.rotation_kind !== 'profile_upgrade') throw new Error('Invalid rotation kind.')
   } else {
     if (revision.record_type !== 'epoch_migration') throw new Error('Migration control type mismatch.')
     exact(['migration_id','migration_kind','source','result_semantic_snapshot_hash','active_head_count','tombstone_head_count'])
