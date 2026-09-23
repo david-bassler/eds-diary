@@ -219,6 +219,84 @@ export class IndexedDbV2LocalSecurityStore {
     return structuredClone(stored.value)
   }
 
+  async persistProfileUpgradeSuccessorPlanBundle(args:{
+    artifactId:string
+    artifactValue:unknown
+    rootKey:Uint8Array
+    epochSalt:Uint8Array
+    rootWrap:RootWrapV6
+    bestEffortWrappingKey:CryptoKey|null
+    writerKey:StoredWriterDeviceKeyV2
+    recoveryStaging:RecoveryTakeoverStagingV2
+    urs:Uint8Array
+    state:EpochLocalSecurityStateV6
+  }):Promise<void>{
+    if(!args.artifactId)throw new Error('Profile-upgrade plan artifact ID is required.')
+    validateRootWrapV6(args.rootWrap)
+    validateEpochLocalSecurityStateV6(args.state)
+    if(args.rootWrap.epoch_id!==args.state.epoch_id
+      ||args.rootWrap.diary_id!==args.state.diary_id
+      ||args.rootWrap.key_id!==args.state.key_id
+      ||args.rootWrap.manifest_fingerprint!==args.state.manifest_fingerprint)throw new Error('Profile-upgrade RootWrapV6/StateV6 binding mismatch.')
+    if((args.rootWrap.mode==='best-effort')!==(args.bestEffortWrappingKey!==null))throw new Error('Profile-upgrade best-effort wrapping-key binding mismatch.')
+    if(args.bestEffortWrappingKey){
+      const opened=await openBestEffortRootWrapV6(args.rootWrap,args.bestEffortWrappingKey)
+      if(base64Url(opened)!==base64Url(args.rootKey))throw new Error('Profile-upgrade RootWrapV6 readback failed before persistence.')
+    }
+    await validateStoredWriterDeviceKeyV2(args.writerKey,args.state.diary_id,args.state.epoch_id)
+    const verifiedStaging=await verifyRecoveryTakeoverStagingV2(args.recoveryStaging,args.urs)
+    if(!isVerifiedRecoveryTakeoverStagingV2(verifiedStaging)
+      ||args.recoveryStaging.diary_id!==args.state.diary_id
+      ||args.recoveryStaging.epoch_id!==args.state.epoch_id
+      ||args.recoveryStaging.manifest_fingerprint!==args.state.manifest_fingerprint)throw new Error('Profile-upgrade RecoveryTakeoverStagingV2 binding mismatch.')
+    const planBytes=new TextDecoder().decode(canonicalBytes(args.artifactValue as never))
+    const planHash=base64Url(await sha256(canonicalBytes(args.artifactValue as never)))
+    const wrapBytes=new TextDecoder().decode(canonicalBytes(args.rootWrap as never))
+    const stateTag=await localStateTagV6(args.rootKey,args.epochSalt,args.state)
+    const stagingId=`${args.recoveryStaging.epoch_id}:${args.recoveryStaging.recovery_generation}:${args.recoveryStaging.recovery_takeover_key_id}:${args.recoveryStaging.manifest_fingerprint}`
+    const db=await openDatabase()
+    const readTx=db.transaction([
+      STORES.operationArtifacts,STORES.rootWraps,STORES.rootWrappingKeys,STORES.writerKeys,
+      STORES.recoveryStaging,STORES.states,
+    ],'readonly')
+    const requests=[
+      readTx.objectStore(STORES.operationArtifacts).get(args.artifactId),
+      readTx.objectStore(STORES.rootWraps).get(args.state.epoch_id),
+      readTx.objectStore(STORES.rootWrappingKeys).get(args.rootWrap.wrap_id),
+      readTx.objectStore(STORES.writerKeys).get(args.writerKey.writer_signing_key_id),
+      readTx.objectStore(STORES.recoveryStaging).get(stagingId),
+      readTx.objectStore(STORES.states).get(args.state.epoch_id),
+    ]
+    const existing=await Promise.all(requests.map(request=>requestResult<unknown>(request)))
+    await transactionDone(readTx)
+    if(existing.some(value=>value!==undefined))throw new Error('Profile-upgrade successor planning bundle already exists incompletely or collides with local state.')
+    const tx=db.transaction([
+      STORES.operationArtifacts,STORES.rootWraps,STORES.rootWrappingKeys,STORES.writerKeys,
+      STORES.recoveryStaging,STORES.states,
+    ],'readwrite')
+    tx.objectStore(STORES.operationArtifacts).add({id:args.artifactId,value:structuredClone(args.artifactValue),bytes:planBytes,hash:planHash})
+    tx.objectStore(STORES.rootWraps).add({id:args.state.epoch_id,wrap:structuredClone(args.rootWrap),bytes:wrapBytes})
+    if(args.bestEffortWrappingKey)tx.objectStore(STORES.rootWrappingKeys).add({id:args.rootWrap.wrap_id,key:args.bestEffortWrappingKey})
+    tx.objectStore(STORES.writerKeys).add(args.writerKey)
+    tx.objectStore(STORES.recoveryStaging).add({id:stagingId,staging:structuredClone(args.recoveryStaging)})
+    tx.objectStore(STORES.states).add({id:args.state.epoch_id,state:structuredClone(args.state),tag:stateTag})
+    await transactionDone(tx)
+    const [plan,state,writer,staging,wrap]=await Promise.all([
+      this.operationArtifact<unknown>(args.artifactId),
+      this.loadState(args.rootKey,args.epochSalt,args.state.epoch_id),
+      this.loadWriterKey(args.writerKey.writer_signing_key_id,args.state.diary_id,args.state.epoch_id),
+      this.loadRecoveryTakeoverStagingMaterial({
+        epochId:args.state.epoch_id,
+        recoveryGeneration:args.recoveryStaging.recovery_generation,
+        recoveryTakeoverKeyId:args.recoveryStaging.recovery_takeover_key_id,
+        manifestFingerprint:args.state.manifest_fingerprint,
+        urs:args.urs,
+      }),
+      this.loadRootWrapV6(args.state.epoch_id),
+    ])
+    if(plan===null||state.manifest_fingerprint!==args.state.manifest_fingerprint||!writer||!isVerifiedRecoveryTakeoverStagingV2(staging.verified)||wrap.wrap.wrap_id!==args.rootWrap.wrap_id)throw new Error('Profile-upgrade successor planning bundle readback failed.')
+  }
+
   async persistRootWrapV6(wrap:RootWrapV6,bestEffortWrappingKey:CryptoKey|null):Promise<void>{
     validateRootWrapV6(wrap)
     if((wrap.mode==='best-effort')!==(bestEffortWrappingKey!==null))throw new Error('RootWrapV6 best-effort key persistence mismatch.')
