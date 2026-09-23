@@ -5,7 +5,7 @@ import { deriveLocalStateMacKeyV2 } from './crypto'
 import { openRevisionEnvelopeV2 } from './envelopes'
 import type { PreparedEnvelope } from '../envelopes'
 import { localJournalInitialV2, localJournalNextV2, localStateTagV6, validateEpochLocalSecurityStateV6, validateStoredWriterDeviceKeyV2, verifyLocalStateTagV6, withDiaryLockV2, type EpochLocalSecurityStateV6, type StoredWriterDeviceKeyV2 } from './localState'
-import { isVerifiedRecoveryTakeoverStagingV2, verifyRecoveryTakeoverStagingV2, type RecoveryTakeoverStagingV2, type VerifiedRecoveryTakeoverStagingV2 } from './recoveryStaging'
+import { isVerifiedRecoveryTakeoverStagingV2, openRecoveryTakeoverStagingV2, verifyRecoveryTakeoverStagingV2, type RecoveryTakeoverStagingV2, type VerifiedRecoveryTakeoverStagingV2 } from './recoveryStaging'
 import { openRecoveryArtifactV6, recoveryArtifactHashV6, recoveryArtifactLocatorV6, recoveryFamilyLocatorV6, type RecoveryArtifactV6 } from './recovery'
 import { activationLineageCacheHashV2, openActivationLineageCacheV2, type ActivationLineageCacheV2 } from './activationLineageCache'
 import { advanceRotationOperationStateV2, rotationOperationStateHashV2, validateRotationOperationStateV2, type RotationOperationStateV2, type RotationOperationStageV2 } from './profileUpgrade'
@@ -448,6 +448,39 @@ export class IndexedDbV2LocalSecurityStore {
     await transactionDone(readTx)
     if(!readback||new TextDecoder().decode(canonicalBytes(readback.staging as never))!==new TextDecoder().decode(canonicalBytes(staging as never)))throw new Error('RecoveryTakeoverStagingV2 persistent readback mismatch.')
     return verifyRecoveryTakeoverStagingV2(readback.staging,urs)
+  }
+
+  async loadRecoveryTakeoverStagingMaterial(args:{
+    epochId:string
+    recoveryGeneration:number
+    recoveryTakeoverKeyId:string
+    manifestFingerprint:string
+    urs:Uint8Array
+  }):Promise<{verified:VerifiedRecoveryTakeoverStagingV2;privateKeyPkcs8:Uint8Array}>{
+    const id=`${args.epochId}:${args.recoveryGeneration}:${args.recoveryTakeoverKeyId}:${args.manifestFingerprint}`
+    const db=await openDatabase(),tx=db.transaction(STORES.recoveryStaging,'readonly')
+    const stored=await requestResult<{id:string;staging:RecoveryTakeoverStagingV2}|undefined>(tx.objectStore(STORES.recoveryStaging).get(id))
+    await transactionDone(tx)
+    if(!stored)throw new Error('RecoveryTakeoverStagingV2 is missing.')
+    return openRecoveryTakeoverStagingV2(stored.staging,args.urs)
+  }
+
+  async deleteRecoveryTakeoverStaging(args:{
+    epochId:string
+    recoveryGeneration:number
+    recoveryTakeoverKeyId:string
+    manifestFingerprint:string
+    urs:Uint8Array
+  }):Promise<void>{
+    const opened=await this.loadRecoveryTakeoverStagingMaterial(args)
+    if(opened.verified.staging.epoch_id!==args.epochId)throw new Error('RecoveryTakeoverStagingV2 deletion binding mismatch.')
+    const id=`${args.epochId}:${args.recoveryGeneration}:${args.recoveryTakeoverKeyId}:${args.manifestFingerprint}`,db=await openDatabase(),tx=db.transaction(STORES.recoveryStaging,'readwrite')
+    tx.objectStore(STORES.recoveryStaging).delete(id)
+    await transactionDone(tx)
+    const check=db.transaction(STORES.recoveryStaging,'readonly')
+    const remaining=await requestResult<unknown>(check.objectStore(STORES.recoveryStaging).get(id))
+    await transactionDone(check)
+    if(remaining!==undefined)throw new Error('RecoveryTakeoverStagingV2 deletion readback failed.')
   }
 
   async persistWriterKey(entry:StoredWriterDeviceKeyV2,diaryId:string,epochId:string):Promise<void>{
