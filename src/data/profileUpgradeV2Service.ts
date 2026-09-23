@@ -1,7 +1,7 @@
 import { base64Url, fixedBase64Url, fromBase64Url, randomBytes } from '../security/crypto/bytes'
 import { canonicalBytes } from '../security/crypto/canonical'
-import { recoveryCommitment, sha256 } from '../security/crypto/core'
-import type { PreparedEnvelope } from '../security/envelopes'
+import { deriveEpochSalt, recoveryCommitment, sha256 } from '../security/crypto/core'
+import { openEnvelope, type PreparedEnvelope } from '../security/envelopes'
 import { validateRevisionGraphV1, validateRevisionV1, type RevisionV1 } from '../security/revisions'
 import {
   DOMAIN_SCHEMA_REGISTRY,
@@ -76,7 +76,7 @@ import {
   type StoredWriterDeviceKeyV2,
 } from '../security/v2/localState'
 import { createRecoveryTakeoverStagingV2 } from '../security/v2/recoveryStaging'
-import { sealRevisionEnvelopeV2 } from '../security/v2/envelopes'
+import { openRevisionEnvelopeV2, sealRevisionEnvelopeV2 } from '../security/v2/envelopes'
 import { SINGLE_WRITER_V2_SCHEMA_ALLOWLIST, type RevisionV2, type WriterContextV2 } from '../security/v2/types'
 import { stateAfterCanonicalVerifyV6 } from '../security/v2/stateReconciliation'
 import type { CanonicalFullResultV2 } from '../security/v2/verifier'
@@ -711,6 +711,55 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
     const sourceVerifier=await this.sourceVerifier(source.material,source.artifact.source_anchor)
     const sourceVerified=await sourceVerifier.verify(sourceRemote.snapshot)
     if(sourceVerified.retired||sourceRemote.snapshot.rows.length!==source.artifact.source_anchor.covered_row_count)throw new Error('Profile-upgrade staged Recovery test does not bind the frozen active v1 Source prefix.')
+
+    const sourceSalt=await deriveEpochSalt(fromBase64Url(plan.diary_id),fromBase64Url(source.artifact.source_epoch_id))
+    const openedAnnouncement=await openEnvelope(
+      source.material.rootKey,
+      sourceSalt,
+      {diaryId:plan.diary_id,epochId:source.artifact.source_epoch_id},
+      {
+        envelopeId:activation.entry.announcement_envelope.envelope_id,
+        iv:activation.entry.announcement_envelope.iv,
+        ciphertext:activation.entry.announcement_envelope.ciphertext,
+      },
+    )
+    if(openedAnnouncement.record_schema!=='rotation-announcement-sw-v1'
+      ||!sameJson(openedAnnouncement.record_data,{
+        rotation_id:operation.operation_id,
+        from_epoch_id:source.artifact.source_epoch_id,
+        successor_epoch_id:plan.successor_epoch_id,
+        successor_creation_locator:plan.creation_locator,
+        successor_manifest_fingerprint:plan.manifest_fingerprint,
+        rotation_kind:'profile_upgrade',
+      }))throw new Error('Profile-upgrade staged Recovery test rejected its one-shot v1 Announcement evidence.')
+
+    const openedConfirmation=await openRevisionEnvelopeV2(
+      recovered.rootKey,
+      ctx.epochSalt,
+      {diaryId:plan.diary_id,epochId:plan.successor_epoch_id},
+      {
+        envelopeId:activation.entry.successor_confirmation_envelope.envelope_id,
+        iv:activation.entry.successor_confirmation_envelope.iv,
+        ciphertext:activation.entry.successor_confirmation_envelope.ciphertext,
+      },
+    )
+    if(openedConfirmation.record_schema!=='successor-activation-confirmation-sw-v2'
+      ||!sameJson(openedConfirmation.record_data,{
+        confirmation_id:(openedConfirmation.record_data as {confirmation_id:string}).confirmation_id,
+        activation_kind:'profile_upgrade',
+        source_profile:SINGLE_WRITER_V1_PROFILE,
+        source_epoch_id:source.artifact.source_epoch_id,
+        source_manifest_fingerprint:source.artifact.source_manifest_fingerprint,
+        source_anchor_before_announcement:source.artifact.source_anchor,
+        successor_epoch_id:plan.successor_epoch_id,
+        successor_manifest_fingerprint:plan.manifest_fingerprint,
+        successor_staging_anchor:operation.successor_staging_anchor,
+        source_announcement_envelope_sha256:await (await import('../security/v2/profileUpgrade')).sourceAnnouncementEnvelopeHashV2(preparedFromRow([
+          activation.entry.announcement_envelope.envelope_id,
+          activation.entry.announcement_envelope.iv,
+          activation.entry.announcement_envelope.ciphertext,
+        ])),
+      }))throw new Error('Profile-upgrade staged Recovery test rejected its one-shot v2 Confirmation evidence.')
 
     const successorVerified=await ctx.codec.verifyRemote(await ctx.transport.read(ctx.remoteId)),result=canonical(successorVerified)
     if(!sameJson(result.remote_anchor,operation.successor_staging_anchor)||result.accepted_activation_confirmation!==null)throw new Error('Profile-upgrade staged Recovery test does not bind the frozen Successor prefix.')
