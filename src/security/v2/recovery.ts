@@ -198,7 +198,7 @@ function validateActivationProof(proof:RecoveryActivationProofV2):void{
   validateRow(proof.announcement_envelope,'announcement_envelope');validateRow(proof.successor_confirmation_envelope,'successor_confirmation_envelope')
   fixedBase64Url(proof.activation_signature,64,'activation_signature')
 }
-function validateLineage(lineage:ActivationLineageV2,payload:RecoveryPayloadV6):void{
+export function validateActivationLineageV2(lineage:ActivationLineageV2,context:{epoch_id:string;manifest_fingerprint:string;RK_epoch:string}):void{
   if(!Array.isArray(lineage)||lineage.length>128)throw new Error('ActivationLineageV2 bound exceeded.')
   let priorSuccessor:{epoch:string;fingerprint:string}|null=null
   const sourceRoots=new Set<string>(),seenEpochs=new Set<string>()
@@ -235,8 +235,8 @@ function validateLineage(lineage:ActivationLineageV2,payload:RecoveryPayloadV6):
       sourceRoots.add(entry.source_root_key)
     }else throw new Error('ActivationLineageV2 entry kind mismatch.')
   }
-  if(lineage.length&&(!priorSuccessor||priorSuccessor.epoch!==payload.epoch_id||priorSuccessor.fingerprint!==payload.manifest_fingerprint))throw new Error('ActivationLineageV2 leaf mismatch.')
-  if(sourceRoots.has(payload.RK_epoch))throw new Error('successor_root_key_reuse')
+  if(lineage.length&&(!priorSuccessor||priorSuccessor.epoch!==context.epoch_id||priorSuccessor.fingerprint!==context.manifest_fingerprint))throw new Error('ActivationLineageV2 leaf mismatch.')
+  if(sourceRoots.has(context.RK_epoch))throw new Error('successor_root_key_reuse')
 }
 function validateTransitionProof(proof:RecoveryAuthorityTransitionProofV2,payload:RecoveryPayloadV6):void{
   exact(proof,TRANSITION_KEYS,'RecoveryAuthorityTransitionProofV2')
@@ -286,7 +286,7 @@ export async function validateRecoveryPayloadV6(payload:RecoveryPayloadV6,urs?:U
   if(await recoveryTakeoverKeyIdV2(publicKey)!==payload.recovery_takeover_key_id)throw new Error('Recovery takeover key ID mismatch.')
   const pkcs8=fromBase64Url(payload.recovery_takeover_private_key_pkcs8);if(pkcs8.byteLength===0)throw new Error('Recovery takeover PKCS#8 is empty.')
   if(!timestamp(payload.created_at))throw new Error('RecoveryPayloadV6 created_at is not canonical.')
-  validateHistory(payload.recovery_credential_history,payload);validateLineage(payload.activation_lineage,payload)
+  validateHistory(payload.recovery_credential_history,payload);validateActivationLineageV2(payload.activation_lineage,{epoch_id:payload.epoch_id,manifest_fingerprint:payload.manifest_fingerprint,RK_epoch:payload.RK_epoch})
   if(payload.recovery_authority_transition_proof!==null)validateTransitionProof(payload.recovery_authority_transition_proof,payload)
   if(urs){
     if(urs.byteLength!==32)throw new Error('URS must contain 32 bytes.')
