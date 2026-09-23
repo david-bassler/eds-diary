@@ -127,7 +127,7 @@ Later changes must retain explicit vectors for at least:
 - `rotation_resume` rejection when any non-Migration-retry row extends the
   Migration staging prefix;
 - StateV6 MAC/rollback detection and exact verifier-anchor reproduction;
-- WriterDeviceKeyV2 key-ID/keypair challenge validation;
+- WriterDeviceKeyV2 key-ID/keypair challenge validation and StateV6 device-ID binding;
 - one fresh canonical verify invocation for every normal domain-write attempt;
 - prepared-envelope Writer provenance mismatch => pre-push quarantine;
 - accepted vs stale-writer semantic durability and authenticated stale quarantine;
