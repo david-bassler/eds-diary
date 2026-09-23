@@ -3,11 +3,16 @@ import type { EpochLocalSecurityStateV6 } from './localState'
 import type { CanonicalFullResultV2 } from './verifier'
 import { SINGLE_WRITER_V2_PROFILE, type VerifiedRemoteState, type WriteAccess, type WriteAuthority, type WritePushDecision, type WritePushPhase } from '../../sync/core/contracts'
 
-function canonicalState(verified:VerifiedRemoteState):CanonicalFullResultV2{
+export interface BoundCanonicalFullV2 {
+  canonical:CanonicalFullResultV2
+  local_operation_generation:number
+}
+function canonicalState(verified:VerifiedRemoteState):BoundCanonicalFullV2{
   if(verified.profileId!==SINGLE_WRITER_V2_PROFILE)throw new Error('V2 WriteAuthority profile mismatch.')
-  const state=verified.profileState as CanonicalFullResultV2
-  if(!state||state.kind!=='canonical_full'||state.profile_id!==SINGLE_WRITER_V2_PROFILE)throw new Error('V2 WriteAuthority requires canonical_full verifier state.')
-  return state
+  const bound=verified.profileState as BoundCanonicalFullV2
+  const state=bound?.canonical
+  if(!state||state.kind!=='canonical_full'||state.profile_id!==SINGLE_WRITER_V2_PROFILE||!Number.isSafeInteger(bound.local_operation_generation)||bound.local_operation_generation<0)throw new Error('V2 WriteAuthority requires a locally bound canonical_full verifier state.')
+  return bound
 }
 
 function sameAnchor(local:EpochLocalSecurityStateV6,remote:CanonicalFullResultV2):boolean{
@@ -30,7 +35,8 @@ function localWriterMatches(local:EpochLocalSecurityStateV6,remote:CanonicalFull
     && local.verified_writer_grant_id===writer.writer_grant_id
 }
 
-function mutationBlocked(local:EpochLocalSecurityStateV6,remote:CanonicalFullResultV2):boolean{
+function mutationBlocked(local:EpochLocalSecurityStateV6,bound:BoundCanonicalFullV2):boolean{
+  const remote=bound.canonical
   return local.epoch_status!=='active'
     || remote.activation_state==='staged_confirmation_missing'
     || remote.source_epoch_sealed
@@ -49,8 +55,8 @@ export class TransferableSingleWriterV2WriteAuthority implements WriteAuthority 
   constructor(private readonly loadLocalState:()=>Promise<EpochLocalSecurityStateV6>|EpochLocalSecurityStateV6){}
 
   private async access(verified:VerifiedRemoteState):Promise<WriteAccess>{
-    const remote=canonicalState(verified),local=await this.loadLocalState()
-    return mutationBlocked(local,remote)?'read_only':'writer'
+    const bound=canonicalState(verified),local=await this.loadLocalState()
+    return mutationBlocked(local,bound)?'read_only':'writer'
   }
 
   async accessAfterPull(verified:VerifiedRemoteState):Promise<WriteAccess>{return this.access(verified)}
@@ -64,10 +70,11 @@ export class TransferableSingleWriterV2WriteAuthority implements WriteAuthority 
   async accessAfterReadback(verified:VerifiedRemoteState):Promise<WriteAccess>{return this.access(verified)}
 }
 
-export function v2VerifiedRemoteState(result:CanonicalFullResultV2,snapshot:VerifiedRemoteState['snapshot']):VerifiedRemoteState{
+export function v2VerifiedRemoteState(result:CanonicalFullResultV2,snapshot:VerifiedRemoteState['snapshot'],localOperationGeneration:number):VerifiedRemoteState{
+  if(!Number.isSafeInteger(localOperationGeneration)||localOperationGeneration<0)throw new Error('Local operation generation is invalid.')
   return {
     profileId:SINGLE_WRITER_V2_PROFILE,
-    profileState:result,
+    profileState:{canonical:result,local_operation_generation:localOperationGeneration} satisfies BoundCanonicalFullV2,
     snapshot,
     manifestFingerprint:result.manifest_fingerprint,
     retired:result.source_epoch_sealed,
