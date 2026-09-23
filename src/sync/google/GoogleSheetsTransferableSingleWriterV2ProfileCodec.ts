@@ -3,7 +3,7 @@ import type { PreparedEnvelope } from '../../security/envelopes'
 import { envelopeRowV2, V2_PADDING_BUCKETS } from '../../security/v2/envelopes'
 import { createAnchorV2, assertExtendsAnchorV2 } from '../../security/v2/prefix'
 import { deriveEpochSaltV2 } from '../../security/v2/crypto'
-import { manifestFingerprintV6, manifestTrustRootV6, openManifestV6, parseManifestCellsV6 } from '../../security/v2/manifest'
+import { manifestFingerprintV6, openManifestTrustRootV6, openManifestV6, parseManifestCellsV6 } from '../../security/v2/manifest'
 import { TransferableSingleWriterV2Verifier } from '../../security/v2/verifier'
 import { canonicalBytes } from '../../security/crypto/canonical'
 import { fixedBase64Url, fromBase64Url } from '../../security/crypto/bytes'
@@ -56,9 +56,9 @@ export class GoogleSheetsTransferableSingleWriterV2ProfileCodec implements Trans
   async verifyRemote(snapshot:RemoteSnapshot):Promise<VerifiedRemoteState>{
     this.validate(snapshot)
     const cells=parseManifestCellsV6(snapshot.manifest)
-    const payload=await openManifestV6(this.rootKey,await this.epochSalt,{diaryId:this.diaryId,epochId:this.epochId},cells)
-    if(payload.google_account_binding!==this.expectedGoogleAccountBinding)throw new Error('ManifestV6 Google account binding mismatch.')
-    const trustRoot=await manifestTrustRootV6(cells,payload)
+    const opened=await openManifestTrustRootV6(this.rootKey,await this.epochSalt,{diaryId:this.diaryId,epochId:this.epochId},cells)
+    if(opened.payload.google_account_binding!==this.expectedGoogleAccountBinding)throw new Error('ManifestV6 Google account binding mismatch.')
+    const trustRoot=opened.trustRoot
     const result=await this.verifier.verifyCanonicalFull(trustRoot,this.rootKey,snapshot.rows)
     const fingerprint=await manifestFingerprintV6(cells)
     if(result.manifest_fingerprint!==fingerprint)throw new Error('V2 verifier manifest fingerprint mismatch.')
