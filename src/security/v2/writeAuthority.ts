@@ -32,7 +32,10 @@ function localWriterMatches(local:EpochLocalSecurityStateV6,remote:CanonicalFull
 }
 
 function mutationBlocked(local:EpochLocalSecurityStateV6,remote:CanonicalFullResultV2):boolean{
-  return local.epoch_status!=='active'
+  return local.diary_id!==remote.diary_id
+    || local.epoch_id!==remote.epoch_id
+    || local.manifest_fingerprint!==remote.manifest_fingerprint
+    || local.epoch_status!=='active'
     || remote.activation_state==='staged_confirmation_missing'
     || remote.source_epoch_sealed
     || remote.current_recovery.recovery_rekey_rotation_required
