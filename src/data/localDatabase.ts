@@ -339,7 +339,7 @@ export interface ActiveProtocolSelectionV2 {
   operation_id:string
 }
 
-export async function persistProfileUpgradeSourceOperationV2(operation:RotationOperationStateV2):Promise<void>{
+export async function persistProfileUpgradeSourceOperationV2(operation:RotationOperationStateV2,expectedSourceOperationGeneration?:number):Promise<void>{
   validateRotationOperationStateV2(operation)
   const db=await openDatabase(),loaded=await loadEpoch(db)
   if(loaded.context.epochId!==operation.source_epoch_id)throw new Error('Profile-upgrade operation Source is not the active v1 epoch.')
@@ -347,6 +347,7 @@ export async function persistProfileUpgradeSourceOperationV2(operation:RotationO
   await withDiaryLock(loaded.context.diaryId,async()=>{
     const current=await loadEpoch(db)
     if(current.context.epochId!==operation.source_epoch_id)throw new Error('Active v1 Source changed during profile-upgrade operation persistence.')
+    if(expectedSourceOperationGeneration!==undefined&&current.state.operation_generation!==expectedSourceOperationGeneration)throw new Error('v1 Source changed after final profile-upgrade verification; retry from a new full verify.')
     const ref=current.state.rotation_state_ref
     if(ref&&ref.operation_id!==operation.operation_id)throw new Error('Another v1 rotation operation is already bound to the Source.')
     const next={...current.state,rotation_state_ref:{operation_id:operation.operation_id,state:operation.stage,state_record_hash:hash},operation_generation:current.state.operation_generation+1}
