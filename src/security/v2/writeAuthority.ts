@@ -1,5 +1,6 @@
 import type { PreparedEnvelope } from '../envelopes'
 import type { EpochLocalSecurityStateV6 } from './localState'
+import type { PreparedEnvelopeAuthorityV2 } from './localPersistence'
 import type { CanonicalFullResultV2 } from './verifier'
 import { SINGLE_WRITER_V2_PROFILE, type VerifiedRemoteState, type WriteAccess, type WriteAuthority, type WritePushDecision, type WritePushPhase } from '../../sync/core/contracts'
 
@@ -46,7 +47,10 @@ function mutationBlocked(local:EpochLocalSecurityStateV6,remote:CanonicalFullRes
 
 export class TransferableSingleWriterV2WriteAuthority implements WriteAuthority {
   readonly profileId=SINGLE_WRITER_V2_PROFILE
-  constructor(private readonly loadLocalState:()=>Promise<EpochLocalSecurityStateV6>|EpochLocalSecurityStateV6){}
+  constructor(
+    private readonly loadLocalState:()=>Promise<EpochLocalSecurityStateV6>|EpochLocalSecurityStateV6,
+    private readonly loadEnvelopeAuthority:(envelopeId:string)=>Promise<PreparedEnvelopeAuthorityV2|null>|PreparedEnvelopeAuthorityV2|null,
+  ){}
 
   private async access(verified:VerifiedRemoteState):Promise<WriteAccess>{
     const remote=canonicalState(verified),local=await this.loadLocalState()
@@ -58,7 +62,15 @@ export class TransferableSingleWriterV2WriteAuthority implements WriteAuthority 
 
   async verifyBeforePush(envelope:PreparedEnvelope,verified:VerifiedRemoteState,_phase:WritePushPhase):Promise<WritePushDecision>{
     if(!envelope.envelopeId||!envelope.iv||!envelope.ciphertext)throw new Error('Prepared envelope is incomplete.')
-    return await this.access(verified)==='writer'?'push':'quarantine_stale_writer'
+    const remote=canonicalState(verified),local=await this.loadLocalState(),prepared=await this.loadEnvelopeAuthority(envelope.envelopeId)
+    if(!prepared)return 'quarantine_stale_writer'
+    if(mutationBlocked(local,remote))return 'quarantine_stale_writer'
+    const current=remote.current_writer
+    if(prepared.writer_generation!==current.writer_generation
+      ||prepared.writer_grant_id!==current.writer_grant_id
+      ||prepared.writer_device_id!==current.writer_device_id
+      ||prepared.writer_key_id!==current.writer_key_id)return 'quarantine_stale_writer'
+    return 'push'
   }
 
   async accessAfterReadback(verified:VerifiedRemoteState):Promise<WriteAccess>{return this.access(verified)}
