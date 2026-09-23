@@ -121,7 +121,8 @@ export class TransferableWriterAuthorityV2 implements WriteAuthority {
   accessAfterPull(verified:VerifiedRemoteState):Promise<WriteAccess>{return this.localAccess(verified,false)}
   canPrepareDomainWrite(verified:VerifiedRemoteState):Promise<WriteAccess>{return this.localAccess(verified,true)}
 
-  async verifyBeforePush(envelope:PreparedEnvelope,verified:VerifiedRemoteState,_phase:WritePushPhase):Promise<WritePushDecision>{
+  async verifyBeforePush(envelope:PreparedEnvelope,verified:VerifiedRemoteState,phase:WritePushPhase):Promise<WritePushDecision>{
+    void phase
     const canonical=canonicalFull(verified),state=validateEpochLocalSecurityStateV6(await this.dependencies.readLocalState())
     assertBoundIdentity(state,canonical)
     const revision=await this.dependencies.inspectPreparedRevision(envelope)
