@@ -30,7 +30,7 @@ export class IndexedDbV2CoordinatorStore implements CoordinatorStore {
 
   async pending(verified:VerifiedRemoteState):Promise<readonly PreparedEnvelope[]>{
     canonical(verified)
-    const [outbox,envelopes]=await Promise.all([this.store.outbox(this.epochId),this.store.envelopes(this.epochId)])
+    const [outbox,envelopes]=await Promise.all([this.store.outbox(this.rootKey,this.epochSalt,this.epochId),this.store.envelopes(this.epochId)])
     const byId=new Map(envelopes.map(envelope=>[envelope.envelopeId,envelope]))
     const pending:PreparedEnvelope[]=[]
     for(const entry of outbox){
