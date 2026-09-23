@@ -1,6 +1,6 @@
 # Transferable Single Writer v2 – Implementation Audit Trail
 
-Stand: 22.09.2026
+Stand: 23.09.2026
 
 Status: **NON-NORMATIVE IMPLEMENTATION REVIEW LOG**.
 
@@ -26,7 +26,9 @@ Reviewed implementation slices:
 - V2-02 – RemoteAnchorV2 hashing and the canonical transferable-writer replay
   verifier, including the operation-bound `rotation_resume` path;
 - V2-03 – EpochLocalSecurityStateV6, WriterDeviceKeyV2 persistence, semantic
-  coordinator persistence and the fail-closed normal-domain write gate.
+  coordinator persistence and the fail-closed normal-domain write gate;
+- V2-04 – ManifestV6, strict Google v2 profile/storage, RecoveryArtifactV6,
+  RecoveryTakeoverStagingV2 and SyncBackupV6.
 
 Primary review sources:
 
@@ -51,6 +53,16 @@ Implemented and adversarially reviewed StateV6 persistence, WriterDeviceKeyV2,
 normal domain-write preparation and semantic CoordinatorStore behavior. New
 findings from this pass are IA-019…IA-029. They are implementation mismatches/
 hardening findings, not changes to D-001…D-010.
+
+
+### 2026-09-23 four-slice stack review after V2-04
+
+Re-reviewed V2-01…V2-04 as one composed security stack rather than as isolated
+PRs. The pure V2-01 and replay-core V2-02 rules did not yield a new standalone
+wire/verifier defect in this pass. New findings IA-031…IA-034 are cross-layer
+contract failures or incomplete wiring at the V2-02↔V2-04 and V2-03↔V2-04
+boundaries. They are intentionally recorded **open** here; this review pass did
+not silently patch them.
 
 ## Findings and disposition
 
@@ -116,6 +128,8 @@ new defects unless their assumptions change:
    announcement bytes before declaring the Successor active.
 7. **The generic `migration_origin` wrapper remains 1..8 Sources by inherited v1 semantics.** This is not a relaxation of the v2 migration-copy rule. §16a.0/§16a.1 separately requires each copied Successor head to carry exactly one Source with exactly one Source revision and proves the full Source↔Successor bijection during cross-epoch activation. Tightening the generic wrapper itself to exactly one would silently remove inherited wrapper expressiveness rather than enforce the activation rule at the correct layer.
 8. **Do not add `diary_id` to the WriterDeviceKeyV2 store entry.** §18.2 freezes that IndexedDB entry to exactly `{writer_signing_key_id, writer_device_id, writer_public_key, private_key}`. The broader architecture rule against global device/key reuse is an enrollment/identity-lifecycle invariant for V2-05/V2-06+; adding a fifth persisted field in V2-03 would itself violate the Exact Protocol. The load-time keypair challenge remains diary/epoch/device-bound as specified.
+9. **SyncBackupV6 offline test-restore is not, by itself, an activation grant.** The current V2-04 restore returns `access="read_only"` even when the encrypted backup manifest says `activation_state="activated"`. Full external ActivationLineage/source-history verification remains mandatory before any later service may promote the epoch to remote-active Writer authority. Treating successful offline test-restore as that promotion would violate §10c/§20.
+
 
 ## Required regression coverage
 
