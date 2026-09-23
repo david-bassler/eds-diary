@@ -77,6 +77,7 @@ hardening findings, not changes to D-001…D-010.
 | IA-019 | V2-03 / sealed local writer state | StateV6 reconciliation could preserve/promote `writer_active` when the freshly verified Source was already sealed. §13/§18 require ordinary Writer authority only for an unsealed active epoch. | **Fixed.** `sameLocalWriter` now requires `source_epoch_sealed=false`; canonical reconciliation of a sealed Source persists `read_only` and clears local writer generation/grant. Pending-Rekey remains a separate maintenance-only case and is still blocked by the normal domain gate rather than forcibly erasing Writer identity. |
 | IA-020 | V2-03 / exact push binding | `verifyBeforePush` authenticated only the persisted outbox authority selected by `envelope_id`; it did not prove that the concrete IV/ciphertext/bytesHash supplied to the push gate were the immutable locally persisted bytes for that ID. | **Fixed.** The local persistence lookup now loads the immutable envelope and requires exact `envelope_id`, IV, ciphertext and `bytesHash` equality before returning its authenticated Writer provenance. A mismatch is security-blocking, not stale quarantine. |
 | IA-021 | V2-03 / WriterDeviceKey locality | The separate WriterDeviceKeyV2 store was keyed only by writer-key ID and device ID. Because the same private key can sign a key-check challenge for arbitrary diary IDs, accidental cross-diary reuse was not rejected; additionally an unusable/tampered local key could throw before StateV6 was reconciled to read-only in the normal prepare path. | **Fixed.** Stored writer keys now carry an authenticated structural `diary_id` binding and refuse cross-diary load/reuse while remaining reusable across epochs of the same diary. Normal domain preparation treats a missing/unusable key as `keyUsable=false`, persists read-only reconciliation, and never silently regenerates the key. |
+| IA-022 | V2-03 / WriteAuthority identity | The v2 WriteAuthority compared local/remote writer tuples and anchors but did not independently bind the supplied canonical state to local `diary_id`, `epoch_id` and `manifest_fingerprint`. Correct production call order already reconciled those identities first, but the security adapter itself was not fail-closed when called directly with a canonical state from another epoch instance. | **Fixed.** Every access/push decision now requires exact local/remote diary, epoch and manifest identity equality before any Writer authority can be granted. Regression vectors cover all three mismatches. |
 
 ## Reviewed points that are not findings
 
@@ -141,7 +142,8 @@ Later changes must retain explicit vectors for at least:
 - active StateV6 requires remote binding/anchor plus complete verified Writer authority;
 - sealed canonical Source reconciliation => local `read_only`;
 - exact prepared-envelope bytes must match immutable local persistence before push authorization;
-- WriterDeviceKeyV2 cannot be reused across diaries and unusable keys downgrade to read-only.
+- WriterDeviceKeyV2 cannot be reused across diaries and unusable keys downgrade to read-only;
+- WriteAuthority binds canonical state to exact local diary/epoch/manifest identity.
 
 ## Anti-churn rule for later reviews
 
