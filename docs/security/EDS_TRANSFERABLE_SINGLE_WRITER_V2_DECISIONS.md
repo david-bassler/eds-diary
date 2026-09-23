@@ -328,17 +328,17 @@ without requiring the staged Artifact to remain current.
 This ledger separates **decision stability** from **implementation status**.
 A recorded decision may be normative before its v2 runtime exists.
 
-Current implementation stack: `feat/transferable-single-writer-v2` (V2-01) -> `feat/transferable-single-writer-v2-verifier` (V2-02). Detailed implementation-review history is recorded in `EDS_TRANSFERABLE_SINGLE_WRITER_V2_IMPLEMENTATION_AUDIT.md`.
+Current implementation stack: `feat/transferable-single-writer-v2` (V2-01) -> `feat/transferable-single-writer-v2-verifier` (V2-02) -> `feat/transferable-single-writer-v2-local-gate` (V2-03). Detailed implementation-review history is recorded in `EDS_TRANSFERABLE_SINGLE_WRITER_V2_IMPLEMENTATION_AUDIT.md`.
 
-The first two implementation layers are now present: frozen v2 wire/control types, strict validators, Ed25519/KDF/ID and EnvelopeV6 primitives, the exact v2 schema registry, RemoteAnchorV2 hashing, and the product-neutral canonical replay verifier including the separately typed `rotation_resume` path. This does **not** mean that StateV6 persistence/write gates, ManifestV6/Google v2 storage, cross-epoch activation, recovery services, migration orchestration, join, handoff UI or takeover UI are complete.
+The first three implementation layers are now present: frozen v2 wire/control types, strict validators, Ed25519/KDF/ID and EnvelopeV6 primitives, the exact v2 schema registry, RemoteAnchorV2 hashing, the product-neutral canonical replay verifier including the separately typed `rotation_resume` path, and the local StateV6/RootWrapV6/WriterDeviceKeyV2 persistence plus fail-closed normal-domain write preparation gate. This does **not** mean that ManifestV6/Google v2 storage, cross-epoch activation, recovery services, migration orchestration, join, cooperative handoff or forced-takeover product flows are complete.
 
 | Decision | Current implementation status |
 | --- | --- |
 | D-001 | Stable URS-/takeover-key identifiers and diary-wide `recovery_credential_history` replay/freshness enforcement are implemented in V2-01/V2-02. Secret-aware URS recomputation and Artifact enforcement remain V2-04+/recovery-service work. |
 | D-002 | Protocol/operation-state semantics specified; v2 recovery-rekey runtime still pending. |
-| D-003 | Shared coordinator retry path implemented and tested; v2 policy implementation still pending. |
-| D-004 | Shared semantic disposition contract implemented; current IndexedDB store remains explicitly v1-only, v2 store/quarantine persistence still pending. |
-| D-005 | Shared WriteAuthority contract and push/retry/readback gates implemented. **The v2 domain-write preparation path does not exist yet**, so `canPrepareDomainWrite` is intentionally not wired into current v1 local writes. |
+| D-003 | Shared coordinator retry path is implemented; V2-03 now provides exact-envelope v2 push/retry authority decisions and immutable local pending bytes. Productive v2 Coordinator/transport wiring remains V2-04 work. |
+| D-004 | Shared semantic disposition contract plus dedicated v2 immutable-envelope/outbox/stale-writer persistence are implemented in V2-03. The productive v2 `CoordinatorStore` adapter that feeds these semantics from Google readback remains part of later profile integration. |
+| D-005 | Implemented through V2-03: `TransferableWriterAuthorityV2` plus `V2DomainWriteService` require root unlock, provider session and a fresh `canonical_full` verification before a new domain RevisionV2 can be signed/reserved/persisted; exact prepared-envelope push/retry/readback authority is fail-closed. Product dispatch to this path begins only when a v2 epoch exists. |
 | D-006 | Protocol/architecture specified; v2 rotation runtime pending. |
 | D-007 | Recovery-takeover key generation/import/keypair-check primitives exist; operation-bound staging and v2 recovery/rotation runtime remain pending. |
 | D-008 | Provider/profile identity split implemented in shared contracts and v1 adapters; v2 adapter pending. |
