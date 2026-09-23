@@ -235,7 +235,7 @@ export async function journalInitialV2(diaryId:string,epochId:string):Promise<st
 export async function journalNextV2(previousHash:string,index:number,row:readonly [string,string,string]):Promise<string>{
   const previous=fixedBase64Url(previousHash,32,'local_journal_hash')
   if(!Number.isSafeInteger(index)||index<1)throw new Error('Journal index is invalid.')
-  const entryHash=await sha256(canonicalBytes(row as string[]))
+  const entryHash=await sha256(canonicalBytes(row as unknown as string[]))
   return base64Url(await sha256(concatBytes(previous,uint64be(index),entryHash)))
 }
 
