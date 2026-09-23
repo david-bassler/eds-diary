@@ -93,6 +93,18 @@ export class IndexedDbV2LocalSecurityStore {
     if(!checked||checked.operation_generation!==state.operation_generation)throw new Error('EpochLocalSecurityStateV6 readback failed.')
   }
 
+  async replaceStateIfGeneration(rootKey:Uint8Array,nextState:EpochLocalSecurityStateV6,expectedGeneration:number):Promise<void>{
+    validateEpochLocalSecurityStateV6(nextState)
+    if(nextState.operation_generation!==expectedGeneration+1)throw new Error('Replacement StateV6 must advance operation_generation exactly once.')
+    const salt=await deriveEpochSaltV2(fixedBase64Url(nextState.diary_id,16),fixedBase64Url(nextState.epoch_id,16))
+    const tag=await localStateTagV6(rootKey,salt,nextState)
+    const db=await this.open(),tx=db.transaction(STORES.state,'readwrite')
+    const store=tx.objectStore(STORES.state),current=await requestResult<StoredStateV6|undefined>(store.get(nextState.epoch_id))
+    if(!current||current.state.operation_generation!==expectedGeneration){tx.abort();throw new Error('Stale v2 local security generation.')}
+    store.put({id:nextState.epoch_id,state:structuredClone(nextState),tag} satisfies StoredStateV6)
+    await transactionDone(tx)
+  }
+
   async readState(rootKey:Uint8Array,epochId:string):Promise<EpochLocalSecurityStateV6|null>{
     fixedBase64Url(epochId,16,'epoch_id')
     const db=await this.open(),tx=db.transaction(STORES.state,'readonly')
