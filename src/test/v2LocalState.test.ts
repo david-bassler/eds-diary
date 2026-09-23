@@ -114,7 +114,6 @@ describe('EpochLocalSecurityStateV6 persistence and writer gate',()=>{
     const f=await fixture(),store=new IndexedDbV2LocalSecurityStore()
     await store.initializeState(rootKey,f.epochSalt,f.initial)
     await store.persistWriterKey({
-      diary_id:f.diaryId,
       writer_signing_key_id:f.writer.writerKeyId,
       writer_device_id:f.writerDeviceId,
       writer_public_key:base64Url(f.writer.publicKeyRaw),
@@ -158,7 +157,6 @@ describe('EpochLocalSecurityStateV6 persistence and writer gate',()=>{
     expect(await store.envelopes(f.epochId)).toHaveLength(0)
 
     await store.persistWriterKey({
-      diary_id:f.diaryId,
       writer_signing_key_id:f.writer.writerKeyId,
       writer_device_id:f.writerDeviceId,
       writer_public_key:base64Url(f.writer.publicKeyRaw),
@@ -186,7 +184,6 @@ describe('EpochLocalSecurityStateV6 persistence and writer gate',()=>{
     const f=await fixture(),store=new IndexedDbV2LocalSecurityStore()
     await store.initializeState(rootKey,f.epochSalt,f.initial)
     await store.persistWriterKey({
-      diary_id:f.diaryId,
       writer_signing_key_id:f.writer.writerKeyId,
       writer_device_id:f.writerDeviceId,
       writer_public_key:base64Url(f.writer.publicKeyRaw),
@@ -210,7 +207,6 @@ describe('EpochLocalSecurityStateV6 persistence and writer gate',()=>{
     const f=await fixture(),store=new IndexedDbV2LocalSecurityStore()
     await store.initializeState(rootKey,f.epochSalt,f.initial)
     await store.persistWriterKey({
-      diary_id:f.diaryId,
       writer_signing_key_id:f.writer.writerKeyId,
       writer_device_id:b(44,16),
       writer_public_key:base64Url(f.writer.publicKeyRaw),
@@ -224,20 +220,6 @@ describe('EpochLocalSecurityStateV6 persistence and writer gate',()=>{
     expect((await store.loadState(rootKey,f.epochSalt,f.epochId)).writer_status).toBe('read_only')
     expect(await store.envelopes(f.epochId)).toHaveLength(0)
   })
-
-  it('rejects reuse of a persisted WriterDeviceKeyV2 across diaries',async()=>{
-    const f=await fixture(),store=new IndexedDbV2LocalSecurityStore()
-    await store.initializeState(rootKey,f.epochSalt,f.initial)
-    await store.persistWriterKey({
-      diary_id:f.diaryId,
-      writer_signing_key_id:f.writer.writerKeyId,
-      writer_device_id:f.writerDeviceId,
-      writer_public_key:base64Url(f.writer.publicKeyRaw),
-      private_key:f.writer.privateKey,
-    },f.diaryId,f.epochId)
-    await expect(store.loadWriterKey(f.writer.writerKeyId,b(54,16),f.epochId)).rejects.toThrow(/different diary/)
-  })
-
   it('fails closed on Pending-Rekey and on any non-terminal mutation ref',async()=>{
     const f=await fixture(),store=new IndexedDbV2LocalSecurityStore()
     await store.initializeState(rootKey,f.epochSalt,f.initial)
@@ -270,7 +252,6 @@ describe('EpochLocalSecurityStateV6 persistence and writer gate',()=>{
     const f=await fixture(),store=new IndexedDbV2LocalSecurityStore()
     await store.initializeState(rootKey,f.epochSalt,f.initial)
     await store.persistWriterKey({
-      diary_id:f.diaryId,
       writer_signing_key_id:f.writer.writerKeyId,
       writer_device_id:f.writerDeviceId,
       writer_public_key:base64Url(f.writer.publicKeyRaw),
@@ -302,7 +283,6 @@ describe('EpochLocalSecurityStateV6 persistence and writer gate',()=>{
     const f=await fixture(),store=new IndexedDbV2LocalSecurityStore()
     await store.initializeState(rootKey,f.epochSalt,f.initial)
     await store.persistWriterKey({
-      diary_id:f.diaryId,
       writer_signing_key_id:f.writer.writerKeyId,
       writer_device_id:f.writerDeviceId,
       writer_public_key:base64Url(f.writer.publicKeyRaw),
@@ -340,7 +320,6 @@ describe('EpochLocalSecurityStateV6 persistence and writer gate',()=>{
     const f=await fixture(),store=new IndexedDbV2LocalSecurityStore()
     await store.initializeState(rootKey,f.epochSalt,f.initial)
     await store.persistWriterKey({
-      diary_id:f.diaryId,
       writer_signing_key_id:f.writer.writerKeyId,
       writer_device_id:f.writerDeviceId,
       writer_public_key:base64Url(f.writer.publicKeyRaw),
@@ -358,7 +337,6 @@ describe('EpochLocalSecurityStateV6 persistence and writer gate',()=>{
     const f=await fixture(),store=new IndexedDbV2LocalSecurityStore()
     await store.initializeState(rootKey,f.epochSalt,f.initial)
     await store.persistWriterKey({
-      diary_id:f.diaryId,
       writer_signing_key_id:f.writer.writerKeyId,
       writer_device_id:f.writerDeviceId,
       writer_public_key:base64Url(f.writer.publicKeyRaw),
