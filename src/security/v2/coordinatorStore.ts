@@ -60,7 +60,7 @@ export class IndexedDbV2CoordinatorStore implements CoordinatorStore {
     const current=await this.store.loadState(this.rootKey,this.epochSalt,this.epochId)
     if(current.operation_generation!==expectedGeneration)throw new Error('Stale StateV6 generation before verified pull commit.')
     let keyUsable=false
-    try{keyUsable=(await this.store.loadWriterKey(current.writer_signing_key_id,current.diary_id,current.epoch_id))!==null}catch{keyUsable=false}
+    try{const key=await this.store.loadWriterKey(current.writer_signing_key_id,current.diary_id,current.epoch_id);keyUsable=key!==null&&key.writer_device_id===current.writer_device_id}catch{keyUsable=false}
     const next=await stateAfterCanonicalVerifyV6(current,remote,verified.snapshot.rows,keyUsable)
     const persisted=await this.store.commitVerifiedDispositions(
       this.rootKey,
