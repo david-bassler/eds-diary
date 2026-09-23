@@ -4,7 +4,7 @@ import { aesGcmDecrypt, aesGcmEncrypt, randomBytes, sha256 } from '../crypto/cor
 import { deriveBackupKeyV2 } from './crypto'
 import { createAnchorV2 } from './prefix'
 import { manifestFingerprintV6, manifestTrustRootV6, openManifestV6, parseManifestCellsV6, type ProtectedManifestV6 } from './manifest'
-import { openRecoveryArtifactV6, recoveryArtifactHashV6, type PreparedEnvelopeRowV2, type RecoveryArtifactV6, type RecoveryPayloadV6 } from './recovery'
+import { openRecoveryArtifactV6, recoveryArtifactHashV6, validateRecoveryArtifactV6, type PreparedEnvelopeRowV2, type RecoveryArtifactV6, type RecoveryPayloadV6 } from './recovery'
 import { openRevisionEnvelopeV2, V2_PADDING_BUCKETS } from './envelopes'
 import { TransferableSingleWriterV2Verifier, type CanonicalFullResultV2 } from './verifier'
 import type { RemoteAnchorV2 } from './types'
@@ -328,11 +328,14 @@ export async function testRestoreBackupV6(
   if(!backup||typeof backup!=='object')throw new Error('BackupV6 document is invalid.')
   exact(backup,BACKUP_KEYS,'BackupV6')
   if(backup.format!=='sync-backup-v6'||backup.backup_format_version!==6)throw new Error('BackupV6 format mismatch.')
+  if(!Array.isArray(backup.epoch_manifest_public)||backup.epoch_manifest_public.length!==4||backup.epoch_manifest_public.some(cell=>typeof cell!=='string'))throw new Error('BackupV6 embedded ManifestV6 schema mismatch.')
+  parseManifestCellsV6(backup.epoch_manifest_public)
+  validateRecoveryArtifactV6(backup.recovery_artifact)
+  validateRows(backup.record_rows,'record_rows');validateRows(backup.pending_outbox_rows,'pending_outbox_rows');validateRows(backup.stale_writer_pending_rows,'stale_writer_pending_rows')
+  if(typeof backup.backup_manifest_ciphertext!=='string'||backup.backup_manifest_ciphertext.length>90_000)throw new Error('BackupV6 manifest ciphertext bound exceeded.')
   if(canonicalBytes(backup as never).byteLength>MAX_BACKUP_V6_BYTES)throw new Error('BackupV6 document size bound exceeded.')
   const id=fixedBase64Url(backup.backup_id,32),iv=fixedBase64Url(backup.backup_manifest_iv,12)
   const cipher=fromBase64Url(backup.backup_manifest_ciphertext);if(cipher.byteLength<16||cipher.byteLength>65_536)throw new Error('BackupV6 manifest ciphertext bound exceeded.')
-  if(!Array.isArray(backup.epoch_manifest_public)||backup.epoch_manifest_public.length!==4||backup.epoch_manifest_public.some(cell=>typeof cell!=='string'))throw new Error('BackupV6 embedded ManifestV6 schema mismatch.')
-  validateRows(backup.record_rows,'record_rows');validateRows(backup.pending_outbox_rows,'pending_outbox_rows');validateRows(backup.stale_writer_pending_rows,'stale_writer_pending_rows')
   const plain=await aesGcmDecrypt(await deriveBackupKeyV2(context.rootKey,context.epochSalt,id),cipher,backupAad(backup.backup_id),iv)
   const manifest=parseCanonicalJson(plain) as unknown as BackupManifestV6;validateBackupManifestV6(manifest)
   if(manifest.backup_id!==backup.backup_id||manifest.diary_id!==context.diaryId||manifest.epoch_id!==context.epochId||manifest.key_id!==context.keyId)throw new Error('BackupV6 identity binding mismatch.')
