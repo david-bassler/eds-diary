@@ -20,6 +20,7 @@ import {
 } from '../../security/v2/manifest'
 import type { RecoveryArtifactV6 } from '../../security/v2/recovery'
 import { isVerifiedRecoveryTakeoverStagingV2, type VerifiedRecoveryTakeoverStagingV2 } from '../../security/v2/recoveryStaging'
+import type { VerifiedPersistedRecoveryArtifactV6 } from '../../security/v2/localPersistence'
 
 export interface TransferableSingleWriterV2ProviderSession {
   readonly providerId:typeof GOOGLE_DRIVE_SHEETS_PROVIDER
@@ -38,7 +39,7 @@ export interface TransferableSingleWriterV2ProviderSession {
     persistence:CreationPersistence
     recoveryStaging:VerifiedRecoveryTakeoverStagingV2
   }):Promise<CreationState>
-  publishRecoveryArtifact(urs:Uint8Array,diaryId:string,epochId:string,artifact:RecoveryArtifactV6):Promise<string>
+  publishRecoveryArtifact(urs:Uint8Array,artifact:VerifiedPersistedRecoveryArtifactV6):Promise<string>
   findRecoveryArtifact(urs:Uint8Array,diaryId:string,epochId:string):Promise<RecoveryArtifactV6|null>
   loadRecoveryArtifact(urs:Uint8Array,diaryId:string,epochId:string):Promise<RecoveryArtifactV6>
   disconnect():Promise<void>
@@ -97,8 +98,8 @@ class GoogleTransferableSingleWriterV2ProviderSession implements TransferableSin
     }
     return runCreationStateMachine(initial,cells,args.transport,codec,args.persistence)
   }
-  publishRecoveryArtifact(urs:Uint8Array,diaryId:string,epochId:string,artifact:RecoveryArtifactV6):Promise<string>{
-    return new GoogleRecoveryArtifactStoreV6(this.api).publish(urs,diaryId,epochId,artifact)
+  publishRecoveryArtifact(urs:Uint8Array,artifact:VerifiedPersistedRecoveryArtifactV6):Promise<string>{
+    return new GoogleRecoveryArtifactStoreV6(this.api).publish(urs,artifact)
   }
   findRecoveryArtifact(urs:Uint8Array,diaryId:string,epochId:string):Promise<RecoveryArtifactV6|null>{
     return new GoogleRecoveryArtifactStoreV6(this.api).find(urs,diaryId,epochId)
