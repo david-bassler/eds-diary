@@ -1,4 +1,4 @@
-import { base64Url, fixedBase64Url, fromBase64Url, utf8 } from '../crypto/bytes'
+import { base64Url, fixedBase64Url, fromBase64Url } from '../crypto/bytes'
 import { canonicalBytes, parseCanonicalJson } from '../crypto/canonical'
 import { aesGcmDecrypt, aesGcmEncrypt, randomBytes, sha256 } from '../crypto/core'
 import { deriveBackupKeyV2 } from './crypto'
