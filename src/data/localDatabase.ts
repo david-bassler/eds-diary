@@ -25,7 +25,7 @@ import type { CoordinatorStore } from '../sync/core/coordinator'
 import { SINGLE_WRITER_V1_PROFILE, type RemoteAnchorState, type VerifiedRemoteState } from '../sync/core/contracts'
 import type { RemoteAnchorV1 } from '../sync/core/prefix'
 import { rotationStateHash, type RotationPersistence, type RotationState } from '../security/rotation'
-import { rotationOperationStateHashV2, validateRotationOperationStateV2, type RotationOperationStateV2 } from '../security/v2/profileUpgrade'
+import { advanceRotationOperationStateV2, rotationOperationStateHashV2, validateRotationOperationStateV2, type RotationOperationStateV2 } from '../security/v2/profileUpgrade'
 import { validateDomainData } from '../security/domainSchemaValidator'
 import painEntrySchema from '../security/schemas/pain-entry.v1.schema.json'
 import activityEntrySchema from '../security/schemas/activity-entry.v1.schema.json'
@@ -350,6 +350,18 @@ export async function persistProfileUpgradeSourceOperationV2(operation:RotationO
     if(expectedSourceOperationGeneration!==undefined&&current.state.operation_generation!==expectedSourceOperationGeneration)throw new Error('v1 Source changed after final profile-upgrade verification; retry from a new full verify.')
     const ref=current.state.rotation_state_ref
     if(ref&&ref.operation_id!==operation.operation_id)throw new Error('Another v1 rotation operation is already bound to the Source.')
+    const read=db.transaction(STORES.operations,'readonly')
+    const prior=await result<{state:RotationOperationStateV2;hash:string}|undefined>(read.objectStore(STORES.operations).get(`profile-upgrade-v2:${current.context.diaryId}`))
+    await complete(read)
+    if(prior){
+      validateRotationOperationStateV2(prior.state)
+      if(prior.hash!==await rotationOperationStateHashV2(prior.state)
+        ||!ref
+        ||ref.operation_id!==prior.state.operation_id
+        ||ref.state_record_hash!==prior.hash)throw new Error('Existing v1 profile-upgrade operation binding is corrupt.')
+      advanceRotationOperationStateV2(prior.state,operation)
+    }else if(ref)throw new Error('v1 profile-upgrade state ref exists without its operation record.')
+    else if(operation.stage!=='source_frozen_verified')throw new Error('A new profile-upgrade operation must start at source_frozen_verified.')
     const next={...current.state,rotation_state_ref:{operation_id:operation.operation_id,state:operation.stage,state_record_hash:hash},operation_generation:current.state.operation_generation+1}
     const tag=await stateTag(current.rootKey,current.epochSalt,next),tx=db.transaction([STORES.operations,STORES.state],'readwrite')
     tx.objectStore(STORES.operations).put({id:`profile-upgrade-v2:${current.context.diaryId}`,state:structuredClone(operation),hash})
