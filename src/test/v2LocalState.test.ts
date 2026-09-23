@@ -179,6 +179,29 @@ describe('EpochLocalSecurityStateV6 persistence and writer gate',()=>{
     expect((await store.loadState(rootKey,f.epochSalt,f.epochId)).local_journal_count).toBe(2)
   })
 
+  it('rejects domain parents that are absent from or belong to another record in the fresh accepted graph before reservation',async()=>{
+    const f=await fixture(),store=new IndexedDbV2LocalSecurityStore()
+    await store.initializeState(rootKey,f.epochSalt,f.initial)
+    await store.persistWriterKey({
+      writer_signing_key_id:f.writer.writerKeyId,
+      writer_device_id:f.writerDeviceId,
+      writer_public_key:base64Url(f.writer.publicKeyRaw),
+      private_key:f.writer.privateKey,
+    },f.diaryId,f.epochId)
+    const foreignParentId=b(48,32)
+    const parent={record_type:'pain_entry',record_schema:'pain-entry/v1',record_id:b(49,16),revision_id:foreignParentId,parent_revision_ids:[],record_status:'active' as const,record_data:painData,migration_origin:null,protocol_created_at:'2026-09-23T08:00:00.000Z',writer_context:{writer_generation:1,writer_grant_id:f.result.current_writer.writer_grant_id,writer_device_id:f.writerDeviceId,writer_key_id:f.writer.writerKeyId},writer_signature:b(50,64)}
+    const graphResult:CanonicalFullResultV2={...f.result,accepted_revision_graph:{revisions:new Map([[foreignParentId,parent]]),heads_by_record:new Map([[parent.record_id,new Set([foreignParentId])]])}}
+    const verified=v2VerifiedRemoteState(graphResult,{manifest:[],rows:[]})
+    const authority=new TransferableSingleWriterV2WriteAuthority(()=>store.loadState(rootKey,f.epochSalt,f.epochId),(envelopeId)=>store.envelopeAuthority(rootKey,f.epochSalt,f.epochId,envelopeId))
+    const preparer=new V2DomainWritePreparer(store,authority,{verifyNow:async()=>verified})
+
+    await expect(preparer.prepareAndPersist(rootKey,f.epochSalt,{recordType:'pain_entry',recordId:b(51,16),parentRevisionIds:[b(52,32)],status:'active',data:painData}))
+      .rejects.toThrow(/parent is not in/)
+    await expect(preparer.prepareAndPersist(rootKey,f.epochSalt,{recordType:'pain_entry',recordId:b(51,16),parentRevisionIds:[foreignParentId],status:'active',data:painData}))
+      .rejects.toThrow(/different record/)
+    expect(await store.envelopes(f.epochId)).toHaveLength(0)
+  })
+
   it('treats a valid keypair stored under the wrong local device binding as read-only',async()=>{
     const f=await fixture(),store=new IndexedDbV2LocalSecurityStore()
     await store.initializeState(rootKey,f.epochSalt,f.initial)
