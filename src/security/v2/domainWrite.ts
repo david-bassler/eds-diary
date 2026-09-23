@@ -8,7 +8,7 @@ import { IndexedDbV2LocalSecurityStore } from './localPersistence'
 import { V2_SCHEMA_REGISTRY } from './schemaRegistry'
 import { V2_RECORD_SCHEMA_BY_TYPE, type RevisionV2 } from './types'
 import { validateRevisionV2 } from './validators'
-import { withDiaryLock } from '../localState'
+import { withDiaryLockV2 } from './localState'
 import type { CanonicalFullResultV2 } from './verifier'
 import { stateAfterCanonicalVerifyV6 } from './stateReconciliation'
 
@@ -55,7 +55,7 @@ export class V2DomainWritePreparer {
     // domain-write attempt performs a new full remote read/verify here.
     const verified=await this.freshSource.verifyNow()
     const remote=canonicalResult(verified)
-    return withDiaryLock(remote.diary_id,async()=>{
+    return withDiaryLockV2(remote.diary_id,async()=>{
       const before=await this.store.loadState(rootKey,epochSalt,remote.epoch_id)
       const key=await this.store.loadWriterKey(before.writer_signing_key_id,before.diary_id,before.epoch_id)
       const keyUsable=key!==null
