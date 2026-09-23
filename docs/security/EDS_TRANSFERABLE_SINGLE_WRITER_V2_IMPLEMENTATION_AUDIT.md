@@ -132,7 +132,8 @@ Later changes must retain explicit vectors for at least:
 - prepared-envelope Writer provenance mismatch => pre-push quarantine;
 - accepted vs stale-writer semantic durability and authenticated stale quarantine;
 - outbox provenance/status MAC tamper rejection;
-- no WebCrypto/long async gaps inside v2 IndexedDB readwrite transactions.
+- no WebCrypto/long async gaps inside v2 IndexedDB readwrite transactions;
+- persisted EnvelopeV6 journal tamper detection before normal prepare/push.
 
 ## Anti-churn rule for later reviews
 
