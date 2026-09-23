@@ -213,6 +213,7 @@ export class IndexedDbV2LocalSecurityStore {
     const storedReservation=await requestResult<EnvelopeReservationV6|undefined>(checkTx.objectStore(STORES.reservations).get(reservationId))
     await transactionDone(checkTx)
     if(!storedReservation||storedReservation.state!=='reserved'||storedReservation.envelope_id!==envelope.envelopeId||storedReservation.iv!==envelope.iv)throw new Error('Envelope reservation is missing, consumed or changed.')
+    await assertAuthorityMatchesEnvelope(rootKey,epochSalt,current.diary_id,current.epoch_id,envelope,authority)
 
     const sequence=current.local_journal_count+1
     const nextState:EpochLocalSecurityStateV6={
