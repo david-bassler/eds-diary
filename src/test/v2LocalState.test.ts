@@ -133,7 +133,7 @@ describe('EpochLocalSecurityStateV6 persistence and writer gate',()=>{
     const reconciled=await stateAfterCanonicalVerifyV6(f.initial,staged,[],true)
     await store.replaceState(rootKey,f.epochSalt,0,reconciled)
     const verified=v2VerifiedRemoteState(staged,{manifest:[],rows:[]})
-    const authority=new TransferableSingleWriterV2WriteAuthority(()=>store.loadState(rootKey,f.epochSalt,f.epochId),(envelopeId)=>store.envelopeAuthority(f.epochId,envelopeId))
+    const authority=new TransferableSingleWriterV2WriteAuthority(()=>store.loadState(rootKey,f.epochSalt,f.epochId),(envelopeId)=>store.envelopeAuthority(rootKey,f.epochSalt,f.epochId,envelopeId))
     await expect(authority.canPrepareDomainWrite(verified)).resolves.toBe('read_only')
 
     const wrong={...f.result,current_writer:{...f.result.current_writer,writer_device_id:b(33,16)}}
@@ -147,7 +147,7 @@ describe('EpochLocalSecurityStateV6 persistence and writer gate',()=>{
     const verified=v2VerifiedRemoteState(f.result,{manifest:[],rows:[]})
     let verifyCalls=0
     const freshSource={verifyNow:async()=>{verifyCalls+=1;return verified}}
-    const authority=new TransferableSingleWriterV2WriteAuthority(()=>store.loadState(rootKey,f.epochSalt,f.epochId),(envelopeId)=>store.envelopeAuthority(f.epochId,envelopeId))
+    const authority=new TransferableSingleWriterV2WriteAuthority(()=>store.loadState(rootKey,f.epochSalt,f.epochId),(envelopeId)=>store.envelopeAuthority(rootKey,f.epochSalt,f.epochId,envelopeId))
     const preparer=new V2DomainWritePreparer(store,authority,freshSource)
 
     await expect(preparer.prepareAndPersist(rootKey,f.epochSalt,{recordType:'pain_entry',recordId:b(11,16),status:'active',data:painData}))
@@ -184,7 +184,7 @@ describe('EpochLocalSecurityStateV6 persistence and writer gate',()=>{
     await store.initializeState(rootKey,f.epochSalt,f.initial)
     const active=await stateAfterCanonicalVerifyV6(f.initial,f.result,[],true)
     await store.replaceState(rootKey,f.epochSalt,0,active)
-    const authority=new TransferableSingleWriterV2WriteAuthority(()=>store.loadState(rootKey,f.epochSalt,f.epochId),(envelopeId)=>store.envelopeAuthority(f.epochId,envelopeId))
+    const authority=new TransferableSingleWriterV2WriteAuthority(()=>store.loadState(rootKey,f.epochSalt,f.epochId),(envelopeId)=>store.envelopeAuthority(rootKey,f.epochSalt,f.epochId,envelopeId))
     const verified=v2VerifiedRemoteState(f.result,{manifest:[],rows:[]})
     await expect(authority.canPrepareDomainWrite(verified)).resolves.toBe('writer')
 
@@ -209,7 +209,7 @@ describe('EpochLocalSecurityStateV6 persistence and writer gate',()=>{
       private_key:f.writer.privateKey,
     },f.diaryId,f.epochId)
     const initialVerified=v2VerifiedRemoteState(f.result,{manifest:[],rows:[]})
-    const authority=new TransferableSingleWriterV2WriteAuthority(()=>store.loadState(rootKey,f.epochSalt,f.epochId),(envelopeId)=>store.envelopeAuthority(f.epochId,envelopeId))
+    const authority=new TransferableSingleWriterV2WriteAuthority(()=>store.loadState(rootKey,f.epochSalt,f.epochId),(envelopeId)=>store.envelopeAuthority(rootKey,f.epochSalt,f.epochId,envelopeId))
     const preparer=new V2DomainWritePreparer(store,authority,{verifyNow:async()=>initialVerified})
     const prepared=await preparer.prepareAndPersist(rootKey,f.epochSalt,{recordType:'pain_entry',recordId:b(20,16),status:'active',data:painData,protocolCreatedAt:'2026-09-23T08:10:00.000Z'})
     const row=envelopeRowV2(prepared.envelope),remoteAnchor=await createAnchorV2(f.diaryId,f.epochId,[row])
@@ -226,7 +226,7 @@ describe('EpochLocalSecurityStateV6 persistence and writer gate',()=>{
     const generation=await coordinatorStore.generation()
     await coordinatorStore.commitVerifiedPull(verified,remoteAnchor,generation)
     expect(await coordinatorStore.pending(verified)).toEqual([])
-    expect((await store.outbox(f.epochId))[0]?.status).toBe('stale_writer_pending')
+    expect((await store.outbox(rootKey,f.epochSalt,f.epochId))[0]?.status).toBe('stale_writer_pending')
     expect((await store.loadState(rootKey,f.epochSalt,f.epochId)).stale_writer_pending_count).toBe(1)
   })
 
@@ -240,7 +240,7 @@ describe('EpochLocalSecurityStateV6 persistence and writer gate',()=>{
       private_key:f.writer.privateKey,
     },f.diaryId,f.epochId)
     const verified1=v2VerifiedRemoteState(f.result,{manifest:[],rows:[]})
-    const authority=new TransferableSingleWriterV2WriteAuthority(()=>store.loadState(rootKey,f.epochSalt,f.epochId),(envelopeId)=>store.envelopeAuthority(f.epochId,envelopeId))
+    const authority=new TransferableSingleWriterV2WriteAuthority(()=>store.loadState(rootKey,f.epochSalt,f.epochId),(envelopeId)=>store.envelopeAuthority(rootKey,f.epochSalt,f.epochId,envelopeId))
     const preparer=new V2DomainWritePreparer(store,authority,{verifyNow:async()=>verified1})
     const prepared=await preparer.prepareAndPersist(rootKey,f.epochSalt,{recordType:'pain_entry',recordId:b(21,16),status:'active',data:painData,protocolCreatedAt:'2026-09-23T08:11:00.000Z'})
 
