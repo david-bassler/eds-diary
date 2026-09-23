@@ -63,7 +63,8 @@ export class TransferableSingleWriterV2WriteAuthority implements WriteAuthority 
   async accessAfterPull(verified:VerifiedRemoteState):Promise<WriteAccess>{return this.access(verified)}
   async canPrepareDomainWrite(verified:VerifiedRemoteState):Promise<WriteAccess>{return this.access(verified)}
 
-  async verifyBeforePush(envelope:PreparedEnvelope,verified:VerifiedRemoteState,_phase:WritePushPhase):Promise<WritePushDecision>{
+  async verifyBeforePush(envelope:PreparedEnvelope,verified:VerifiedRemoteState,phase:WritePushPhase):Promise<WritePushDecision>{
+    void phase
     if(!envelope.envelopeId||!envelope.iv||!envelope.ciphertext)throw new Error('Prepared envelope is incomplete.')
     const remote=canonicalState(verified),local=await this.loadLocalState(),prepared=await this.loadEnvelopeAuthority(envelope)
     if(!prepared)return 'quarantine_stale_writer'
