@@ -129,6 +129,7 @@ async function openDatabase():Promise<IDBDatabase>{
 }
 
 const VERIFIED_PERSISTED_RECOVERY_ARTIFACTS=new WeakSet<VerifiedPersistedRecoveryArtifactV6>()
+const VERIFIED_PERSISTED_RECOVERY_ARTIFACT_TOKEN=Symbol('VerifiedPersistedRecoveryArtifactV6')
 export class VerifiedPersistedRecoveryArtifactV6 {
   constructor(
     readonly artifact:RecoveryArtifactV6,
@@ -137,7 +138,11 @@ export class VerifiedPersistedRecoveryArtifactV6 {
     readonly artifactLocator:string,
     readonly diaryId:string,
     readonly epochId:string,
-  ){VERIFIED_PERSISTED_RECOVERY_ARTIFACTS.add(this)}
+    token:symbol,
+  ){
+    if(token!==VERIFIED_PERSISTED_RECOVERY_ARTIFACT_TOKEN)throw new Error('VerifiedPersistedRecoveryArtifactV6 can only be created after persistent readback verification.')
+    VERIFIED_PERSISTED_RECOVERY_ARTIFACTS.add(this)
+  }
 }
 export function isVerifiedPersistedRecoveryArtifactV6(value:unknown):value is VerifiedPersistedRecoveryArtifactV6{
   return typeof value==='object'&&value!==null&&VERIFIED_PERSISTED_RECOVERY_ARTIFACTS.has(value as VerifiedPersistedRecoveryArtifactV6)
@@ -195,7 +200,7 @@ export class IndexedDbV2LocalSecurityStore {
     await transactionDone(readTx)
     if(!readback||readback.artifactBytes!==artifactBytes||readback.artifactSha256!==artifactSha256||readback.familyLocator!==familyLocator||readback.artifactLocator!==artifactLocator)throw new Error('RecoveryArtifactV6 persistent readback mismatch.')
     await openRecoveryArtifactV6(artifact,urs)
-    return new VerifiedPersistedRecoveryArtifactV6(structuredClone(artifact),artifactSha256,familyLocator,artifactLocator,diaryId,epochId)
+    return new VerifiedPersistedRecoveryArtifactV6(structuredClone(artifact),artifactSha256,familyLocator,artifactLocator,diaryId,epochId,VERIFIED_PERSISTED_RECOVERY_ARTIFACT_TOKEN)
   }
 
   async persistRecoveryTakeoverStaging(staging:RecoveryTakeoverStagingV2,urs:Uint8Array):Promise<VerifiedRecoveryTakeoverStagingV2>{
