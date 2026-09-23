@@ -298,8 +298,6 @@ export async function createBestEffortRootWrapV6(rootKey:Uint8Array,wrappingKey:
   assertRootKeyV6(rootKey);assertBestEffortWrapKeyV6(wrappingKey);assertRootWrapIdentityV6(identity)
   if(wrapId.byteLength!==16||iv.byteLength!==12)throw new Error('Invalid RootWrapV6 randomness.')
   const draft:BestEffortRootWrapV6={local_wrap_version:6,mode:'best-effort',...identity,wrap_id:base64Url(wrapId),wrap_iv:base64Url(iv),wrapped_root_key:'',mode_metadata:{}}
-  const encrypted=await aesGcmEncrypt(new Uint8Array(await crypto.subtle.exportKey('raw',await crypto.subtle.importKey('raw',arrayBuffer(new Uint8Array(32)),{name:'AES-GCM'},true,['encrypt']))).slice(0,0),rootKey,new Uint8Array())
-  void encrypted
   const ciphertext=await crypto.subtle.encrypt({name:'AES-GCM',iv:arrayBuffer(iv),additionalData:arrayBuffer(rootWrapAadV6(draft)),tagLength:128},wrappingKey,arrayBuffer(rootKey))
   return{...draft,wrapped_root_key:base64Url(new Uint8Array(ciphertext))}
 }
