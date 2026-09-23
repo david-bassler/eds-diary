@@ -9,10 +9,11 @@ import { isVerifiedRecoveryTakeoverStagingV2, verifyRecoveryTakeoverStagingV2, t
 import { openRecoveryArtifactV6, recoveryArtifactHashV6, recoveryArtifactLocatorV6, recoveryFamilyLocatorV6, type RecoveryArtifactV6 } from './recovery'
 import { activationLineageCacheHashV2, openActivationLineageCacheV2, type ActivationLineageCacheV2 } from './activationLineageCache'
 import { advanceRotationOperationStateV2, rotationOperationStateHashV2, validateRotationOperationStateV2, type RotationOperationStateV2, type RotationOperationStageV2 } from './profileUpgrade'
+import { openBestEffortRootWrapV6, validateRootWrapV6, type RootWrapV6 } from './rootWrap'
 
 const DATABASE_NAME='eds-diary-v2-security'
-const DATABASE_VERSION=6
-const STORES={states:'epochSecurityStateV6',writerKeys:'writerDeviceKeysV2',reservations:'envelopeReservationsV6',envelopes:'envelopesV6',outbox:'outboxV6',recoveryStaging:'recoveryTakeoverStagingV2',recoveryArtifacts:'recoveryArtifactsV6',rotationOperations:'rotationOperationsV2',lineageCaches:'activationLineageCachesV2'} as const
+const DATABASE_VERSION=7
+const STORES={states:'epochSecurityStateV6',writerKeys:'writerDeviceKeysV2',reservations:'envelopeReservationsV6',envelopes:'envelopesV6',outbox:'outboxV6',recoveryStaging:'recoveryTakeoverStagingV2',recoveryArtifacts:'recoveryArtifactsV6',rotationOperations:'rotationOperationsV2',lineageCaches:'activationLineageCachesV2',rootWraps:'rootWrapsV6',rootWrappingKeys:'rootWrappingKeysV6'} as const
 
 export interface EnvelopeReservationV6 {
   id:string
@@ -121,6 +122,8 @@ async function openDatabase():Promise<IDBDatabase>{
       if(!db.objectStoreNames.contains(STORES.recoveryArtifacts))db.createObjectStore(STORES.recoveryArtifacts,{keyPath:'id'})
       if(!db.objectStoreNames.contains(STORES.rotationOperations))db.createObjectStore(STORES.rotationOperations,{keyPath:'id'})
       if(!db.objectStoreNames.contains(STORES.lineageCaches))db.createObjectStore(STORES.lineageCaches,{keyPath:'id'})
+      if(!db.objectStoreNames.contains(STORES.rootWraps))db.createObjectStore(STORES.rootWraps,{keyPath:'id'})
+      if(!db.objectStoreNames.contains(STORES.rootWrappingKeys))db.createObjectStore(STORES.rootWrappingKeys,{keyPath:'id'})
     })
     request.addEventListener('success',()=>{
       const db=request.result
@@ -153,6 +156,56 @@ export function isVerifiedPersistedRecoveryArtifactV6(value:unknown):value is Ve
 }
 
 export class IndexedDbV2LocalSecurityStore {
+  async persistRootWrapV6(wrap:RootWrapV6,bestEffortWrappingKey:CryptoKey|null):Promise<void>{
+    validateRootWrapV6(wrap)
+    if((wrap.mode==='best-effort')!==(bestEffortWrappingKey!==null))throw new Error('RootWrapV6 best-effort key persistence mismatch.')
+    if(bestEffortWrappingKey){
+      const algorithm=bestEffortWrappingKey.algorithm as AesKeyAlgorithm
+      if(bestEffortWrappingKey.type!=='secret'||bestEffortWrappingKey.extractable||bestEffortWrappingKey.algorithm.name!=='AES-GCM'||algorithm.length!==256)throw new Error('RootWrapV6 best-effort key is invalid.')
+      const opened=await openBestEffortRootWrapV6(wrap,bestEffortWrappingKey)
+      if(opened.byteLength!==32)throw new Error('RootWrapV6 best-effort verification failed.')
+    }
+    const encoded=new TextDecoder().decode(canonicalBytes(wrap as never)),db=await openDatabase()
+    const readTx=db.transaction([STORES.rootWraps,STORES.rootWrappingKeys],'readonly')
+    const wrapRequest=readTx.objectStore(STORES.rootWraps).get(wrap.epoch_id)
+    const keyRequest=readTx.objectStore(STORES.rootWrappingKeys).get(wrap.wrap_id)
+    const [existingWrap,existingKey]=await Promise.all([
+      requestResult<{id:string;wrap:RootWrapV6;bytes:string}|undefined>(wrapRequest),
+      requestResult<{id:string;key:CryptoKey}|undefined>(keyRequest),
+    ])
+    await transactionDone(readTx)
+    if(existingWrap){
+      if(existingWrap.bytes!==encoded||existingWrap.wrap.wrap_id!==wrap.wrap_id)throw new Error('RootWrapV6 immutable epoch binding collision.')
+      if(wrap.mode==='best-effort'&&!existingKey)throw new Error('RootWrapV6 best-effort key is missing.')
+      return
+    }
+    const tx=db.transaction([STORES.rootWraps,STORES.rootWrappingKeys],'readwrite')
+    tx.objectStore(STORES.rootWraps).add({id:wrap.epoch_id,wrap:structuredClone(wrap),bytes:encoded})
+    if(bestEffortWrappingKey)tx.objectStore(STORES.rootWrappingKeys).add({id:wrap.wrap_id,key:bestEffortWrappingKey})
+    await transactionDone(tx)
+    const verifyTx=db.transaction(STORES.rootWraps,'readonly')
+    const readback=await requestResult<{id:string;wrap:RootWrapV6;bytes:string}|undefined>(verifyTx.objectStore(STORES.rootWraps).get(wrap.epoch_id))
+    await transactionDone(verifyTx)
+    if(!readback||readback.bytes!==encoded)throw new Error('RootWrapV6 persistent readback mismatch.')
+    validateRootWrapV6(readback.wrap)
+  }
+
+  async loadRootWrapV6(epochId:string):Promise<{wrap:RootWrapV6;bestEffortWrappingKey:CryptoKey|null}>{
+    fixedBase64Url(epochId,16,'epoch_id')
+    const db=await openDatabase(),tx=db.transaction([STORES.rootWraps,STORES.rootWrappingKeys],'readonly')
+    const wrapRequest=tx.objectStore(STORES.rootWraps).get(epochId)
+    const stored=await requestResult<{id:string;wrap:RootWrapV6;bytes:string}|undefined>(wrapRequest)
+    if(!stored){tx.abort();throw new Error('RootWrapV6 is missing.')}
+    const keyRequest=tx.objectStore(STORES.rootWrappingKeys).get(stored.wrap.wrap_id)
+    const key=await requestResult<{id:string;key:CryptoKey}|undefined>(keyRequest)
+    await transactionDone(tx)
+    validateRootWrapV6(stored.wrap)
+    if(stored.bytes!==new TextDecoder().decode(canonicalBytes(stored.wrap as never)))throw new Error('RootWrapV6 stored bytes mismatch.')
+    if(stored.wrap.mode==='best-effort'&&!key)throw new Error('RootWrapV6 best-effort key is missing.')
+    if(stored.wrap.mode!=='best-effort'&&key)throw new Error('RootWrapV6 unexpected wrapping key.')
+    return{wrap:structuredClone(stored.wrap),bestEffortWrappingKey:key?.key??null}
+  }
+
   async initializeRotationOperation(state:RotationOperationStateV2):Promise<RotationOperationStateV2>{
     validateRotationOperationStateV2(state)
     const hash=await rotationOperationStateHashV2(state),db=await openDatabase(),readTx=db.transaction(STORES.rotationOperations,'readonly')
