@@ -982,7 +982,7 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
   async persistLineageAndReverifyBeforeSwitch():Promise<'ready'|'superseded'>{
     const ctx=await this.successorContext(),activation=await this.artifact<ActivationArtifactV2>('activation'),backup=await this.artifact<BackupArtifactV2>('activated-backup')
     if(!activation||!backup)throw new Error('Profile-upgrade final activation artifacts are incomplete.')
-    let state=await this.v2Store.loadState(ctx.rootKey,ctx.epochSalt,ctx.plan.successor_epoch_id)
+    const state=await this.v2Store.loadState(ctx.rootKey,ctx.epochSalt,ctx.plan.successor_epoch_id)
     if(state.activation_lineage_cache_ref===null){
       const cache=await createActivationLineageCacheV2({
         rootKey:ctx.rootKey,epochSalt:ctx.epochSalt,diaryId:ctx.plan.diary_id,epochId:ctx.plan.successor_epoch_id,
