@@ -2,11 +2,12 @@ import { base64Url, equalBytes, fixedBase64Url, fromBase64Url, randomBytes } fro
 import { canonicalBytes } from '../crypto/canonical'
 import { hmacSha256 } from '../crypto/core'
 import { deriveLocalStateMacKeyV2 } from './crypto'
+import { openRevisionEnvelopeV2 } from './envelopes'
 import type { PreparedEnvelope } from '../envelopes'
 import { localJournalInitialV2, localJournalNextV2, localStateTagV6, validateEpochLocalSecurityStateV6, validateStoredWriterDeviceKeyV2, verifyLocalStateTagV6, withDiaryLockV2, type EpochLocalSecurityStateV6, type StoredWriterDeviceKeyV2 } from './localState'
 
 const DATABASE_NAME='eds-diary-v2-security'
-const DATABASE_VERSION=2
+const DATABASE_VERSION=3
 const STORES={states:'epochSecurityStateV6',writerKeys:'writerDeviceKeysV2',reservations:'envelopeReservationsV6',envelopes:'envelopesV6',outbox:'outboxV6'} as const
 
 export interface EnvelopeReservationV6 {
@@ -66,7 +67,14 @@ async function openDatabase():Promise<IDBDatabase>{
       const db=request.result
       if(!db.objectStoreNames.contains(STORES.states))db.createObjectStore(STORES.states,{keyPath:'id'})
       if(!db.objectStoreNames.contains(STORES.writerKeys))db.createObjectStore(STORES.writerKeys,{keyPath:'writer_signing_key_id'})
-      if(!db.objectStoreNames.contains(STORES.reservations)){const store=db.createObjectStore(STORES.reservations,{keyPath:'id'});store.createIndex('byEpoch','epoch_id')}
+      if(!db.objectStoreNames.contains(STORES.reservations)){
+        const store=db.createObjectStore(STORES.reservations,{keyPath:'id'})
+        store.createIndex('byEpoch','epoch_id')
+        store.createIndex('byEpochIv',['epoch_id','iv'],{unique:true})
+      }else{
+        const store=request.transaction!.objectStore(STORES.reservations)
+        if(!store.indexNames.contains('byEpochIv'))store.createIndex('byEpochIv',['epoch_id','iv'],{unique:true})
+      }
       if(!db.objectStoreNames.contains(STORES.envelopes)){const store=db.createObjectStore(STORES.envelopes,{keyPath:'id'});store.createIndex('byEpoch','epoch_id');store.createIndex('bySequence',['epoch_id','local_sequence'],{unique:true})}
       if(!db.objectStoreNames.contains(STORES.outbox)){const store=db.createObjectStore(STORES.outbox,{keyPath:'id'});store.createIndex('byEpoch','epoch_id')}
     })
