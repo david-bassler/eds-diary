@@ -7,10 +7,12 @@ import type { PreparedEnvelope } from '../envelopes'
 import { localJournalInitialV2, localJournalNextV2, localStateTagV6, validateEpochLocalSecurityStateV6, validateStoredWriterDeviceKeyV2, verifyLocalStateTagV6, withDiaryLockV2, type EpochLocalSecurityStateV6, type StoredWriterDeviceKeyV2 } from './localState'
 import { isVerifiedRecoveryTakeoverStagingV2, verifyRecoveryTakeoverStagingV2, type RecoveryTakeoverStagingV2, type VerifiedRecoveryTakeoverStagingV2 } from './recoveryStaging'
 import { openRecoveryArtifactV6, recoveryArtifactHashV6, recoveryArtifactLocatorV6, recoveryFamilyLocatorV6, type RecoveryArtifactV6 } from './recovery'
+import { activationLineageCacheHashV2, openActivationLineageCacheV2, type ActivationLineageCacheV2 } from './activationLineageCache'
+import { advanceRotationOperationStateV2, rotationOperationStateHashV2, validateRotationOperationStateV2, type RotationOperationStateV2, type RotationOperationStageV2 } from './profileUpgrade'
 
 const DATABASE_NAME='eds-diary-v2-security'
-const DATABASE_VERSION=5
-const STORES={states:'epochSecurityStateV6',writerKeys:'writerDeviceKeysV2',reservations:'envelopeReservationsV6',envelopes:'envelopesV6',outbox:'outboxV6',recoveryStaging:'recoveryTakeoverStagingV2',recoveryArtifacts:'recoveryArtifactsV6'} as const
+const DATABASE_VERSION=6
+const STORES={states:'epochSecurityStateV6',writerKeys:'writerDeviceKeysV2',reservations:'envelopeReservationsV6',envelopes:'envelopesV6',outbox:'outboxV6',recoveryStaging:'recoveryTakeoverStagingV2',recoveryArtifacts:'recoveryArtifactsV6',rotationOperations:'rotationOperationsV2',lineageCaches:'activationLineageCachesV2'} as const
 
 export interface EnvelopeReservationV6 {
   id:string
@@ -117,6 +119,8 @@ async function openDatabase():Promise<IDBDatabase>{
       if(!db.objectStoreNames.contains(STORES.outbox)){const store=db.createObjectStore(STORES.outbox,{keyPath:'id'});store.createIndex('byEpoch','epoch_id')}
       if(!db.objectStoreNames.contains(STORES.recoveryStaging))db.createObjectStore(STORES.recoveryStaging,{keyPath:'id'})
       if(!db.objectStoreNames.contains(STORES.recoveryArtifacts))db.createObjectStore(STORES.recoveryArtifacts,{keyPath:'id'})
+      if(!db.objectStoreNames.contains(STORES.rotationOperations))db.createObjectStore(STORES.rotationOperations,{keyPath:'id'})
+      if(!db.objectStoreNames.contains(STORES.lineageCaches))db.createObjectStore(STORES.lineageCaches,{keyPath:'id'})
     })
     request.addEventListener('success',()=>{
       const db=request.result
@@ -149,6 +153,114 @@ export function isVerifiedPersistedRecoveryArtifactV6(value:unknown):value is Ve
 }
 
 export class IndexedDbV2LocalSecurityStore {
+  async initializeRotationOperation(state:RotationOperationStateV2):Promise<RotationOperationStateV2>{
+    validateRotationOperationStateV2(state)
+    const hash=await rotationOperationStateHashV2(state),db=await openDatabase(),readTx=db.transaction(STORES.rotationOperations,'readonly')
+    const existing=await requestResult<{id:string;state:RotationOperationStateV2;hash:string}|undefined>(readTx.objectStore(STORES.rotationOperations).get(state.operation_id))
+    await transactionDone(readTx)
+    if(existing){
+      if(existing.hash!==hash||await rotationOperationStateHashV2(existing.state)!==hash)throw new Error('Existing RotationOperationStateV2 does not match the requested operation.')
+      return structuredClone(existing.state)
+    }
+    const tx=db.transaction(STORES.rotationOperations,'readwrite')
+    tx.objectStore(STORES.rotationOperations).add({id:state.operation_id,state:structuredClone(state),hash})
+    await transactionDone(tx)
+    return this.loadRotationOperation(state.operation_id)
+  }
+
+  async loadRotationOperation(operationId:string):Promise<RotationOperationStateV2>{
+    fixedBase64Url(operationId,32,'operation_id')
+    const db=await openDatabase(),tx=db.transaction(STORES.rotationOperations,'readonly')
+    const stored=await requestResult<{id:string;state:RotationOperationStateV2;hash:string}|undefined>(tx.objectStore(STORES.rotationOperations).get(operationId))
+    await transactionDone(tx)
+    if(!stored||stored.id!==operationId)throw new Error('RotationOperationStateV2 is missing.')
+    validateRotationOperationStateV2(stored.state)
+    if(stored.hash!==await rotationOperationStateHashV2(stored.state))throw new Error('RotationOperationStateV2 readback hash failed.')
+    return structuredClone(stored.state)
+  }
+
+  async advanceRotationOperation(expectedStage:RotationOperationStageV2,next:RotationOperationStateV2):Promise<RotationOperationStateV2>{
+    const current=await this.loadRotationOperation(next.operation_id)
+    if(current.stage!==expectedStage)throw new Error('RotationOperationStateV2 stage changed before transition.')
+    advanceRotationOperationStateV2(current,next)
+    const hash=await rotationOperationStateHashV2(next),db=await openDatabase(),tx=db.transaction(STORES.rotationOperations,'readwrite')
+    tx.objectStore(STORES.rotationOperations).put({id:next.operation_id,state:structuredClone(next),hash})
+    await transactionDone(tx)
+    return this.loadRotationOperation(next.operation_id)
+  }
+
+  async bindRotationOperationToState(
+    rootKey:Uint8Array,
+    epochSalt:Uint8Array,
+    epochId:string,
+    operation:RotationOperationStateV2,
+    expectedOperationGeneration:number,
+  ):Promise<EpochLocalSecurityStateV6>{
+    const persisted=await this.loadRotationOperation(operation.operation_id)
+    if(await rotationOperationStateHashV2(persisted)!==await rotationOperationStateHashV2(operation))throw new Error('RotationOperationStateV2 binding mismatch.')
+    const current=await this.loadState(rootKey,epochSalt,epochId)
+    if(current.operation_generation!==expectedOperationGeneration)throw new Error('Stale StateV6 generation during rotation-operation binding.')
+    if(current.diary_id===operation.source_epoch_id)throw new Error('Rotation operation Source ID cannot be used as diary identity.')
+    if(current.epoch_id!==operation.successor_epoch_id)throw new Error('Rotation operation does not target this successor epoch.')
+    if(current.rotation_state_ref&&current.rotation_state_ref.operation_id!==operation.operation_id)throw new Error('Another rotation operation is already bound to this epoch.')
+    const hash=await rotationOperationStateHashV2(operation)
+    const next:EpochLocalSecurityStateV6={...current,operation_generation:current.operation_generation+1,rotation_state_ref:{operation_id:operation.operation_id,state:operation.stage,state_record_hash:hash}}
+    validateEpochLocalSecurityStateV6(next)
+    const tag=await localStateTagV6(rootKey,epochSalt,next),db=await openDatabase(),tx=db.transaction(STORES.states,'readwrite')
+    tx.objectStore(STORES.states).put({id:epochId,state:structuredClone(next),tag})
+    await transactionDone(tx)
+    return this.loadState(rootKey,epochSalt,epochId)
+  }
+
+  async persistActivationLineageCache(
+    rootKey:Uint8Array,
+    epochSalt:Uint8Array,
+    cache:ActivationLineageCacheV2,
+    expectedOperationGeneration:number,
+  ):Promise<EpochLocalSecurityStateV6>{
+    const lineage=await openActivationLineageCacheV2({cache,rootKey,epochSalt,diaryId:cache.diary_id,epochId:cache.epoch_id,manifestFingerprint:cache.manifest_fingerprint})
+    if(!lineage.length)throw new Error('A profile-upgrade ActivationLineageCacheV2 must not be empty.')
+    const current=await this.loadState(rootKey,epochSalt,cache.epoch_id)
+    if(current.operation_generation!==expectedOperationGeneration)throw new Error('Stale StateV6 generation during ActivationLineageCacheV2 persistence.')
+    if(current.diary_id!==cache.diary_id||current.manifest_fingerprint!==cache.manifest_fingerprint)throw new Error('ActivationLineageCacheV2 does not bind the local epoch.')
+    const cacheHash=await activationLineageCacheHashV2(cache),db=await openDatabase()
+    const readTx=db.transaction(STORES.lineageCaches,'readonly')
+    const existing=await requestResult<{id:string;cache:ActivationLineageCacheV2;hash:string}|undefined>(readTx.objectStore(STORES.lineageCaches).get(cache.cache_id))
+    await transactionDone(readTx)
+    const encoded=new TextDecoder().decode(canonicalBytes(cache as never))
+    if(existing&&(
+      existing.hash!==cacheHash
+      ||new TextDecoder().decode(canonicalBytes(existing.cache as never))!==encoded
+    ))throw new Error('ActivationLineageCacheV2 immutable identity collision.')
+    const next:EpochLocalSecurityStateV6={...current,operation_generation:current.operation_generation+1,activation_lineage_cache_ref:{cache_id:cache.cache_id,cache_record_hash:cacheHash}}
+    validateEpochLocalSecurityStateV6(next)
+    const tag=await localStateTagV6(rootKey,epochSalt,next),tx=db.transaction([STORES.lineageCaches,STORES.states],'readwrite')
+    if(!existing)tx.objectStore(STORES.lineageCaches).add({id:cache.cache_id,cache:structuredClone(cache),hash:cacheHash})
+    tx.objectStore(STORES.states).put({id:cache.epoch_id,state:structuredClone(next),tag})
+    await transactionDone(tx)
+    const verifyTx=db.transaction(STORES.lineageCaches,'readonly')
+    const readback=await requestResult<{id:string;cache:ActivationLineageCacheV2;hash:string}|undefined>(verifyTx.objectStore(STORES.lineageCaches).get(cache.cache_id))
+    await transactionDone(verifyTx)
+    if(!readback||readback.hash!==cacheHash||new TextDecoder().decode(canonicalBytes(readback.cache as never))!==encoded)throw new Error('ActivationLineageCacheV2 persistent readback mismatch.')
+    await openActivationLineageCacheV2({cache:readback.cache,rootKey,epochSalt,diaryId:cache.diary_id,epochId:cache.epoch_id,manifestFingerprint:cache.manifest_fingerprint})
+    return this.loadState(rootKey,epochSalt,cache.epoch_id)
+  }
+
+  async loadActivationLineageCache(
+    rootKey:Uint8Array,
+    epochSalt:Uint8Array,
+    epochId:string,
+  ):Promise<ActivationLineageCacheV2>{
+    const state=await this.loadState(rootKey,epochSalt,epochId),ref=state.activation_lineage_cache_ref
+    if(!ref)throw new Error('ActivationLineageCacheV2 reference is missing.')
+    const db=await openDatabase(),tx=db.transaction(STORES.lineageCaches,'readonly')
+    const stored=await requestResult<{id:string;cache:ActivationLineageCacheV2;hash:string}|undefined>(tx.objectStore(STORES.lineageCaches).get(ref.cache_id))
+    await transactionDone(tx)
+    if(!stored||stored.hash!==ref.cache_record_hash||stored.hash!==await activationLineageCacheHashV2(stored.cache))throw new Error('ActivationLineageCacheV2 reference/hash mismatch.')
+    await openActivationLineageCacheV2({cache:stored.cache,rootKey,epochSalt,diaryId:state.diary_id,epochId:state.epoch_id,manifestFingerprint:state.manifest_fingerprint})
+    return structuredClone(stored.cache)
+  }
+
   async initializeState(rootKey:Uint8Array,epochSalt:Uint8Array,state:EpochLocalSecurityStateV6):Promise<void>{
     validateEpochLocalSecurityStateV6(state)
     const db=await openDatabase(),tag=await localStateTagV6(rootKey,epochSalt,state),tx=db.transaction(STORES.states,'readwrite')
