@@ -77,7 +77,7 @@ import {
 } from '../security/v2/localState'
 import { createRecoveryTakeoverStagingV2 } from '../security/v2/recoveryStaging'
 import { sealRevisionEnvelopeV2 } from '../security/v2/envelopes'
-import type { RevisionV2, WriterContextV2 } from '../security/v2/types'
+import { SINGLE_WRITER_V2_SCHEMA_ALLOWLIST, type RevisionV2, type WriterContextV2 } from '../security/v2/types'
 import { stateAfterCanonicalVerifyV6 } from '../security/v2/stateReconciliation'
 import type { CanonicalFullResultV2 } from '../security/v2/verifier'
 import {
@@ -90,6 +90,8 @@ import { createBackupV6, testRestoreBackupV6, type SyncBackupV6 } from '../secur
 import { TransferableSingleWriterV2Verifier } from '../security/v2/verifier'
 import { createActivationLineageCacheV2 } from '../security/v2/activationLineageCache'
 import { createAnchorV2 } from '../security/v2/prefix'
+import { V2_SCHEMA_REGISTRY_HASH } from '../security/v2/schemaRegistry'
+import { V6_PROTOCOL_LIMITS } from '../security/v2/manifest'
 
 type Row=readonly[string,string,string]
 export type ProfileUpgradeV2FaultPoint=
@@ -369,9 +371,9 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
       diary_marker:'epoch-manifest-v6',crypto_suite:'A256GCM-HKDF-SHA256-ED25519-v6',sync_profile:SINGLE_WRITER_V2_PROFILE,
       created_at:source.created_at,google_account_binding:accountBinding,
       predecessor_epochs:[{epoch_id:source.source_epoch_id,manifest_fingerprint:source.source_manifest_fingerprint}],
-      record_schema_allowlist:['activity-entry/v1','activity-type-settings/v1','medication-entry/v1','medication-prescription/v1','pain-entry/v1','pain-type-settings/v1','writer-grant-sw-v2','rotation-announcement-sw-v2','epoch-migration-sw-v2','recovery-authority-transition-sw-v2','successor-activation-confirmation-sw-v2'],
-      record_schema_registry_hash:(await import('../security/v2/schemaRegistry')).V2_SCHEMA_REGISTRY_HASH,
-      protocol_limits:(await import('../security/v2/manifest')).V6_PROTOCOL_LIMITS,
+      record_schema_allowlist:[...SINGLE_WRITER_V2_SCHEMA_ALLOWLIST],
+      record_schema_registry_hash:V2_SCHEMA_REGISTRY_HASH,
+      protocol_limits:V6_PROTOCOL_LIMITS,
       epoch_start_authority_mode:'genesis_grant_required',epoch_start_writer_generation:1,epoch_start_writer_grant_id:grantId,
       epoch_start_writer_device_id:writerDeviceId,epoch_start_writer_key_id:writer.writerKeyId,epoch_start_writer_public_key:base64Url(writer.publicKeyRaw),
       recovery_takeover_key_id:recovery.recoveryTakeoverKeyId,recovery_takeover_public_key:base64Url(recovery.publicKeyRaw),
