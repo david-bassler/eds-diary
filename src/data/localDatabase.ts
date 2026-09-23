@@ -25,6 +25,7 @@ import type { CoordinatorStore } from '../sync/core/coordinator'
 import { SINGLE_WRITER_V1_PROFILE, type RemoteAnchorState, type VerifiedRemoteState } from '../sync/core/contracts'
 import type { RemoteAnchorV1 } from '../sync/core/prefix'
 import { rotationStateHash, type RotationPersistence, type RotationState } from '../security/rotation'
+import { rotationOperationStateHashV2, validateRotationOperationStateV2, type RotationOperationStateV2 } from '../security/v2/profileUpgrade'
 import { validateDomainData } from '../security/domainSchemaValidator'
 import painEntrySchema from '../security/schemas/pain-entry.v1.schema.json'
 import activityEntrySchema from '../security/schemas/activity-entry.v1.schema.json'
@@ -65,6 +66,7 @@ const STORES = {
 } as const
 const LEGACY_ACTIVITY_TYPES = 'eds-diary-activity-types-v1'
 const ACTIVE_CONTEXT = 'active'
+const ACTIVE_PROTOCOL_SELECTION = 'active-protocol-selection'
 
 export interface EpochContext { id:'active'; diaryId:string; epochId:string; keyId:string; manifestFingerprint:string; wrapId:string }
 interface StoredEnvelope extends PreparedEnvelope { id:string; epochId:string; localSeq:number; rowBytes:string }
@@ -193,7 +195,7 @@ async function verifiedEnvelopeRevisions(db:IDBDatabase):Promise<RevisionV1[]>{
   return revisions
 }
 async function persistRevision(db:IDBDatabase,store:LocalStoreName,value:Record<string,unknown>,fixedRevisionId?:string,writeMode:'normal'|'merge'|'merge-stage'|'test-branch'='normal',explicitParents:readonly string[]=[]):Promise<void>{
-  const loaded=await loadEpoch(db),rotationStep=loaded.state.rotation_state_ref?.state,frozen=rotationStep!==undefined&&['source_frozen_verified','recovery_secret_verified','successor_planned','successor_bound','copying','successor_verified','recovery_verified','backup_verified','announcement_pending','announcement_durable'].includes(rotationStep);if(loaded.state.epoch_status==='retired'||frozen)throw new Error('Epoch is frozen for rotation.')
+  const loaded=await loadEpoch(db),rotationStep=loaded.state.rotation_state_ref?.state,frozen=rotationStep!==undefined&&['source_frozen_verified','recovery_secret_verified','successor_planned','successor_bound','copying','successor_verified','recovery_verified','backup_verified','announcement_pending','announcement_prepared','recovery_artifact_verified','staged_backup_verified','announcement_unknown','announcement_durable','confirmation_unknown','confirmation_durable','activated_backup_verified'].includes(rotationStep);if(loaded.state.epoch_status==='retired'||frozen)throw new Error('Epoch is frozen for rotation.')
   const id=String(value.id??'');if(!id)throw new Error('Record id is required.');const revisions=await verifiedEnvelopeRevisions(db),profile=profileFor(store,id),canonicalInput=revisions.some(revision=>revision.record_id===id&&revision.record_type===profile.recordType&&revision.record_schema===profile.recordSchema),recordId=canonicalInput?id:await recordIdentity(loaded.context,store,id);if(!canonicalInput)await rememberMapping(db,store,recordId,id)
   const graph=validateRevisionGraphV1(revisions),heads=sortedRevisionIds(graph.headsByRecord.get(recordId)??[]),revisionId=fixedRevisionId??base64Url(randomBytes(32));if(writeMode==='normal'&&heads.length>1)throw new UnresolvedRecordConflictError(recordId,heads);if(writeMode==='merge'&&heads.length<2)throw new Error('Record does not have multiple heads to merge.');if((writeMode==='merge'||writeMode==='merge-stage')&&value.status==='deleted')throw new Error('Explicit merge requires an active merged value.');if(writeMode==='test-branch'&&import.meta.env.MODE!=='test')throw new Error('Test branch writes are unavailable in production.');const parents=writeMode==='test-branch'||writeMode==='merge-stage'?sortedRevisionIds(explicitParents):heads
   if(writeMode==='merge-stage'&&(parents.length<2||parents.length>8||parents.some(parent=>!heads.includes(parent))))throw new Error('Staged merge parents must be current heads of the record.')
@@ -311,6 +313,78 @@ export async function activeEpochVerifierMaterial():Promise<{localEnvelopes:Prep
 
 export const DOMAIN_SCHEMA_REGISTRY:Readonly<Record<string,unknown>>=DOMAIN_SCHEMAS
 export interface VerifiedEpochMaterial {context:EpochContext;state:EpochLocalSecurityStateV5;rootKey:Uint8Array;epochSalt:Uint8Array;envelopes:PreparedEnvelope[];revisions:RevisionV1[]}
+export interface ActiveProtocolSelectionV2 {
+  id:typeof ACTIVE_PROTOCOL_SELECTION
+  sync_profile:'google-sheets-transferable-single-writer-v2'
+  diary_id:string
+  epoch_id:string
+  manifest_fingerprint:string
+  operation_id:string
+}
+
+export async function persistProfileUpgradeSourceOperationV2(operation:RotationOperationStateV2):Promise<void>{
+  validateRotationOperationStateV2(operation)
+  const db=await openDatabase(),loaded=await loadEpoch(db)
+  if(loaded.context.epochId!==operation.source_epoch_id)throw new Error('Profile-upgrade operation Source is not the active v1 epoch.')
+  const hash=await rotationOperationStateHashV2(operation)
+  await withDiaryLock(loaded.context.diaryId,async()=>{
+    const current=await loadEpoch(db)
+    if(current.context.epochId!==operation.source_epoch_id)throw new Error('Active v1 Source changed during profile-upgrade operation persistence.')
+    const ref=current.state.rotation_state_ref
+    if(ref&&ref.operation_id!==operation.operation_id)throw new Error('Another v1 rotation operation is already bound to the Source.')
+    const next={...current.state,rotation_state_ref:{operation_id:operation.operation_id,state:operation.stage,state_record_hash:hash},operation_generation:current.state.operation_generation+1}
+    const tag=await stateTag(current.rootKey,current.epochSalt,next),tx=db.transaction([STORES.operations,STORES.state],'readwrite')
+    tx.objectStore(STORES.operations).put({id:`profile-upgrade-v2:${current.context.diaryId}`,state:structuredClone(operation),hash})
+    tx.objectStore(STORES.state).put({id:current.context.epochId,state:next,tag} satisfies StoredState)
+    await complete(tx)
+  })
+}
+export async function loadProfileUpgradeSourceOperationV2():Promise<RotationOperationStateV2|null>{
+  const db=await openDatabase(),loaded=await loadEpoch(db),tx=db.transaction(STORES.operations,'readonly')
+  const stored=await result<{state:RotationOperationStateV2;hash:string}|undefined>(tx.objectStore(STORES.operations).get(`profile-upgrade-v2:${loaded.context.diaryId}`))
+  await complete(tx)
+  if(!stored)return null
+  validateRotationOperationStateV2(stored.state)
+  if(stored.hash!==await rotationOperationStateHashV2(stored.state))throw new Error('Profile-upgrade operation-state hash failed.')
+  const ref=loaded.state.rotation_state_ref
+  if(!ref||ref.operation_id!==stored.state.operation_id||ref.state!==stored.state.stage||ref.state_record_hash!==stored.hash)throw new Error('v1 Source profile-upgrade state binding failed.')
+  return structuredClone(stored.state)
+}
+export async function activeProtocolSelectionV2():Promise<ActiveProtocolSelectionV2|null>{
+  const db=await openDatabase(),tx=db.transaction(STORES.context,'readonly')
+  const value=await result<ActiveProtocolSelectionV2|undefined>(tx.objectStore(STORES.context).get(ACTIVE_PROTOCOL_SELECTION))
+  await complete(tx)
+  return value??null
+}
+export async function atomicSelectV2AndRetireV1(args:{
+  operation:RotationOperationStateV2
+  diaryId:string
+  successorEpochId:string
+  successorManifestFingerprint:string
+}):Promise<void>{
+  if(args.operation.stage!=='activated_backup_verified')throw new Error('Profile upgrade requires activated_backup_verified before local switch.')
+  if(args.operation.successor_epoch_id!==args.successorEpochId||args.operation.successor_manifest_fingerprint!==args.successorManifestFingerprint)throw new Error('Profile-upgrade switch successor binding mismatch.')
+  const db=await openDatabase(),initial=await loadEpoch(db)
+  await withDiaryLock(initial.context.diaryId,async()=>{
+    const source=await loadEpoch(db)
+    if(source.context.diaryId!==args.diaryId||source.context.epochId!==args.operation.source_epoch_id)throw new Error('Profile-upgrade Source changed before atomic local switch.')
+    const selectedTx=db.transaction(STORES.context,'readonly')
+    const prior=await result<ActiveProtocolSelectionV2|undefined>(selectedTx.objectStore(STORES.context).get(ACTIVE_PROTOCOL_SELECTION))
+    await complete(selectedTx)
+    const selection:ActiveProtocolSelectionV2={id:ACTIVE_PROTOCOL_SELECTION,sync_profile:'google-sheets-transferable-single-writer-v2',diary_id:args.diaryId,epoch_id:args.successorEpochId,manifest_fingerprint:args.successorManifestFingerprint,operation_id:args.operation.operation_id}
+    if(prior){
+      if(new TextDecoder().decode(canonicalBytes(prior as never))!==new TextDecoder().decode(canonicalBytes(selection as never)))throw new Error('A different v2 epoch is already selected locally.')
+      if(source.state.epoch_status!=='retired')throw new Error('v2 protocol selection exists without retired v1 Source.')
+      return
+    }
+    const hash=await rotationOperationStateHashV2(args.operation)
+    if(source.state.rotation_state_ref?.operation_id!==args.operation.operation_id||source.state.rotation_state_ref.state_record_hash!==hash)throw new Error('v1 Source is not bound to the final profile-upgrade operation state.')
+    const retired={...source.state,epoch_status:'retired' as const,operation_generation:source.state.operation_generation+1},tag=await stateTag(source.rootKey,source.epochSalt,retired),tx=db.transaction([STORES.context,STORES.state],'readwrite')
+    tx.objectStore(STORES.context).add(selection)
+    tx.objectStore(STORES.state).put({id:source.context.epochId,state:retired,tag} satisfies StoredState)
+    await complete(tx)
+  })
+}
 
 export class IndexedDbRotationRepository {
   constructor(private readonly envelopeFault?: (point:'after-reservation'|'after-encryption',envelopeId:string,iv?:string)=>void|Promise<void>){}
