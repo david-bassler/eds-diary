@@ -200,7 +200,6 @@ export class IndexedDbV2LocalSecurityStore {
     if(await rotationOperationStateHashV2(persisted)!==await rotationOperationStateHashV2(operation))throw new Error('RotationOperationStateV2 binding mismatch.')
     const current=await this.loadState(rootKey,epochSalt,epochId)
     if(current.operation_generation!==expectedOperationGeneration)throw new Error('Stale StateV6 generation during rotation-operation binding.')
-    if(current.diary_id===operation.source_epoch_id)throw new Error('Rotation operation Source ID cannot be used as diary identity.')
     if(current.epoch_id!==operation.successor_epoch_id)throw new Error('Rotation operation does not target this successor epoch.')
     if(current.rotation_state_ref&&current.rotation_state_ref.operation_id!==operation.operation_id)throw new Error('Another rotation operation is already bound to this epoch.')
     const hash=await rotationOperationStateHashV2(operation)
