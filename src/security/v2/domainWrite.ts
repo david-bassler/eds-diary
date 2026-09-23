@@ -30,6 +30,15 @@ export interface FreshCanonicalV2Source {
   verifyNow():Promise<VerifiedRemoteState>
 }
 
+async function usableWriterKey(
+  store:IndexedDbV2LocalSecurityStore,
+  keyId:string,
+  diaryId:string,
+  epochId:string,
+):Promise<StoredWriterDeviceKeyV2|null>{
+  try{return await store.loadWriterKey(keyId,diaryId,epochId)}catch{return null}
+}
+
 function canonicalResult(verified:VerifiedRemoteState):CanonicalFullResultV2{
   if(verified.profileId!==SINGLE_WRITER_V2_PROFILE)throw new Error('Fresh canonical v2 verification is required before domain-write preparation.')
   const result=verified.profileState as CanonicalFullResultV2
@@ -58,8 +67,7 @@ export class V2DomainWritePreparer {
     return withDiaryLockV2(remote.diary_id,async()=>{
       await this.store.verifyLocalJournal(rootKey,epochSalt,remote.epoch_id)
       const before=await this.store.loadState(rootKey,epochSalt,remote.epoch_id)
-      let key:StoredWriterDeviceKeyV2|null=null
-      try{key=await this.store.loadWriterKey(before.writer_signing_key_id,before.diary_id,before.epoch_id)}catch{key=null}
+      const key=await usableWriterKey(this.store,before.writer_signing_key_id,before.diary_id,before.epoch_id)
       const keyUsable=key!==null&&key.writer_device_id===before.writer_device_id
       const reconciled=await stateAfterCanonicalVerifyV6(before,remote,verified.snapshot.rows,keyUsable)
       await this.store.replaceState(rootKey,epochSalt,before.operation_generation,reconciled)
