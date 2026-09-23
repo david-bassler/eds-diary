@@ -4,6 +4,7 @@ import { assertExtendsAnchorV2, createAnchorV2 } from './prefix'
 
 function sameLocalWriter(state:EpochLocalSecurityStateV6,result:CanonicalFullResultV2,writerKeyUsable:boolean):boolean{
   return writerKeyUsable
+    && result.activation_state!=='staged_confirmation_missing'
     && state.epoch_status==='active'
     && state.writer_device_id===result.current_writer.writer_device_id
     && state.writer_signing_key_id===result.current_writer.writer_key_id
