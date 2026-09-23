@@ -45,6 +45,14 @@ export class GoogleSheetsTransferableSingleWriterV2ProfileCodec implements Trans
       if(total>MAX_CANONICAL_BYTES)throw new Error('Remote v2 canonical byte bound exceeded.')
     }
   }
+  async verifyCreationCandidate(snapshot:RemoteSnapshot):Promise<{manifestFingerprint:string}>{
+    this.validate(snapshot)
+    if(snapshot.rows.length!==0)throw new Error('V2 creation candidate must not contain record rows.')
+    const cells=parseManifestCellsV6(snapshot.manifest)
+    const payload=await openManifestV6(this.rootKey,await this.epochSalt,{diaryId:this.diaryId,epochId:this.epochId},cells)
+    if(payload.google_account_binding!==this.expectedGoogleAccountBinding)throw new Error('ManifestV6 Google account binding mismatch.')
+    return{manifestFingerprint:await manifestFingerprintV6(cells)}
+  }
   async verifyRemote(snapshot:RemoteSnapshot):Promise<VerifiedRemoteState>{
     this.validate(snapshot)
     const cells=parseManifestCellsV6(snapshot.manifest)
