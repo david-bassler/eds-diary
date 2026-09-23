@@ -506,6 +506,9 @@ describe('EpochLocalSecurityStateV6 persistence and writer gate',()=>{
   })
 
   it('requires Web Locks in browser-like worker contexts instead of falling back unlocked',async()=>{
+    class FakeWorkerGlobalScope {}
+    vi.stubGlobal('WorkerGlobalScope',FakeWorkerGlobalScope)
+    vi.stubGlobal('self',new FakeWorkerGlobalScope())
     vi.stubGlobal('navigator',{})
     try{
       await expect(withDiaryLockV2(b(74,16),async()=>undefined)).rejects.toThrow(/Web Locks/)
