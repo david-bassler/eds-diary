@@ -200,7 +200,7 @@ function validateActivationProof(proof:RecoveryActivationProofV2):void{
 function validateLineage(lineage:ActivationLineageV2,payload:RecoveryPayloadV6):void{
   if(!Array.isArray(lineage)||lineage.length>128)throw new Error('ActivationLineageV2 bound exceeded.')
   let priorSuccessor:{epoch:string;fingerprint:string}|null=null
-  const sourceRoots=new Set<string>()
+  const sourceRoots=new Set<string>(),seenEpochs=new Set<string>()
   for(const entry of lineage){
     if(!entry||typeof entry!=='object')throw new Error('ActivationLineageV2 entry schema mismatch.')
     if(entry.kind==='profile_upgrade'){
@@ -212,6 +212,9 @@ function validateLineage(lineage:ActivationLineageV2,payload:RecoveryPayloadV6):
       validateAnchorV2(entry.successor_staging_anchor,'profile_upgrade.successor_staging_anchor')
       validateRow(entry.announcement_envelope,'profile_upgrade.announcement_envelope');validateRow(entry.successor_confirmation_envelope,'profile_upgrade.successor_confirmation_envelope')
       if(priorSuccessor)throw new Error('Profile upgrade may only be the first lineage entry.')
+      if(entry.source_epoch_id===entry.successor_epoch_id||seenEpochs.has(entry.source_epoch_id)||seenEpochs.has(entry.successor_epoch_id))throw new Error('ActivationLineageV2 cycle/repetition detected.')
+      if(sourceRoots.has(entry.source_root_key))throw new Error('ActivationLineageV2 source root reuse detected.')
+      seenEpochs.add(entry.source_epoch_id);seenEpochs.add(entry.successor_epoch_id)
       priorSuccessor={epoch:entry.successor_epoch_id,fingerprint:entry.successor_manifest_fingerprint}
       sourceRoots.add(entry.source_root_key)
     }else if(entry.kind==='v2_rotation'){
@@ -219,6 +222,14 @@ function validateLineage(lineage:ActivationLineageV2,payload:RecoveryPayloadV6):
       if(entry.source_profile!==SINGLE_WRITER_V2_PROFILE)throw new Error('v2 rotation source profile mismatch.')
       fixedBase64Url(entry.source_root_key,32);validateActivationProof(entry.proof)
       if(priorSuccessor&&(entry.proof.source_epoch_id!==priorSuccessor.epoch||entry.proof.source_manifest_fingerprint!==priorSuccessor.fingerprint))throw new Error('ActivationLineageV2 continuity mismatch.')
+      if(entry.proof.source_epoch_id===entry.proof.successor_epoch_id)throw new Error('ActivationLineageV2 self-cycle detected.')
+      if(priorSuccessor===null){
+        if(seenEpochs.has(entry.proof.source_epoch_id))throw new Error('ActivationLineageV2 source repetition detected.')
+        seenEpochs.add(entry.proof.source_epoch_id)
+      }
+      if(seenEpochs.has(entry.proof.successor_epoch_id))throw new Error('ActivationLineageV2 cycle/repetition detected.')
+      if(sourceRoots.has(entry.source_root_key))throw new Error('ActivationLineageV2 source root reuse detected.')
+      seenEpochs.add(entry.proof.successor_epoch_id)
       priorSuccessor={epoch:entry.proof.successor_epoch_id,fingerprint:entry.proof.successor_manifest_fingerprint}
       sourceRoots.add(entry.source_root_key)
     }else throw new Error('ActivationLineageV2 entry kind mismatch.')
