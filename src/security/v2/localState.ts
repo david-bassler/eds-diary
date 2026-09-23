@@ -324,10 +324,10 @@ export async function openPassphraseRootWrapV6(wrap:RootWrapV6,passphrase:string
   assertRootKeyV6(plaintext);return plaintext
 }
 
-export interface PrfWrapEnrollmentMaterialV6 {credentialId:Uint8Array;prfEvalInput:Uint8Array;prfOutput:Uint8Array;rpId:string}
+export interface PrfWrapEnrollmentMaterialV6 {credentialId:Uint8Array;prfEvalInput:Uint8Array;prfOutput:Uint8Array;rpId:string;verified:true}
 export async function createPrfRootWrapV6(rootKey:Uint8Array,material:PrfWrapEnrollmentMaterialV6,identity:RootWrapIdentityV6,wrapId=randomBytes(16),wrapSalt=randomBytes(32),iv=randomBytes(12)):Promise<PrfRootWrapV6>{
   assertRootKeyV6(rootKey);assertRootWrapIdentityV6(identity)
-  if(wrapId.byteLength!==16||material.prfEvalInput.byteLength!==32||material.prfOutput.byteLength!==32||wrapSalt.byteLength!==32||iv.byteLength!==12||!material.credentialId.byteLength||!material.rpId)throw new Error('Invalid RootWrapV6 PRF enrollment material.')
+  if(material.verified!==true||wrapId.byteLength!==16||material.prfEvalInput.byteLength!==32||material.prfOutput.byteLength!==32||wrapSalt.byteLength!==32||iv.byteLength!==12||!material.credentialId.byteLength||!material.rpId)throw new Error('Invalid or unverified RootWrapV6 PRF enrollment material.')
   const draft:PrfRootWrapV6={local_wrap_version:6,mode:'prf',...identity,wrap_id:base64Url(wrapId),wrap_iv:base64Url(iv),wrapped_root_key:'',mode_metadata:{prf_profile:'webauthn-prf-v6-1',credential_id:base64Url(material.credentialId),prf_eval_input:base64Url(material.prfEvalInput),prf_wrap_salt:base64Url(wrapSalt),rp_id:material.rpId}}
   const encrypted=await aesGcmEncrypt(await prfKekV6(material.prfOutput,wrapSalt,identity,material.credentialId),rootKey,rootWrapAadV6(draft),iv)
   return{...draft,wrapped_root_key:base64Url(encrypted.ciphertext)}
