@@ -45,6 +45,36 @@ async function verifyOutboxTag(rootKey:Uint8Array,epochSalt:Uint8Array,entry:V2O
   if(!equalBytes(fixedBase64Url(tag,32,'outbox_tag'),expected))throw new Error('V2 outbox MAC failed.')
 }
 
+function sameAuthority(left:PreparedEnvelopeAuthorityV2,right:PreparedEnvelopeAuthorityV2):boolean{
+  return left.writer_generation===right.writer_generation
+    &&left.writer_grant_id===right.writer_grant_id
+    &&left.writer_device_id===right.writer_device_id
+    &&left.writer_key_id===right.writer_key_id
+}
+function assertStateTransition(current:EpochLocalSecurityStateV6,next:EpochLocalSecurityStateV6):void{
+  if(current.epoch_status==='orphaned'&&next.epoch_status!=='orphaned')throw new Error('Orphaned v2 epochs are terminal and cannot be reactivated.')
+}
+function assertOutboxTransition(current:V2OutboxStatus,next:V2OutboxStatus):void{
+  if(current==='durable'&&next!=='durable')throw new Error('Durable v2 outbox entries are terminal.')
+  if(current==='stale_writer_pending'&&next!=='stale_writer_pending')throw new Error('Stale-writer quarantine is terminal.')
+}
+async function assertAuthorityMatchesEnvelope(
+  rootKey:Uint8Array,
+  epochSalt:Uint8Array,
+  diaryId:string,
+  epochId:string,
+  envelope:PreparedEnvelope,
+  authority:PreparedEnvelopeAuthorityV2,
+):Promise<void>{
+  const revision=await openRevisionEnvelopeV2(rootKey,epochSalt,{diaryId,epochId},envelope)
+  const context=revision.writer_context
+  if(!context
+    ||context.writer_generation!==authority.writer_generation
+    ||context.writer_grant_id!==authority.writer_grant_id
+    ||context.writer_device_id!==authority.writer_device_id
+    ||context.writer_key_id!==authority.writer_key_id)throw new Error('Prepared envelope Writer provenance does not match its encrypted RevisionV2.')
+}
+
 function requestResult<T>(request:IDBRequest<T>):Promise<T>{
   return new Promise((resolve,reject)=>{
     request.addEventListener('success',()=>resolve(request.result),{once:true})
@@ -112,6 +142,7 @@ export class IndexedDbV2LocalSecurityStore {
     validateEpochLocalSecurityStateV6(next)
     const db=await openDatabase(),current=await this.loadState(rootKey,epochSalt,next.epoch_id)
     if(current.operation_generation!==expectedOperationGeneration||next.operation_generation!==expectedOperationGeneration+1)throw new Error('Stale EpochLocalSecurityStateV6 generation.')
+    assertStateTransition(current,next)
     const tag=await localStateTagV6(rootKey,epochSalt,next),tx=db.transaction(STORES.states,'readwrite')
     tx.objectStore(STORES.states).put({id:next.epoch_id,state:structuredClone(next),tag})
     await transactionDone(tx)
