@@ -155,6 +155,10 @@ export function validateEpochLocalSecurityStateV6(value:unknown):EpochLocalSecur
     nullableId(state.verified_writer_grant_id,32,'verified_writer_grant_id')
     if(state.recovery_urs_id===null||state.recovery_takeover_key_id===null||state.recovery_credential_history_sha256===null)throw new Error('Bound Full Verify must persist current recovery freshness fields.')
   }
+  if(state.epoch_status==='active'){
+    if(state.remote_binding===null||state.remote_anchor===null||!verifiedSet)throw new Error('active EpochLocalSecurityStateV6 requires bound remote anchor and verified Writer authority.')
+  }
+  if(state.epoch_status!=='active'&&state.writer_status==='writer_active')throw new Error('Only an active epoch may be writer_active.')
   if(state.writer_status==='writer_active'){
     if(state.epoch_status!=='active')throw new Error('writer_active requires active epoch_status.')
     if(state.writer_generation===null||state.writer_grant_id===null)throw new Error('writer_active requires writer generation/grant.')
