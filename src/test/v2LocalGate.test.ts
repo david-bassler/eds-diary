@@ -199,7 +199,7 @@ describe('EpochLocalSecurityStateV6 and writer gate',()=>{
     const authority:WriterAuthoritySnapshotV2={writer_generation:1,writer_grant_id:grant,writer_device_id:device,writer_key_id:missing,writer_public_key:b(28,32),source_epoch_sealed:false}
     const service=new V2DomainWriteService(diary,epoch,{store:repo,requireUnlockedRoot:async()=>({rootKey}),providerSessionActive:()=>true,freshCanonicalVerify:async()=>verified(authority,anchor)})
     await expect(service.prepareDomainWrite({record_type:'pain_entry',record_schema:'pain-entry/v1',record_id:b(29,16),parent_revision_ids:[],record_status:'active',record_data:pain()})).rejects.toThrow(/read_only/)
-    expect((await repo.readState(rootKey,epoch)?.writer_status)).toBe('read_only')
+    expect((await repo.readState(rootKey,epoch))?.writer_status).toBe('read_only')
     expect(await repo.listOutbox(epoch)).toEqual([])
   })
 
