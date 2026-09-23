@@ -173,6 +173,12 @@ export function validateEpochLocalSecurityStateV6(value:unknown):EpochLocalSecur
   id(state.recovery_credential_history_sha256,32,'recovery_credential_history_sha256')
   safeInteger(state.stale_writer_pending_count,0,'stale_writer_pending_count')
 
+  const remoteBinding=validateRemoteBinding(state.remote_binding)
+  const remoteAnchor=validateRemoteAnchor(state.remote_anchor)
+  const verifiedSet=verifiedNullCount===0
+  if((remoteAnchor!==null)!==verifiedSet)throw new Error('remote_anchor and verified writer cache must become bound together.')
+  if(remoteBinding===null&&remoteAnchor!==null)throw new Error('A verified remote_anchor requires a remote_binding.')
+  if(state.epoch_status==='active'&&(remoteBinding===null||remoteAnchor===null||!verifiedSet))throw new Error('active v2 epoch requires a bound fully verified remote state.')
   if(state.writer_status==='read_only'){
     if(generation!==null||grantId!==null)throw new Error('read_only state must not carry current writer generation/grant.')
   }else{
