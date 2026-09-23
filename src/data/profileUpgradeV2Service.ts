@@ -82,6 +82,7 @@ import { stateAfterCanonicalVerifyV6 } from '../security/v2/stateReconciliation'
 import type { CanonicalFullResultV2 } from '../security/v2/verifier'
 import {
   createRecoveryArtifactV6,
+  openRecoveryArtifactV6,
   recoveryArtifactHashV6,
   type ProfileUpgradeActivationEntryV2,
   type RecoveryArtifactV6,
@@ -684,6 +685,35 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
     await this.successorSession.publishRecoveryArtifact(this.urs,persisted)
     const readback=await this.successorSession.loadRecoveryArtifact(this.urs,plan.diary_id,plan.successor_epoch_id)
     if(!sameJson(readback,activation.recovery_artifact))throw new Error('Profile-upgrade RecoveryArtifactV6 remote readback differs from persisted one-shot bytes.')
+
+    // §18 step 6 requires an actual staged Recovery test here; remote readback
+    // alone is insufficient. Re-derive RK/takeover authority from the published
+    // artifact, re-verify the frozen v1 source prefix and the exact staged v2
+    // migration prefix, and bind the recovered lineage to the one-shot evidence.
+    const recovered=await openRecoveryArtifactV6(readback,this.urs)
+    const ctx=await this.successorContext(),operation=await this.load(),source=await this.frozenSource()
+    if(base64Url(recovered.rootKey)!==base64Url(ctx.rootKey)
+      ||recovered.payload.diary_id!==plan.diary_id
+      ||recovered.payload.epoch_id!==plan.successor_epoch_id
+      ||recovered.payload.manifest_fingerprint!==plan.manifest_fingerprint
+      ||!operation.successor_staging_anchor
+      ||!sameJson(recovered.payload.remote_anchor,operation.successor_staging_anchor)
+      ||!sameJson(recovered.payload.activation_lineage,activation.lineage))throw new Error('Profile-upgrade staged RecoveryArtifactV6 recovered a different successor identity/evidence.')
+
+    const sourceRemote=await this.verifySourceAtFrozenPrefix(false)
+    const sourceVerifier=await this.sourceVerifier(source.material,source.artifact.source_anchor)
+    const sourceVerified=await sourceVerifier.verify(sourceRemote.snapshot)
+    if(sourceVerified.retired||sourceRemote.snapshot.rows.length!==source.artifact.source_anchor.covered_row_count)throw new Error('Profile-upgrade staged Recovery test does not bind the frozen active v1 Source prefix.')
+
+    const successorVerified=await ctx.codec.verifyRemote(await ctx.transport.read(ctx.remoteId)),result=canonical(successorVerified)
+    if(!sameJson(result.remote_anchor,operation.successor_staging_anchor)||result.accepted_activation_confirmation!==null)throw new Error('Profile-upgrade staged Recovery test does not bind the frozen Successor prefix.')
+    await verifyProfileUpgradeMigrationIntegrityV2({
+      sourceEpochId:source.artifact.source_epoch_id,
+      sourceManifestFingerprint:source.artifact.source_manifest_fingerprint,
+      sourceAnchor:source.artifact.source_anchor,
+      sourceRevisions:source.material.revisions,
+      successor:result,
+    })
   }
 
   private async backupRows():Promise<{pending:Row[];stale:Row[]}>{
