@@ -111,6 +111,8 @@ export class GoogleSheetsTransferableSingleWriterV2Transport implements RemoteTr
 
   async create(locator: string, manifest: readonly string[]): Promise<void> {
     try {
+      fixedBase64Url(locator,16,'creation_locator')
+      if(manifest.length)throw new TransportError('provider_incompatible','Manifest bytes must be written in the separately persisted manifest phase.')
       const created = await this.api.request<{spreadsheetId?: string; sheets?: Sheet[]}>('https://sheets.googleapis.com/v4/spreadsheets', {
         method: 'POST', body: JSON.stringify({properties: {title: `sync-${locator}`}, sheets: [
           {properties: {title: '_m', sheetType: 'GRID', gridProperties: {rowCount: 1, columnCount: 4}}},
@@ -118,7 +120,6 @@ export class GoogleSheetsTransferableSingleWriterV2Transport implements RemoteTr
         ]}),
       })
       if (!created.spreadsheetId) throw new TransportError('unknown_outcome', 'Create response omitted the candidate ID.')
-      if(manifest.length)throw new TransportError('provider_incompatible','Manifest bytes must be written in the separately persisted manifest phase.')
     } catch (error) { throw normalize(error, true) }
   }
 
@@ -128,7 +129,12 @@ export class GoogleSheetsTransferableSingleWriterV2Transport implements RemoteTr
   }
 
   async readProperties(remoteId:string):Promise<Readonly<Record<string,string>>>{try{return(await this.api.request<DriveFile>(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(remoteId)}?fields=appProperties`)).appProperties??{}}catch(error){throw normalize(error)}}
-  async patchProperties(remoteId:string,properties:Readonly<Record<string,string>>):Promise<void>{if(Object.keys(properties).sort().join('\0')!=='app_format\0epoch_locator'||properties.app_format!=='sync-v6')throw new TransportError('integrity_failure','Unexpected protocol properties.');try{await this.api.request(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(remoteId)}?fields=id,appProperties`,{method:'PATCH',body:JSON.stringify({appProperties:properties})})}catch(error){throw normalize(error,true)}}
+  async patchProperties(remoteId:string,properties:Readonly<Record<string,string>>):Promise<void>{
+    if(Object.keys(properties).sort().join('\0')!=='app_format\0epoch_locator'
+      ||properties.app_format!=='sync-v6'
+      ||properties.epoch_locator!==await expectedEpochLocator(this.binding))throw new TransportError('integrity_failure','Unexpected protocol properties.')
+    try{await this.api.request(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(remoteId)}?fields=id,appProperties`,{method:'PATCH',body:JSON.stringify({appProperties:properties})})}catch(error){throw normalize(error,true)}
+  }
   async orphanCandidates(remoteIds:readonly string[]):Promise<void>{for(const id of [...remoteIds].sort()){try{await this.api.request(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?fields=id,trashed`,{method:'PATCH',body:JSON.stringify({trashed:true})})}catch(error){throw normalize(error,true)}}}
 
   private async verifyDrive(remoteId: string,preBound=false): Promise<void> {
@@ -217,6 +223,7 @@ export class GoogleSheetsTransferableSingleWriterV2Transport implements RemoteTr
 
   async append(remoteId: string, row: readonly [string, string, string]): Promise<void> {
     try {
+      if(row[0].length+row[1].length+row[2].length+10>MAX_CANONICAL_ROW_BYTES)throw new TransportError('integrity_failure','EnvelopeV6 row is invalid.')
       fixedBase64Url(row[0],32,'envelope_id');fixedBase64Url(row[1],12,'iv')
       const bucket=fromBase64Url(row[2]).byteLength-16
       if(!V2_PADDING_BUCKETS.includes(bucket as (typeof V2_PADDING_BUCKETS)[number])||canonicalBytes([...row]).byteLength>MAX_CANONICAL_ROW_BYTES)throw new TransportError('integrity_failure','EnvelopeV6 row is invalid.')
