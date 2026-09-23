@@ -58,14 +58,14 @@ export class V2DomainWritePreparer {
     return withDiaryLockV2(remote.diary_id,async()=>{
       const before=await this.store.loadState(rootKey,epochSalt,remote.epoch_id)
       const key=await this.store.loadWriterKey(before.writer_signing_key_id,before.diary_id,before.epoch_id)
-      const keyUsable=key!==null
+      const keyUsable=key!==null&&key.writer_device_id===before.writer_device_id
       const reconciled=await stateAfterCanonicalVerifyV6(before,remote,verified.snapshot.rows,keyUsable)
       await this.store.replaceState(rootKey,epochSalt,before.operation_generation,reconciled)
 
       if(await this.authority.canPrepareDomainWrite(verified)!=='writer')throw new Error('Fresh canonical v2 authority does not permit domain-write preparation.')
       const local=await this.store.loadState(rootKey,epochSalt,remote.epoch_id)
       if(local.writer_status!=='writer_active'||local.writer_generation===null||local.writer_grant_id===null)throw new Error('Local StateV6 is not writer_active.')
-      if(!key)throw new Error('Local WriterDeviceKeyV2 is missing; writer operation is read-only.')
+      if(!key||key.writer_device_id!==local.writer_device_id)throw new Error('Local WriterDeviceKeyV2 is missing or not bound to the local device; writer operation is read-only.')
 
       const recordSchema=V2_RECORD_SCHEMA_BY_TYPE[input.recordType]
       const schema=V2_SCHEMA_REGISTRY[recordSchema]
