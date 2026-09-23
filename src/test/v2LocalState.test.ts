@@ -271,6 +271,38 @@ describe('EpochLocalSecurityStateV6 persistence and writer gate',()=>{
     await expect(authority.verifyBeforePush(prepared.envelope,verified2,'initial')).resolves.toBe('quarantine_stale_writer')
   })
 
+  it('fails closed before prepare or push when a persisted EnvelopeV6 row no longer matches the authenticated local journal',async()=>{
+    const f=await fixture(),store=new IndexedDbV2LocalSecurityStore()
+    await store.initializeState(rootKey,f.epochSalt,f.initial)
+    await store.persistWriterKey({
+      writer_signing_key_id:f.writer.writerKeyId,
+      writer_device_id:f.writerDeviceId,
+      writer_public_key:base64Url(f.writer.publicKeyRaw),
+      private_key:f.writer.privateKey,
+    },f.diaryId,f.epochId)
+    const verified=v2VerifiedRemoteState(f.result,{manifest:[],rows:[]})
+    const authority=new TransferableSingleWriterV2WriteAuthority(()=>store.loadState(rootKey,f.epochSalt,f.epochId),(envelopeId)=>store.envelopeAuthority(rootKey,f.epochSalt,f.epochId,envelopeId))
+    const preparer=new V2DomainWritePreparer(store,authority,{verifyNow:async()=>verified})
+    await preparer.prepareAndPersist(rootKey,f.epochSalt,{recordType:'pain_entry',recordId:b(46,16),status:'active',data:painData,protocolCreatedAt:'2026-09-23T08:12:00.000Z'})
+
+    const db=await __v2LocalPersistenceTesting.openDatabase()
+    const tx=db.transaction(__v2LocalPersistenceTesting.STORES.envelopes,'readwrite')
+    const entries=await new Promise<Array<Record<string,unknown>>>((resolve,reject)=>{
+      const request=tx.objectStore(__v2LocalPersistenceTesting.STORES.envelopes).getAll()
+      request.addEventListener('success',()=>resolve(request.result as Array<Record<string,unknown>>),{once:true})
+      request.addEventListener('error',()=>reject(request.error),{once:true})
+    })
+    const first=entries[0]!
+    tx.objectStore(__v2LocalPersistenceTesting.STORES.envelopes).put({...first,ciphertext:`${String(first.ciphertext)}A`})
+    await new Promise<void>((resolve,reject)=>{tx.addEventListener('complete',()=>resolve(),{once:true});tx.addEventListener('error',()=>reject(tx.error),{once:true})})
+
+    await expect(store.verifyLocalJournal(rootKey,f.epochSalt,f.epochId)).rejects.toThrow(/journal hash/)
+    await expect(preparer.prepareAndPersist(rootKey,f.epochSalt,{recordType:'pain_entry',recordId:b(47,16),status:'active',data:painData}))
+      .rejects.toThrow(/journal hash/)
+    const coordinatorStore=new IndexedDbV2CoordinatorStore(f.epochId,rootKey,f.epochSalt,store)
+    await expect(coordinatorStore.pending(verified)).rejects.toThrow(/journal hash/)
+  })
+
   it('rejects rollback and same-height prefix replacement during StateV6 reconciliation',async()=>{
     const f=await fixture(),first=await stateAfterCanonicalVerifyV6(f.initial,f.result,[],true)
     const conflicting={...f.result,remote_anchor:{...f.result.remote_anchor,prefix_hash:b(77,32)}}
