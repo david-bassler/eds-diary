@@ -149,6 +149,24 @@ describe('v2 pre-implementation hardening boundaries',()=>{
     expect(contracts).toMatch(/must never manufacture VerifiedRemoteState/)
     expect(protocol).toMatch(/staged_incomplete, \*\*kein\*\* kanonischer\s+VerifiedRemoteState/)
   })
+  it('keeps V2 manifest provenance and fresh-read capabilities on fail-closed production paths',async()=>{
+    const manifest=await readFile('src/security/v2/manifest.ts','utf8')
+    const verifier=await readFile('src/security/v2/verifier.ts','utf8')
+    const codec=await readFile('src/sync/google/GoogleSheetsTransferableSingleWriterV2ProfileCodec.ts','utf8')
+    const provider=await readFile('src/sync/google/GoogleTransferableSingleWriterV2Provider.ts','utf8')
+    expect(manifest).toMatch(/openManifestTrustRootV6/)
+    expect(manifest).not.toMatch(/export async function manifestTrustRootV6\(/)
+    expect(verifier).toMatch(/isVerifiedManifestTrustRootV6\(trustRoot\)/)
+    expect(codec).toMatch(/openManifestTrustRootV6/)
+    expect(provider).toMatch(/freshCanonicalSource/)
+    expect(provider).toMatch(/verifyNow:async\(\)=>\{[\s\S]*transportForEpoch[\s\S]*transport\.read\(remoteId\)[\s\S]*codec\.verifyRemote/s)
+    for(const file of await files('src')){
+      if(file.includes('/test/'))continue
+      const source=await readFile(file,'utf8')
+      if(file.endsWith('security/v2/manifest.ts'))continue
+      expect(source,file).not.toMatch(/__brandManifestTrustRootV2ForTests/)
+    }
+  })
   it('keeps valid post-activation lifecycle advancement from producing a stale cutover backup or switch',async()=>{
     const protocol=await readFile('docs/security/EDS_TRANSFERABLE_SINGLE_WRITER_V2_EXACT_PROTOCOL.md','utf8')
     const ledger=await readFile('docs/security/EDS_TRANSFERABLE_SINGLE_WRITER_V2_DECISIONS.md','utf8')
