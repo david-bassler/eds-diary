@@ -185,7 +185,7 @@ export class ProductiveWriterHandoffV2Service {
       &&!nonTerminalSecurityOperation(state,operation.operation_id)
   }
 
-  private async finalizeFromFresh(context:ActiveHandoffContextV2,operation:WriterGrantOperationStateV2,fresh:FreshHandoffVerifyV2,grant:WriterGrantV2):Promise<WriterGrantOperationStateV2|'absent'>{
+  private async finalizeFromFresh(context:ActiveHandoffContextV2,operation:WriterGrantOperationStateV2,fresh:FreshHandoffVerifyV2):Promise<WriterGrantOperationStateV2|'absent'>{
     const rowPresent=fresh.verified.snapshot.rows.some(row=>row[0]===operation.prepared_envelope.envelope_id)
     if(fresh.verified.acceptedEnvelopeIds.has(operation.prepared_envelope.envelope_id)){
       // Durable means this exact one-shot Grant was canonically accepted at its
@@ -219,7 +219,7 @@ export class ProductiveWriterHandoffV2Service {
     const maxAppends=operation.stage==='prepared'?2:1
     while(true){
       const fresh=await this.freshVerify(context)
-      const classified=await this.finalizeFromFresh(context,current,fresh,grant)
+      const classified=await this.finalizeFromFresh(context,current,fresh)
       if(classified!=='absent')return toResult(classified,grant)
       const state=await this.refreshLocal(context,fresh,true)
       if(!this.sourceStillOwnsGrantAnchor(state,fresh.result,grant,current)){
