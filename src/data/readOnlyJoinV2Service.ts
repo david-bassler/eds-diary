@@ -251,11 +251,25 @@ async function discoverActiveCandidate(session:TransferableSingleWriterV2Provide
   return{familyLocator,candidate:active[0]!}
 }
 
-function validateResumePlan(plan:ReadOnlyJoinPlanV2,familyLocator:string,candidate:ActiveCandidateV2):void{
-  if(plan.format!=='read-only-join-v2'||plan.version!==2||plan.recovery_family_locator!==familyLocator
+async function validateResumePlan(args:{
+  plan:ReadOnlyJoinPlanV2
+  joinId:string
+  familyLocator:string
+  candidate:ActiveCandidateV2
+  state:EpochLocalSecurityStateV6
+}):Promise<void>{
+  const {plan,joinId,familyLocator,candidate,state}=args
+  if(plan.format!=='read-only-join-v2'||plan.version!==2
+    ||plan.join_id!==joinId||plan.recovery_family_locator!==familyLocator
+    ||plan.recovery_artifact_sha256!==candidate.artifactSha256
     ||plan.diary_id!==candidate.payload.diary_id||plan.epoch_id!==candidate.payload.epoch_id
     ||plan.manifest_fingerprint!==candidate.payload.manifest_fingerprint||plan.remote_resource_id!==candidate.remoteId)throw new Error('Persisted read-only Join plan does not match the freshly verified remote leaf.')
-  fixedBase64Url(plan.join_id,32,'join_id');fixedBase64Url(plan.local_writer_device_id,16,'local_writer_device_id');fixedBase64Url(plan.local_writer_key_id,32,'local_writer_key_id')
+  fixedBase64Url(plan.join_id,32,'join_id');fixedBase64Url(plan.recovery_artifact_sha256,32,'recovery_artifact_sha256')
+  fixedBase64Url(plan.local_writer_device_id,16,'local_writer_device_id');fixedBase64Url(plan.local_writer_key_id,32,'local_writer_key_id')
+  await assertExtendsAnchorV2(plan.remote_anchor,plan.diary_id,plan.epoch_id,candidate.snapshot.rows)
+  if(state.diary_id!==plan.diary_id||state.epoch_id!==plan.epoch_id||state.manifest_fingerprint!==plan.manifest_fingerprint
+    ||state.writer_device_id!==plan.local_writer_device_id||state.writer_signing_key_id!==plan.local_writer_key_id
+    ||state.remote_binding?.remote_resource_id!==plan.remote_resource_id)throw new Error('Persisted read-only Join plan is not bound to the authenticated local StateV6.')
 }
 
 export class ProductiveReadOnlyJoinV2Service {
@@ -264,6 +278,25 @@ export class ProductiveReadOnlyJoinV2Service {
     private readonly store=new IndexedDbV2LocalSecurityStore(),
     private readonly fault?: (point:'after-join-bundle')=>Promise<void>,
   ){}
+
+  private async reconcileForLocalSwitch(args:{
+    plan:ReadOnlyJoinPlanV2
+    joinId:string
+    familyLocator:string
+    candidate:ActiveCandidateV2
+  }):Promise<EpochLocalSecurityStateV6>{
+    const {plan,joinId,familyLocator,candidate}=args
+    const epochSalt=await deriveEpochSaltV2(fixedBase64Url(candidate.payload.diary_id,16),fixedBase64Url(candidate.payload.epoch_id,16))
+    let state=await this.store.loadState(candidate.rootKey,epochSalt,candidate.payload.epoch_id)
+    await validateResumePlan({plan,joinId,familyLocator,candidate,state})
+    const key=await this.store.loadWriterKey(state.writer_signing_key_id,state.diary_id,state.epoch_id)
+    if(!key||key.writer_device_id!==state.writer_device_id)throw new Error('Persisted read-only Join WriterDeviceKeyV2 is missing or does not match authenticated StateV6.')
+    const next=await stateAfterCanonicalVerifyV6(state,candidate.result,candidate.snapshot.rows,false)
+    await this.store.replaceState(candidate.rootKey,epochSalt,state.operation_generation,next)
+    state=await this.store.loadState(candidate.rootKey,epochSalt,candidate.payload.epoch_id)
+    if(state.writer_status!=='read_only'||state.writer_generation!==null||state.writer_grant_id!==null||state.epoch_status!=='active')throw new Error('Persisted read-only Join state lost its fail-closed status.')
+    return state
+  }
 
   async join(urs:Uint8Array):Promise<ReadOnlyJoinResultV2>{
     if(urs.byteLength!==32)throw new Error('V2 read-only Join requires a 32-byte Recovery Key.')
@@ -278,20 +311,11 @@ export class ProductiveReadOnlyJoinV2Service {
     const epochSalt=await deriveEpochSaltV2(fixedBase64Url(candidate.payload.diary_id,16),fixedBase64Url(candidate.payload.epoch_id,16))
 
     if(existing){
-      validateResumePlan(existing,familyLocator,candidate)
-      let state=await this.store.loadState(candidate.rootKey,epochSalt,candidate.payload.epoch_id)
-      const key=await this.store.loadWriterKey(existing.local_writer_key_id,candidate.payload.diary_id,candidate.payload.epoch_id)
-      if(!key||key.writer_device_id!==existing.local_writer_device_id)throw new Error('Persisted read-only Join WriterDeviceKeyV2 is missing.')
-      if(!same(state.remote_anchor,candidate.result.remote_anchor)
-        ||state.verified_writer_grant_id!==candidate.result.current_writer.writer_grant_id
-        ||state.recovery_generation!==candidate.result.current_recovery.recovery_generation){
-        const next=await stateAfterCanonicalVerifyV6(state,candidate.result,candidate.snapshot.rows,true)
-        await this.store.replaceState(candidate.rootKey,epochSalt,state.operation_generation,next)
-        state=await this.store.loadState(candidate.rootKey,epochSalt,candidate.payload.epoch_id)
-      }
-      if(state.writer_status!=='read_only'||state.epoch_status!=='active')throw new Error('Persisted read-only Join state lost its fail-closed status.')
-      await atomicSelectReadOnlyJoinV2({joinId,diaryId:candidate.payload.diary_id,epochId:candidate.payload.epoch_id,manifestFingerprint:candidate.payload.manifest_fingerprint})
-      return{joinId,diaryId:candidate.payload.diary_id,epochId:candidate.payload.epoch_id,manifestFingerprint:candidate.payload.manifest_fingerprint,remoteResourceId:candidate.remoteId,writerDeviceId:existing.local_writer_device_id,writerKeyId:existing.local_writer_key_id,resumed:true}
+      const final=await discoverActiveCandidate(this.session,urs)
+      if(final.familyLocator!==familyLocator)throw new Error('Recovery family changed during read-only Join resume.')
+      const state=await this.reconcileForLocalSwitch({plan:existing,joinId,familyLocator,candidate:final.candidate})
+      await atomicSelectReadOnlyJoinV2({joinId,diaryId:state.diary_id,epochId:state.epoch_id,manifestFingerprint:state.manifest_fingerprint})
+      return{joinId,diaryId:state.diary_id,epochId:state.epoch_id,manifestFingerprint:state.manifest_fingerprint,remoteResourceId:final.candidate.remoteId,writerDeviceId:state.writer_device_id,writerKeyId:state.writer_signing_key_id,resumed:true}
     }
 
     const writer=await generateWriterDeviceKeyV2(),writerDeviceId=base64Url(randomBytes(16))
@@ -345,7 +369,10 @@ export class ProductiveReadOnlyJoinV2Service {
     }
     await this.store.persistReadOnlyJoinBundle({artifactId,artifactValue:plan,rootKey:candidate.rootKey,epochSalt,rootWrap:wrap.wrap,bestEffortWrappingKey:wrap.bestEffortWrappingKey,writerKey:storedWriter,state,lineageCache})
     await this.fault?.('after-join-bundle')
-    await atomicSelectReadOnlyJoinV2({joinId,diaryId:state.diary_id,epochId:state.epoch_id,manifestFingerprint:state.manifest_fingerprint})
-    return{joinId,diaryId:state.diary_id,epochId:state.epoch_id,manifestFingerprint:state.manifest_fingerprint,remoteResourceId:candidate.remoteId,writerDeviceId,writerKeyId:writer.writerKeyId,resumed:false}
+    const final=await discoverActiveCandidate(this.session,urs)
+    if(final.familyLocator!==familyLocator)throw new Error('Recovery family changed before read-only Join local switch.')
+    const finalState=await this.reconcileForLocalSwitch({plan,joinId,familyLocator,candidate:final.candidate})
+    await atomicSelectReadOnlyJoinV2({joinId,diaryId:finalState.diary_id,epochId:finalState.epoch_id,manifestFingerprint:finalState.manifest_fingerprint})
+    return{joinId,diaryId:finalState.diary_id,epochId:finalState.epoch_id,manifestFingerprint:finalState.manifest_fingerprint,remoteResourceId:final.candidate.remoteId,writerDeviceId:finalState.writer_device_id,writerKeyId:finalState.writer_signing_key_id,resumed:false}
   }
 }
