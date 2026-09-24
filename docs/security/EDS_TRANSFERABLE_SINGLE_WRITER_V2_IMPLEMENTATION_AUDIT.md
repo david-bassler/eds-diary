@@ -24,11 +24,13 @@ Reviewed implementation slices:
 
 - V2-01 – types, strict validators, pure crypto and EnvelopeV6 primitives;
 - V2-02 – RemoteAnchorV2 hashing and the canonical transferable-writer replay
-  verifier, including the operation-bound `rotation_resume` path.
+  verifier, including the operation-bound `rotation_resume` path;
+- V2-03 – EpochLocalSecurityStateV6, WriterDeviceKeyV2 persistence, semantic
+  coordinator persistence and the fail-closed normal-domain write gate.
 
 Primary review sources:
 
-- Exact Protocol §§4–13, 16a–16b, 22–24;
+- Exact Protocol §§4–14, 16a–16b, 18–18.2, 22–24;
 - inherited v1 wrapper/graph rules explicitly retained by v2 §5;
 - D-001…D-010;
 - the frozen machine-readable v2 schema registry.
@@ -42,6 +44,13 @@ Re-reviewed the current V2-01/V2-02 stack against Exact Protocol §§4–13,
 this pass are IA-017 and IA-018. Both are implementation mismatches; neither
 changes the threat model or any D-001…D-010 decision. Earlier IA-001…IA-016
 were rechecked against the current branch before adding these entries.
+
+### 2026-09-23 V2-03 implementation/review pass
+
+Implemented and adversarially reviewed StateV6 persistence, WriterDeviceKeyV2,
+normal domain-write preparation and semantic CoordinatorStore behavior. New
+findings from this pass are IA-019…IA-029. They are implementation mismatches/
+hardening findings, not changes to D-001…D-010.
 
 ## Findings and disposition
 
@@ -58,13 +67,24 @@ were rechecked against the current branch before adding these entries.
 | IA-009 | V2-02 / rotation_resume | `rotation_resume` could return `staged_migration_present` even if another physical/semantic row followed the accepted Migration-Control. The `copying -> successor_verified` staging boundary requires the Migration row followed only by byte-identical retries of that same Migration envelope. | **Fixed.** The verifier records the accepted Migration envelope/row and rejects any other suffix in `rotation_resume` as `successor_staging_mismatch`. |
 | IA-010 | V2-02 / result authority | A non-native `canonical_full` result may contain replayed Writer/Recovery state while its activation state is only `staged_confirmation_missing` or `cross_epoch_evidence_present`. Those fields describe verified log state; they are not themselves an active-epoch grant. | **Intentional boundary.** Cross-epoch activation must separately validate Source/ActivationLineage/Announcement/Confirmation evidence. V2-03/V2-04 adapters must never turn these states directly into writer/recovery authority. |
 | IA-011 | V2-02 / manifest trust root | `VerifiedManifestTrustRootV2` is currently an input contract, not yet the output of the final ManifestV6 codec. V2-02 defensively rechecks key/ID/history shape but does not duplicate every protected-manifest invariant. | **Intentional deferred layer.** V2-04 must make the ManifestV6 parser/codec the only production source of this trust root and enforce profile, crypto suite, schema registry, protocol limits, account binding and immutable manifest fingerprint there. |
-| IA-012 | V2-02 / rollback floors | Replay computes RemoteAnchorV2 but does not itself reconcile a persisted local/backup/recovery freshness floor. | **Intentional deferred layer.** EpochLocalSecurityStateV6 and the fail-closed write/recovery gates in V2-03 consume the verifier result and enforce monotone anchor/freshness rules. |
-| IA-013 | V2-01 / one-shot persistence | The pure EnvelopeV6 primitive accepts caller-supplied envelope ID and IV; by itself it cannot prove persistent pre-reservation or cross-crash one-shot use. | **Intentional deferred layer.** The exact one-shot reservation/journal rule belongs to V2-03 local persistence. Do not “fix” V2-01 by adding product storage to the pure primitive. |
+| IA-012 | V2-02 / rollback floors | Replay computes RemoteAnchorV2 but does not itself reconcile a persisted local/backup/recovery freshness floor. | **Deferred layer now partially completed in V2-03.** StateV6 reconciliation rejects rollback/same-height replacement against the persisted local RemoteAnchorV2 and reproduces the exact final snapshot anchor. Backup/RecoveryArtifact freshness floors remain later-layer work. |
+| IA-013 | V2-01 / one-shot persistence | The pure EnvelopeV6 primitive accepts caller-supplied envelope ID and IV; by itself it cannot prove persistent pre-reservation or cross-crash one-shot use. | **Deferred layer completed for normal V2-03 domain writes.** Envelope ID/IV are persisted as a one-shot reservation before encryption; sealed bytes and the v6 journal/state update are then persisted atomically. Rotation/Recovery operation-specific one-shot state remains with their later services. |
 | IA-014 | V2-02 / historical rotation | Historical RotationAnnouncements were classified stale before validating rotation-kind / recovery-transition binding against the Recovery state at their own anchor. A claim already invalid at its historical decision prefix must not be laundered into a non-fatal stale result. | **Fixed.** Rotation/rekey mode is now validated against the historical anchor Recovery snapshot first; only an otherwise valid claim may become `stale_rotation_announcement_rejected`. |
 | IA-015 | V2-02 / duplicate exactness | Duplicate-envelope detection stored only SHA-256 of the canonical row and treated equal hashes as byte identity. Collision resistance is strong but the protocol requires exact row equality and no hash indirection is needed. | **Fixed.** The verifier stores the exact three canonical Base64URL strings for the first envelope occurrence and compares them directly. |
 | IA-016 | V2-02 / snapshot complexity | Migration semantic-snapshot sorting recomputed JCS bytes inside every sort comparison, multiplying serialization work under large valid head sets. | **Fixed.** Sort bytes are precomputed once per semantic head entry, then compared lexicographically; normative ordering and final hash bytes are unchanged. |
 | IA-017 | V2-01 / migration_origin | `validateMigrationOrigin` did not implement the inherited v1 canonical wrapper rules: it allowed up to 4096 Sources and 4096 source revision IDs, did not require Sources to be unique/byte-sorted, and did not require each `source_revision_ids` list to be byte-sorted. v2 §5 explicitly inherits the v1 migration-origin semantics (1..8 Sources; 1..8 unique revision IDs per Source; canonical decoded-byte ordering). | **Fixed in PR #49 and propagated to PR #50.** Runtime validation now enforces the 8/8 bounds, Source uniqueness, Source ordering by decoded `(source_epoch_id, source_record_id)` bytes, and decoded-byte ordering of `source_revision_ids`. Negative vectors cover oversize, duplicate and unsorted forms. |
 | IA-018 | V2-02 / per-record bounds | The replay verifier enforced the inherited 4096-revisions-per-`record_id` limit only inside the accepted domain graph. Unique stale-writer/stale-grant/control revisions could therefore bypass the per-record bound even though v2 §5 inherits the v1 common-wrapper/graph limit and byte-identical retry rows are the only repetition that should be a semantic no-op. | **Fixed.** Replay now counts every unique validated RevisionV2 by `record_id` before authority/control disposition, so stale/control rows cannot evade the 4096 bound; physical byte-identical retries still bypass semantic counting as intended. |
+| IA-019 | V2-03 / sealed local writer state | StateV6 reconciliation could preserve/promote `writer_active` when the freshly verified Source was already sealed. §13/§18 require ordinary Writer authority only for an unsealed active epoch. | **Fixed.** `sameLocalWriter` now requires `source_epoch_sealed=false`; canonical reconciliation of a sealed Source persists `read_only` and clears local writer generation/grant. Pending-Rekey remains a separate maintenance-only case and is still blocked by the normal domain gate rather than forcibly erasing Writer identity. |
+| IA-020 | V2-03 / exact push binding | `verifyBeforePush` authenticated only the persisted outbox authority selected by `envelope_id`; it did not prove that the concrete IV/ciphertext/bytesHash supplied to the push gate were the immutable locally persisted bytes for that ID. | **Fixed.** The local persistence lookup now loads the immutable envelope and requires exact `envelope_id`, IV, ciphertext and `bytesHash` equality before returning its authenticated Writer provenance. A mismatch is security-blocking, not stale quarantine. |
+| IA-021 | V2-03 / unusable WriterDeviceKey | The normal prepare path loaded/validated WriterDeviceKeyV2 before StateV6 reconciliation; a missing or corrupt/non-usable local key could therefore throw before the authenticated state was downgraded to read-only. | **Fixed.** Normal domain preparation treats a missing/unusable WriterDeviceKeyV2 as `keyUsable=false`, persists read-only reconciliation, and never silently regenerates the key. The frozen §18.2 four-field key-store entry is unchanged. |
+| IA-022 | V2-03 / WriteAuthority identity | The v2 WriteAuthority compared local/remote writer tuples and anchors but did not independently bind the supplied canonical state to local `diary_id`, `epoch_id` and `manifest_fingerprint`. Correct production call order already reconciled those identities first, but the security adapter itself was not fail-closed when called directly with a canonical state from another epoch instance. | **Fixed.** Every access/push decision now requires exact local/remote diary, epoch and manifest identity equality before any Writer authority can be granted. Regression vectors cover all three mismatches. |
+| IA-023 | V2-03 / pull-time stale quarantine | A prepared local envelope that was still absent remotely could remain `prepared/pending` after canonical pull proved that its Writer authority had advanced (or Source seal/Pending-Rekey had activated). Because the shared coordinator returns immediately in read-only state, that envelope might never reach `verifyBeforePush` and therefore never enter `stale_writer_pending`. | **Fixed.** The semantic disposition commit now also compares every non-durable local outbox authority with the freshly verified current Writer and fences. Missing remote envelopes are quarantined atomically when authority advanced, Source sealed or Pending-Rekey is active. |
+| IA-024 | V2-03 / remote-local envelope identity | Pull disposition reconciliation matched local envelopes to verifier sets by `envelope_id` only. A remote row using a locally known ID with different IV/ciphertext could therefore be marked durable/stale before the later coordinator byte comparison ever ran. §4 requires this collision to be fatal. | **Fixed.** Before any disposition/state mutation, every remote row whose ID exists locally is compared byte-for-byte against immutable local IV/ciphertext. Any mismatch is security-blocking. |
+| IA-025 | V2-03 / one-shot IV anomaly | Local EnvelopeV6 reservation generated IVs without checking already reserved local IVs or the freshly verified remote IV history. §4 requires same-IV/different-envelope reuse to block new encryption fail-closed. | **Fixed.** Reservations now use a unique per-epoch IV index, never retry a detected RNG collision, compare the candidate IV against the verified remote rows before encryption, and journal-integrity verification also requires every sealed envelope to retain its matching sealed reservation. |
+| IA-026 | V2-03 / outbox completeness | Outbox MACs authenticated individual entries but not set completeness. Deleting a valid entry left the immutable envelope journal valid; subsequent reconciliation could silently omit the pending/quarantined envelope and even recalculate a smaller authenticated stale count. | **Fixed.** Local integrity verification now enforces a one-to-one authenticated EnvelopeV6↔outbox mapping and exact `stale_writer_pending_count`; verified-pull and status mutation paths run this check before changing StateV6. Missing entries are security-blocking. |
+| IA-027 | V2-03 / encrypted Writer provenance | The outbox Writer tuple was authenticated locally but not cryptographically checked against the `writer_context` inside the encrypted RevisionV2. An inconsistent internal caller could therefore ask the pre-push gate to authorize bytes under unrelated current-authority metadata. | **Fixed.** Envelope commit and pre-push authority lookup decrypt/validate the immutable RevisionV2 and require exact Writer-context equality with the authenticated outbox authority. |
+| IA-028 | V2-03 / terminal local states | The storage adapter validated StateV6 snapshots individually but did not enforce transition terminality. In particular, a direct `orphaned -> active` replacement or `stale_writer_pending -> pending` outbox transition was structurally possible even though both are terminal protocol states. | **Fixed.** State replacement/disposition paths reject any exit from `orphaned`; outbox transitions enforce `durable` and `stale_writer_pending` terminality. |
+| IA-029 | V2-03 / Web Locks worker boundary | The Web-Lock helper failed closed only when `window` existed. A browser Worker/ServiceWorker context without LockManager could therefore take the non-browser fallback and execute a v2 mutation unlocked. | **Fixed.** Missing LockManager now fails closed in both Window and WorkerGlobalScope contexts; only genuine non-browser test/server runtimes may use the fallback. |
 
 ## Reviewed points that are not findings
 
@@ -94,6 +114,7 @@ new defects unless their assumptions change:
    Source and bind predecessor, source snapshots, activation proof and exact
    announcement bytes before declaring the Successor active.
 7. **The generic `migration_origin` wrapper remains 1..8 Sources by inherited v1 semantics.** This is not a relaxation of the v2 migration-copy rule. §16a.0/§16a.1 separately requires each copied Successor head to carry exactly one Source with exactly one Source revision and proves the full Source↔Successor bijection during cross-epoch activation. Tightening the generic wrapper itself to exactly one would silently remove inherited wrapper expressiveness rather than enforce the activation rule at the correct layer.
+8. **Do not add `diary_id` to the WriterDeviceKeyV2 store entry.** §18.2 freezes that IndexedDB entry to exactly `{writer_signing_key_id, writer_device_id, writer_public_key, private_key}`. The broader architecture rule against global device/key reuse is an enrollment/identity-lifecycle invariant for V2-05/V2-06+; adding a fifth persisted field in V2-03 would itself violate the Exact Protocol. The load-time keypair challenge remains diary/epoch/device-bound as specified.
 
 ## Required regression coverage
 
@@ -116,7 +137,28 @@ Later changes must retain explicit vectors for at least:
 - native-Epoch Migration rejection;
 - `canonical_full` vs `rotation_resume` type/result separation;
 - `rotation_resume` rejection when any non-Migration-retry row extends the
-  Migration staging prefix.
+  Migration staging prefix;
+- StateV6 MAC/rollback detection and exact verifier-anchor reproduction;
+- WriterDeviceKeyV2 key-ID/keypair challenge validation and StateV6 device-ID binding;
+- one fresh canonical verify invocation for every normal domain-write attempt;
+- prepared-envelope Writer provenance mismatch => pre-push quarantine;
+- accepted vs stale-writer semantic durability and authenticated stale quarantine;
+- outbox provenance/status MAC tamper rejection;
+- no WebCrypto/long async gaps inside v2 IndexedDB readwrite transactions;
+- persisted EnvelopeV6 journal tamper detection before normal prepare/push;
+- domain RevisionV2 parent existence/record binding against the fresh accepted graph;
+- active StateV6 requires remote binding/anchor plus complete verified Writer authority;
+- sealed canonical Source reconciliation => local `read_only`;
+- exact prepared-envelope bytes must match immutable local persistence before push authorization;
+- unusable/missing WriterDeviceKeyV2 downgrades the normal domain path to read-only without silent regeneration;
+- WriteAuthority binds canonical state to exact local diary/epoch/manifest identity;
+- pull-time authority loss/seal/Pending-Rekey quarantines locally prepared missing envelopes;
+- remote/local envelope-ID collisions compare exact row bytes before semantic status mutation;
+- new EnvelopeV6 IVs are unique against local reservations and freshly verified remote history;
+- envelope journal, sealed reservations and authenticated outbox remain a complete local bijection;
+- authenticated outbox Writer provenance equals the encrypted RevisionV2 writer_context;
+- orphaned epochs and stale/durable outbox terminal states cannot be reopened;
+- browser Window and Worker mutation paths require Web Locks.
 
 ## Anti-churn rule for later reviews
 

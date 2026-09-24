@@ -91,7 +91,7 @@ describe('v2 pre-implementation hardening boundaries',()=>{
     expect(ledger).toMatch(/Rejected alternative/)
     expect(ledger).toMatch(/Revisit only if/)
     expect(ledger).toMatch(/Implementation status at this review/)
-    expect(ledger).toMatch(/canPrepareDomainWrite.*intentionally not wired/s)
+    expect(ledger).toMatch(/D-005.*V2-03 core implemented.*FreshCanonicalV2Source\.verifyNow\(\).*V2-04.*real provider read \+ canonical_full/s)
   })
   it('records artifact publish attempt before the recovery rekey point of no return',async()=>{
     const protocol=await readFile('docs/security/EDS_TRANSFERABLE_SINGLE_WRITER_V2_EXACT_PROTOCOL.md','utf8')
