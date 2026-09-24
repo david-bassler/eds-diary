@@ -59,6 +59,7 @@ import { envelopeRowV2, sealRevisionEnvelopeV2 } from '../security/v2/envelopes'
 import { validateRevisionV2 } from '../security/v2/validators'
 import { createAnchorV2 } from '../security/v2/prefix'
 import type { RecoveryAuthorityTransitionV2, RevisionV2, RotationAnnouncementV2, WriterGrantV2 } from '../security/v2/types'
+import type { CanonicalFullResultV2 } from '../security/v2/verifier'
 import { createTransferDescriptorV2, ProductiveWriterHandoffV2Service } from '../data/writerHandoffV2Service'
 import { localJournalInitialV2, type EpochLocalSecurityStateV6, type StoredWriterDeviceKeyV2 } from '../security/v2/localState'
 
@@ -666,6 +667,47 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     expect(resumed.stage).toBe('durable')
     expect(resumed.operationId).toBe(operation.operation_id)
     expect(v2.remote.appendCounts.get(operation.prepared_envelope.envelope_id)).toBe(1)
+  },120_000)
+
+  it('rejects a stale WriterGrant transition when a sibling outbox MAC is invalid',async()=>{
+    const createdAt='2026-09-23T12:54:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    if(!v2.remote||!v2.recovery)throw new Error('handoff fixture missing successor/recovery state')
+    const local=await persistLocalPreparedDomainRow(v2,urs,createdAt)
+    await v2.remote.append('successor-v2',[local.envelope.envelopeId,local.envelope.iv,local.envelope.ciphertext])
+    const codec=new GoogleSheetsTransferableSingleWriterV2ProfileCodec(local.recovered.payload.diary_id,local.recovered.payload.epoch_id,local.recovered.rootKey,v2.account)
+    const verified=await codec.verifyRemote(await v2.remote.read('successor-v2'))
+    const canonical=verified.profileState as CanonicalFullResultV2
+    const beforePull=await local.store.loadState(local.recovered.rootKey,local.epochSalt,upgraded.successor_epoch_id)
+    await new IndexedDbV2CoordinatorStore(upgraded.successor_epoch_id,local.recovered.rootKey,local.epochSalt,local.store).commitVerifiedPull(verified,canonical.remote_anchor,beforePull.operation_generation)
+    const current=await local.store.loadState(local.recovered.rootKey,local.epochSalt,upgraded.successor_epoch_id)
+    const targetPair=await generateWriterDeviceKeyV2(),targetDeviceId=base64Url(randomBytes(16)),targetKey:StoredWriterDeviceKeyV2={writer_signing_key_id:targetPair.writerKeyId,writer_device_id:targetDeviceId,writer_public_key:base64Url(targetPair.publicKeyRaw),private_key:targetPair.privateKey}
+    const descriptor=await createTransferDescriptorV2({...current,writer_status:'read_only',writer_device_id:targetDeviceId,writer_signing_key_id:targetPair.writerKeyId,writer_generation:null,writer_grant_id:null},targetKey,new Uint8Array(32).fill(49))
+    let crashed=false
+    await expect(new ProductiveWriterHandoffV2Service(v2,local.store,()=>createdAt,async point=>{
+      if(point==='after-prepared'&&!crashed){crashed=true;throw new Error('handoff-crash:prepared-for-journal-tamper')}
+    }).handoff(descriptor)).rejects.toThrow('handoff-crash:prepared-for-journal-tamper')
+    const operation=await local.store.loadBoundWriterGrantOperation(local.recovered.rootKey,local.epochSalt,upgraded.successor_epoch_id)
+    if(!operation)throw new Error('prepared Handoff operation missing')
+
+    const db=await __v2LocalPersistenceTesting.openDatabase(),storeName=__v2LocalPersistenceTesting.STORES.outbox
+    const readTx=db.transaction(storeName,'readonly')
+    const request=readTx.objectStore(storeName).get(`${upgraded.successor_epoch_id}:${local.envelope.envelopeId}`)
+    const sibling=await new Promise<Record<string,unknown>>((resolve,reject)=>{
+      request.addEventListener('success',()=>resolve(request.result as Record<string,unknown>),{once:true})
+      request.addEventListener('error',()=>reject(request.error),{once:true})
+    })
+    await transactionComplete(readTx)
+    const writeTx=db.transaction(storeName,'readwrite')
+    writeTx.objectStore(storeName).put({...sibling,status:'stale_writer_pending'})
+    await transactionComplete(writeTx)
+
+    const beforeTransition=await local.store.loadState(local.recovered.rootKey,local.epochSalt,upgraded.successor_epoch_id)
+    await expect(local.store.advanceWriterGrantOperationBinding(
+      local.recovered.rootKey,local.epochSalt,upgraded.successor_epoch_id,beforeTransition.operation_generation,'prepared',{...operation,stage:'stale'},
+    )).rejects.toThrow(/outbox MAC failed/)
+    expect((await local.store.loadWriterGrantOperation(operation.operation_id)).stage).toBe('prepared')
+    expect((await local.store.loadState(local.recovered.rootKey,local.epochSalt,upgraded.successor_epoch_id)).writer_operation_state_ref?.state).toBe('prepared')
   },120_000)
 
   it('marks a prepared Handoff stale when any physical row lands after its authority anchor before append',async()=>{
