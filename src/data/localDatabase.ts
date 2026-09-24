@@ -387,6 +387,48 @@ export async function activeProtocolSelectionV2():Promise<ActiveProtocolSelectio
   await complete(tx)
   return value??null
 }
+export async function atomicSelectReadOnlyJoinV2(args:{
+  joinId:string
+  diaryId:string
+  epochId:string
+  manifestFingerprint:string
+}):Promise<void>{
+  fixedBase64Url(args.joinId,32,'join_id');fixedBase64Url(args.diaryId,16,'diary_id');fixedBase64Url(args.epochId,16,'epoch_id');fixedBase64Url(args.manifestFingerprint,32,'manifest_fingerprint')
+  await ready()
+  const db=await openDatabase(),initial=await loadEpoch(db)
+  await withDiaryLock(initial.context.diaryId,async()=>{
+    const source=await loadEpoch(db)
+    const selectedTx=db.transaction(STORES.context,'readonly')
+    const prior=await result<ActiveProtocolSelectionV2|undefined>(selectedTx.objectStore(STORES.context).get(ACTIVE_PROTOCOL_SELECTION))
+    await complete(selectedTx)
+    const selection:ActiveProtocolSelectionV2={id:ACTIVE_PROTOCOL_SELECTION,sync_profile:'google-sheets-transferable-single-writer-v2',diary_id:args.diaryId,epoch_id:args.epochId,manifest_fingerprint:args.manifestFingerprint,operation_id:args.joinId}
+    if(prior){
+      if(new TextDecoder().decode(canonicalBytes(prior as never))!==new TextDecoder().decode(canonicalBytes(selection as never)))throw new Error('A different v2 epoch is already selected locally.')
+      if(source.state.epoch_status!=='retired')throw new Error('v2 Join selection exists without a retired local placeholder epoch.')
+      return
+    }
+    if(source.state.epoch_status!=='local_offline'
+      ||source.state.remote_binding!==null
+      ||source.state.remote_anchor!==null
+      ||source.state.rotation_state_ref!==null
+      ||source.state.migration_state_ref!==null
+      ||source.state.local_journal_count!==0)throw new Error('Read-only Join requires a fresh local profile; existing local diary state must be imported or merged explicitly.')
+    const txRead=db.transaction([STORES.envelopes,STORES.outbox,STORES.operations],'readonly')
+    const envelopeRequest=txRead.objectStore(STORES.envelopes).index('byEpoch').getAll(source.context.epochId)
+    const outboxRequest=txRead.objectStore(STORES.outbox).index('byEpoch').getAll(source.context.epochId)
+    const operationRequest=txRead.objectStore(STORES.operations).getAll()
+    const [envelopes,outbox,operations]=await Promise.all([result<StoredEnvelope[]>(envelopeRequest),result<StoredOutbox[]>(outboxRequest),result<unknown[]>(operationRequest)])
+    await complete(txRead)
+    if(envelopes.length||outbox.length||operations.length)throw new Error('Read-only Join refuses to overwrite non-empty local persistence.')
+    const retired={...source.state,epoch_status:'retired' as const,operation_generation:source.state.operation_generation+1}
+    const tag=await stateTag(source.rootKey,source.epochSalt,retired)
+    const tx=db.transaction([STORES.context,STORES.state],'readwrite')
+    tx.objectStore(STORES.context).add(selection)
+    tx.objectStore(STORES.state).put({id:source.context.epochId,state:retired,tag} satisfies StoredState)
+    await complete(tx)
+  })
+}
+
 export async function markV1ProfileUpgradeSourceRace(operation:RotationOperationStateV2):Promise<void>{
   if(operation.stage!=='stale')throw new Error('Profile-upgrade Source race terminal state must be stale.')
   const db=await openDatabase(),initial=await loadEpoch(db)
