@@ -1,4 +1,4 @@
-import { base64Url, decodeUtf8, fromBase64Url, randomBytes } from '../security/crypto/bytes'
+import { base64Url, decodeUtf8, fixedBase64Url, fromBase64Url, randomBytes } from '../security/crypto/bytes'
 import { canonicalBytes } from '../security/crypto/canonical'
 import { deriveEpochSalt, sha256 } from '../security/crypto/core'
 import { envelopeRow, openEnvelope, prepareEnvelope, type PreparedEnvelope } from '../security/envelopes'
