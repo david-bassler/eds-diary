@@ -426,6 +426,24 @@ export async function activeProtocolSelectionV2():Promise<ActiveProtocolSelectio
   await complete(tx)
   return value??null
 }
+export async function assertReadOnlyJoinLocalProfileIsFresh():Promise<void>{
+  await ready()
+  const db=await openDatabase(),source=await loadEpoch(db)
+  if(source.state.epoch_status!=='local_offline'
+    ||source.state.remote_binding!==null
+    ||source.state.remote_anchor!==null
+    ||source.state.rotation_state_ref!==null
+    ||source.state.migration_state_ref!==null
+    ||source.state.local_journal_count!==0)throw new Error('Read-only Join requires a fresh local profile; existing local diary state must be imported or merged explicitly.')
+  const tx=db.transaction([STORES.envelopes,STORES.outbox,STORES.operations],'readonly')
+  const envelopeRequest=tx.objectStore(STORES.envelopes).index('byEpoch').getAll(source.context.epochId)
+  const outboxRequest=tx.objectStore(STORES.outbox).index('byEpoch').getAll(source.context.epochId)
+  const operationRequest=tx.objectStore(STORES.operations).getAll()
+  const [envelopes,outbox,operations]=await Promise.all([result<StoredEnvelope[]>(envelopeRequest),result<StoredOutbox[]>(outboxRequest),result<unknown[]>(operationRequest)])
+  await complete(tx)
+  if(envelopes.length||outbox.length||operations.length)throw new Error('Read-only Join refuses to overwrite non-empty local persistence.')
+}
+
 export async function atomicSelectReadOnlyJoinV2(args:{
   joinId:string
   diaryId:string
