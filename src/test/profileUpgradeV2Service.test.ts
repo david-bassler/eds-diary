@@ -211,7 +211,7 @@ async function appendPostActivationDomainRow(v2:V2Session,urs:Uint8Array,created
   const unsigned:RevisionV2={
     record_type:'pain_entry',record_schema:'pain-entry/v1',
     record_id:base64Url(randomBytes(16)),revision_id:base64Url(randomBytes(32)),
-    parent_revision_ids:[],record_status:'active',record_data:pain('post-activation-domain'),
+    parent_revision_ids:[],record_status:'active',record_data:(()=>{const {id:_,...data}=pain('post-activation-domain');return data})(),
     migration_origin:null,protocol_created_at:createdAt,
     writer_context:{
       writer_generation:ctx.state.verified_writer_generation!,
