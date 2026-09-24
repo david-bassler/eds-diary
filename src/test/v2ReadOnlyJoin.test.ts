@@ -64,7 +64,7 @@ async function nativeJoinFixture(){
   const snapshot={manifest:manifestCellsArrayV6(cells),rows:[row]}
   const verified=await codec.verifyRemote(snapshot),canonical=verified.profileState as Awaited<ReturnType<TransferableSingleWriterV2Verifier['verifyCanonicalFull']>>
   const artifact=await createRecoveryArtifactV6({
-    recovery_artifact_id:id(14,16),diary_id:diaryId,epoch_id:epochId,key_id:keyId,RK_epoch:base64Url(rootKey),
+    diary_id:diaryId,epoch_id:epochId,key_id:keyId,RK_epoch:base64Url(rootKey),
     manifest_fingerprint:fingerprint,remote_anchor:canonical.remote_anchor,google_account_binding:accountBinding,
     recovery_generation:0,recovery_urs_commitment:recoveryCommitment,recovery_urs_id:recoveryUrsId,recovery_credential_history:history,
     recovery_takeover_key_id:recovery.recoveryTakeoverKeyId,recovery_takeover_public_key:base64Url(recovery.publicKeyRaw),
