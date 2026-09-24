@@ -688,6 +688,9 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     const ceremonyEntry=(await store.outbox(recovered.rootKey,epochSalt,upgraded.successor_epoch_id)).find(entry=>entry.envelope_id===operation.prepared_envelope.envelope_id)
     expect(ceremonyEntry?.status).toBe('stale_writer_pending')
     expect(after.stale_writer_pending_count).toBeGreaterThanOrEqual(1)
+    const codec=new GoogleSheetsTransferableSingleWriterV2ProfileCodec(recovered.payload.diary_id,recovered.payload.epoch_id,recovered.rootKey,v2.account)
+    const canonical=(await codec.verifyRemote(await v2.remote.read('successor-v2'))).profileState as {dispositions:readonly {envelope_id:string;disposition:string}[]}
+    expect(canonical.dispositions.find(item=>item.envelope_id===operation.prepared_envelope.envelope_id)?.disposition).toBe('stale_grant_rejected')
   },120_000)
 
   it('quarantines an absent prepared Handoff Grant when the authority anchor advances before resume',async()=>{
