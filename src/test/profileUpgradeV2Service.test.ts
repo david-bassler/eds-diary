@@ -416,6 +416,20 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     expect(result.successor_activation_anchor?.covered_row_count).toBe(result.successor_staging_anchor!.covered_row_count+2)
   },90_000)
 
+  it('persists the freshest Confirmation retry prefix when a retry appears between activation reads',async()=>{
+    const createdAt='2026-09-23T15:40:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    let armed=false
+    await expect(new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt,point=>{
+      if(point==='after-confirmation-append'&&!armed){armed=true;throw new Error('armed-confirmation-anchor-race')}
+    }).upgrade()).rejects.toThrow('armed-confirmation-anchor-race')
+    if(!v2.remote)throw new Error('successor missing in test fixture')
+    const confirmation=v2.remote.snapshot.rows.at(-1)!
+    v2.remote.afterNextRead=()=>{v2.remote!.snapshot.rows.push([...confirmation])}
+    const result=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    expect(result.stage).toBe('switched')
+    expect(result.successor_activation_anchor?.covered_row_count).toBe(result.successor_staging_anchor!.covered_row_count+2)
+  },90_000)
+
   it('accepts a valid post-activation Fachrow and includes it in the activated/final verified prefix',async()=>{
     const createdAt='2026-09-23T15:45:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
     let armed=false
