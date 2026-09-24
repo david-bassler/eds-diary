@@ -941,7 +941,9 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
       sourceAnchor:source.artifact.source_anchor,sourceRevisions:source.material.revisions,successor:result,
     })
     const sourceRemote=await this.verifySourceAtFrozenPrefix(true)
-    if(sourceRemote.announcementCount<1)throw new Error('Profile-upgrade activation lacks durable Source Announcement.')
+    if(sourceRemote.announcementCount!==1)throw new Error('Profile-upgrade activation requires exactly one physical Source Announcement.')
+    const successorRemote=await this.verifySuccessorAtStagingOrConfirmation()
+    if(successorRemote.confirmationCount!==1)throw new Error('Profile-upgrade activation requires exactly one physical Successor Confirmation.')
     const announcement=operation.announcement_envelope!,confirmation=operation.confirmation_envelope!
     if(!sameJson(activation.entry.source_anchor_before_announcement,source.artifact.source_anchor)
       ||activation.entry.source_epoch_id!==source.artifact.source_epoch_id
