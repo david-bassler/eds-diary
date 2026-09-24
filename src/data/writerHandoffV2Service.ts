@@ -171,7 +171,7 @@ export class ProductiveWriterHandoffV2Service {
   private async noPendingDomainEnvelopes(context:ActiveHandoffContextV2):Promise<void>{
     await this.store.verifyLocalJournal(context.rootKey,context.epochSalt,context.state.epoch_id)
     const entries=await this.store.outbox(context.rootKey,context.epochSalt,context.state.epoch_id)
-    const pending=entries.filter((entry:V2OutboxEntry)=>entry.authority!==null&&entry.status!=='durable')
+    const pending=entries.filter((entry:V2OutboxEntry)=>entry.authority!==null&&(entry.status==='prepared'||entry.status==='pending'))
     if(pending.length)throw new Error('Cooperative handoff requires all local Writer envelopes to be durable or otherwise resolved.')
   }
 
