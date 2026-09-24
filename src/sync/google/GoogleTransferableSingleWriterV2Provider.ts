@@ -8,7 +8,7 @@ import {
   type GoogleApiClient,
 } from './GoogleSheetsTransferableSingleWriterV2Transport'
 import { GoogleSheetsTransferableSingleWriterV2ProfileCodec } from './GoogleSheetsTransferableSingleWriterV2ProfileCodec'
-import { GoogleRecoveryArtifactStoreV6 } from './GoogleRecoveryArtifactStoreV6'
+import { GoogleRecoveryArtifactStoreV6, type DiscoveredRecoveryArtifactV6 } from './GoogleRecoveryArtifactStoreV6'
 import { deriveEpochSaltV2 } from '../../security/v2/crypto'
 import { fixedBase64Url } from '../../security/crypto/bytes'
 import {
@@ -42,6 +42,7 @@ export interface TransferableSingleWriterV2ProviderSession {
     recoveryStaging:VerifiedRecoveryTakeoverStagingV2
   }):Promise<CreationState>
   publishRecoveryArtifact(urs:Uint8Array,artifact:VerifiedPersistedRecoveryArtifactV6):Promise<string>
+  discoverRecoveryFamilyArtifacts(urs:Uint8Array):Promise<readonly DiscoveredRecoveryArtifactV6[]>
   findRecoveryArtifact(urs:Uint8Array,diaryId:string,epochId:string):Promise<RecoveryArtifactV6|null>
   loadRecoveryArtifact(urs:Uint8Array,diaryId:string,epochId:string):Promise<RecoveryArtifactV6>
   disconnect():Promise<void>
@@ -115,6 +116,9 @@ class GoogleTransferableSingleWriterV2ProviderSession implements TransferableSin
   }
   publishRecoveryArtifact(urs:Uint8Array,artifact:VerifiedPersistedRecoveryArtifactV6):Promise<string>{
     return new GoogleRecoveryArtifactStoreV6(this.api).publish(urs,artifact)
+  }
+  discoverRecoveryFamilyArtifacts(urs:Uint8Array):Promise<readonly DiscoveredRecoveryArtifactV6[]>{
+    return new GoogleRecoveryArtifactStoreV6(this.api).discoverFamilyArtifacts(urs)
   }
   findRecoveryArtifact(urs:Uint8Array,diaryId:string,epochId:string):Promise<RecoveryArtifactV6|null>{
     return new GoogleRecoveryArtifactStoreV6(this.api).find(urs,diaryId,epochId)
