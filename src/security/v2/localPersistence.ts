@@ -543,11 +543,37 @@ export class IndexedDbV2LocalSecurityStore {
       if(!ref||ref.operation_id!==operation.operation_id||ref.state!==operation.stage||ref.state_record_hash!==priorHash)throw new Error('WriterGrantOperationStateV2 current StateV6 binding failed.')
       if(operation.stage!==expectedStage)throw new Error('WriterGrantOperationStateV2 stage changed before transition.')
       advanceWriterGrantOperationStateV2(operation,next)
-      const nextHash=await writerGrantOperationStateHashV2(next)
-      const nextState:EpochLocalSecurityStateV6={...current,operation_generation:current.operation_generation+1,writer_operation_state_ref:{operation_id:next.operation_id,state:next.stage,state_record_hash:nextHash}}
+      const nextHash=await writerGrantOperationStateHashV2(next),db=await openDatabase()
+      let staleOutbox:V2OutboxEntry|null=null,staleCount=current.stale_writer_pending_count
+      if(next.stage==='stale'){
+        const readTx=db.transaction(STORES.outbox,'readonly')
+        const entryRequest=readTx.objectStore(STORES.outbox).get(`${epochId}:${operation.prepared_envelope.envelope_id}`)
+        const entriesRequest=readTx.objectStore(STORES.outbox).index('byEpoch').getAll(epochId)
+        const [entry,entries]=await Promise.all([
+          requestResult<V2OutboxEntry|undefined>(entryRequest),
+          requestResult<V2OutboxEntry[]>(entriesRequest),
+        ])
+        await transactionDone(readTx)
+        if(!entry)throw new Error('Stale WriterGrant operation is missing its ceremony-owned outbox entry.')
+        await verifyOutboxTag(rootKey,epochSalt,entry)
+        if(entry.authority!==null)throw new Error('WriterGrant ceremony outbox entry unexpectedly carries Writer provenance.')
+        assertOutboxTransition(entry.status,'stale_writer_pending')
+        const core:V2OutboxEntryCore={id:entry.id,epoch_id:entry.epoch_id,envelope_id:entry.envelope_id,status:'stale_writer_pending',authority:null}
+        staleOutbox={...core,tag:await outboxTag(rootKey,epochSalt,core)}
+        staleCount=entries.filter(item=>item.id!==entry.id&&item.status==='stale_writer_pending').length+1
+      }
+      const nextState:EpochLocalSecurityStateV6={
+        ...current,
+        operation_generation:current.operation_generation+1,
+        writer_operation_state_ref:{operation_id:next.operation_id,state:next.stage,state_record_hash:nextHash},
+        stale_writer_pending_count:staleCount,
+      }
       validateEpochLocalSecurityStateV6(nextState);assertStateTransition(current,nextState)
-      const tag=await localStateTagV6(rootKey,epochSalt,nextState),db=await openDatabase(),tx=db.transaction([STORES.writerGrantOperations,STORES.states],'readwrite')
+      const tag=await localStateTagV6(rootKey,epochSalt,nextState)
+      const stores=[STORES.writerGrantOperations,STORES.states,...(staleOutbox?[STORES.outbox]:[])] as string[]
+      const tx=db.transaction(stores,'readwrite')
       tx.objectStore(STORES.writerGrantOperations).put({id:next.operation_id,state:structuredClone(next),hash:nextHash})
+      if(staleOutbox)tx.objectStore(STORES.outbox).put(staleOutbox)
       tx.objectStore(STORES.states).put({id:epochId,state:structuredClone(nextState),tag})
       await transactionDone(tx)
       return this.loadState(rootKey,epochSalt,epochId)
