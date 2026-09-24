@@ -119,6 +119,59 @@ in PR #56 before remediation. The earlier V2-07 findings are retained as
 IA-052…IA-056 to preserve the global audit namespace. No D-001…D-010 decision
 changed.
 
+### 2026-09-24 full-stack re-audit after V2-07
+
+Re-reviewed the complete current V2-01…V2-07 stack on the exact PR heads below,
+rather than relying on earlier review SHAs:
+
+- V2-01 / PR #49: `c7e2621cf05da539a0b58e9d0d9f93387bd78e19`
+- V2-02 / PR #50: `db0a0f68dcec8b3282a953d00fbc3325c4d25e3c`
+- V2-03 / PR #52: `7498f4413bc26bfc4e320b31f15b705ef2f37e6e`
+- V2-04 / PR #53: `c6a25e4ea1eba7112b7e1f0898d8cdffee482741`
+- V2-05 / PR #54: `eaf043c8456b111fe18629d2d7ef309d8b4ce17c`
+- V2-06 / PR #55: `20123f3d5dfd1880c30e02d780af6bcf6f8e1718`
+- V2-07 / PR #56 pre-audit head: `678345ba1bc977fa7b351c9faa731d776cf41d4f`
+
+Every one of those exact heads had a complete successful Security Validation run
+before this re-audit began.
+
+The pass rechecked, in order:
+
+1. frozen V2 wire schemas, strict validators, canonical timestamp/ID/bounds rules,
+   Ed25519 key-id derivation and domain-separated signing inputs;
+2. canonical replay, historical Writer/Recovery authority, immediate-anchor g+1
+   linearization, stale/fatal disposition boundaries, Pending-Rekey and seal fences;
+3. StateV6 MAC binding, monotonic remote-prefix reconciliation, non-extractable
+   WriterDeviceKeyV2 persistence, immutable envelope/reservation/outbox journal,
+   operation-generation fencing and fail-closed normal write authority;
+4. Google-v2 provider/profile/account binding, ManifestV6, RecoveryArtifactV6,
+   RecoveryTakeoverStagingV2 and SyncBackupV6 restore validation;
+5. productive v1→v2 cutover including freeze fencing, one-shot controls, migration
+   provenance, staged/activated Recovery+Backup, crash/unknown-outcome resume and
+   final source/successor freshness;
+6. productive read-only Join including Recovery-family leaf discovery, RootWrap/
+   State/WriterKey/lineage binding and final fresh canonical verification;
+7. productive Cooperative Handoff including target PoP, distinct A→B identity,
+   fresh source authority, g+1 grant preparation, ceremony-owned outbox isolation,
+   bounded unknown-outcome retry, stale/durable terminal evidence, source demotion
+   and target adoption only after independent fresh canonical verification;
+8. cross-layer Coordinator/Backup behavior for ceremony-owned and quarantined rows,
+   App/Settings wiring boundaries, §24 implementation inventory and production
+   release-gate documentation.
+
+No new wire-format, verifier, cryptographic-authority or productive V2-01…V2-07
+ceremony defect was identified before remediation in this pass. The first new
+finding is IA-062: release-gate/status documentation still describes the pre-V2-07
+implementation boundary. IA-062 is intentionally recorded OPEN before any status
+document is changed.
+
+Current functional boundary after V2-07 remains:
+- §24 steps 1–10 implemented and internally validated;
+- Forced Takeover remains the next unimplemented protocol ceremony;
+- native v2→v2 Rotation and two-phase Recovery-Rekey orchestration remain open;
+- normal App/Settings/domain-materialization/UI wiring remains open;
+- Live-Google Parallel-Append and the external production gates remain open.
+
 ## Findings and disposition
 
 | ID | Area | Finding | Disposition |
