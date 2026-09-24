@@ -17,6 +17,16 @@ const DATABASE_NAME='eds-diary-v2-security'
 const DATABASE_VERSION=10
 const STORES={states:'epochSecurityStateV6',writerKeys:'writerDeviceKeysV2',reservations:'envelopeReservationsV6',envelopes:'envelopesV6',outbox:'outboxV6',recoveryStaging:'recoveryTakeoverStagingV2',recoveryArtifacts:'recoveryArtifactsV6',rotationOperations:'rotationOperationsV2',writerGrantOperations:'writerGrantOperationsV2',lineageCaches:'activationLineageCachesV2',rootWraps:'rootWrapsV6',rootWrappingKeys:'rootWrappingKeysV6',creationOperations:'creationOperationsV2',operationArtifacts:'operationArtifactsV2'} as const
 
+const TERMINAL_ROTATION_OPERATION_STATES_V2=new Set(['switched','stale','cutover_race','post_activation_superseded'])
+const TERMINAL_WRITER_GRANT_OPERATION_STATES_V2=new Set(['durable','stale'])
+const TERMINAL_RECOVERY_OPERATION_STATES_V2=new Set(['completed','stale','superseded'])
+function blockingSecurityOperationRef(state:EpochLocalSecurityStateV6):boolean{
+  return (state.rotation_state_ref!==null&&!TERMINAL_ROTATION_OPERATION_STATES_V2.has(state.rotation_state_ref.state))
+    ||state.migration_state_ref!==null
+    ||(state.writer_operation_state_ref!==null&&!TERMINAL_WRITER_GRANT_OPERATION_STATES_V2.has(state.writer_operation_state_ref.state))
+    ||(state.recovery_operation_state_ref!==null&&!TERMINAL_RECOVERY_OPERATION_STATES_V2.has(state.recovery_operation_state_ref.state))
+}
+
 export interface EnvelopeReservationV6 {
   id:string
   epoch_id:string
@@ -446,8 +456,7 @@ export class IndexedDbV2LocalSecurityStore {
       const current=await this.loadState(args.rootKey,args.epochSalt,args.operation.epoch_id)
       if(current.operation_generation!==args.expectedOperationGeneration)throw new Error('Stale StateV6 generation during WriterGrant preparation.')
       if(current.epoch_status!=='active'||current.writer_status!=='writer_active'||current.writer_generation===null||current.writer_grant_id===null)throw new Error('WriterGrant preparation requires writer_active StateV6.')
-      if(current.writer_operation_state_ref!==null)throw new Error('Another WriterGrant operation is already bound to this epoch.')
-      if(current.rotation_state_ref!==null||current.migration_state_ref!==null||current.recovery_operation_state_ref!==null)throw new Error('WriterGrant preparation is blocked by another security operation.')
+      if(blockingSecurityOperationRef(current))throw new Error('WriterGrant preparation is blocked by another non-terminal security operation.')
       await assertAuthorityMatchesEnvelope(args.rootKey,args.epochSalt,current.diary_id,current.epoch_id,args.envelope,null)
       const db=await openDatabase(),checkTx=db.transaction(STORES.reservations,'readonly')
       const storedReservation=await requestResult<EnvelopeReservationV6|undefined>(checkTx.objectStore(STORES.reservations).get(args.reservation.id))
