@@ -280,13 +280,13 @@ export async function activationLineageHashV2(lineage:readonly ProfileUpgradeAct
   return base64Url(await sha256(canonicalBytes(lineage as never)))
 }
 
-function successorDomainHeads(result:CanonicalFullResultV2):RevisionV2[]{
-  const heads:RevisionV2[]=[]
-  for(const ids of result.accepted_revision_graph.heads_by_record.values())for(const id of ids){
-    const revision=result.accepted_revision_graph.revisions.get(id)
-    if(revision&&revision.record_status!=='control')heads.push(revision)
+function successorMigrationCopies(result:CanonicalFullResultV2,sourceEpochId:string):RevisionV2[]{
+  const copies:RevisionV2[]=[]
+  for(const revision of result.accepted_revision_graph.revisions.values()){
+    if(revision.record_status==='control'||revision.migration_origin===null)continue
+    if(revision.migration_origin.sources.some(source=>source.source_epoch_id===sourceEpochId))copies.push(revision)
   }
-  return heads
+  return copies
 }
 
 export async function verifyProfileUpgradeMigrationIntegrityV2(args:{
@@ -312,9 +312,9 @@ export async function verifyProfileUpgradeMigrationIntegrityV2(args:{
 
   const sourceByRevision=new Map(source.heads.map(head=>[head.revision_id,head]))
   const claimed=new Set<string>()
-  const successorHeads=successorDomainHeads(args.successor)
-  if(successorHeads.length!==source.heads.length)throw new Error('Profile upgrade migration provenance head-count mismatch.')
-  for(const target of successorHeads){
+  const successorCopies=successorMigrationCopies(args.successor,args.sourceEpochId)
+  if(successorCopies.length!==source.heads.length)throw new Error('Profile upgrade migration provenance copy-count mismatch.')
+  for(const target of successorCopies){
     if(target.parent_revision_ids.length!==0||target.migration_origin===null||target.migration_origin.sources.length!==1)throw new Error('Profile upgrade migration provenance mismatch.')
     const origin=target.migration_origin.sources[0]!
     if(origin.source_epoch_id!==args.sourceEpochId||origin.source_record_id!==target.record_id||origin.source_revision_ids.length!==1)throw new Error('Profile upgrade migration provenance mismatch.')
