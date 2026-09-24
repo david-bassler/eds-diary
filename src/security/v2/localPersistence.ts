@@ -1,7 +1,7 @@
 import { base64Url, equalBytes, fixedBase64Url, fromBase64Url, randomBytes } from '../crypto/bytes'
 import { canonicalBytes } from '../crypto/canonical'
 import { hmacSha256, sha256 } from '../crypto/core'
-import { deriveLocalStateMacKeyV2 } from './crypto'
+import { deriveLocalStateMacKeyV2, verifyEd25519V2, writerGrantSigningBytesV2 } from './crypto'
 import { openRevisionEnvelopeV2 } from './envelopes'
 import type { PreparedEnvelope } from '../envelopes'
 import { localJournalInitialV2, localJournalNextV2, localStateTagV6, validateEpochLocalSecurityStateV6, validateStoredWriterDeviceKeyV2, verifyLocalStateTagV6, withDiaryLockV2, type EpochLocalSecurityStateV6, type StoredWriterDeviceKeyV2 } from './localState'
@@ -12,6 +12,7 @@ import { advanceRotationOperationStateV2, rotationOperationStateHashV2, validate
 import { openBestEffortRootWrapV6, validateRootWrapV6, type RootWrapV6 } from './rootWrap'
 import { advanceWriterGrantOperationStateV2, validateWriterGrantOperationStateV2, writerGrantOperationStateHashV2, type WriterGrantOperationStageV2, type WriterGrantOperationStateV2 } from './writerGrantOperation'
 import type { CreationPersistence, CreationState } from '../../sync/core/creation'
+import type { WriterGrantV2 } from './types'
 
 const DATABASE_NAME='eds-diary-v2-security'
 const DATABASE_VERSION=10
@@ -456,8 +457,28 @@ export class IndexedDbV2LocalSecurityStore {
       const current=await this.loadState(args.rootKey,args.epochSalt,args.operation.epoch_id)
       if(current.operation_generation!==args.expectedOperationGeneration)throw new Error('Stale StateV6 generation during WriterGrant preparation.')
       if(current.epoch_status!=='active'||current.writer_status!=='writer_active'||current.writer_generation===null||current.writer_grant_id===null)throw new Error('WriterGrant preparation requires writer_active StateV6.')
+      if(args.operation.operation_kind!=='handoff')throw new Error('This WriterGrant preparation path accepts cooperative handoff only.')
       if(blockingSecurityOperationRef(current))throw new Error('WriterGrant preparation is blocked by another non-terminal security operation.')
       await assertAuthorityMatchesEnvelope(args.rootKey,args.epochSalt,current.diary_id,current.epoch_id,args.envelope,null)
+      const revision=await openRevisionEnvelopeV2(args.rootKey,args.epochSalt,{diaryId:current.diary_id,epochId:current.epoch_id},args.envelope)
+      const grant=revision.record_data as WriterGrantV2
+      const anchor=current.remote_anchor
+      if(revision.record_schema!=='writer-grant-sw-v2'||!grant||grant.reason!=='handoff'
+        ||grant.authorization.kind!=='writer_handoff'||grant.authorization.signer_key_id!==current.writer_signing_key_id
+        ||grant.previous_writer_generation!==current.writer_generation||grant.previous_grant_id!==current.writer_grant_id
+        ||grant.writer_generation!==current.writer_generation+1||grant.writer_generation!==args.operation.expected_writer_generation
+        ||grant.grant_id!==args.operation.expected_writer_grant_id
+        ||grant.recovery_generation!==current.recovery_generation
+        ||anchor===null
+        ||anchor.covered_row_count!==args.operation.authority_anchor.covered_row_count
+        ||anchor.prefix_hash!==args.operation.authority_anchor.prefix_hash
+        ||anchor.anchor_profile!==args.operation.authority_anchor.anchor_profile
+        ||grant.authority_anchor.covered_row_count!==anchor.covered_row_count
+        ||grant.authority_anchor.prefix_hash!==anchor.prefix_hash
+        ||grant.authority_anchor.anchor_profile!==anchor.anchor_profile)throw new Error('Prepared Handoff Grant does not bind the authenticated current Writer/Recovery/Anchor state.')
+      const sourceKey=await this.loadWriterKey(current.writer_signing_key_id,current.diary_id,current.epoch_id)
+      if(!sourceKey||sourceKey.writer_device_id!==current.writer_device_id||!grant.authorization.signature
+        ||!await verifyEd25519V2(fixedBase64Url(sourceKey.writer_public_key,32,'writer_public_key'),grant.authorization.signature,writerGrantSigningBytesV2(current.diary_id,current.epoch_id,grant)))throw new Error('Prepared Handoff Grant authorization does not verify against the authenticated local WriterDeviceKeyV2.')
       const db=await openDatabase(),checkTx=db.transaction(STORES.reservations,'readonly')
       const storedReservation=await requestResult<EnvelopeReservationV6|undefined>(checkTx.objectStore(STORES.reservations).get(args.reservation.id))
       await transactionDone(checkTx)
