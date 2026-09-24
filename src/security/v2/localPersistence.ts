@@ -537,6 +537,7 @@ export class IndexedDbV2LocalSecurityStore {
     next:WriterGrantOperationStateV2,
   ):Promise<EpochLocalSecurityStateV6>{
     return withDiaryLockV2((await this.loadState(rootKey,epochSalt,epochId)).diary_id,async()=>{
+      await this.verifyLocalJournal(rootKey,epochSalt,epochId)
       const current=await this.loadState(rootKey,epochSalt,epochId),operation=await this.loadWriterGrantOperation(next.operation_id)
       if(current.operation_generation!==expectedOperationGeneration)throw new Error('Stale StateV6 generation during WriterGrant transition.')
       const ref=current.writer_operation_state_ref,priorHash=await writerGrantOperationStateHashV2(operation)
