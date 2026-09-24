@@ -90,7 +90,10 @@ describe('v2 pre-implementation hardening boundaries',()=>{
     for(const id of ['D-001','D-002','D-003','D-004','D-005','D-006','D-007','D-008','D-009','D-010'])expect(ledger).toContain(id)
     expect(ledger).toMatch(/Rejected alternative/)
     expect(ledger).toMatch(/Revisit only if/)
-    expect(ledger).toMatch(/Implementation status at this review/)
+    expect(ledger).toMatch(/Historical implementation snapshot at the V2-03 review/)
+    expect(ledger).toMatch(/not the current implementation inventory/)
+    expect(ledger).toContain('EDS_TRANSFERABLE_SINGLE_WRITER_V2_IMPLEMENTATION_AUDIT.md')
+    expect(ledger).toContain('PRODUCTION_SECURITY_RELEASE_GATES.md')
     expect(ledger).toMatch(/D-005.*V2-03 core implemented.*FreshCanonicalV2Source\.verifyNow\(\).*V2-04.*real provider read \+ canonical_full/s)
   })
   it('records artifact publish attempt before the recovery rekey point of no return',async()=>{
