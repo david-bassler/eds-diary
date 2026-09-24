@@ -516,6 +516,31 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     expect(v2.remote.snapshot.rows.some(row=>row[0]===envelope.envelopeId)).toBe(false)
   },120_000)
 
+  it('rejects a direct durable Handoff transition before canonical readback evidence',async()=>{
+    const createdAt='2026-09-23T12:36:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    if(!v2.remote||!v2.recovery)throw new Error('handoff fixture missing successor/recovery state')
+    const recovered=await openRecoveryArtifactV6(v2.recovery,urs),epochSalt=await deriveEpochSaltV2(fromBase64Url(recovered.payload.diary_id),fromBase64Url(recovered.payload.epoch_id))
+    const store=new IndexedDbV2LocalSecurityStore(),state=await store.loadState(recovered.rootKey,epochSalt,upgraded.successor_epoch_id)
+    const targetPair=await generateWriterDeviceKeyV2(),targetDeviceId=base64Url(randomBytes(16)),targetKey:StoredWriterDeviceKeyV2={writer_signing_key_id:targetPair.writerKeyId,writer_device_id:targetDeviceId,writer_public_key:base64Url(targetPair.publicKeyRaw),private_key:targetPair.privateKey}
+    const descriptor=await createTransferDescriptorV2({...state,writer_status:'read_only',writer_device_id:targetDeviceId,writer_signing_key_id:targetPair.writerKeyId,writer_generation:null,writer_grant_id:null},targetKey,new Uint8Array(32).fill(53))
+    let crashed=false
+    await expect(new ProductiveWriterHandoffV2Service(v2,store,()=>createdAt,async point=>{
+      if(point==='after-prepared'&&!crashed){crashed=true;throw new Error('handoff-crash:prepared-for-false-durable')}
+    }).handoff(descriptor)).rejects.toThrow('handoff-crash:prepared-for-false-durable')
+    const operation=await store.loadBoundWriterGrantOperation(recovered.rootKey,epochSalt,upgraded.successor_epoch_id)
+    if(!operation)throw new Error('prepared Handoff operation missing')
+    const before=await store.loadState(recovered.rootKey,epochSalt,upgraded.successor_epoch_id)
+    await expect(store.advanceWriterGrantOperationBinding(
+      recovered.rootKey,epochSalt,upgraded.successor_epoch_id,before.operation_generation,'prepared',{...operation,stage:'durable'},
+    )).rejects.toThrow(/requires canonical durable ceremony evidence/)
+    expect((await store.loadWriterGrantOperation(operation.operation_id)).stage).toBe('prepared')
+    expect((await store.loadState(recovered.rootKey,epochSalt,upgraded.successor_epoch_id)).writer_operation_state_ref?.state).toBe('prepared')
+    const entry=(await store.outbox(recovered.rootKey,epochSalt,upgraded.successor_epoch_id)).find(item=>item.envelope_id===operation.prepared_envelope.envelope_id)
+    expect(entry?.status).toBe('prepared')
+    expect(v2.remote.snapshot.rows.some(row=>row[0]===operation.prepared_envelope.envelope_id)).toBe(false)
+  },120_000)
+
   it('refuses TransferDescriptorV2 creation on the current Writer without locally demoting it',async()=>{
     const createdAt='2026-09-23T12:35:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
     const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
