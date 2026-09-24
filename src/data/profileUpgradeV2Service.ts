@@ -911,7 +911,7 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
       if(successor.confirmationCount>0){
         const result=canonical(successor.verified),fresh=await this.verifyActivationBoundary(successor.verified,result)
         await this.commitSuccessorCanonical(fresh.verified,fresh.result)
-        return{kind:'durable',activationAnchor:successor.activationAnchor!}
+        return{kind:'durable',activationAnchor:fresh.activationAnchor}
       }
       if(state.stage==='confirmation_unknown')return{kind:'unknown'}
       const row:[string,string,string]=[operation.confirmation_envelope.envelope_id,operation.confirmation_envelope.iv,operation.confirmation_envelope.ciphertext]
@@ -928,14 +928,14 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
       if(successor.confirmationCount===0)return{kind:'unknown'}
       const result=canonical(successor.verified),fresh=await this.verifyActivationBoundary(successor.verified,result)
       await this.commitSuccessorCanonical(fresh.verified,fresh.result)
-      return{kind:'durable',activationAnchor:successor.activationAnchor!}
+      return{kind:'durable',activationAnchor:fresh.activationAnchor}
     }catch(error){
       if(error instanceof ProfileUpgradeSuccessorCutoverRaceError)return{kind:'cutover_race'}
       throw error
     }
   }
 
-  private async verifyActivationBoundary(verified:VerifiedRemoteState,result:CanonicalFullResultV2):Promise<{verified:VerifiedRemoteState;result:CanonicalFullResultV2}>{
+  private async verifyActivationBoundary(verified:VerifiedRemoteState,result:CanonicalFullResultV2):Promise<{verified:VerifiedRemoteState;result:CanonicalFullResultV2;activationAnchor:CanonicalFullResultV2['remote_anchor']}>{
     const operation=await this.load(),source=await this.frozenSource(),activation=await this.artifact<ActivationArtifactV2>('activation')
     if(!activation||!operation.successor_staging_anchor)throw new Error('Profile-upgrade activation evidence is missing.')
     const sourceRemote=await this.verifySourceAtFrozenPrefix(true)
@@ -960,7 +960,8 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
       ||!sameJson(activation.entry.successor_confirmation_envelope,confirmation))throw new Error('Profile-upgrade ActivationLineageV2 binding mismatch.')
     if(freshResult.accepted_activation_confirmation===null||freshResult.activation_state!=='cross_epoch_evidence_present')throw new Error('Profile-upgrade canonical successor lacks accepted Confirmation evidence.')
     void verified
-    return{verified:successorRemote.verified,result:freshResult}
+    if(!successorRemote.activationAnchor)throw new Error('Profile-upgrade activation anchor is missing after durable Confirmation.')
+    return{verified:successorRemote.verified,result:freshResult,activationAnchor:successorRemote.activationAnchor}
   }
 
   private async recoveryAdvancedBeyondArtifact(result:CanonicalFullResultV2):Promise<boolean>{
