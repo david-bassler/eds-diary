@@ -165,7 +165,7 @@ async function verifyProfileUpgradeLineage(args:{
   if(!same(await createAnchorV1(candidate.payload.diary_id,entry.source_epoch_id,sourcePrefix),entry.source_anchor_before_announcement))throw new Error('Profile-upgrade Join Source frozen prefix mismatch.')
   const suffix=sourceSnapshot.rows.slice(entry.source_anchor_before_announcement.covered_row_count)
   const announcementRow=[entry.announcement_envelope.envelope_id,entry.announcement_envelope.iv,entry.announcement_envelope.ciphertext]
-  if(suffix.length!==1||!same(suffix[0],announcementRow))throw new Error('Profile-upgrade Join Source Announcement is not the unique post-freeze row.')
+  if(!suffix.length||!same(suffix[0],announcementRow))throw new Error('Profile-upgrade Join Source Announcement is not the immediate first post-freeze row.')
 
   const announcement=await openEnvelope(sourceRoot,sourceSalt,{diaryId:candidate.payload.diary_id,epochId:entry.source_epoch_id},prepared(entry.announcement_envelope))
   const data=announcement.record_data as Record<string,unknown>
