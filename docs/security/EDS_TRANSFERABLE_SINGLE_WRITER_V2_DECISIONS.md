@@ -323,16 +323,23 @@ without requiring the staged Artifact to remain current.
 
 ---
 
-## Implementation status at this review
+## Historical implementation snapshot at the V2-03 review
 
-This ledger separates **decision stability** from **implementation status**.
-A recorded decision may be normative before its v2 runtime exists.
+This section is a **historical implementation snapshot from the V2-03 review**,
+not the current implementation inventory. Current status is maintained in
+`EDS_TRANSFERABLE_SINGLE_WRITER_V2_IMPLEMENTATION_AUDIT.md` and
+`PRODUCTION_SECURITY_RELEASE_GATES.md`. The decision rationale below remains
+normative unless explicitly superseded.
 
-Current implementation stack: `feat/transferable-single-writer-v2` (V2-01) -> `feat/transferable-single-writer-v2-verifier` (V2-02) -> `feat/transferable-single-writer-v2-local-state` (V2-03). Detailed implementation-review history is recorded in `EDS_TRANSFERABLE_SINGLE_WRITER_V2_IMPLEMENTATION_AUDIT.md`.
+This ledger separates **decision stability** from the implementation status that
+was observed at that review point. A recorded decision may be normative before
+its v2 runtime exists.
 
-The first three implementation layers are now present: frozen v2 wire/control types, strict validators, Ed25519/KDF/ID and EnvelopeV6 primitives, the exact v2 schema registry, RemoteAnchorV2 hashing, the product-neutral canonical replay verifier including the separately typed `rotation_resume` path, and the V2-03 local StateV6/WriterDeviceKeyV2/normal-domain write-gate core. This does **not** mean that ManifestV6/Google v2 storage, RootWrapV6 product bootstrap, cross-epoch activation, recovery services, migration orchestration, join, cooperative handoff, forced-takeover product flow or UI are complete.
+Implementation stack at that historical review: `feat/transferable-single-writer-v2` (V2-01) -> `feat/transferable-single-writer-v2-verifier` (V2-02) -> `feat/transferable-single-writer-v2-local-state` (V2-03). Detailed implementation-review history is recorded in `EDS_TRANSFERABLE_SINGLE_WRITER_V2_IMPLEMENTATION_AUDIT.md`.
 
-| Decision | Current implementation status |
+At that historical review point, the first three implementation layers were present: frozen v2 wire/control types, strict validators, Ed25519/KDF/ID and EnvelopeV6 primitives, the exact v2 schema registry, RemoteAnchorV2 hashing, the product-neutral canonical replay verifier including the separately typed `rotation_resume` path, and the V2-03 local StateV6/WriterDeviceKeyV2/normal-domain write-gate core. The following sentence records the historical boundary at that review point and must not be read as current status: ManifestV6/Google v2 storage, RootWrapV6 product bootstrap, cross-epoch activation, recovery services, migration orchestration, join, cooperative handoff, forced-takeover product flow and UI were not yet complete at that time.
+
+| Decision | Historical implementation status at V2-03 review |
 | --- | --- |
 | D-001 | Stable URS-/takeover-key identifiers and diary-wide `recovery_credential_history` replay/freshness enforcement are implemented in V2-01/V2-02. Secret-aware URS recomputation and Artifact enforcement remain V2-04+/recovery-service work. |
 | D-002 | Protocol/operation-state semantics specified; v2 recovery-rekey runtime still pending. |
@@ -345,9 +352,11 @@ The first three implementation layers are now present: frozen v2 wire/control ty
 | D-009 | Implemented in V2-02: `canonical_full` and operation-bound `rotation_resume` are separate APIs/result types; `rotation_resume` exposes no normal Writer/Recovery authority and now also enforces the exact Migration staging suffix. |
 | D-010 | Protocol/operation-state and backup semantics specified for post-activation lifecycle supersession; v2 runtime pending. |
 
-A future review should not report an item in the “pending” column as a newly
-discovered protocol flaw unless the implementation stack claims that item is
-already complete.
+The table below is likewise historical for implementation status; consult the
+current implementation audit before interpreting any `pending` entry. A future
+review should not report an item that was pending at this snapshot as a newly
+discovered protocol flaw unless the current implementation stack claims that
+item is now complete.
 
 ---
 

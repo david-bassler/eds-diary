@@ -110,6 +110,105 @@ All six current V2 PR heads have a successful complete Security Validation run.
 The fact that the PRs are currently Draft is process state, not evidence of an
 unresolved implementation finding.
 
+### 2026-09-24 V2-07 cooperative Writer Handoff implementation/review pass
+
+Recomposed the previously implemented productive crash-resumable A→B Writer
+Handoff on the current V2-06 head and reviewed it against Exact Protocol
+§§7, 8, 13, 14 and 15. Rebase findings IA-050 and IA-051 were recorded OPEN
+in PR #56 before remediation. The earlier V2-07 findings are retained as
+IA-052…IA-056 to preserve the global audit namespace. No D-001…D-010 decision
+changed.
+
+### 2026-09-24 full-stack re-audit after V2-07
+
+Re-reviewed the complete current V2-01…V2-07 stack on the exact PR heads below,
+rather than relying on earlier review SHAs:
+
+- V2-01 / PR #49: `c7e2621cf05da539a0b58e9d0d9f93387bd78e19`
+- V2-02 / PR #50: `db0a0f68dcec8b3282a953d00fbc3325c4d25e3c`
+- V2-03 / PR #52: `7498f4413bc26bfc4e320b31f15b705ef2f37e6e`
+- V2-04 / PR #53: `c6a25e4ea1eba7112b7e1f0898d8cdffee482741`
+- V2-05 / PR #54: `eaf043c8456b111fe18629d2d7ef309d8b4ce17c`
+- V2-06 / PR #55: `20123f3d5dfd1880c30e02d780af6bcf6f8e1718`
+- V2-07 / PR #56 pre-audit head: `678345ba1bc977fa7b351c9faa731d776cf41d4f`
+
+Every one of those exact heads had a complete successful Security Validation run
+before this re-audit began.
+
+The pass rechecked, in order:
+
+1. frozen V2 wire schemas, strict validators, canonical timestamp/ID/bounds rules,
+   Ed25519 key-id derivation and domain-separated signing inputs;
+2. canonical replay, historical Writer/Recovery authority, immediate-anchor g+1
+   linearization, stale/fatal disposition boundaries, Pending-Rekey and seal fences;
+3. StateV6 MAC binding, monotonic remote-prefix reconciliation, non-extractable
+   WriterDeviceKeyV2 persistence, immutable envelope/reservation/outbox journal,
+   operation-generation fencing and fail-closed normal write authority;
+4. Google-v2 provider/profile/account binding, ManifestV6, RecoveryArtifactV6,
+   RecoveryTakeoverStagingV2 and SyncBackupV6 restore validation;
+5. productive v1→v2 cutover including freeze fencing, one-shot controls, migration
+   provenance, staged/activated Recovery+Backup, crash/unknown-outcome resume and
+   final source/successor freshness;
+6. productive read-only Join including Recovery-family leaf discovery, RootWrap/
+   State/WriterKey/lineage binding and final fresh canonical verification;
+7. productive Cooperative Handoff including target PoP, distinct A→B identity,
+   fresh source authority, g+1 grant preparation, ceremony-owned outbox isolation,
+   bounded unknown-outcome retry, stale/durable terminal evidence, source demotion
+   and target adoption only after independent fresh canonical verification;
+8. cross-layer Coordinator/Backup behavior for ceremony-owned and quarantined rows,
+   App/Settings wiring boundaries, §24 implementation inventory and production
+   release-gate documentation.
+
+No new wire-format, verifier, cryptographic-authority or productive V2-01…V2-07
+ceremony defect was identified before remediation in this pass. The first new
+finding is IA-062: release-gate/status documentation still describes the pre-V2-07
+implementation boundary. IA-062 is intentionally recorded OPEN before any status
+document is changed.
+
+Current functional boundary after V2-07 remains:
+- §24 steps 1–10 implemented and internally validated;
+- Forced Takeover remains the next unimplemented protocol ceremony;
+- native v2→v2 Rotation and two-phase Recovery-Rekey orchestration remain open;
+- normal App/Settings/domain-materialization/UI wiring remains open;
+- Live-Google Parallel-Append and the external production gates remain open.
+
+### 2026-09-24 complete V2-01…V2-07 re-audit after Cooperative Handoff
+
+Re-reviewed the full implemented v2 stack, current Git ancestry, §24 inventory,
+release-gate status, cross-slice Join/Handoff/Coordinator/Backup boundaries and
+the current PR heads rather than relying on earlier review snapshots.
+
+Findings were recorded before remediation:
+- IA-065: the historical V2-03 decision-ledger table still called its rows
+  `Current implementation status`;
+- IA-066: V2-02…V2-07 contained the current V2-01 hardening semantics byte-for-byte
+  but did not contain the current V2-01 PR head in their Git ancestry.
+
+Both were remediated only after their OPEN audit entries existed. No additional
+wire-format, cryptographic, canonical-replay, Writer/Recovery-authority,
+StateV6, migration, Join or Cooperative-Handoff implementation defect was found
+in this pass.
+
+Validated stack after ancestry repair:
+- V2-01 / PR #49: `c7e2621cf05da539a0b58e9d0d9f93387bd78e19`
+- V2-02 / PR #50: `ecef8db879f59b1fed78e506a4a89da4b85edddf`
+- V2-03 / PR #52: `df80592997481d5687de615f888a0e9abbb91c7a`
+- V2-04 / PR #53: `877923734d350b78d8abd6e407cbcecf47e94b07`
+- V2-05 / PR #54: `8536724252520058c8a65931cc287a37862844de`
+- V2-06 / PR #55: `489ad3cde189d7170ce833f0cff82360e6874b13`
+- V2-07 / PR #56 pre-closure head:
+  `3d4a15d390a163f3406f5d9ddfdee821e4602b2d`
+
+Every recomposed V2-02…V2-07 head above completed the full Security Validation
+successfully; V2-01 was already fully green on its unchanged current head.
+
+Current implementation boundary remains:
+- §24 steps 1–10 implemented and internally validated;
+- productive Forced Takeover remains open;
+- native v2→v2 Rotation and two-phase Recovery-Rekey remain open;
+- normal App/Settings/domain-materialization/UI wiring remains open;
+- Live-Google Parallel-Append and external production gates remain open.
+
 ## Findings and disposition
 
 | ID | Area | Finding | Disposition |
@@ -164,6 +263,23 @@ unresolved implementation finding.
 | IA-047 | V2-05 / split-read activation freshness | `verifyActivationBoundary(verified,result)` performed another fresh Successor read/`canonical_full`, but callers continued using the older snapshot for Recovery-supersession and activated-Backup decisions. | **Fixed after being recorded OPEN.** Activation verification returns the fresher verified/result pair, proves it extends the caller anchor, and all supersession/commit/Backup decisions use it. A race regression advances Recovery between the two reads and proves no activated Backup is persisted. |
 | IA-048 | V2-05 / historical migration proof vs post-activation graph | `verifyProfileUpgradeMigrationIntegrityV2()` derived Successor provenance from final current domain heads, so a valid post-activation Fachrow could retroactively break the historical migration proof. | **Fixed after being recorded OPEN.** The canonical verifier proves the migration snapshot at the Migration row; the cross-epoch check now identifies immutable accepted migration-copy revisions by `migration_origin` to the v1 Source and proves that historical bijection independently of later current heads. |
 | IA-049 | V2-05 / fresh Confirmation-retry activation anchor | After IA-047, activation verification intentionally performs a fresher Successor read and uses its canonical state. `publishOrReconcileConfirmation()` still returned `successor.activationAnchor` from the older first read. If an additional byte-identical Confirmation retry became visible between those reads, the service had observed the longer retry prefix but would persist a shorter `successor_activation_anchor`, contradicting §21 step 20. | **Fixed after being recorded OPEN.** The activation-boundary result carries the activation anchor computed from the same freshest read used for canonical commit/supersession, and `confirmation_durable` persists that anchor. A race regression injects a Confirmation retry between the reads and proves the stored anchor expands through both retry rows. |
+| IA-050 | V2-07 / audit namespace recomposition | The pre-existing V2-07 branch used IA-044…IA-048 locally, but the current V2-01…V2-06 base already owns IA-044…IA-049. Keeping both histories would make findings ambiguous. | **Fixed after being recorded OPEN in PR #56.** V2-07 findings were renumbered without changing their substance or regression coverage; IA-050/IA-051 describe the recomposition itself and the prior Handoff findings continue as IA-052…IA-056. |
+| IA-051 | V2-07 / stale stacked base | The pre-existing V2-07 head was 41 commits behind the current PR #55 head. Its green CI therefore proved only the older composition and could not establish compatibility with the current IA-045…IA-049 V2-05/V2-06 base. | **Fixed after being recorded OPEN in PR #56.** The branch was recomposed on the exact current #55 head, preserving only V2-07-specific code/tests/audit deltas, and must pass the complete Security Validation on the recomposed head before the review is current. |
+| IA-052 | V2-07 / terminal operation refs | The first Handoff persistence cut treated any existing rotation/recovery/writer operation ref as a blocker. V2-05 legitimately leaves a terminal `rotation_state_ref="switched"`, so the first productive Handoff after profile upgrade was rejected even though §13 blocks only non-terminal security operations. The same issue would have prevented a later Handoff after a prior terminal WriterGrant operation. | **Fixed.** Handoff gating now classifies the frozen terminal sets explicitly: rotation `switched/stale/cutover_race/post_activation_superseded`, WriterGrant `durable/stale`, and Recovery `completed/stale/superseded` do not block a new Handoff. A new descriptor supersedes the StateV6 reference to a prior terminal WriterGrant operation; resume without a descriptor still reports that terminal operation. The full productive v1→v2→Handoff fixture pins this path. |
+| IA-053 | V2-07 / persistence authority boundary | The initial service validated fresh source authority before constructing the Grant, but the storage primitive that atomically persisted EnvelopeV6 + WriterGrantOperationStateV2 + StateV6 ref only proved that the encrypted row was structurally a WriterGrant. A direct internal caller could therefore attempt to persist a prepared Handoff whose anchor, predecessor generation/grant, recovery generation or authorization did not match the MAC-authenticated current StateV6. | **Fixed.** The persistence boundary decrypts the exact prepared Grant before commit and independently requires `operation_kind=handoff`, direct g+1 predecessor binding to authenticated StateV6, exact current RemoteAnchorV2, current Recovery generation, expected operation generation/grant IDs, and a valid `writer_handoff` authorization signature against the authenticated local WriterDeviceKeyV2. These checks execute before the atomic reservation/envelope/outbox/operation/state transaction. |
+| IA-054 | V2-07 / durable Handoff completion | The first readback logic required an accepted A→B Grant to still equal the final `current_writer`. If B had already canonically issued a later g+2 Grant before A's readback, A's exact Grant was nevertheless durably accepted, but the service would throw instead of completing the original Handoff and reconciling A read-only to the newer authority. | **Fixed.** Handoff durability is based on canonical acceptance of the exact persisted Grant envelope at its row, not on that Grant remaining the latest authority forever. A later accepted grant does not undo the completed A→B transfer; A reconciles to the freshest current authority (normally read-only after A→B; writer-active only if a later valid Grant has independently returned authority to A), while B's own adoption still requires that B itself is the current canonical Writer at its fresh verify. |
+| IA-055 | V2-07 / descriptor API state transition | The first production `createTransferDescriptor()` implementation performed fresh reconciliation with `writerKeyUsable=false` before checking that the caller was locally read-only. Invoking the descriptor action accidentally on the current Writer would therefore persist a local read-only downgrade and only then reject because the same device was already canonical Writer. Descriptor creation must not itself mutate valid Writer authority. | **Fixed.** The production descriptor entry point now requires authenticated local `writer_status="read_only"` before any fresh reconciliation. A regression invokes descriptor creation on the current Writer and proves the call rejects while local Writer status, generation and grant remain unchanged. |
+| IA-056 | V2-07 / generic Coordinator ownership | WriterGrant control envelopes are persisted in the shared immutable envelope/outbox journal with `authority=null` because they deliberately have no RevisionV2 `writer_context`. The generic v2 Coordinator initially returned those entries from `pending()`. During a non-terminal Handoff, generic WriteAuthority would then classify that ceremony-owned control as non-pushable/stale and could move it to `stale_writer_pending`, preventing the specialized Handoff readback from later marking the accepted Grant durable. | **Fixed.** `IndexedDbV2CoordinatorStore.pending()` excludes `authority=null` entries entirely. Such WriterGrant controls are owned exclusively by WriterHandoff/ForcedTakeover operation state; canonical pull may still mark an accepted control durable through semantic disposition reconciliation. The productive crash test stops at `prepared` and proves the exact Handoff envelope is absent from the generic Coordinator pending set. |
+| IA-057 | V2-07 / stale Handoff control quarantine | When a prepared Handoff Grant becomes terminal `stale`, the operation state transitioned correctly but its ceremony-owned outbox entry (`authority=null`) remained `prepared`. The generic Coordinator intentionally ignores such controls, so nothing later reclassified it. A future BackupV6 could therefore treat the row as pending even though the ceremony was terminal stale. | **Fixed after being recorded OPEN.** The WriterGrant operation transition to `stale` now atomically MAC-rewrites its exact ceremony outbox entry to `stale_writer_pending`, updates `stale_writer_pending_count`, and persists the terminal operation/StateV6 ref in the same IndexedDB transaction. Regressions cover both a physically present `stale_grant_rejected` Grant after an intervening row and an absent prepared Grant made stale before resume. |
+| IA-058 | V2-07 / Handoff pending-envelope gate | `noPendingDomainEnvelopes()` initially rejected every non-durable domain outbox entry, including terminal `stale_writer_pending` rows. §15 forbids unresolved non-durable Pending-Envelopes from A; quarantined stale rows are already resolved historical material and must not permanently prevent a later cooperative transfer. | **Fixed after being recorded OPEN.** The gate now blocks only current Writer envelopes in `prepared` or `pending`; terminal stale quarantine does not block transfer. A regression proves the same locally persisted domain row blocks Handoff while unresolved and allows Handoff after explicit terminal quarantine, while remaining quarantined afterward. |
+| IA-059 | V2-07 / stale-transition outbox integrity | The IA-057 atomic stale transition computed the new `stale_writer_pending_count` from all epoch outbox entries but initially verified only the ceremony entry MAC. A direct persistence caller could therefore cause a new MAC-authenticated StateV6 count to be derived from a sibling outbox record whose status/tag pair had not first passed the existing full journal-integrity check. | **Fixed after being recorded OPEN.** Every WriterGrant operation transition now runs the complete EnvelopeV6/outbox/reservation journal-integrity verification before reading aggregate outbox status or changing the operation/StateV6 binding. A direct-storage regression corrupts a sibling outbox status without its MAC and proves the stale transition rejects before either operation or StateV6 advances. |
+| IA-060 | V2-07 / durable WriterGrant transition evidence | `advanceWriterGrantOperationBinding()` initially allowed a direct `prepared/append_unknown -> durable` transition based only on the operation/StateV6 binding. The productive Handoff service reaches `durable` only after a fresh canonical readback has already marked the exact ceremony outbox entry durable, but the persistence boundary itself did not require that authenticated evidence. A direct internal caller could therefore persist a false terminal Handoff success while the exact Grant remained merely local/pending. | **Fixed after being recorded OPEN.** The storage boundary now requires the exact ceremony-owned outbox entry (`authority=null`) to be MAC-valid and already `status="durable"` before any terminal durable operation transition. A direct `prepared -> durable` regression without remote/canonical evidence fails without changing operation, StateV6 or outbox. |
+| IA-061 | V2-07 / stale WriterGrant transition evidence | Productive Handoff reaches `stale` only after a fresh canonical verify has been reconciled into MAC-authenticated StateV6, but `advanceWriterGrantOperationBinding()` itself still permits `prepared/append_unknown -> stale` while StateV6 continues to show the exact original `authority_anchor`, predecessor Writer and Recovery generation with no seal/rekey fence. A direct internal persistence caller could therefore falsely terminalize a still-authorized Handoff and quarantine its one-shot Grant without authenticated stale evidence. | **Fixed after being recorded OPEN.** A terminal stale transition now requires MAC-authenticated StateV6 to carry a remote anchor different from the operation's decision anchor, which in the production reconciliation path can only arise from a fresh verified physical prefix extension. With the original anchor still current, the transition fails before outbox, operation or StateV6 change. A direct-storage regression pins this boundary. |
+| IA-062 | V2-07 / release-gate inventory drift | After Cooperative Handoff became productive and fully validated, `PRODUCTION_SECURITY_RELEASE_GATES.md` and its internal TODO still described the v2 implementation boundary as V2-01…V2-06 and listed Cooperative Handoff as open. The protocol code was correct, but the authoritative release-status inventory could cause reviewers to reason from an outdated implementation boundary. | **Fixed after being recorded OPEN.** Release gates now describe V2-01…V2-07, include productive Cooperative Handoff in implemented/tested scope, start remaining internal work at Forced Takeover, and pin the last fully green security-code head before status-only documentation cleanup (`4ecbb48ab659843e36adbbeb08b679685f924efa`). The decisions ledger's V2-03 implementation table is explicitly labeled as a historical snapshot and points reviewers to the implementation audit/release gates for current status. |
+| IA-063 | V2-07 / stale WriterGrant prefix-advance proof | IA-061 added a persistence-layer stale-evidence gate, but the first cut only required authenticated StateV6 `remote_anchor` to differ from the prepared Grant's `authority_anchor`. A same-height/different-hash anchor is not a proof of physical prefix advancement and must never authorize terminal stale classification, even though the normal canonical reconciliation path would already reject such a fork. | **Fixed after being recorded OPEN.** Terminal WriterGrant `stale` now requires the authenticated StateV6 anchor to use the same v2 anchor profile and have `covered_row_count` strictly greater than the prepared authority anchor. A direct-storage regression persists a MAC-valid same-height/different-hash StateV6 anchor and proves operation, State ref and ceremony outbox remain non-terminal. Full Security Validation is green on implementation head `4ecbb48ab659843e36adbbeb08b679685f924efa`. |
+| IA-064 | V2-07 / anti-churn assurance status coupling | After IA-062 correctly relabeled the V2 decision ledger's implementation table as a historical V2-03 snapshot, `architecture.test.ts` still required the old literal heading `Implementation status at this review`. The new documentation was semantically correct, but the assurance test encoded the stale wording rather than the intended anti-churn property and therefore made the full validation fail. | **Fixed after being recorded OPEN.** The assurance test now requires the historical V2-03 snapshot label, explicitly requires pointers to the current implementation audit and production release gates, and retains the D-001…D-010 anti-churn checks. Full Security Validation is green on head `844034967388f34ea59c412d41854d98ca190a1f`. |
+| IA-065 | V2-07 / historical decision-ledger status labeling | IA-062/IA-064 correctly marked the V2 decision-ledger implementation section as a historical V2-03 snapshot and redirected current status to the implementation audit/release gates, but the table immediately below still used the heading `Current implementation status` and contained then-correct statements such as `v2 adapter pending` / `V2-04 must wire ...`. That heading contradicted the historical-snapshot warning and could still be read as the current V2-07 boundary. | **Fixed after being recorded OPEN.** The table is now explicitly labeled `Historical implementation status at V2-03 review`; its old row contents remain unchanged as historical evidence. Architecture assurance now requires that historical label, forbids the ambiguous `Current implementation status` header, and retains pointers to the current implementation audit/release gates. |
+| IA-066 | V2-01…V2-07 / stacked-branch ancestry drift | The current V2-01 PR head contained four later hardening commits (canonical protocol timestamps and canonical `migration_origin` bounds) that were byte-for-byte present in the downstream V2-02…V2-07 trees, but those downstream branches still descended from the older V2-01 commit `bea77cc64dc9b6689a875450216f853065dea950` rather than the current PR #49 head `c7e2621cf05da539a0b58e9d0d9f93387bd78e19`. The security semantics were present, but the stacked Git ancestry no longer proved that the reviewed lower slice was actually an ancestor of every upper slice. | **Fixed after being recorded OPEN.** The stack was repaired bottom-up with tree-preserving merge commits. Every current adjacent pair V2-01→V2-07 now has `behind_by=0`, every PR reports the current lower head as its base SHA, and all recomposed slice heads completed full Security Validation successfully. The V2-01 hardening files were byte-identical before the ancestry repair, so no security semantics changed during the merge repair. |
 
 
 ## Reviewed points that are not findings
@@ -257,6 +373,49 @@ Later changes must retain explicit vectors for at least:
 
 
 - profile-upgrade decision rows must be immediate after their bound prefixes; byte-identical physical retries remain semantic no-ops, Confirmation retries extend `successor_activation_anchor`, and later valid post-activation suffix rows are canonical-full verified;
+
+- TransferDescriptorV2 PoP, diary/epoch/key-ID binding and distinct target identity are verified before any Handoff Grant is persisted;
+- WriterGrantOperationStateV2 prepared/append_unknown/durable/stale transitions remain closed and once-set Grant bytes/anchor/expected IDs are immutable;
+- cooperative Handoff preparation requires a fresh exact current source Writer/Recovery/Anchor and no non-durable source domain envelopes;
+- WriterGrant Unknown Outcome retries reuse exact persisted bytes, re-verify the exact authority anchor before every retry and stop without a blind third append;
+- any intervening physical row after the Handoff authority anchor makes the prepared Grant stale and leaves the source Writer active;
+- source becomes read_only only after canonical acceptance of the exact persisted Handoff Grant; target becomes writer_active only after its own fresh Full Verify and exact local device/key/public-key match;
+- terminal prior security-operation refs do not block a later Handoff, while non-terminal refs remain hard blockers;
+- descriptor creation on a current Writer rejects before reconciliation and cannot demote valid local Writer authority;
+- ceremony-owned WriterGrant controls (`authority=null`) never enter the generic Coordinator pending/push/quarantine path;
+
+- terminal stale WriterGrant operation and its ceremony-owned outbox row transition together to the authenticated stale quarantine; generic sync never owns the ceremony row;
+- cooperative Handoff blocks unresolved current-Writer `prepared/pending` domain rows but does not treat terminal `stale_writer_pending` history as unresolved work;
+
+- WriterGrant operation transitions authenticate the complete local envelope/outbox/reservation journal before deriving stale aggregates or mutating StateV6;
+
+### 2026-09-24 full-stack re-audit final disposition
+
+The V2-01…V2-07 re-audit is complete. It rechecked the frozen wire/crypto layer,
+canonical replay and historical authority, StateV6/persistence/write gates,
+Google/Recovery/Backup, productive profile upgrade, read-only Join, Cooperative
+Handoff, cross-layer Coordinator behavior, App/UI boundaries and release-status
+inventory.
+
+New findings from this pass were recorded before remediation:
+
+- IA-062: release/status inventory drift after V2-07;
+- IA-063: WriterGrant stale persistence accepted a merely different rather than
+  strictly longer authenticated remote anchor;
+- IA-064: the anti-churn architecture test encoded the stale decision-ledger
+  heading instead of the intended historical-snapshot property.
+
+All three are closed. IA-063 is the only protocol-adjacent code hardening from
+this pass; IA-062 and IA-064 are status/assurance corrections. No additional
+wire-format, cryptographic-authority, verifier, migration, Join or Cooperative
+Handoff defect remained open after the final pass.
+
+The current implementation boundary remains intentionally unchanged:
+§24 steps 1–10 are implemented and internally validated. Forced Takeover,
+native v2→v2 Rotation plus two-phase Recovery-Rekey orchestration, normal
+App/Settings/domain-materialization/UI wiring, the Live-Google
+Parallel-Append-Gate and the external production gates remain open and must not
+be described as implemented by this review.
 
 ## Anti-churn rule for later reviews
 

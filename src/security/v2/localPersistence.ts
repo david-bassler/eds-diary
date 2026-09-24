@@ -1,7 +1,7 @@
 import { base64Url, equalBytes, fixedBase64Url, fromBase64Url, randomBytes } from '../crypto/bytes'
 import { canonicalBytes } from '../crypto/canonical'
 import { hmacSha256, sha256 } from '../crypto/core'
-import { deriveLocalStateMacKeyV2 } from './crypto'
+import { deriveLocalStateMacKeyV2, verifyEd25519V2, writerGrantSigningBytesV2 } from './crypto'
 import { openRevisionEnvelopeV2 } from './envelopes'
 import type { PreparedEnvelope } from '../envelopes'
 import { localJournalInitialV2, localJournalNextV2, localStateTagV6, validateEpochLocalSecurityStateV6, validateStoredWriterDeviceKeyV2, verifyLocalStateTagV6, withDiaryLockV2, type EpochLocalSecurityStateV6, type StoredWriterDeviceKeyV2 } from './localState'
@@ -10,11 +10,23 @@ import { openRecoveryArtifactV6, recoveryArtifactHashV6, recoveryArtifactLocator
 import { activationLineageCacheHashV2, openActivationLineageCacheV2, type ActivationLineageCacheV2 } from './activationLineageCache'
 import { advanceRotationOperationStateV2, rotationOperationStateHashV2, validateRotationOperationStateV2, type RotationOperationStateV2, type RotationOperationStageV2 } from './profileUpgrade'
 import { openBestEffortRootWrapV6, validateRootWrapV6, type RootWrapV6 } from './rootWrap'
+import { advanceWriterGrantOperationStateV2, validateWriterGrantOperationStateV2, writerGrantOperationStateHashV2, type WriterGrantOperationStageV2, type WriterGrantOperationStateV2 } from './writerGrantOperation'
 import type { CreationPersistence, CreationState } from '../../sync/core/creation'
+import type { WriterGrantV2 } from './types'
 
 const DATABASE_NAME='eds-diary-v2-security'
-const DATABASE_VERSION=9
-const STORES={states:'epochSecurityStateV6',writerKeys:'writerDeviceKeysV2',reservations:'envelopeReservationsV6',envelopes:'envelopesV6',outbox:'outboxV6',recoveryStaging:'recoveryTakeoverStagingV2',recoveryArtifacts:'recoveryArtifactsV6',rotationOperations:'rotationOperationsV2',lineageCaches:'activationLineageCachesV2',rootWraps:'rootWrapsV6',rootWrappingKeys:'rootWrappingKeysV6',creationOperations:'creationOperationsV2',operationArtifacts:'operationArtifactsV2'} as const
+const DATABASE_VERSION=10
+const STORES={states:'epochSecurityStateV6',writerKeys:'writerDeviceKeysV2',reservations:'envelopeReservationsV6',envelopes:'envelopesV6',outbox:'outboxV6',recoveryStaging:'recoveryTakeoverStagingV2',recoveryArtifacts:'recoveryArtifactsV6',rotationOperations:'rotationOperationsV2',writerGrantOperations:'writerGrantOperationsV2',lineageCaches:'activationLineageCachesV2',rootWraps:'rootWrapsV6',rootWrappingKeys:'rootWrappingKeysV6',creationOperations:'creationOperationsV2',operationArtifacts:'operationArtifactsV2'} as const
+
+const TERMINAL_ROTATION_OPERATION_STATES_V2=new Set(['switched','stale','cutover_race','post_activation_superseded'])
+const TERMINAL_WRITER_GRANT_OPERATION_STATES_V2=new Set(['durable','stale'])
+const TERMINAL_RECOVERY_OPERATION_STATES_V2=new Set(['completed','stale','superseded'])
+function blockingSecurityOperationRef(state:EpochLocalSecurityStateV6):boolean{
+  return (state.rotation_state_ref!==null&&!TERMINAL_ROTATION_OPERATION_STATES_V2.has(state.rotation_state_ref.state))
+    ||state.migration_state_ref!==null
+    ||(state.writer_operation_state_ref!==null&&!TERMINAL_WRITER_GRANT_OPERATION_STATES_V2.has(state.writer_operation_state_ref.state))
+    ||(state.recovery_operation_state_ref!==null&&!TERMINAL_RECOVERY_OPERATION_STATES_V2.has(state.recovery_operation_state_ref.state))
+}
 
 export interface EnvelopeReservationV6 {
   id:string
@@ -127,6 +139,7 @@ async function openDatabase():Promise<IDBDatabase>{
       if(!db.objectStoreNames.contains(STORES.recoveryStaging))db.createObjectStore(STORES.recoveryStaging,{keyPath:'id'})
       if(!db.objectStoreNames.contains(STORES.recoveryArtifacts))db.createObjectStore(STORES.recoveryArtifacts,{keyPath:'id'})
       if(!db.objectStoreNames.contains(STORES.rotationOperations))db.createObjectStore(STORES.rotationOperations,{keyPath:'id'})
+      if(!db.objectStoreNames.contains(STORES.writerGrantOperations))db.createObjectStore(STORES.writerGrantOperations,{keyPath:'id'})
       if(!db.objectStoreNames.contains(STORES.lineageCaches))db.createObjectStore(STORES.lineageCaches,{keyPath:'id'})
       if(!db.objectStoreNames.contains(STORES.rootWraps))db.createObjectStore(STORES.rootWraps,{keyPath:'id'})
       if(!db.objectStoreNames.contains(STORES.rootWrappingKeys))db.createObjectStore(STORES.rootWrappingKeys,{keyPath:'id'})
@@ -424,6 +437,160 @@ export class IndexedDbV2LocalSecurityStore {
     if(stored.wrap.mode==='best-effort'&&!key)throw new Error('RootWrapV6 best-effort key is missing.')
     if(stored.wrap.mode!=='best-effort'&&key)throw new Error('RootWrapV6 unexpected wrapping key.')
     return{wrap:structuredClone(stored.wrap),bestEffortWrappingKey:key?.key??null}
+  }
+
+  async persistPreparedWriterGrantOperationBundle(args:{
+    rootKey:Uint8Array
+    epochSalt:Uint8Array
+    expectedOperationGeneration:number
+    reservation:EnvelopeReservationV6
+    envelope:PreparedEnvelope
+    operation:WriterGrantOperationStateV2
+  }):Promise<EpochLocalSecurityStateV6>{
+    validateWriterGrantOperationStateV2(args.operation)
+    if(args.operation.stage!=='prepared')throw new Error('WriterGrantOperationStateV2 bundle must start at prepared.')
+    if(args.operation.prepared_envelope.envelope_id!==args.envelope.envelopeId
+      ||args.operation.prepared_envelope.iv!==args.envelope.iv
+      ||args.operation.prepared_envelope.ciphertext!==args.envelope.ciphertext)throw new Error('WriterGrantOperationStateV2 does not bind the prepared envelope bytes.')
+    if(args.reservation.state!=='reserved'||args.reservation.envelope_id!==args.envelope.envelopeId||args.reservation.iv!==args.envelope.iv)throw new Error('WriterGrantOperationStateV2 envelope reservation mismatch.')
+    return withDiaryLockV2((await this.loadState(args.rootKey,args.epochSalt,args.operation.epoch_id)).diary_id,async()=>{
+      const current=await this.loadState(args.rootKey,args.epochSalt,args.operation.epoch_id)
+      if(current.operation_generation!==args.expectedOperationGeneration)throw new Error('Stale StateV6 generation during WriterGrant preparation.')
+      if(current.epoch_status!=='active'||current.writer_status!=='writer_active'||current.writer_generation===null||current.writer_grant_id===null)throw new Error('WriterGrant preparation requires writer_active StateV6.')
+      if(args.operation.operation_kind!=='handoff')throw new Error('This WriterGrant preparation path accepts cooperative handoff only.')
+      if(blockingSecurityOperationRef(current))throw new Error('WriterGrant preparation is blocked by another non-terminal security operation.')
+      await assertAuthorityMatchesEnvelope(args.rootKey,args.epochSalt,current.diary_id,current.epoch_id,args.envelope,null)
+      const revision=await openRevisionEnvelopeV2(args.rootKey,args.epochSalt,{diaryId:current.diary_id,epochId:current.epoch_id},args.envelope)
+      const grant=revision.record_data as WriterGrantV2
+      const anchor=current.remote_anchor
+      if(revision.record_schema!=='writer-grant-sw-v2'||!grant||grant.reason!=='handoff'
+        ||grant.authorization.kind!=='writer_handoff'||grant.authorization.signer_key_id!==current.writer_signing_key_id
+        ||grant.previous_writer_generation!==current.writer_generation||grant.previous_grant_id!==current.writer_grant_id
+        ||grant.writer_generation!==current.writer_generation+1||grant.writer_generation!==args.operation.expected_writer_generation
+        ||grant.grant_id!==args.operation.expected_writer_grant_id
+        ||grant.recovery_generation!==current.recovery_generation
+        ||anchor===null
+        ||anchor.covered_row_count!==args.operation.authority_anchor.covered_row_count
+        ||anchor.prefix_hash!==args.operation.authority_anchor.prefix_hash
+        ||anchor.anchor_profile!==args.operation.authority_anchor.anchor_profile
+        ||grant.authority_anchor.covered_row_count!==anchor.covered_row_count
+        ||grant.authority_anchor.prefix_hash!==anchor.prefix_hash
+        ||grant.authority_anchor.anchor_profile!==anchor.anchor_profile)throw new Error('Prepared Handoff Grant does not bind the authenticated current Writer/Recovery/Anchor state.')
+      const sourceKey=await this.loadWriterKey(current.writer_signing_key_id,current.diary_id,current.epoch_id)
+      if(!sourceKey||sourceKey.writer_device_id!==current.writer_device_id||!grant.authorization.signature
+        ||!await verifyEd25519V2(fixedBase64Url(sourceKey.writer_public_key,32,'writer_public_key'),grant.authorization.signature,writerGrantSigningBytesV2(current.diary_id,current.epoch_id,grant)))throw new Error('Prepared Handoff Grant authorization does not verify against the authenticated local WriterDeviceKeyV2.')
+      const db=await openDatabase(),checkTx=db.transaction(STORES.reservations,'readonly')
+      const storedReservation=await requestResult<EnvelopeReservationV6|undefined>(checkTx.objectStore(STORES.reservations).get(args.reservation.id))
+      await transactionDone(checkTx)
+      if(!storedReservation||storedReservation.state!=='reserved'||storedReservation.envelope_id!==args.envelope.envelopeId||storedReservation.iv!==args.envelope.iv)throw new Error('WriterGrant envelope reservation is missing or changed.')
+      const hash=await writerGrantOperationStateHashV2(args.operation),sequence=current.local_journal_count+1
+      const next:EpochLocalSecurityStateV6={
+        ...current,
+        operation_generation:current.operation_generation+1,
+        writer_operation_state_ref:{operation_id:args.operation.operation_id,state:args.operation.stage,state_record_hash:hash},
+        local_journal_count:sequence,
+        local_journal_hash:await localJournalNextV2(current.local_journal_hash,sequence,args.envelope),
+      }
+      validateEpochLocalSecurityStateV6(next)
+      const tag=await localStateTagV6(args.rootKey,args.epochSalt,next)
+      const outboxCore:V2OutboxEntryCore={id:args.reservation.id,epoch_id:args.operation.epoch_id,envelope_id:args.envelope.envelopeId,status:'prepared',authority:null}
+      const outboxEntry:V2OutboxEntry={...outboxCore,tag:await outboxTag(args.rootKey,args.epochSalt,outboxCore)}
+      const tx=db.transaction([STORES.reservations,STORES.envelopes,STORES.outbox,STORES.writerGrantOperations,STORES.states],'readwrite')
+      tx.objectStore(STORES.reservations).put({...storedReservation,state:'sealed'} satisfies EnvelopeReservationV6)
+      tx.objectStore(STORES.envelopes).add({...args.envelope,id:args.reservation.id,epoch_id:args.operation.epoch_id,local_sequence:sequence} satisfies PersistedEnvelopeV6)
+      tx.objectStore(STORES.outbox).add(outboxEntry)
+      tx.objectStore(STORES.writerGrantOperations).add({id:args.operation.operation_id,state:structuredClone(args.operation),hash})
+      tx.objectStore(STORES.states).put({id:next.epoch_id,state:structuredClone(next),tag})
+      await transactionDone(tx)
+      const [operation,state]=await Promise.all([this.loadWriterGrantOperation(args.operation.operation_id),this.loadState(args.rootKey,args.epochSalt,args.operation.epoch_id)])
+      if(operation.stage!=='prepared'||state.writer_operation_state_ref?.state_record_hash!==hash)throw new Error('WriterGrant operation bundle readback failed.')
+      await this.verifyLocalJournal(args.rootKey,args.epochSalt,args.operation.epoch_id)
+      return state
+    })
+  }
+
+  async loadWriterGrantOperation(operationId:string):Promise<WriterGrantOperationStateV2>{
+    fixedBase64Url(operationId,32,'operation_id')
+    const db=await openDatabase(),tx=db.transaction(STORES.writerGrantOperations,'readonly')
+    const stored=await requestResult<{id:string;state:WriterGrantOperationStateV2;hash:string}|undefined>(tx.objectStore(STORES.writerGrantOperations).get(operationId))
+    await transactionDone(tx)
+    if(!stored||stored.id!==operationId)throw new Error('WriterGrantOperationStateV2 is missing.')
+    validateWriterGrantOperationStateV2(stored.state)
+    if(stored.hash!==await writerGrantOperationStateHashV2(stored.state))throw new Error('WriterGrantOperationStateV2 readback hash failed.')
+    return structuredClone(stored.state)
+  }
+
+  async loadBoundWriterGrantOperation(rootKey:Uint8Array,epochSalt:Uint8Array,epochId:string):Promise<WriterGrantOperationStateV2|null>{
+    const state=await this.loadState(rootKey,epochSalt,epochId),ref=state.writer_operation_state_ref
+    if(!ref)return null
+    const operation=await this.loadWriterGrantOperation(ref.operation_id),hash=await writerGrantOperationStateHashV2(operation)
+    if(operation.epoch_id!==epochId||operation.stage!==ref.state||hash!==ref.state_record_hash)throw new Error('WriterGrantOperationStateV2 StateV6 binding failed.')
+    return operation
+  }
+
+  async advanceWriterGrantOperationBinding(
+    rootKey:Uint8Array,
+    epochSalt:Uint8Array,
+    epochId:string,
+    expectedOperationGeneration:number,
+    expectedStage:WriterGrantOperationStageV2,
+    next:WriterGrantOperationStateV2,
+  ):Promise<EpochLocalSecurityStateV6>{
+    return withDiaryLockV2((await this.loadState(rootKey,epochSalt,epochId)).diary_id,async()=>{
+      await this.verifyLocalJournal(rootKey,epochSalt,epochId)
+      const current=await this.loadState(rootKey,epochSalt,epochId),operation=await this.loadWriterGrantOperation(next.operation_id)
+      if(current.operation_generation!==expectedOperationGeneration)throw new Error('Stale StateV6 generation during WriterGrant transition.')
+      const ref=current.writer_operation_state_ref,priorHash=await writerGrantOperationStateHashV2(operation)
+      if(!ref||ref.operation_id!==operation.operation_id||ref.state!==operation.stage||ref.state_record_hash!==priorHash)throw new Error('WriterGrantOperationStateV2 current StateV6 binding failed.')
+      if(operation.stage!==expectedStage)throw new Error('WriterGrantOperationStateV2 stage changed before transition.')
+      advanceWriterGrantOperationStateV2(operation,next)
+      const nextHash=await writerGrantOperationStateHashV2(next),db=await openDatabase()
+      if(next.stage==='durable'){
+        const readTx=db.transaction(STORES.outbox,'readonly')
+        const entry=await requestResult<V2OutboxEntry|undefined>(readTx.objectStore(STORES.outbox).get(`${epochId}:${operation.prepared_envelope.envelope_id}`))
+        await transactionDone(readTx)
+        if(!entry)throw new Error('Durable WriterGrant operation is missing its ceremony-owned outbox entry.')
+        await verifyOutboxTag(rootKey,epochSalt,entry)
+        if(entry.authority!==null||entry.status!=='durable')throw new Error('Durable WriterGrant operation requires canonical durable ceremony evidence.')
+      }
+      let staleOutbox:V2OutboxEntry|null=null,staleCount=current.stale_writer_pending_count
+      if(next.stage==='stale'){
+        const anchor=current.remote_anchor
+        if(anchor===null
+          ||anchor.anchor_profile!==operation.authority_anchor.anchor_profile
+          ||anchor.covered_row_count<=operation.authority_anchor.covered_row_count)throw new Error('Stale WriterGrant operation requires authenticated remote prefix advancement beyond its authority anchor.')
+        const readTx=db.transaction(STORES.outbox,'readonly')
+        const entryRequest=readTx.objectStore(STORES.outbox).get(`${epochId}:${operation.prepared_envelope.envelope_id}`)
+        const entriesRequest=readTx.objectStore(STORES.outbox).index('byEpoch').getAll(epochId)
+        const [entry,entries]=await Promise.all([
+          requestResult<V2OutboxEntry|undefined>(entryRequest),
+          requestResult<V2OutboxEntry[]>(entriesRequest),
+        ])
+        await transactionDone(readTx)
+        if(!entry)throw new Error('Stale WriterGrant operation is missing its ceremony-owned outbox entry.')
+        await verifyOutboxTag(rootKey,epochSalt,entry)
+        if(entry.authority!==null)throw new Error('WriterGrant ceremony outbox entry unexpectedly carries Writer provenance.')
+        assertOutboxTransition(entry.status,'stale_writer_pending')
+        const core:V2OutboxEntryCore={id:entry.id,epoch_id:entry.epoch_id,envelope_id:entry.envelope_id,status:'stale_writer_pending',authority:null}
+        staleOutbox={...core,tag:await outboxTag(rootKey,epochSalt,core)}
+        staleCount=entries.filter(item=>item.id!==entry.id&&item.status==='stale_writer_pending').length+1
+      }
+      const nextState:EpochLocalSecurityStateV6={
+        ...current,
+        operation_generation:current.operation_generation+1,
+        writer_operation_state_ref:{operation_id:next.operation_id,state:next.stage,state_record_hash:nextHash},
+        stale_writer_pending_count:staleCount,
+      }
+      validateEpochLocalSecurityStateV6(nextState);assertStateTransition(current,nextState)
+      const tag=await localStateTagV6(rootKey,epochSalt,nextState)
+      const stores=[STORES.writerGrantOperations,STORES.states,...(staleOutbox?[STORES.outbox]:[])] as string[]
+      const tx=db.transaction(stores,'readwrite')
+      tx.objectStore(STORES.writerGrantOperations).put({id:next.operation_id,state:structuredClone(next),hash:nextHash})
+      if(staleOutbox)tx.objectStore(STORES.outbox).put(staleOutbox)
+      tx.objectStore(STORES.states).put({id:epochId,state:structuredClone(nextState),tag})
+      await transactionDone(tx)
+      return this.loadState(rootKey,epochSalt,epochId)
+    })
   }
 
   async initializeRotationOperation(state:RotationOperationStateV2):Promise<RotationOperationStateV2>{
