@@ -188,13 +188,12 @@ export class ProductiveWriterHandoffV2Service {
   private async finalizeFromFresh(context:ActiveHandoffContextV2,operation:WriterGrantOperationStateV2,fresh:FreshHandoffVerifyV2,grant:WriterGrantV2):Promise<WriterGrantOperationStateV2|'absent'>{
     const rowPresent=fresh.verified.snapshot.rows.some(row=>row[0]===operation.prepared_envelope.envelope_id)
     if(fresh.verified.acceptedEnvelopeIds.has(operation.prepared_envelope.envelope_id)){
-      if(fresh.result.current_writer.writer_generation!==grant.writer_generation
-        ||fresh.result.current_writer.writer_grant_id!==grant.grant_id
-        ||fresh.result.current_writer.writer_device_id!==grant.writer_device_id
-        ||fresh.result.current_writer.writer_key_id!==grant.writer_key_id
-        ||fresh.result.current_writer.writer_public_key!==grant.writer_public_key)throw new Error('Accepted handoff Grant does not equal the canonical Writer authority.')
-      const key=await this.localKey((await this.store.loadState(context.rootKey,context.epochSalt,operation.epoch_id)))
-      await this.refreshLocal(context,fresh,key.writer_device_id===context.state.writer_device_id)
+      // Durable means this exact one-shot Grant was canonically accepted at its
+      // row. A later accepted g+2 Grant may already have advanced current_writer;
+      // that does not undo the completed A->B handoff. The source still
+      // reconciles to the freshest current authority and therefore remains
+      // read-only.
+      await this.refreshLocal(context,fresh,true)
       return this.markOperation(context,operation,'durable')
     }
     if(rowPresent){
