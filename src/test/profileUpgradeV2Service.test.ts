@@ -320,6 +320,31 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     expect(v2.remote).not.toBeNull()
   },90_000)
 
+  it('rejects duplicate physical profile-upgrade Announcement rows at the activation boundary',async()=>{
+    const createdAt='2026-09-23T14:30:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    let armed=false
+    await expect(new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt,point=>{
+      if(point==='after-announcement_durable'&&!armed){armed=true;throw new Error('armed-duplicate-announcement')}
+    }).upgrade()).rejects.toThrow('armed-duplicate-announcement')
+    const announcement=source.transport.snapshot.rows.at(-1)!
+    source.transport.snapshot.rows.push([...announcement])
+    await expect(new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()).rejects.toThrow(/profile_upgrade_source_race|exactly one physical Source Announcement/)
+    expect(await activeProtocolSelectionV2()).toBeNull()
+  },90_000)
+
+  it('rejects duplicate physical Successor Confirmation rows at the activation boundary',async()=>{
+    const createdAt='2026-09-23T15:30:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    let armed=false
+    await expect(new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt,point=>{
+      if(point==='after-confirmation_durable'&&!armed){armed=true;throw new Error('armed-duplicate-confirmation')}
+    }).upgrade()).rejects.toThrow('armed-duplicate-confirmation')
+    if(!v2.remote)throw new Error('successor missing in test fixture')
+    const confirmation=v2.remote.snapshot.rows.at(-1)!
+    v2.remote.snapshot.rows.push([...confirmation])
+    await expect(new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()).rejects.toThrow(/profile_upgrade_successor_cutover_race|exactly one physical Successor Confirmation/)
+    expect(await activeProtocolSelectionV2()).toBeNull()
+  },90_000)
+
   it('enters terminal successor cutover-race when another row becomes first after the staging anchor',async()=>{
     const createdAt='2026-09-23T15:00:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
     let armed=false
