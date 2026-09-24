@@ -78,7 +78,7 @@ the exact profile-upgrade activation rules before bottom-up merge. IA-045 and
 IA-046 were recorded **OPEN before remediation**; follow-up inspection added
 IA-047, IA-048 and IA-049, also recorded OPEN before code changes. IA-045 was a real
 protocol regression introduced by the prior IA-044 hardening; IA-046 was the
-missing productive assurance coverage that allowed it to remain green. All four
+missing productive assurance coverage that allowed it to remain green. All five
 were subsequently remediated with productive regression coverage, including the freshest Confirmation-retry anchor race.
 
 ## Findings and disposition
