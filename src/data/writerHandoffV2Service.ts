@@ -243,6 +243,14 @@ export class ProductiveWriterHandoffV2Service {
   async handoff(descriptorInput?:unknown):Promise<WriterHandoffResultV2>{
     const context=await this.activeContext()
     let operation=await this.store.loadBoundWriterGrantOperation(context.rootKey,context.epochSalt,context.state.epoch_id)
+    if(operation&&TERMINAL_WRITER.has(operation.stage)){
+      if(descriptorInput===undefined){
+        if(operation.operation_kind!=='handoff')throw new Error('The terminal WriterGrant operation is not a cooperative handoff.')
+        const parsed=await this.parseOperationEnvelope(context,operation)
+        return toResult(operation,parsed.grant)
+      }
+      operation=null
+    }
     if(operation){
       if(operation.operation_kind!=='handoff')throw new Error('A different WriterGrant operation is already bound locally.')
       const parsed=await this.parseOperationEnvelope(context,operation)
