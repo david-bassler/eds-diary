@@ -11,6 +11,7 @@ import {
   writerGrantSigningBytesV2,
 } from '../security/v2/crypto'
 import { deriveEpochSaltV2 } from '../security/v2/crypto'
+import { __brandManifestTrustRootV2ForTests } from '../security/v2/manifest'
 import { envelopeRowV2, sealRevisionEnvelopeV2 } from '../security/v2/envelopes'
 import { createAnchorV2, prefixHashesV2 } from '../security/v2/prefix'
 import type { EpochMigrationV2, RecoveryAuthorityTransitionV2, RevisionV2, RotationAnnouncementV2, WriterGrantV2 } from '../security/v2/types'
@@ -44,7 +45,7 @@ async function trustRoot(predecessor = false) {
     recovery_takeover_key_id: recovery.recoveryTakeoverKeyId,
     recovery_takeover_public_key: base64Url(recovery.publicKeyRaw),
   }
-  return { root, writer, recovery }
+  return { root:__brandManifestTrustRootV2ForTests(root), writer, recovery }
 }
 
 function grantRevision(grant: WriterGrantV2, marker: number): RevisionV2<WriterGrantV2> {

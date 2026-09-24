@@ -56,10 +56,15 @@ export interface WriteAuthority {
   accessAfterReadback(verified: VerifiedRemoteState): Promise<WriteAccess> | WriteAccess
 }
 
+export interface CreationCandidateVerification {manifestFingerprint:string}
 export interface TransportProfileCodec {
   readonly profileId: string
   validate(snapshot: RemoteSnapshot): void
   verifyRemote(snapshot: RemoteSnapshot): Promise<VerifiedRemoteState>
+  /** Authority-free pre-binding verification used only by persistent resource
+   * creation. It may validate an immutable manifest before mandatory genesis or
+   * migration rows exist, but must never return a VerifiedRemoteState. */
+  verifyCreationCandidate?(snapshot:RemoteSnapshot):Promise<CreationCandidateVerification>
   row(envelope: PreparedEnvelope): readonly [string, string, string]
   createAnchor(diaryId:string,epochId:string,rows:ReadonlyArray<readonly string[]>):Promise<RemoteAnchorState>
   assertExtendsAnchor(anchor:RemoteAnchorState|null,diaryId:string,epochId:string,rows:ReadonlyArray<readonly string[]>):Promise<void>

@@ -24,6 +24,7 @@ import type {
   WriterGrantV2,
 } from './types'
 import { validateRevisionV2 } from './validators'
+import { isVerifiedManifestTrustRootV6 } from './manifest'
 
 const MAX_SAFE = Number.MAX_SAFE_INTEGER
 const MAX_PER_RECORD = 4096
@@ -622,6 +623,7 @@ async function replay(
   rootKey: Uint8Array,
   rows: ReadonlyArray<readonly string[]>,
 ): Promise<{ state: ReplayState; prefixHashes: Uint8Array[] }> {
+  if(!isVerifiedManifestTrustRootV6(trustRoot))fail('schema_or_canonicalization_failure','ManifestV6 trust root lacks authenticated cell provenance.')
   await validateTrustRoot(trustRoot)
   if (rootKey.byteLength !== 32) fail('schema_or_canonicalization_failure', 'RK_epoch must contain 32 bytes.')
   if (rows.length > MAX_ROWS) fail('schema_or_canonicalization_failure', 'Remote row bound exceeded.')

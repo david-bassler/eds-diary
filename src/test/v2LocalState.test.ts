@@ -390,6 +390,47 @@ describe('EpochLocalSecurityStateV6 persistence and writer gate',()=>{
     expect((await store.loadState(rootKey,f.epochSalt,f.epochId)).stale_writer_pending_count).toBe(1)
   })
 
+  it('quarantines old local pending writes on the next fresh domain-write verification before returning read-only',async()=>{
+    const f=await fixture(),store=new IndexedDbV2LocalSecurityStore()
+    await store.initializeState(rootKey,f.epochSalt,f.initial)
+    await store.persistWriterKey({
+      writer_signing_key_id:f.writer.writerKeyId,
+      writer_device_id:f.writerDeviceId,
+      writer_public_key:base64Url(f.writer.publicKeyRaw),
+      private_key:f.writer.privateKey,
+    },f.diaryId,f.epochId)
+    const initial=v2VerifiedRemoteState(f.result,{manifest:[],rows:[]})
+    const takeover:CanonicalFullResultV2={
+      ...f.result,
+      current_writer:{
+        ...f.result.current_writer,
+        writer_generation:2,
+        writer_grant_id:b(75,32),
+        writer_device_id:b(76,16),
+        writer_key_id:b(77,32),
+      },
+    }
+    let calls=0
+    const authority=new TransferableSingleWriterV2WriteAuthority(
+      ()=>store.loadState(rootKey,f.epochSalt,f.epochId),
+      (envelope)=>store.envelopeAuthority(rootKey,f.epochSalt,f.epochId,envelope),
+    )
+    const preparer=new V2DomainWritePreparer(store,authority,{
+      verifyNow:async()=>++calls===1?initial:v2VerifiedRemoteState(takeover,{manifest:[],rows:[]}),
+    })
+    const first=await preparer.prepareAndPersist(rootKey,f.epochSalt,{
+      recordType:'pain_entry',recordId:b(78,16),status:'active',data:painData,protocolCreatedAt:'2026-09-23T08:25:00.000Z',
+    })
+    await expect(preparer.prepareAndPersist(rootKey,f.epochSalt,{
+      recordType:'pain_entry',recordId:b(79,16),status:'active',data:painData,protocolCreatedAt:'2026-09-23T08:26:00.000Z',
+    })).rejects.toThrow(/does not permit domain-write preparation/)
+    const entry=(await store.outbox(rootKey,f.epochSalt,f.epochId)).find(item=>item.envelope_id===first.envelope.envelopeId)
+    expect(entry?.status).toBe('stale_writer_pending')
+    const state=await store.loadState(rootKey,f.epochSalt,f.epochId)
+    expect(state.writer_status).toBe('read_only')
+    expect(state.stale_writer_pending_count).toBe(1)
+  })
+
   it('rejects a verified remote row that reuses a local envelope_id with different row bytes',async()=>{
     const f=await fixture(),store=new IndexedDbV2LocalSecurityStore()
     await store.initializeState(rootKey,f.epochSalt,f.initial)

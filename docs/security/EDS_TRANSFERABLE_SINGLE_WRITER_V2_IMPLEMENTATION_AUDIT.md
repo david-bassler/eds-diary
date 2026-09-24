@@ -1,6 +1,6 @@
 # Transferable Single Writer v2 – Implementation Audit Trail
 
-Stand: 22.09.2026
+Stand: 23.09.2026
 
 Status: **NON-NORMATIVE IMPLEMENTATION REVIEW LOG**.
 
@@ -26,7 +26,9 @@ Reviewed implementation slices:
 - V2-02 – RemoteAnchorV2 hashing and the canonical transferable-writer replay
   verifier, including the operation-bound `rotation_resume` path;
 - V2-03 – EpochLocalSecurityStateV6, WriterDeviceKeyV2 persistence, semantic
-  coordinator persistence and the fail-closed normal-domain write gate.
+  coordinator persistence and the fail-closed normal-domain write gate;
+- V2-04 – ManifestV6, strict Google v2 profile/storage, RecoveryArtifactV6,
+  RecoveryTakeoverStagingV2 and SyncBackupV6.
 
 Primary review sources:
 
@@ -52,6 +54,17 @@ normal domain-write preparation and semantic CoordinatorStore behavior. New
 findings from this pass are IA-019…IA-029. They are implementation mismatches/
 hardening findings, not changes to D-001…D-010.
 
+
+### 2026-09-23 four-slice stack review after V2-04
+
+Re-reviewed V2-01…V2-04 as one composed security stack rather than as isolated
+PRs. The pure V2-01 and replay-core V2-02 rules did not yield a new standalone
+wire/verifier defect in this pass. New findings IA-031…IA-034 are cross-layer
+contract failures or incomplete wiring at the V2-02↔V2-04 and V2-03↔V2-04
+boundaries. They were first recorded open, then closed explicitly in the
+follow-up implementation pass with dedicated regression coverage; no D-xxx
+decision changed.
+
 ## Findings and disposition
 
 | ID | Area | Finding | Disposition |
@@ -66,7 +79,7 @@ hardening findings, not changes to D-001…D-010.
 | IA-008 | V2-02 / complexity | Historical writer lookup scanned `authority_history_by_prefix` linearly. With the 100,000-row protocol bound, many stale rows could force quadratic verifier work. | **Fixed.** Prefix history remains for anchor reproduction, but a separate tuple-keyed authority index provides O(1) historical Writer lookup. This is availability hardening, not a wire/protocol change. |
 | IA-009 | V2-02 / rotation_resume | `rotation_resume` could return `staged_migration_present` even if another physical/semantic row followed the accepted Migration-Control. The `copying -> successor_verified` staging boundary requires the Migration row followed only by byte-identical retries of that same Migration envelope. | **Fixed.** The verifier records the accepted Migration envelope/row and rejects any other suffix in `rotation_resume` as `successor_staging_mismatch`. |
 | IA-010 | V2-02 / result authority | A non-native `canonical_full` result may contain replayed Writer/Recovery state while its activation state is only `staged_confirmation_missing` or `cross_epoch_evidence_present`. Those fields describe verified log state; they are not themselves an active-epoch grant. | **Intentional boundary.** Cross-epoch activation must separately validate Source/ActivationLineage/Announcement/Confirmation evidence. V2-03/V2-04 adapters must never turn these states directly into writer/recovery authority. |
-| IA-011 | V2-02 / manifest trust root | `VerifiedManifestTrustRootV2` is currently an input contract, not yet the output of the final ManifestV6 codec. V2-02 defensively rechecks key/ID/history shape but does not duplicate every protected-manifest invariant. | **Intentional deferred layer.** V2-04 must make the ManifestV6 parser/codec the only production source of this trust root and enforce profile, crypto suite, schema registry, protocol limits, account binding and immutable manifest fingerprint there. |
+| IA-011 | V2-02 / manifest trust root | `VerifiedManifestTrustRootV2` was initially only an input contract; V2-02 defensively rechecked key/ID/history shape but could not prove protected-manifest provenance. | **Deferred layer completed in V2-04.** `openManifestTrustRootV6` decrypts and validates the exact ManifestV6 cells and brands the resulting trust root; the production verifier rejects unbranded structural roots. The profile codec and backup verifier use only that provenance-preserving path. |
 | IA-012 | V2-02 / rollback floors | Replay computes RemoteAnchorV2 but does not itself reconcile a persisted local/backup/recovery freshness floor. | **Deferred layer now partially completed in V2-03.** StateV6 reconciliation rejects rollback/same-height replacement against the persisted local RemoteAnchorV2 and reproduces the exact final snapshot anchor. Backup/RecoveryArtifact freshness floors remain later-layer work. |
 | IA-013 | V2-01 / one-shot persistence | The pure EnvelopeV6 primitive accepts caller-supplied envelope ID and IV; by itself it cannot prove persistent pre-reservation or cross-crash one-shot use. | **Deferred layer completed for normal V2-03 domain writes.** Envelope ID/IV are persisted as a one-shot reservation before encryption; sealed bytes and the v6 journal/state update are then persisted atomically. Rotation/Recovery operation-specific one-shot state remains with their later services. |
 | IA-014 | V2-02 / historical rotation | Historical RotationAnnouncements were classified stale before validating rotation-kind / recovery-transition binding against the Recovery state at their own anchor. A claim already invalid at its historical decision prefix must not be laundered into a non-fatal stale result. | **Fixed.** Rotation/rekey mode is now validated against the historical anchor Recovery snapshot first; only an otherwise valid claim may become `stale_rotation_announcement_rejected`. |
@@ -85,6 +98,12 @@ hardening findings, not changes to D-001…D-010.
 | IA-027 | V2-03 / encrypted Writer provenance | The outbox Writer tuple was authenticated locally but not cryptographically checked against the `writer_context` inside the encrypted RevisionV2. An inconsistent internal caller could therefore ask the pre-push gate to authorize bytes under unrelated current-authority metadata. | **Fixed.** Envelope commit and pre-push authority lookup decrypt/validate the immutable RevisionV2 and require exact Writer-context equality with the authenticated outbox authority. |
 | IA-028 | V2-03 / terminal local states | The storage adapter validated StateV6 snapshots individually but did not enforce transition terminality. In particular, a direct `orphaned -> active` replacement or `stale_writer_pending -> pending` outbox transition was structurally possible even though both are terminal protocol states. | **Fixed.** State replacement/disposition paths reject any exit from `orphaned`; outbox transitions enforce `durable` and `stale_writer_pending` terminality. |
 | IA-029 | V2-03 / Web Locks worker boundary | The Web-Lock helper failed closed only when `window` existed. A browser Worker/ServiceWorker context without LockManager could therefore take the non-browser fallback and execute a v2 mutation unlocked. | **Fixed.** Missing LockManager now fails closed in both Window and WorkerGlobalScope contexts; only genuine non-browser test/server runtimes may use the fallback. |
+| IA-030 | V2-04 / creation resume intent | The shared creation state machine resumed a persisted creation record without byte-for-byte checking that the newly supplied immutable Manifest cells/fingerprint and bound diary/epoch/key/properties were the same planned resource. Under crash-resume, a reused locator record could therefore continue with stale one-shot intent instead of failing closed. | **Fixed.** Resume now compares the persisted immutable creation intent against the current request before any discovery or remote mutation; mismatched manifest bytes/fingerprint/context are rejected. Regression coverage pins a changed ManifestV6 resume attempt. |
+| IA-031 | V2-03↔V2-04 / fresh domain-write reconciliation | `V2DomainWritePreparer.prepareAndPersist()` performed its mandatory fresh canonical verify but persisted only StateV6, bypassing the Coordinator's semantic disposition/quarantine commit. An old pending envelope could therefore remain non-quarantined when the next write attempt discovered Writer advancement. | **Fixed.** The prepare path now uses the same `commitVerifiedDispositions` primitive as verified pull before deciding write access. It then requires the local operation generation to remain unchanged while acquiring the write lock; any intervening local mutation forces a new full-verify attempt. Regression coverage proves Writer advancement both rejects the new write and moves the old pending envelope to `stale_writer_pending`. |
+| IA-032 | V2-04 / verified capability branding | `VerifiedRecoveryTakeoverStagingV2` and `VerifiedPersistedRecoveryArtifactV6` could be directly constructed and thereby self-register in their WeakSet brands without the mandated verification/persistence path. | **Fixed.** Both constructors now require module-private runtime tokens; forged construction with any external token throws before branding. Only successful AEAD/keypair verification or persistent/readback verification possesses the token. Negative runtime tests pin both capabilities. |
+| IA-033 | V2-02↔V2-04 / Manifest trust-root provenance | `manifestTrustRootV6(cells,payload)` accepted independently supplied cells and protected payload, so the security API itself did not prove that the authority payload had been decrypted from those exact cells. | **Fixed.** The independent pairing API is removed from production use. `openManifestTrustRootV6` performs decrypt+validation+fingerprint+trust-root creation in one provenance-preserving operation and registers the result in a module-private WeakSet. `TransferableSingleWriterV2Verifier` rejects any unbranded structural trust root. The only synthetic branding seam is test-only and runtime-disabled outside `NODE_ENV=test`; architecture tests prohibit production use. |
+| IA-034 | V2-03↔V2-04 / FreshCanonicalV2Source wiring | V2-03 deliberately left `FreshCanonicalV2Source.verifyNow()` for V2-04, but the first V2-04 cut had only transport/codec/provider primitives and no production fresh-source adapter. | **Fixed.** The authenticated Google v2 provider session now exposes `freshCanonicalSource(...)`. Every `verifyNow()` creates a newly authenticated epoch transport, performs a new strict `transport.read(remoteId)`, and immediately passes that snapshot to the v2 codec's `canonical_full` verifier; no snapshot or `VerifiedRemoteState` is accepted from the caller or cached. Regression coverage calls it twice and proves two independent provider reads/auth bindings. |
+
 
 ## Reviewed points that are not findings
 
@@ -115,6 +134,8 @@ new defects unless their assumptions change:
    announcement bytes before declaring the Successor active.
 7. **The generic `migration_origin` wrapper remains 1..8 Sources by inherited v1 semantics.** This is not a relaxation of the v2 migration-copy rule. §16a.0/§16a.1 separately requires each copied Successor head to carry exactly one Source with exactly one Source revision and proves the full Source↔Successor bijection during cross-epoch activation. Tightening the generic wrapper itself to exactly one would silently remove inherited wrapper expressiveness rather than enforce the activation rule at the correct layer.
 8. **Do not add `diary_id` to the WriterDeviceKeyV2 store entry.** §18.2 freezes that IndexedDB entry to exactly `{writer_signing_key_id, writer_device_id, writer_public_key, private_key}`. The broader architecture rule against global device/key reuse is an enrollment/identity-lifecycle invariant for V2-05/V2-06+; adding a fifth persisted field in V2-03 would itself violate the Exact Protocol. The load-time keypair challenge remains diary/epoch/device-bound as specified.
+9. **SyncBackupV6 offline test-restore is not, by itself, an activation grant.** The current V2-04 restore returns `access="read_only"` even when the encrypted backup manifest says `activation_state="activated"`. Full external ActivationLineage/source-history verification remains mandatory before any later service may promote the epoch to remote-active Writer authority. Treating successful offline test-restore as that promotion would violate §10c/§20.
+
 
 ## Required regression coverage
 
@@ -159,6 +180,11 @@ Later changes must retain explicit vectors for at least:
 - authenticated outbox Writer provenance equals the encrypted RevisionV2 writer_context;
 - orphaned epochs and stale/durable outbox terminal states cannot be reopened;
 - browser Window and Worker mutation paths require Web Locks.
+- next domain-write prepare after remote Writer advancement quarantines all old local pending envelopes before returning read-only;
+- verified Recovery staging/artifact capabilities cannot be directly constructed or forged;
+- ManifestV6 trust-root creation cryptographically binds the exact decrypted payload to the exact public cells/fingerprint;
+- provider-bound FreshCanonicalV2Source performs a new remote read + canonical_full on every call and has no snapshot cache;
+
 
 ## Anti-churn rule for later reviews
 
