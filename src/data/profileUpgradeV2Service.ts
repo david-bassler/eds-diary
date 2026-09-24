@@ -828,13 +828,15 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
     if(!allowAnnouncement||!announcement)throw new ProfileUpgradePreCutoverStaleError('v1 Source advanced before its one-shot profile-upgrade Announcement.')
     const expected:[string,string,string]=[announcement.envelope_id,announcement.iv,announcement.ciphertext]
     const suffix=snapshot.rows.slice(source.artifact.source_anchor.covered_row_count)
-    if(suffix.length!==1||!sameJson(suffix[0],expected))throw new ProfileUpgradeSourceRaceError('profile_upgrade_source_race')
-    return{snapshot,announcementCount:1}
+    if(!sameJson(suffix[0],expected))throw new ProfileUpgradeSourceRaceError('profile_upgrade_source_race')
+    let announcementCount=0
+    while(announcementCount<suffix.length&&sameJson(suffix[announcementCount],expected))announcementCount+=1
+    return{snapshot,announcementCount}
   }
-  private async verifySuccessorAtStagingOrConfirmation():Promise<{verified:VerifiedRemoteState;confirmationCount:number;activationAnchor:CanonicalFullResultV2['remote_anchor']|null}>{
+  private async verifySuccessorAtStagingOrConfirmation(snapshotOverride?:RemoteSnapshot):Promise<{verified:VerifiedRemoteState;confirmationCount:number;activationAnchor:CanonicalFullResultV2['remote_anchor']|null}>{
     const operation=await this.load(),ctx=await this.successorContext()
     if(!operation.successor_staging_anchor||!operation.confirmation_envelope)throw new Error('Profile-upgrade cutover evidence is incomplete.')
-    const snapshot=await ctx.transport.read(ctx.remoteId)
+    const snapshot=snapshotOverride??await ctx.transport.read(ctx.remoteId)
     const stagingRows=snapshot.rows.slice(0,operation.successor_staging_anchor.covered_row_count)
     if(!sameJson(await createAnchorV2(ctx.plan.diary_id,ctx.plan.successor_epoch_id,stagingRows),operation.successor_staging_anchor))throw new Error('Profile-upgrade Successor staging prefix changed.')
     const suffix=snapshot.rows.slice(operation.successor_staging_anchor.covered_row_count),expected:[string,string,string]=[operation.confirmation_envelope.envelope_id,operation.confirmation_envelope.iv,operation.confirmation_envelope.ciphertext]
@@ -842,10 +844,12 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
       const verified=await ctx.codec.verifyRemote(snapshot)
       return{verified,confirmationCount:0,activationAnchor:null}
     }
-    if(suffix.length!==1||!sameJson(suffix[0],expected))throw new ProfileUpgradeSuccessorCutoverRaceError('profile_upgrade_successor_cutover_race')
+    if(!sameJson(suffix[0],expected))throw new ProfileUpgradeSuccessorCutoverRaceError('profile_upgrade_successor_cutover_race')
+    let confirmationCount=0
+    while(confirmationCount<suffix.length&&sameJson(suffix[confirmationCount],expected))confirmationCount+=1
     const verified=await ctx.codec.verifyRemote(snapshot)
-    const activationAnchor=await createAnchorV2(ctx.plan.diary_id,ctx.plan.successor_epoch_id,snapshot.rows)
-    return{verified,confirmationCount:1,activationAnchor}
+    const activationAnchor=await createAnchorV2(ctx.plan.diary_id,ctx.plan.successor_epoch_id,snapshot.rows.slice(0,operation.successor_staging_anchor.covered_row_count+confirmationCount))
+    return{verified,confirmationCount,activationAnchor}
   }
 
   async publishOrReconcileAnnouncement(state:RotationOperationStateV2):Promise<{kind:'durable'}|{kind:'unknown'}|{kind:'stale'}|{kind:'source_race'}>{
@@ -941,9 +945,14 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
       sourceAnchor:source.artifact.source_anchor,sourceRevisions:source.material.revisions,successor:result,
     })
     const sourceRemote=await this.verifySourceAtFrozenPrefix(true)
-    if(sourceRemote.announcementCount!==1)throw new Error('Profile-upgrade activation requires exactly one physical Source Announcement.')
-    const successorRemote=await this.verifySuccessorAtStagingOrConfirmation()
-    if(successorRemote.confirmationCount!==1)throw new Error('Profile-upgrade activation requires exactly one physical Successor Confirmation.')
+    if(sourceRemote.announcementCount<1)throw new Error('Profile-upgrade activation lacks a durable immediate Source Announcement.')
+    const successorRemote=await this.verifySuccessorAtStagingOrConfirmation(verified.snapshot)
+    if(successorRemote.confirmationCount<1)throw new Error('Profile-upgrade activation lacks a durable immediate Successor Confirmation.')
+    const successorResult=canonical(successorRemote.verified)
+    if(!sameJson(successorResult.remote_anchor,result.remote_anchor)
+      ||successorResult.current_recovery.recovery_generation!==result.current_recovery.recovery_generation
+      ||successorResult.current_writer.writer_grant_id!==result.current_writer.writer_grant_id
+      ||successorResult.source_epoch_sealed!==result.source_epoch_sealed)throw new Error('Profile-upgrade activation verification snapshot/result mismatch.')
     const announcement=operation.announcement_envelope!,confirmation=operation.confirmation_envelope!
     if(!sameJson(activation.entry.source_anchor_before_announcement,source.artifact.source_anchor)
       ||activation.entry.source_epoch_id!==source.artifact.source_epoch_id
