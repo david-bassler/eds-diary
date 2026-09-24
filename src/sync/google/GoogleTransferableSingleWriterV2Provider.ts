@@ -28,7 +28,7 @@ export interface TransferableSingleWriterV2ProviderSession {
   readonly providerId:typeof GOOGLE_DRIVE_SHEETS_PROVIDER
   readonly profileId:typeof SINGLE_WRITER_V2_PROFILE
   transportForEpoch(diaryId:string,epochId:string):Promise<GoogleSheetsTransferableSingleWriterV2Transport>
-  v1TransportForEpoch(diaryId:string,epochId:string):Promise<GoogleSheetsSingleWriterTransport>
+  v1TransportForEpoch?(diaryId:string,epochId:string):Promise<GoogleSheetsSingleWriterTransport>
   remoteIdentityBinding(transport:RemoteTransport):Promise<string>
   codecForEpoch(diaryId:string,epochId:string,rootKey:Uint8Array,transport:RemoteTransport):Promise<GoogleSheetsTransferableSingleWriterV2ProfileCodec>
   freshCanonicalSource(diaryId:string,epochId:string,rootKey:Uint8Array,remoteId:string):FreshCanonicalV2Source
@@ -44,7 +44,7 @@ export interface TransferableSingleWriterV2ProviderSession {
     recoveryStaging:VerifiedRecoveryTakeoverStagingV2
   }):Promise<CreationState>
   publishRecoveryArtifact(urs:Uint8Array,artifact:VerifiedPersistedRecoveryArtifactV6):Promise<string>
-  discoverRecoveryFamilyArtifacts(urs:Uint8Array):Promise<readonly DiscoveredRecoveryArtifactV6[]>
+  discoverRecoveryFamilyArtifacts?(urs:Uint8Array):Promise<readonly DiscoveredRecoveryArtifactV6[]>
   findRecoveryArtifact(urs:Uint8Array,diaryId:string,epochId:string):Promise<RecoveryArtifactV6|null>
   loadRecoveryArtifact(urs:Uint8Array,diaryId:string,epochId:string):Promise<RecoveryArtifactV6>
   disconnect():Promise<void>
