@@ -194,6 +194,23 @@ export async function prepareReadOnlyJoinRootWrapV6ForActiveMode(rootKey:Uint8Ar
   return{wrap,bestEffortWrappingKey:key}
 }
 
+export async function openReadOnlyJoinRootWrapV6WithActiveMode(prepared:PreparedSuccessorRootWrapV6):Promise<Uint8Array>{
+  const wrap=prepared.wrap
+  if(wrap.mode==='best-effort'){
+    if(!prepared.bestEffortWrappingKey)throw new Error('Join RootWrapV6 best-effort wrapping key is missing.')
+    return openBestEffortRootWrapV6(wrap,prepared.bestEffortWrappingKey)
+  }
+  const active=await loadEpoch(await openDatabase()),factor=unlockFactors.get(active.context.diaryId)
+  if(wrap.mode==='passphrase'){
+    if(!factor||factor.mode!=='passphrase')throw new LocalUnlockRequiredError('passphrase')
+    return openPassphraseRootWrapV6(wrap,factor.passphrase)
+  }
+  if(!factor||factor.mode!=='prf')throw new LocalUnlockRequiredError('prf')
+  const expectedInput=fromBase64Url(wrap.mode_metadata.prf_eval_input)
+  if(!sameBytes(expectedInput,factor.prfEvalInput)||wrap.mode_metadata.rp_id!==factor.rpId)throw new LocalUnlockRequiredError('prf')
+  return openPrfRootWrapV6(wrap,factor.credentialId,factor.prfOutput)
+}
+
 export async function openSuccessorRootWrapV6WithActiveMode(prepared:PreparedSuccessorRootWrapV6):Promise<Uint8Array>{
   const wrap=prepared.wrap
   if(wrap.mode==='best-effort'){
