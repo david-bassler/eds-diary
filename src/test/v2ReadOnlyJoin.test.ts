@@ -249,6 +249,24 @@ describe('productive v2 read-only Join',()=>{
     expect(await activeProtocolSelectionV2()).toBeNull()
   })
 
+  it('refuses local selection when the crash-persisted Join RootWrapV6 is missing',async()=>{
+    const f=await nativeJoinFixture(),calls={family:0},store=new IndexedDbV2LocalSecurityStore()
+    const crashing=new ProductiveReadOnlyJoinV2Service(sessionFor(f,calls),store,async()=>{throw new Error('injected join crash')})
+    await expect(crashing.join(f.urs)).rejects.toThrow(/injected join crash/)
+
+    const db=await __v2LocalPersistenceTesting.openDatabase(),storeName=__v2LocalPersistenceTesting.STORES.rootWraps
+    const tx=db.transaction(storeName,'readwrite')
+    tx.objectStore(storeName).delete(f.epochId)
+    await new Promise<void>((resolve,reject)=>{
+      tx.addEventListener('complete',()=>resolve(),{once:true})
+      tx.addEventListener('abort',()=>reject(tx.error),{once:true})
+      tx.addEventListener('error',()=>reject(tx.error),{once:true})
+    })
+
+    await expect(new ProductiveReadOnlyJoinV2Service(sessionFor(f,calls),store).join(f.urs)).rejects.toThrow(/RootWrapV6 is missing/)
+    expect(await activeProtocolSelectionV2()).toBeNull()
+  })
+
   it('rejects a crash-resume Join plan whose immutable RecoveryArtifact hash changed',async()=>{
     const f=await nativeJoinFixture(),calls={family:0},store=new IndexedDbV2LocalSecurityStore()
     const crashing=new ProductiveReadOnlyJoinV2Service(sessionFor(f,calls),store,async()=>{throw new Error('injected join crash')})
