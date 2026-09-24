@@ -33,6 +33,7 @@ import {
   activeProtocolSelectionV2,
   assertReadOnlyJoinLocalProfileIsFresh,
   atomicSelectReadOnlyJoinV2,
+  openReadOnlyJoinRootWrapV6WithActiveMode,
   prepareReadOnlyJoinRootWrapV6ForActiveMode,
 } from './localDatabase'
 
@@ -267,9 +268,11 @@ async function validateResumePlan(args:{
   fixedBase64Url(plan.join_id,32,'join_id');fixedBase64Url(plan.recovery_artifact_sha256,32,'recovery_artifact_sha256')
   fixedBase64Url(plan.local_writer_device_id,16,'local_writer_device_id');fixedBase64Url(plan.local_writer_key_id,32,'local_writer_key_id')
   await assertExtendsAnchorV2(plan.remote_anchor,plan.diary_id,plan.epoch_id,candidate.snapshot.rows)
-  if(state.diary_id!==plan.diary_id||state.epoch_id!==plan.epoch_id||state.manifest_fingerprint!==plan.manifest_fingerprint
+  const binding=state.remote_binding
+  if(state.diary_id!==plan.diary_id||state.epoch_id!==plan.epoch_id||state.key_id!==candidate.payload.key_id||state.manifest_fingerprint!==plan.manifest_fingerprint
     ||state.writer_device_id!==plan.local_writer_device_id||state.writer_signing_key_id!==plan.local_writer_key_id
-    ||state.remote_binding?.remote_resource_id!==plan.remote_resource_id)throw new Error('Persisted read-only Join plan is not bound to the authenticated local StateV6.')
+    ||binding?.storage_provider_id!==GOOGLE_DRIVE_SHEETS_PROVIDER||binding.sync_profile!==SINGLE_WRITER_V2_PROFILE
+    ||binding.remote_resource_id!==plan.remote_resource_id||binding.remote_identity_binding!==candidate.accountBinding)throw new Error('Persisted read-only Join plan is not bound to the authenticated local StateV6.')
 }
 
 export class ProductiveReadOnlyJoinV2Service {
@@ -291,6 +294,13 @@ export class ProductiveReadOnlyJoinV2Service {
     await validateResumePlan({plan,joinId,familyLocator,candidate,state})
     const key=await this.store.loadWriterKey(state.writer_signing_key_id,state.diary_id,state.epoch_id)
     if(!key||key.writer_device_id!==state.writer_device_id)throw new Error('Persisted read-only Join WriterDeviceKeyV2 is missing or does not match authenticated StateV6.')
+    const persistedWrap=await this.store.loadRootWrapV6(state.epoch_id)
+    if(persistedWrap.wrap.diary_id!==state.diary_id||persistedWrap.wrap.epoch_id!==state.epoch_id
+      ||persistedWrap.wrap.key_id!==state.key_id||persistedWrap.wrap.manifest_fingerprint!==state.manifest_fingerprint)throw new Error('Persisted read-only Join RootWrapV6 is not bound to authenticated StateV6.')
+    const openedRoot=await openReadOnlyJoinRootWrapV6WithActiveMode(persistedWrap)
+    if(base64Url(openedRoot)!==base64Url(candidate.rootKey))throw new Error('Persisted read-only Join RootWrapV6 does not recover the verified remote root key.')
+    if(state.activation_lineage_cache_ref!==null)await this.store.loadActivationLineageCache(candidate.rootKey,epochSalt,state.epoch_id)
+    else if(candidate.payload.activation_lineage.length!==0)throw new Error('Persisted read-only Join is missing ActivationLineageCacheV2.')
     const next=await stateAfterCanonicalVerifyV6(state,candidate.result,candidate.snapshot.rows,false)
     await this.store.replaceState(candidate.rootKey,epochSalt,state.operation_generation,next)
     state=await this.store.loadState(candidate.rootKey,epochSalt,candidate.payload.epoch_id)
