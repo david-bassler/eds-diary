@@ -138,7 +138,9 @@ export class ProductiveWriterHandoffV2Service {
   }
 
   async createTransferDescriptor():Promise<TransferDescriptorV2>{
-    const context=await this.activeContext(),key=await this.localKey(context.state),fresh=await this.freshVerify(context)
+    const context=await this.activeContext()
+    if(context.state.writer_status!=='read_only')throw new Error('TransferDescriptorV2 may only be created by a locally read-only device.')
+    const key=await this.localKey(context.state),fresh=await this.freshVerify(context)
     const state=await this.refreshLocal(context,fresh,false)
     if(nonTerminalSecurityOperation(state,null))throw new Error('TransferDescriptorV2 creation is blocked by another security operation.')
     if(state.writer_status!=='read_only'||state.epoch_status!=='active')throw new Error('TransferDescriptorV2 requires active read-only state after fresh verification.')
