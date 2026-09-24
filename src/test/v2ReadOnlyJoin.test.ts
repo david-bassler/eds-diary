@@ -23,6 +23,8 @@ import { SINGLE_WRITER_V2_PROFILE, type VerifiedRemoteState } from '../sync/core
 import type { TransferableSingleWriterV2ProviderSession } from '../sync/google/GoogleTransferableSingleWriterV2Provider'
 import { IndexedDbV2LocalSecurityStore, __v2LocalPersistenceTesting } from '../security/v2/localPersistence'
 import { ProductiveReadOnlyJoinV2Service } from '../data/readOnlyJoinV2Service'
+import { ProductiveWriterHandoffV2Service } from '../data/writerHandoffV2Service'
+import { verifyTransferDescriptorV2 } from '../security/v2/validators'
 import { __localDatabaseTesting, activeEpochSyncContext, activeProtocolSelectionV2 } from '../data/localDatabase'
 
 const id=(fill:number,length:number)=>base64Url(new Uint8Array(length).fill(fill))
@@ -148,6 +150,22 @@ describe('productive v2 read-only Join',()=>{
     const selected=await activeProtocolSelectionV2()
     expect(selected).toMatchObject({diary_id:f.diaryId,epoch_id:f.epochId,manifest_fingerprint:f.fingerprint,operation_id:joined.joinId})
     expect((await activeEpochSyncContext()).state.epoch_status).toBe('retired')
+  })
+
+  it('feeds the productive cooperative-Handoff descriptor API from the exact joined read-only identity',async()=>{
+    const f=await nativeJoinFixture(),calls={family:0},session=sessionFor(f,calls)
+    const joined=await new ProductiveReadOnlyJoinV2Service(session).join(f.urs)
+    const descriptor=await new ProductiveWriterHandoffV2Service(session).createTransferDescriptor()
+    const verified=await verifyTransferDescriptorV2(descriptor)
+    expect(verified.diary_id).toBe(joined.diaryId)
+    expect(verified.epoch_id).toBe(joined.epochId)
+    expect(verified.writer_device_id).toBe(joined.writerDeviceId)
+    expect(verified.writer_key_id).toBe(joined.writerKeyId)
+    expect(verified.writer_device_id).not.toBe(f.writerDeviceId)
+    const state=await new IndexedDbV2LocalSecurityStore().loadState(f.rootKey,f.epochSalt,f.epochId)
+    expect(state.writer_status).toBe('read_only')
+    expect(state.writer_generation).toBeNull()
+    expect(state.writer_grant_id).toBeNull()
   })
 
   it('resumes the exact persisted local identity after a crash between Join bundle and local switch',async()=>{
