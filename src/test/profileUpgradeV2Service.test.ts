@@ -309,6 +309,21 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     expect(await activeProtocolSelectionV2()).toMatchObject({epoch_id:joined.epochId,operation_id:joined.joinId})
   },120_000)
 
+  it('refuses TransferDescriptorV2 creation on the current Writer without locally demoting it',async()=>{
+    const createdAt='2026-09-23T12:35:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    if(!v2.recovery)throw new Error('handoff fixture missing recovery state')
+    const recovered=await openRecoveryArtifactV6(v2.recovery,urs),epochSalt=await deriveEpochSaltV2(fromBase64Url(recovered.payload.diary_id),fromBase64Url(recovered.payload.epoch_id))
+    const store=new IndexedDbV2LocalSecurityStore()
+    const before=await store.loadState(recovered.rootKey,epochSalt,upgraded.successor_epoch_id)
+    expect(before.writer_status).toBe('writer_active')
+    await expect(new ProductiveWriterHandoffV2Service(v2,store,()=>createdAt).createTransferDescriptor()).rejects.toThrow(/locally read-only/)
+    const after=await store.loadState(recovered.rootKey,epochSalt,upgraded.successor_epoch_id)
+    expect(after.writer_status).toBe('writer_active')
+    expect(after.writer_generation).toBe(before.writer_generation)
+    expect(after.writer_grant_id).toBe(before.writer_grant_id)
+  },120_000)
+
   it('transfers Writer authority cooperatively and lets the target adopt only after its own full verify',async()=>{
     const createdAt='2026-09-23T12:40:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
     const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
