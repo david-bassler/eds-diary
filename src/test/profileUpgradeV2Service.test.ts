@@ -53,7 +53,7 @@ import {
 } from '../security/v2/crypto'
 import { envelopeRowV2, sealRevisionEnvelopeV2 } from '../security/v2/envelopes'
 import { createAnchorV2 } from '../security/v2/prefix'
-import type { RecoveryAuthorityTransitionV2, RevisionV2, WriterGrantV2 } from '../security/v2/types'
+import type { RecoveryAuthorityTransitionV2, RevisionV2, RotationAnnouncementV2, WriterGrantV2 } from '../security/v2/types'
 
 type Row=readonly[string,string,string]
 
@@ -277,6 +277,31 @@ async function prepareRecoveryTransitionRow(v2:V2Session,urs:Uint8Array,createdA
   return envelopeRowV2(envelope)
 }
 
+async function prepareSealRow(v2:V2Session,urs:Uint8Array,createdAt:string):Promise<Row>{
+  const ctx=await successorSecurityContext(v2,urs),successorEpochId=base64Url(randomBytes(16))
+  const rotation:RotationAnnouncementV2={
+    rotation_id:base64Url(randomBytes(32)),from_epoch_id:ctx.payload.epoch_id,
+    successor_epoch_id:successorEpochId,successor_creation_locator:base64Url(randomBytes(16)),
+    successor_manifest_fingerprint:base64Url(randomBytes(32)),rotation_kind:'normal',
+    source_writer_generation:ctx.state.verified_writer_generation!,source_writer_grant_id:ctx.state.verified_writer_grant_id!,
+    successor_recovery_generation:ctx.state.recovery_generation,
+    source_anchor_before_announcement:await createAnchorV2(ctx.payload.diary_id,ctx.payload.epoch_id,ctx.remote.snapshot.rows),
+    successor_staging_anchor:await createAnchorV2(ctx.payload.diary_id,successorEpochId,[]),recovery_transition_id:null,
+  }
+  const unsigned:RevisionV2<RotationAnnouncementV2>={
+    record_type:'rotation_announcement',record_schema:'rotation-announcement-sw-v2',
+    record_id:base64Url(randomBytes(16)),revision_id:base64Url(randomBytes(32)),
+    parent_revision_ids:[],record_status:'control',record_data:rotation,migration_origin:null,protocol_created_at:createdAt,
+    writer_context:{
+      writer_generation:ctx.state.verified_writer_generation!,writer_grant_id:ctx.state.verified_writer_grant_id!,
+      writer_device_id:ctx.state.verified_writer_device_id!,writer_key_id:ctx.state.verified_writer_key_id!,
+    },writer_signature:null,
+  }
+  const revision={...unsigned,writer_signature:await signEd25519V2(ctx.writer.private_key,revisionSigningBytesV2(ctx.payload.diary_id,ctx.payload.epoch_id,unsigned))}
+  const envelope=await sealRevisionEnvelopeV2(ctx.recovered.rootKey,ctx.epochSalt,{diaryId:ctx.payload.diary_id,epochId:ctx.payload.epoch_id},revision,randomBytes(32),randomBytes(12))
+  return envelopeRowV2(envelope)
+}
+
 describe('ProductiveProfileUpgradeV2Service',()=>{
   beforeEach(async()=>{
     await __localDatabaseTesting.resetForTesting()
@@ -436,6 +461,21 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     expect(await activeProtocolSelectionV2()).toBeNull()
     const store=new IndexedDbV2LocalSecurityStore()
     expect(await store.operationArtifact(`${result.operation_id}:activated-backup`)).toBeNull()
+  },90_000)
+
+  it('supersedes before activated Backup when the activated Successor is sealed by a valid v2 RotationAnnouncement',async()=>{
+    const createdAt='2026-09-23T15:57:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    let armed=false
+    await expect(new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt,point=>{
+      if(point==='after-confirmation_durable'&&!armed){armed=true;throw new Error('armed-post-activation-seal')}
+    }).upgrade()).rejects.toThrow('armed-post-activation-seal')
+    if(!v2.remote)throw new Error('successor missing in test fixture')
+    const sealRow=await prepareSealRow(v2,urs,createdAt)
+    v2.remote.snapshot.rows.push([...sealRow])
+    const result=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    expect(result.stage).toBe('post_activation_superseded')
+    expect(result.activated_backup_id).toBeNull()
+    expect(await activeProtocolSelectionV2()).toBeNull()
   },90_000)
 
   it('enters terminal successor cutover-race when another row becomes first after the staging anchor',async()=>{
