@@ -235,6 +235,34 @@ async function appendPostActivationDomainRow(v2:V2Session,urs:Uint8Array,created
   const row=envelopeRowV2(envelope);await ctx.remote.append(ctx.remote.remoteId,row);return row
 }
 
+async function persistLocalPreparedDomainRow(v2:V2Session,urs:Uint8Array,createdAt:string){
+  const ctx=await successorSecurityContext(v2,urs)
+  const state=await ctx.store.loadState(ctx.recovered.rootKey,ctx.epochSalt,ctx.payload.epoch_id)
+  if(state.writer_status!=='writer_active'||state.writer_generation===null||state.writer_grant_id===null)throw new Error('local domain fixture requires current Writer')
+  const key=await ctx.store.loadWriterKey(state.writer_signing_key_id,state.diary_id,state.epoch_id)
+  if(!key)throw new Error('local domain fixture WriterDeviceKeyV2 missing')
+  const reservation=await ctx.store.reserveEnvelope(state.epoch_id,ctx.remote.snapshot.rows)
+  const unsigned:RevisionV2={
+    record_type:'pain_entry',record_schema:'pain-entry/v1',
+    record_id:base64Url(randomBytes(16)),revision_id:base64Url(randomBytes(32)),
+    parent_revision_ids:[],record_status:'active',
+    record_data:{startedAt:createdAt,endedAt:'',locations:[],intensity:5,qualities:[],cause:'',occursWhen:'',note:'local handoff gate fixture',createdAt,updatedAt:createdAt},
+    migration_origin:null,protocol_created_at:createdAt,
+    writer_context:{
+      writer_generation:state.writer_generation,writer_grant_id:state.writer_grant_id,
+      writer_device_id:state.writer_device_id,writer_key_id:state.writer_signing_key_id,
+    },
+    writer_signature:null,
+  }
+  const revision={...unsigned,writer_signature:await signEd25519V2(key.private_key,revisionSigningBytesV2(state.diary_id,state.epoch_id,unsigned))}
+  const envelope=await sealRevisionEnvelopeV2(ctx.recovered.rootKey,ctx.epochSalt,{diaryId:state.diary_id,epochId:state.epoch_id},revision,fromBase64Url(reservation.envelope_id),fromBase64Url(reservation.iv))
+  const after=await ctx.store.commitReservedEnvelope(ctx.recovered.rootKey,ctx.epochSalt,state.operation_generation,reservation,envelope,{
+    writer_generation:state.writer_generation,writer_grant_id:state.writer_grant_id,
+    writer_device_id:state.writer_device_id,writer_key_id:state.writer_signing_key_id,
+  })
+  return{...ctx,envelope,state:after}
+}
+
 async function appendPostActivationHandoff(v2:V2Session,urs:Uint8Array,createdAt:string){
   const ctx=await successorSecurityContext(v2,urs),target=await generateWriterDeviceKeyV2(),targetDeviceId=base64Url(randomBytes(16))
   const grant:WriterGrantV2={
@@ -653,9 +681,56 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     v2.remote.injectBeforeNextAppend=[existing[0]!,existing[1]!,existing[2]!]
     const result=await new ProductiveWriterHandoffV2Service(v2,store,()=>createdAt).handoff(descriptor)
     expect(result.stage).toBe('stale')
+    const operation=await store.loadWriterGrantOperation(result.operationId)
     const after=await store.loadState(recovered.rootKey,epochSalt,upgraded.successor_epoch_id)
     expect(after.writer_status).toBe('writer_active')
     expect(after.writer_operation_state_ref?.state).toBe('stale')
+    const ceremonyEntry=(await store.outbox(recovered.rootKey,epochSalt,upgraded.successor_epoch_id)).find(entry=>entry.envelope_id===operation.prepared_envelope.envelope_id)
+    expect(ceremonyEntry?.status).toBe('stale_writer_pending')
+    expect(after.stale_writer_pending_count).toBeGreaterThanOrEqual(1)
+  },120_000)
+
+  it('quarantines an absent prepared Handoff Grant when the authority anchor advances before resume',async()=>{
+    const createdAt='2026-09-23T12:56:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    if(!v2.remote||!v2.recovery)throw new Error('handoff fixture missing successor/recovery state')
+    const recovered=await openRecoveryArtifactV6(v2.recovery,urs),epochSalt=await deriveEpochSaltV2(fromBase64Url(recovered.payload.diary_id),fromBase64Url(recovered.payload.epoch_id))
+    const store=new IndexedDbV2LocalSecurityStore(),state=await store.loadState(recovered.rootKey,epochSalt,upgraded.successor_epoch_id)
+    const targetPair=await generateWriterDeviceKeyV2(),targetDeviceId=base64Url(randomBytes(16)),targetKey:StoredWriterDeviceKeyV2={writer_signing_key_id:targetPair.writerKeyId,writer_device_id:targetDeviceId,writer_public_key:base64Url(targetPair.publicKeyRaw),private_key:targetPair.privateKey}
+    const descriptor=await createTransferDescriptorV2({...state,writer_status:'read_only',writer_device_id:targetDeviceId,writer_signing_key_id:targetPair.writerKeyId,writer_generation:null,writer_grant_id:null},targetKey,new Uint8Array(32).fill(47))
+    let crashed=false
+    await expect(new ProductiveWriterHandoffV2Service(v2,store,()=>createdAt,async point=>{
+      if(point==='after-prepared'&&!crashed){crashed=true;throw new Error('handoff-crash:prepared-for-stale')}
+    }).handoff(descriptor)).rejects.toThrow('handoff-crash:prepared-for-stale')
+    const operation=await store.loadBoundWriterGrantOperation(recovered.rootKey,epochSalt,upgraded.successor_epoch_id)
+    if(!operation)throw new Error('prepared Handoff operation missing')
+    const existing=v2.remote.snapshot.rows.at(-1)
+    if(!existing)throw new Error('handoff remote prefix missing')
+    v2.remote.snapshot.rows.push([...existing])
+    const resumed=await new ProductiveWriterHandoffV2Service(v2,store,()=>createdAt).handoff()
+    expect(resumed.stage).toBe('stale')
+    expect(v2.remote.snapshot.rows.some(row=>row[0]===operation.prepared_envelope.envelope_id)).toBe(false)
+    const entry=(await store.outbox(recovered.rootKey,epochSalt,upgraded.successor_epoch_id)).find(item=>item.envelope_id===operation.prepared_envelope.envelope_id)
+    expect(entry?.status).toBe('stale_writer_pending')
+  },120_000)
+
+  it('blocks Handoff on unresolved local domain work but permits the same row after terminal stale quarantine',async()=>{
+    const createdAt='2026-09-23T12:57:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    if(!v2.remote||!v2.recovery)throw new Error('handoff fixture missing successor/recovery state')
+    const local=await persistLocalPreparedDomainRow(v2,urs,createdAt)
+    const current=await local.store.loadState(local.recovered.rootKey,local.epochSalt,upgraded.successor_epoch_id)
+    const targetPair=await generateWriterDeviceKeyV2(),targetDeviceId=base64Url(randomBytes(16)),targetKey:StoredWriterDeviceKeyV2={writer_signing_key_id:targetPair.writerKeyId,writer_device_id:targetDeviceId,writer_public_key:base64Url(targetPair.publicKeyRaw),private_key:targetPair.privateKey}
+    const descriptor=await createTransferDescriptorV2({...current,writer_status:'read_only',writer_device_id:targetDeviceId,writer_signing_key_id:targetPair.writerKeyId,writer_generation:null,writer_grant_id:null},targetKey,new Uint8Array(32).fill(48))
+    await expect(new ProductiveWriterHandoffV2Service(v2,local.store,()=>createdAt).handoff(descriptor)).rejects.toThrow(/all local Writer envelopes/)
+    const beforeQuarantine=await local.store.loadState(local.recovered.rootKey,local.epochSalt,upgraded.successor_epoch_id)
+    await local.store.updateOutboxStatus(local.recovered.rootKey,local.epochSalt,upgraded.successor_epoch_id,local.envelope.envelopeId,beforeQuarantine.operation_generation,'stale_writer_pending')
+    const result=await new ProductiveWriterHandoffV2Service(v2,local.store,()=>createdAt).handoff(descriptor)
+    expect(result.stage).toBe('durable')
+    const after=await local.store.loadState(local.recovered.rootKey,local.epochSalt,upgraded.successor_epoch_id)
+    expect(after.writer_status).toBe('read_only')
+    const staleEntry=(await local.store.outbox(local.recovered.rootKey,local.epochSalt,upgraded.successor_epoch_id)).find(entry=>entry.envelope_id===local.envelope.envelopeId)
+    expect(staleEntry?.status).toBe('stale_writer_pending')
   },120_000)
 
   it('enters terminal source-race when a v1 row lands between the final read and one-shot Announcement append',async()=>{
