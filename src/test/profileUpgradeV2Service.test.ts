@@ -61,6 +61,7 @@ class MemoryTransport implements RemoteTransport {
     readonly snapshot:RemoteSnapshot&{manifest:string[];rows:string[][]},
   ){}
   appendCounts=new Map<string,number>()
+  appendAttempts=0
   unknownAfterAppend=false
   unknownWithoutAppend=0
   injectBeforeNextAppend:Row|null=null
@@ -69,6 +70,7 @@ class MemoryTransport implements RemoteTransport {
   async read(id:string):Promise<RemoteSnapshot>{if(id!==this.remoteId)throw new Error('wrong remote');return structuredClone(this.snapshot)}
   async append(id:string,row:readonly[string,string,string]):Promise<void>{
     if(id!==this.remoteId)throw new Error('wrong remote')
+    this.appendAttempts+=1
     if(this.unknownWithoutAppend>0){this.unknownWithoutAppend-=1;throw new TransportError('unknown_outcome','simulated unresolved append')}
     if(this.injectBeforeNextAppend){this.snapshot.rows.push([...this.injectBeforeNextAppend]);this.injectBeforeNextAppend=null}
     this.snapshot.rows.push([...row])
@@ -372,6 +374,41 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     expect(result.stage).toBe('durable')
     const operation=await store.loadWriterGrantOperation(result.operationId)
     expect(v2.remote.appendCounts.get(operation.prepared_envelope.envelope_id)).toBe(1)
+  },120_000)
+
+  it('rejects an invalid TransferDescriptorV2 PoP before persisting or appending a Handoff Grant',async()=>{
+    const createdAt='2026-09-23T12:47:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    if(!v2.remote||!v2.recovery)throw new Error('handoff fixture missing successor/recovery state')
+    const recovered=await openRecoveryArtifactV6(v2.recovery,urs),epochSalt=await deriveEpochSaltV2(fromBase64Url(recovered.payload.diary_id),fromBase64Url(recovered.payload.epoch_id))
+    const store=new IndexedDbV2LocalSecurityStore(),state=await store.loadState(recovered.rootKey,epochSalt,upgraded.successor_epoch_id)
+    const targetPair=await generateWriterDeviceKeyV2(),targetDeviceId=base64Url(randomBytes(16)),targetKey:StoredWriterDeviceKeyV2={writer_signing_key_id:targetPair.writerKeyId,writer_device_id:targetDeviceId,writer_public_key:base64Url(targetPair.publicKeyRaw),private_key:targetPair.privateKey}
+    const descriptor=await createTransferDescriptorV2({...state,writer_status:'read_only',writer_device_id:targetDeviceId,writer_signing_key_id:targetPair.writerKeyId,writer_generation:null,writer_grant_id:null},targetKey,new Uint8Array(32).fill(45))
+    const tampered={...descriptor,possession_signature:base64Url(new Uint8Array(64).fill(99))}
+    const attempts=v2.remote.appendAttempts
+    await expect(new ProductiveWriterHandoffV2Service(v2,store,()=>createdAt).handoff(tampered)).rejects.toThrow(/possession signature failed/)
+    expect(v2.remote.appendAttempts).toBe(attempts)
+    expect(await store.loadBoundWriterGrantOperation(recovered.rootKey,epochSalt,upgraded.successor_epoch_id)).toBeNull()
+  },120_000)
+
+  it('does not blind-loop WriterGrant retries after repeated unknown outcomes without a remote commit',async()=>{
+    const createdAt='2026-09-23T12:48:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    if(!v2.remote||!v2.recovery)throw new Error('handoff fixture missing successor/recovery state')
+    const recovered=await openRecoveryArtifactV6(v2.recovery,urs),epochSalt=await deriveEpochSaltV2(fromBase64Url(recovered.payload.diary_id),fromBase64Url(recovered.payload.epoch_id))
+    const store=new IndexedDbV2LocalSecurityStore(),state=await store.loadState(recovered.rootKey,epochSalt,upgraded.successor_epoch_id)
+    const targetPair=await generateWriterDeviceKeyV2(),targetDeviceId=base64Url(randomBytes(16)),targetKey:StoredWriterDeviceKeyV2={writer_signing_key_id:targetPair.writerKeyId,writer_device_id:targetDeviceId,writer_public_key:base64Url(targetPair.publicKeyRaw),private_key:targetPair.privateKey}
+    const descriptor=await createTransferDescriptorV2({...state,writer_status:'read_only',writer_device_id:targetDeviceId,writer_signing_key_id:targetPair.writerKeyId,writer_generation:null,writer_grant_id:null},targetKey,new Uint8Array(32).fill(46))
+    const before=v2.remote.appendAttempts
+    v2.remote.unknownWithoutAppend=2
+    const unresolved=await new ProductiveWriterHandoffV2Service(v2,store,()=>createdAt).handoff(descriptor)
+    expect(unresolved.stage).toBe('append_unknown')
+    expect(v2.remote.appendAttempts-before).toBe(2)
+    expect(v2.remote.snapshot.rows.some(row=>row[0]===(await store.loadWriterGrantOperation(unresolved.operationId)).prepared_envelope.envelope_id)).toBe(false)
+
+    const resumed=await new ProductiveWriterHandoffV2Service(v2,store,()=>createdAt).handoff()
+    expect(resumed.stage).toBe('durable')
+    expect(v2.remote.appendAttempts-before).toBe(3)
   },120_000)
 
   it('resumes the exact prepared Handoff after crashes before and after the remote append',async()=>{
