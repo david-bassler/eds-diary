@@ -669,6 +669,33 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     expect(v2.remote.appendCounts.get(operation.prepared_envelope.envelope_id)).toBe(1)
   },120_000)
 
+  it('stales a prepared Handoff when Recovery-Rekey becomes pending before append',async()=>{
+    const createdAt='2026-09-23T12:52:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    if(!v2.remote||!v2.recovery)throw new Error('handoff fixture missing successor/recovery state')
+    const recovered=await openRecoveryArtifactV6(v2.recovery,urs),epochSalt=await deriveEpochSaltV2(fromBase64Url(recovered.payload.diary_id),fromBase64Url(recovered.payload.epoch_id))
+    const store=new IndexedDbV2LocalSecurityStore(),state=await store.loadState(recovered.rootKey,epochSalt,upgraded.successor_epoch_id)
+    const targetPair=await generateWriterDeviceKeyV2(),targetDeviceId=base64Url(randomBytes(16)),targetKey:StoredWriterDeviceKeyV2={writer_signing_key_id:targetPair.writerKeyId,writer_device_id:targetDeviceId,writer_public_key:base64Url(targetPair.publicKeyRaw),private_key:targetPair.privateKey}
+    const descriptor=await createTransferDescriptorV2({...state,writer_status:'read_only',writer_device_id:targetDeviceId,writer_signing_key_id:targetPair.writerKeyId,writer_generation:null,writer_grant_id:null},targetKey,new Uint8Array(32).fill(51))
+    let crashed=false
+    await expect(new ProductiveWriterHandoffV2Service(v2,store,()=>createdAt,async point=>{
+      if(point==='after-prepared'&&!crashed){crashed=true;throw new Error('handoff-crash:prepared-for-rekey')}
+    }).handoff(descriptor)).rejects.toThrow('handoff-crash:prepared-for-rekey')
+    const operation=await store.loadBoundWriterGrantOperation(recovered.rootKey,epochSalt,upgraded.successor_epoch_id)
+    if(!operation)throw new Error('prepared Handoff operation missing')
+    const attempts=v2.remote.appendAttempts
+    await v2.remote.append('successor-v2',await prepareRecoveryTransitionRow(v2,urs,createdAt))
+    const resumed=await new ProductiveWriterHandoffV2Service(v2,store,()=>createdAt).handoff()
+    expect(resumed.stage).toBe('stale')
+    expect(v2.remote.appendAttempts).toBe(attempts+1)
+    expect(v2.remote.snapshot.rows.some(row=>row[0]===operation.prepared_envelope.envelope_id)).toBe(false)
+    const after=await store.loadState(recovered.rootKey,epochSalt,upgraded.successor_epoch_id)
+    expect(after.recovery_rekey_rotation_required).toBe(true)
+    expect(after.writer_operation_state_ref?.state).toBe('stale')
+    const entry=(await store.outbox(recovered.rootKey,epochSalt,upgraded.successor_epoch_id)).find(item=>item.envelope_id===operation.prepared_envelope.envelope_id)
+    expect(entry?.status).toBe('stale_writer_pending')
+  },120_000)
+
   it('loses a concurrent g+1 race without appending its prepared Grant',async()=>{
     const createdAt='2026-09-23T12:53:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
     const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
