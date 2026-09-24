@@ -137,6 +137,24 @@ describe('productive v2 read-only Join',()=>{
     expect((await activeEpochSyncContext()).state.epoch_status).toBe('retired')
   })
 
+  it('resumes the exact persisted local identity after a crash between Join bundle and local switch',async()=>{
+    const f=await nativeJoinFixture(),calls={family:0},store=new IndexedDbV2LocalSecurityStore()
+    const crashing=new ProductiveReadOnlyJoinV2Service(sessionFor(f,calls),store,async point=>{
+      if(point==='after-join-bundle')throw new Error('injected join crash')
+    })
+    await expect(crashing.join(f.urs)).rejects.toThrow(/injected join crash/)
+    expect(await activeProtocolSelectionV2()).toBeNull()
+    const persisted=await store.loadState(f.rootKey,f.epochSalt,f.epochId)
+    expect(persisted.writer_status).toBe('read_only')
+    const persistedDevice=persisted.writer_device_id,persistedKey=persisted.writer_signing_key_id
+
+    const resumed=await new ProductiveReadOnlyJoinV2Service(sessionFor(f,calls),store).join(f.urs)
+    expect(resumed.resumed).toBe(true)
+    expect(resumed.writerDeviceId).toBe(persistedDevice)
+    expect(resumed.writerKeyId).toBe(persistedKey)
+    expect(await activeProtocolSelectionV2()).toMatchObject({operation_id:resumed.joinId,epoch_id:f.epochId})
+  })
+
   it('blocks an unrelated non-fresh local profile before Recovery-family discovery',async()=>{
     const f=await nativeJoinFixture(),calls={family:0}
     const db=await __localDatabaseTesting.openDatabase(),stores=__localDatabaseTesting.STORES
