@@ -339,7 +339,7 @@ Implementation stack at that historical review: `feat/transferable-single-writer
 
 At that historical review point, the first three implementation layers were present: frozen v2 wire/control types, strict validators, Ed25519/KDF/ID and EnvelopeV6 primitives, the exact v2 schema registry, RemoteAnchorV2 hashing, the product-neutral canonical replay verifier including the separately typed `rotation_resume` path, and the V2-03 local StateV6/WriterDeviceKeyV2/normal-domain write-gate core. The following sentence records the historical boundary at that review point and must not be read as current status: ManifestV6/Google v2 storage, RootWrapV6 product bootstrap, cross-epoch activation, recovery services, migration orchestration, join, cooperative handoff, forced-takeover product flow and UI were not yet complete at that time.
 
-| Decision | Current implementation status |
+| Decision | Historical implementation status at V2-03 review |
 | --- | --- |
 | D-001 | Stable URS-/takeover-key identifiers and diary-wide `recovery_credential_history` replay/freshness enforcement are implemented in V2-01/V2-02. Secret-aware URS recomputation and Artifact enforcement remain V2-04+/recovery-service work. |
 | D-002 | Protocol/operation-state semantics specified; v2 recovery-rekey runtime still pending. |
