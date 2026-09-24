@@ -89,7 +89,7 @@ export async function createRecoveryTakeoverStagingV2(args:{
   await validateRecoveryTakeoverStagingV2(staging)
   return staging
 }
-export async function verifyRecoveryTakeoverStagingV2(staging:RecoveryTakeoverStagingV2,urs:Uint8Array):Promise<VerifiedRecoveryTakeoverStagingV2>{
+export async function openRecoveryTakeoverStagingV2(staging:RecoveryTakeoverStagingV2,urs:Uint8Array):Promise<{verified:VerifiedRecoveryTakeoverStagingV2;privateKeyPkcs8:Uint8Array}>{
   await validateRecoveryTakeoverStagingV2(staging)
   const plain=await aesGcmDecrypt(
     await deriveRecoveryTakeoverStagingKeyV2(urs,fixedBase64Url(staging.salt,32)),
@@ -100,7 +100,8 @@ export async function verifyRecoveryTakeoverStagingV2(staging:RecoveryTakeoverSt
   const payload=parseCanonicalJson(plain) as unknown as {recovery_takeover_private_key_pkcs8:string}
   if(!payload||typeof payload!=='object')throw new Error('RecoveryTakeoverStagingV2 plaintext schema mismatch.')
   exact(payload,PLAINTEXT_KEYS,'RecoveryTakeoverStagingV2 plaintext')
-  const privateKey=await importRecoveryTakeoverSigningKeyV2(fromBase64Url(payload.recovery_takeover_private_key_pkcs8))
+  const privateKeyPkcs8=fromBase64Url(payload.recovery_takeover_private_key_pkcs8)
+  const privateKey=await importRecoveryTakeoverSigningKeyV2(privateKeyPkcs8)
   if(!await verifyRecoveryTakeoverKeyPairV2(
     privateKey,
     fixedBase64Url(staging.recovery_takeover_public_key,32),
@@ -108,5 +109,8 @@ export async function verifyRecoveryTakeoverStagingV2(staging:RecoveryTakeoverSt
     staging.epoch_id,
     staging.recovery_generation,
   ))throw new Error('RecoveryTakeoverStagingV2 keypair check failed.')
-  return new VerifiedRecoveryTakeoverStagingV2(structuredClone(staging),VERIFIED_STAGING_TOKEN)
+  return{verified:new VerifiedRecoveryTakeoverStagingV2(structuredClone(staging),VERIFIED_STAGING_TOKEN),privateKeyPkcs8:new Uint8Array(privateKeyPkcs8)}
+}
+export async function verifyRecoveryTakeoverStagingV2(staging:RecoveryTakeoverStagingV2,urs:Uint8Array):Promise<VerifiedRecoveryTakeoverStagingV2>{
+  return(await openRecoveryTakeoverStagingV2(staging,urs)).verified
 }

@@ -31,6 +31,10 @@ function localWriterMatches(local:EpochLocalSecurityStateV6,remote:CanonicalFull
     && local.verified_writer_grant_id===writer.writer_grant_id
 }
 
+const TERMINAL_ROTATION_STATES=new Set(['switched','stale','cutover_race','post_activation_superseded'])
+function hasNonTerminalOperationRef(ref:EpochLocalSecurityStateV6['rotation_state_ref']):boolean{
+  return ref!==null&&!TERMINAL_ROTATION_STATES.has(ref.state)
+}
 function mutationBlocked(local:EpochLocalSecurityStateV6,remote:CanonicalFullResultV2):boolean{
   return local.diary_id!==remote.diary_id
     || local.epoch_id!==remote.epoch_id
@@ -40,7 +44,7 @@ function mutationBlocked(local:EpochLocalSecurityStateV6,remote:CanonicalFullRes
     || remote.source_epoch_sealed
     || remote.current_recovery.recovery_rekey_rotation_required
     || local.recovery_rekey_rotation_required
-    || local.rotation_state_ref!==null
+    || hasNonTerminalOperationRef(local.rotation_state_ref)
     || local.migration_state_ref!==null
     || local.writer_operation_state_ref!==null
     || local.recovery_operation_state_ref!==null

@@ -25,6 +25,7 @@ import type { CoordinatorStore } from '../sync/core/coordinator'
 import { SINGLE_WRITER_V1_PROFILE, type RemoteAnchorState, type VerifiedRemoteState } from '../sync/core/contracts'
 import type { RemoteAnchorV1 } from '../sync/core/prefix'
 import { rotationStateHash, type RotationPersistence, type RotationState } from '../security/rotation'
+import { advanceRotationOperationStateV2, rotationOperationStateHashV2, validateRotationOperationStateV2, type RotationOperationStateV2 } from '../security/v2/profileUpgrade'
 import { validateDomainData } from '../security/domainSchemaValidator'
 import painEntrySchema from '../security/schemas/pain-entry.v1.schema.json'
 import activityEntrySchema from '../security/schemas/activity-entry.v1.schema.json'
@@ -35,6 +36,17 @@ import activityTypeSettingsSchema from '../security/schemas/activity-type-settin
 import epochMigrationSchema from '../security/schemas/epoch-migration-sw.v1.schema.json'
 import rotationAnnouncementSchema from '../security/schemas/rotation-announcement-sw.v1.schema.json'
 import { validateRevisionV1 } from '../security/revisions'
+import {
+  createBestEffortRootWrapV6,
+  createPassphraseRootWrapV6,
+  createPrfRootWrapV6,
+  generateBestEffortWrappingKeyV6,
+  openBestEffortRootWrapV6,
+  openPassphraseRootWrapV6,
+  openPrfRootWrapV6,
+  type RootWrapIdentityV6,
+  type RootWrapV6,
+} from '../security/v2/rootWrap'
 
 const DATABASE_NAME = 'eds-diary'
 const SECURE_DATABASE_VERSION_FLOOR = 9
@@ -54,6 +66,7 @@ const STORES = {
 } as const
 const LEGACY_ACTIVITY_TYPES = 'eds-diary-activity-types-v1'
 const ACTIVE_CONTEXT = 'active'
+const ACTIVE_PROTOCOL_SELECTION = 'active-protocol-selection'
 
 export interface EpochContext { id:'active'; diaryId:string; epochId:string; keyId:string; manifestFingerprint:string; wrapId:string }
 interface StoredEnvelope extends PreparedEnvelope { id:string; epochId:string; localSeq:number; rowBytes:string }
@@ -136,6 +149,46 @@ async function loadEpoch(db:IDBDatabase):Promise<{context:EpochContext;rootKey:U
   const contextTx=db.transaction(STORES.context,'readonly'),context=await result<EpochContext|undefined>(contextTx.objectStore(STORES.context).get(ACTIVE_CONTEXT));await complete(contextTx);if(!context){const made=await initialContext(db);unlockedRoots.set(made.context.epochId,new Uint8Array(made.rootKey));return{...made,epochSalt:await deriveEpochSalt(fromBase64Url(made.context.diaryId),fromBase64Url(made.context.epochId))}}
   const {wrap,stored}=await readEpochRecords(db,context);assertEpochIdentityBindings(context,wrap,stored.state);const rootKey=await openStoredRoot(db,context,wrap),epochSalt=await deriveEpochSalt(fromBase64Url(context.diaryId),fromBase64Url(context.epochId));await verifyStateTag(rootKey,epochSalt,stored.state,stored.tag);return{context,rootKey,state:stored.state,epochSalt}
 }
+export interface PreparedSuccessorRootWrapV6 {wrap:RootWrapV6;bestEffortWrappingKey:CryptoKey|null}
+export async function prepareSuccessorRootWrapV6ForActiveMode(rootKey:Uint8Array,identity:RootWrapIdentityV6,wrapId:Uint8Array):Promise<PreparedSuccessorRootWrapV6>{
+  const db=await openDatabase(),active=await loadEpoch(db),records=await readEpochRecords(db,active.context)
+  if(active.context.diaryId!==identity.diary_id)throw new Error('RootWrapV6 successor diary does not match the active v1 diary.')
+  if(wrapId.byteLength!==16)throw new Error('RootWrapV6 wrap_id must contain 16 bytes.')
+  if(records.wrap.mode==='passphrase'){
+    const factor=unlockFactors.get(identity.diary_id)
+    if(!factor||factor.mode!=='passphrase')throw new LocalUnlockRequiredError('passphrase')
+    const wrap=await createPassphraseRootWrapV6(rootKey,factor.passphrase,identity,wrapId)
+    if(base64Url(await openPassphraseRootWrapV6(wrap,factor.passphrase))!==base64Url(rootKey))throw new Error('RootWrapV6 passphrase readback failed.')
+    return{wrap,bestEffortWrappingKey:null}
+  }
+  if(records.wrap.mode==='prf'){
+    const factor=unlockFactors.get(identity.diary_id)
+    if(!factor||factor.mode!=='prf')throw new LocalUnlockRequiredError('prf')
+    const wrap=await createPrfRootWrapV6(rootKey,{credentialId:factor.credentialId,prfEvalInput:factor.prfEvalInput,prfOutput:factor.prfOutput,rpId:factor.rpId},identity,wrapId)
+    if(base64Url(await openPrfRootWrapV6(wrap,factor.credentialId,factor.prfOutput))!==base64Url(rootKey))throw new Error('RootWrapV6 PRF readback failed.')
+    return{wrap,bestEffortWrappingKey:null}
+  }
+  const key=await generateBestEffortWrappingKeyV6(),wrap=await createBestEffortRootWrapV6(rootKey,key,identity,wrapId)
+  if(base64Url(await openBestEffortRootWrapV6(wrap,key))!==base64Url(rootKey))throw new Error('RootWrapV6 best-effort readback failed.')
+  return{wrap,bestEffortWrappingKey:key}
+}
+export async function openSuccessorRootWrapV6WithActiveMode(prepared:PreparedSuccessorRootWrapV6):Promise<Uint8Array>{
+  const wrap=prepared.wrap
+  if(wrap.mode==='best-effort'){
+    if(!prepared.bestEffortWrappingKey)throw new Error('RootWrapV6 best-effort wrapping key is missing.')
+    return openBestEffortRootWrapV6(wrap,prepared.bestEffortWrappingKey)
+  }
+  const factor=unlockFactors.get(wrap.diary_id)
+  if(wrap.mode==='passphrase'){
+    if(!factor||factor.mode!=='passphrase')throw new LocalUnlockRequiredError('passphrase')
+    return openPassphraseRootWrapV6(wrap,factor.passphrase)
+  }
+  if(!factor||factor.mode!=='prf')throw new LocalUnlockRequiredError('prf')
+  const expectedInput=fromBase64Url(wrap.mode_metadata.prf_eval_input)
+  if(!sameBytes(expectedInput,factor.prfEvalInput)||wrap.mode_metadata.rp_id!==factor.rpId)throw new LocalUnlockRequiredError('prf')
+  return openPrfRootWrapV6(wrap,factor.credentialId,factor.prfOutput)
+}
+
 export interface LocalRootWrapStatus{initialized:boolean;mode:'best-effort'|'passphrase'|'prf';locked:boolean;credentialId?:string;prfEvalInput?:string;rpId?:string}
 export async function localRootWrapStatus():Promise<LocalRootWrapStatus>{const db=await openDatabase(),tx=db.transaction(STORES.context,'readonly'),done=complete(tx),context=await result<EpochContext|undefined>(tx.objectStore(STORES.context).get(ACTIVE_CONTEXT));await done;if(!context)return{initialized:false,mode:'best-effort',locked:false};const {wrap}=await readEpochRecords(db,context);if(wrap.mode==='prf')return{initialized:true,mode:'prf',locked:!unlockedRoots.has(context.epochId),credentialId:wrap.mode_metadata.credential_id,prfEvalInput:wrap.mode_metadata.prf_eval_input,rpId:wrap.mode_metadata.rp_id};return{initialized:true,mode:wrap.mode,locked:wrap.mode!=='best-effort'&&!unlockedRoots.has(context.epochId)}}
 export async function unlockActiveRootWithPassphrase(passphrase:string):Promise<void>{const db=await openDatabase(),tx=db.transaction(STORES.context,'readonly'),context=await result<EpochContext|undefined>(tx.objectStore(STORES.context).get(ACTIVE_CONTEXT));await complete(tx);if(!context)throw new Error('No active epoch exists.');const{wrap,stored}=await readEpochRecords(db,context);if(wrap.mode!=='passphrase')throw new Error('Active root wrap is not passphrase mode.');const rootKey=await openPassphraseRootWrap(wrap,passphrase),salt=await deriveEpochSalt(fromBase64Url(context.diaryId),fromBase64Url(context.epochId));await verifyStateTag(rootKey,salt,stored.state,stored.tag);unlockFactors.set(context.diaryId,{mode:'passphrase',passphrase});unlockedRoots.set(context.epochId,new Uint8Array(rootKey));readyPromise=null}
@@ -159,7 +212,7 @@ async function verifiedEnvelopeRevisions(db:IDBDatabase):Promise<RevisionV1[]>{
   return revisions
 }
 async function persistRevision(db:IDBDatabase,store:LocalStoreName,value:Record<string,unknown>,fixedRevisionId?:string,writeMode:'normal'|'merge'|'merge-stage'|'test-branch'='normal',explicitParents:readonly string[]=[]):Promise<void>{
-  const loaded=await loadEpoch(db),rotationStep=loaded.state.rotation_state_ref?.state,frozen=rotationStep!==undefined&&['source_frozen_verified','recovery_secret_verified','successor_planned','successor_bound','copying','successor_verified','recovery_verified','backup_verified','announcement_pending','announcement_durable'].includes(rotationStep);if(loaded.state.epoch_status==='retired'||frozen)throw new Error('Epoch is frozen for rotation.')
+  const loaded=await loadEpoch(db),rotationStep=loaded.state.rotation_state_ref?.state,frozen=rotationStep!==undefined&&['source_frozen_verified','recovery_secret_verified','successor_planned','successor_bound','copying','successor_verified','recovery_verified','backup_verified','announcement_pending','announcement_prepared','recovery_artifact_verified','staged_backup_verified','announcement_unknown','announcement_durable','confirmation_unknown','confirmation_durable','activated_backup_verified','cutover_race','post_activation_superseded','profile_upgrade_source_race'].includes(rotationStep);if(loaded.state.epoch_status==='retired'||frozen)throw new Error('Epoch is frozen for rotation.')
   const id=String(value.id??'');if(!id)throw new Error('Record id is required.');const revisions=await verifiedEnvelopeRevisions(db),profile=profileFor(store,id),canonicalInput=revisions.some(revision=>revision.record_id===id&&revision.record_type===profile.recordType&&revision.record_schema===profile.recordSchema),recordId=canonicalInput?id:await recordIdentity(loaded.context,store,id);if(!canonicalInput)await rememberMapping(db,store,recordId,id)
   const graph=validateRevisionGraphV1(revisions),heads=sortedRevisionIds(graph.headsByRecord.get(recordId)??[]),revisionId=fixedRevisionId??base64Url(randomBytes(32));if(writeMode==='normal'&&heads.length>1)throw new UnresolvedRecordConflictError(recordId,heads);if(writeMode==='merge'&&heads.length<2)throw new Error('Record does not have multiple heads to merge.');if((writeMode==='merge'||writeMode==='merge-stage')&&value.status==='deleted')throw new Error('Explicit merge requires an active merged value.');if(writeMode==='test-branch'&&import.meta.env.MODE!=='test')throw new Error('Test branch writes are unavailable in production.');const parents=writeMode==='test-branch'||writeMode==='merge-stage'?sortedRevisionIds(explicitParents):heads
   if(writeMode==='merge-stage'&&(parents.length<2||parents.length>8||parents.some(parent=>!heads.includes(parent))))throw new Error('Staged merge parents must be current heads of the record.')
@@ -277,6 +330,108 @@ export async function activeEpochVerifierMaterial():Promise<{localEnvelopes:Prep
 
 export const DOMAIN_SCHEMA_REGISTRY:Readonly<Record<string,unknown>>=DOMAIN_SCHEMAS
 export interface VerifiedEpochMaterial {context:EpochContext;state:EpochLocalSecurityStateV5;rootKey:Uint8Array;epochSalt:Uint8Array;envelopes:PreparedEnvelope[];revisions:RevisionV1[]}
+export interface ActiveProtocolSelectionV2 {
+  id:typeof ACTIVE_PROTOCOL_SELECTION
+  sync_profile:'google-sheets-transferable-single-writer-v2'
+  diary_id:string
+  epoch_id:string
+  manifest_fingerprint:string
+  operation_id:string
+}
+
+export async function persistProfileUpgradeSourceOperationV2(operation:RotationOperationStateV2,expectedSourceOperationGeneration?:number):Promise<void>{
+  validateRotationOperationStateV2(operation)
+  const db=await openDatabase(),loaded=await loadEpoch(db)
+  if(loaded.context.epochId!==operation.source_epoch_id)throw new Error('Profile-upgrade operation Source is not the active v1 epoch.')
+  const hash=await rotationOperationStateHashV2(operation)
+  await withDiaryLock(loaded.context.diaryId,async()=>{
+    const current=await loadEpoch(db)
+    if(current.context.epochId!==operation.source_epoch_id)throw new Error('Active v1 Source changed during profile-upgrade operation persistence.')
+    if(expectedSourceOperationGeneration!==undefined&&current.state.operation_generation!==expectedSourceOperationGeneration)throw new Error('v1 Source changed after final profile-upgrade verification; retry from a new full verify.')
+    const ref=current.state.rotation_state_ref
+    if(ref&&ref.operation_id!==operation.operation_id)throw new Error('Another v1 rotation operation is already bound to the Source.')
+    const read=db.transaction(STORES.operations,'readonly')
+    const prior=await result<{state:RotationOperationStateV2;hash:string}|undefined>(read.objectStore(STORES.operations).get(`profile-upgrade-v2:${current.context.diaryId}`))
+    await complete(read)
+    if(prior){
+      validateRotationOperationStateV2(prior.state)
+      if(prior.hash!==await rotationOperationStateHashV2(prior.state)
+        ||!ref
+        ||ref.operation_id!==prior.state.operation_id
+        ||ref.state_record_hash!==prior.hash)throw new Error('Existing v1 profile-upgrade operation binding is corrupt.')
+      advanceRotationOperationStateV2(prior.state,operation)
+    }else if(ref)throw new Error('v1 profile-upgrade state ref exists without its operation record.')
+    else if(operation.stage!=='source_frozen_verified')throw new Error('A new profile-upgrade operation must start at source_frozen_verified.')
+    const next={...current.state,rotation_state_ref:{operation_id:operation.operation_id,state:operation.stage,state_record_hash:hash},operation_generation:current.state.operation_generation+1}
+    const tag=await stateTag(current.rootKey,current.epochSalt,next),tx=db.transaction([STORES.operations,STORES.state],'readwrite')
+    tx.objectStore(STORES.operations).put({id:`profile-upgrade-v2:${current.context.diaryId}`,state:structuredClone(operation),hash})
+    tx.objectStore(STORES.state).put({id:current.context.epochId,state:next,tag} satisfies StoredState)
+    await complete(tx)
+  })
+}
+export async function loadProfileUpgradeSourceOperationV2():Promise<RotationOperationStateV2|null>{
+  const db=await openDatabase(),loaded=await loadEpoch(db),tx=db.transaction(STORES.operations,'readonly')
+  const stored=await result<{state:RotationOperationStateV2;hash:string}|undefined>(tx.objectStore(STORES.operations).get(`profile-upgrade-v2:${loaded.context.diaryId}`))
+  await complete(tx)
+  if(!stored)return null
+  validateRotationOperationStateV2(stored.state)
+  if(stored.hash!==await rotationOperationStateHashV2(stored.state))throw new Error('Profile-upgrade operation-state hash failed.')
+  const ref=loaded.state.rotation_state_ref
+  const sourceRaceRef=stored.state.stage==='stale'&&ref?.state==='profile_upgrade_source_race'
+  if(!ref||ref.operation_id!==stored.state.operation_id||(!sourceRaceRef&&ref.state!==stored.state.stage)||ref.state_record_hash!==stored.hash)throw new Error('v1 Source profile-upgrade state binding failed.')
+  return structuredClone(stored.state)
+}
+export async function activeProtocolSelectionV2():Promise<ActiveProtocolSelectionV2|null>{
+  const db=await openDatabase(),tx=db.transaction(STORES.context,'readonly')
+  const value=await result<ActiveProtocolSelectionV2|undefined>(tx.objectStore(STORES.context).get(ACTIVE_PROTOCOL_SELECTION))
+  await complete(tx)
+  return value??null
+}
+export async function markV1ProfileUpgradeSourceRace(operation:RotationOperationStateV2):Promise<void>{
+  if(operation.stage!=='stale')throw new Error('Profile-upgrade Source race terminal state must be stale.')
+  const db=await openDatabase(),initial=await loadEpoch(db)
+  await withDiaryLock(initial.context.diaryId,async()=>{
+    const current=await loadEpoch(db)
+    if(current.context.epochId!==operation.source_epoch_id)throw new Error('Profile-upgrade Source race epoch mismatch.')
+    const hash=await rotationOperationStateHashV2(operation)
+    const ref={operation_id:operation.operation_id,state:'profile_upgrade_source_race',state_record_hash:hash}
+    const next={...current.state,epoch_status:'retired' as const,rotation_state_ref:ref,operation_generation:current.state.operation_generation+1}
+    const tag=await stateTag(current.rootKey,current.epochSalt,next),tx=db.transaction([STORES.operations,STORES.state],'readwrite')
+    tx.objectStore(STORES.operations).put({id:`profile-upgrade-v2:${current.context.diaryId}`,state:structuredClone(operation),hash})
+    tx.objectStore(STORES.state).put({id:current.context.epochId,state:next,tag} satisfies StoredState)
+    await complete(tx)
+  })
+}
+
+export async function atomicSelectV2AndRetireV1(args:{
+  operation:RotationOperationStateV2
+  diaryId:string
+  successorEpochId:string
+  successorManifestFingerprint:string
+}):Promise<void>{
+  if(args.operation.stage!=='activated_backup_verified')throw new Error('Profile upgrade requires activated_backup_verified before local switch.')
+  if(args.operation.successor_epoch_id!==args.successorEpochId||args.operation.successor_manifest_fingerprint!==args.successorManifestFingerprint)throw new Error('Profile-upgrade switch successor binding mismatch.')
+  const db=await openDatabase(),initial=await loadEpoch(db)
+  await withDiaryLock(initial.context.diaryId,async()=>{
+    const source=await loadEpoch(db)
+    if(source.context.diaryId!==args.diaryId||source.context.epochId!==args.operation.source_epoch_id)throw new Error('Profile-upgrade Source changed before atomic local switch.')
+    const selectedTx=db.transaction(STORES.context,'readonly')
+    const prior=await result<ActiveProtocolSelectionV2|undefined>(selectedTx.objectStore(STORES.context).get(ACTIVE_PROTOCOL_SELECTION))
+    await complete(selectedTx)
+    const selection:ActiveProtocolSelectionV2={id:ACTIVE_PROTOCOL_SELECTION,sync_profile:'google-sheets-transferable-single-writer-v2',diary_id:args.diaryId,epoch_id:args.successorEpochId,manifest_fingerprint:args.successorManifestFingerprint,operation_id:args.operation.operation_id}
+    if(prior){
+      if(new TextDecoder().decode(canonicalBytes(prior as never))!==new TextDecoder().decode(canonicalBytes(selection as never)))throw new Error('A different v2 epoch is already selected locally.')
+      if(source.state.epoch_status!=='retired')throw new Error('v2 protocol selection exists without retired v1 Source.')
+      return
+    }
+    const hash=await rotationOperationStateHashV2(args.operation)
+    if(source.state.rotation_state_ref?.operation_id!==args.operation.operation_id||source.state.rotation_state_ref.state_record_hash!==hash)throw new Error('v1 Source is not bound to the final profile-upgrade operation state.')
+    const retired={...source.state,epoch_status:'retired' as const,operation_generation:source.state.operation_generation+1},tag=await stateTag(source.rootKey,source.epochSalt,retired),tx=db.transaction([STORES.context,STORES.state],'readwrite')
+    tx.objectStore(STORES.context).add(selection)
+    tx.objectStore(STORES.state).put({id:source.context.epochId,state:retired,tag} satisfies StoredState)
+    await complete(tx)
+  })
+}
 
 export class IndexedDbRotationRepository {
   constructor(private readonly envelopeFault?: (point:'after-reservation'|'after-encryption',envelopeId:string,iv?:string)=>void|Promise<void>){}

@@ -1,4 +1,4 @@
-import { GOOGLE_DRIVE_SHEETS_PROVIDER, SINGLE_WRITER_V2_PROFILE, type RemoteTransport, type TransportProfileCodec } from '../core/contracts'
+import { GOOGLE_DRIVE_SHEETS_PROVIDER, SINGLE_WRITER_V2_PROFILE, type RemoteTransport } from '../core/contracts'
 import { runCreationStateMachine, type CreationPersistence, type CreationState } from '../core/creation'
 import { GoogleAuthProvider, isAuthenticatedGoogleApiClient } from './GoogleAuthProvider'
 import {
@@ -28,7 +28,7 @@ export interface TransferableSingleWriterV2ProviderSession {
   readonly profileId:typeof SINGLE_WRITER_V2_PROFILE
   transportForEpoch(diaryId:string,epochId:string):Promise<GoogleSheetsTransferableSingleWriterV2Transport>
   remoteIdentityBinding(transport:RemoteTransport):Promise<string>
-  codecForEpoch(diaryId:string,epochId:string,rootKey:Uint8Array,transport:RemoteTransport):Promise<TransportProfileCodec>
+  codecForEpoch(diaryId:string,epochId:string,rootKey:Uint8Array,transport:RemoteTransport):Promise<GoogleSheetsTransferableSingleWriterV2ProfileCodec>
   freshCanonicalSource(diaryId:string,epochId:string,rootKey:Uint8Array,remoteId:string):FreshCanonicalV2Source
   creationProperties(diaryId:string,epochId:string):Promise<Readonly<Record<string,string>>>
   createOrReconcileEpoch(args:{
@@ -60,7 +60,7 @@ class GoogleTransferableSingleWriterV2ProviderSession implements TransferableSin
     if(!isAuthenticatedGoogleV2Transport(transport))throw new Error('Google v2 identity binding requires the authenticated v2 transport.')
     return transport.authenticatedAccountBinding()
   }
-  async codecForEpoch(diaryId:string,epochId:string,rootKey:Uint8Array,transport:RemoteTransport):Promise<TransportProfileCodec>{
+  async codecForEpoch(diaryId:string,epochId:string,rootKey:Uint8Array,transport:RemoteTransport):Promise<GoogleSheetsTransferableSingleWriterV2ProfileCodec>{
     if(!isAuthenticatedGoogleV2Transport(transport)||transport.profileId!==SINGLE_WRITER_V2_PROFILE)throw new Error('Google v2 codec requires the authenticated v2 transport.')
     return new GoogleSheetsTransferableSingleWriterV2ProfileCodec(diaryId,epochId,rootKey,await transport.authenticatedAccountBinding())
   }
