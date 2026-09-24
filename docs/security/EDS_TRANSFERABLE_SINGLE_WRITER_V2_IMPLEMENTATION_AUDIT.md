@@ -79,7 +79,7 @@ during this pass and are fixed in the same slice. Neither changes D-001…D-010.
 ### 2026-09-24 V2-07 cooperative Writer Handoff implementation/review pass
 
 Implemented the productive crash-resumable A→B Writer Handoff and reviewed it
-against Exact Protocol §§7, 8, 13, 14 and 15. New findings IA-044…IA-046 were
+against Exact Protocol §§7, 8, 13, 14 and 15. New findings IA-044…IA-047 were
 implementation mismatches found during this pass and are fixed in the same
 slice. No D-001…D-010 decision changed.
 
@@ -134,6 +134,7 @@ slice. No D-001…D-010 decision changed.
 | IA-044 | V2-07 / terminal operation refs | The first Handoff persistence cut treated any existing rotation/recovery/writer operation ref as a blocker. V2-05 legitimately leaves a terminal `rotation_state_ref="switched"`, so the first productive Handoff after profile upgrade was rejected even though §13 blocks only non-terminal security operations. The same issue would have prevented a later Handoff after a prior terminal WriterGrant operation. | **Fixed.** Handoff gating now classifies the frozen terminal sets explicitly: rotation `switched/stale/cutover_race/post_activation_superseded`, WriterGrant `durable/stale`, and Recovery `completed/stale/superseded` do not block a new Handoff. A new descriptor supersedes the StateV6 reference to a prior terminal WriterGrant operation; resume without a descriptor still reports that terminal operation. The full productive v1→v2→Handoff fixture pins this path. |
 | IA-045 | V2-07 / persistence authority boundary | The initial service validated fresh source authority before constructing the Grant, but the storage primitive that atomically persisted EnvelopeV6 + WriterGrantOperationStateV2 + StateV6 ref only proved that the encrypted row was structurally a WriterGrant. A direct internal caller could therefore attempt to persist a prepared Handoff whose anchor, predecessor generation/grant, recovery generation or authorization did not match the MAC-authenticated current StateV6. | **Fixed.** The persistence boundary decrypts the exact prepared Grant before commit and independently requires `operation_kind=handoff`, direct g+1 predecessor binding to authenticated StateV6, exact current RemoteAnchorV2, current Recovery generation, expected operation generation/grant IDs, and a valid `writer_handoff` authorization signature against the authenticated local WriterDeviceKeyV2. These checks execute before the atomic reservation/envelope/outbox/operation/state transaction. |
 | IA-046 | V2-07 / durable Handoff completion | The first readback logic required an accepted A→B Grant to still equal the final `current_writer`. If B had already canonically issued a later g+2 Grant before A's readback, A's exact Grant was nevertheless durably accepted, but the service would throw instead of completing the original Handoff and reconciling A read-only to the newer authority. | **Fixed.** Handoff durability is based on canonical acceptance of the exact persisted Grant envelope at its row, not on that Grant remaining the latest authority forever. A later accepted grant does not undo the completed A→B transfer; A reconciles to the freshest current authority and remains read-only, while B's own adoption still requires that B itself is the current canonical Writer at its fresh verify. |
+| IA-047 | V2-07 / descriptor API state transition | The first production `createTransferDescriptor()` implementation performed fresh reconciliation with `writerKeyUsable=false` before checking that the caller was locally read-only. Invoking the descriptor action accidentally on the current Writer would therefore persist a local read-only downgrade and only then reject because the same device was already canonical Writer. Descriptor creation must not itself mutate valid Writer authority. | **Fixed.** The production descriptor entry point now requires authenticated local `writer_status="read_only"` before any fresh reconciliation. A regression invokes descriptor creation on the current Writer and proves the call rejects while local Writer status, generation and grant remain unchanged. |
 
 
 ## Reviewed points that are not findings
@@ -231,6 +232,7 @@ Later changes must retain explicit vectors for at least:
 - any intervening physical row after the Handoff authority anchor makes the prepared Grant stale and leaves the source Writer active;
 - source becomes read_only only after canonical acceptance of the exact persisted Handoff Grant; target becomes writer_active only after its own fresh Full Verify and exact local device/key/public-key match;
 - terminal prior security-operation refs do not block a later Handoff, while non-terminal refs remain hard blockers;
+- descriptor creation on a current Writer rejects before reconciliation and cannot demote valid local Writer authority;
 
 
 ## Anti-churn rule for later reviews
