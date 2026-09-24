@@ -404,7 +404,8 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     const unresolved=await new ProductiveWriterHandoffV2Service(v2,store,()=>createdAt).handoff(descriptor)
     expect(unresolved.stage).toBe('append_unknown')
     expect(v2.remote.appendAttempts-before).toBe(2)
-    expect(v2.remote.snapshot.rows.some(row=>row[0]===(await store.loadWriterGrantOperation(unresolved.operationId)).prepared_envelope.envelope_id)).toBe(false)
+    const unresolvedOperation=await store.loadWriterGrantOperation(unresolved.operationId)
+    expect(v2.remote.snapshot.rows.some(row=>row[0]===unresolvedOperation.prepared_envelope.envelope_id)).toBe(false)
 
     const resumed=await new ProductiveWriterHandoffV2Service(v2,store,()=>createdAt).handoff()
     expect(resumed.stage).toBe('durable')
