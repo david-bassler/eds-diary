@@ -240,7 +240,7 @@ Current functional boundary after V2-07 remains:
 | IA-061 | V2-07 / stale WriterGrant transition evidence | Productive Handoff reaches `stale` only after a fresh canonical verify has been reconciled into MAC-authenticated StateV6, but `advanceWriterGrantOperationBinding()` itself still permits `prepared/append_unknown -> stale` while StateV6 continues to show the exact original `authority_anchor`, predecessor Writer and Recovery generation with no seal/rekey fence. A direct internal persistence caller could therefore falsely terminalize a still-authorized Handoff and quarantine its one-shot Grant without authenticated stale evidence. | **Fixed after being recorded OPEN.** A terminal stale transition now requires MAC-authenticated StateV6 to carry a remote anchor different from the operation's decision anchor, which in the production reconciliation path can only arise from a fresh verified physical prefix extension. With the original anchor still current, the transition fails before outbox, operation or StateV6 change. A direct-storage regression pins this boundary. |
 | IA-062 | V2-07 / release-gate inventory drift | After Cooperative Handoff became productive and fully validated, `PRODUCTION_SECURITY_RELEASE_GATES.md` and its internal TODO still described the v2 implementation boundary as V2-01…V2-06 and listed Cooperative Handoff as open. The protocol code was correct, but the authoritative release-status inventory could cause reviewers to reason from an outdated implementation boundary. | **Fixed after being recorded OPEN.** Release gates now describe V2-01…V2-07, include productive Cooperative Handoff in implemented/tested scope, start remaining internal work at Forced Takeover, and pin the last fully green security-code head before status-only documentation cleanup (`4ecbb48ab659843e36adbbeb08b679685f924efa`). The decisions ledger's V2-03 implementation table is explicitly labeled as a historical snapshot and points reviewers to the implementation audit/release gates for current status. |
 | IA-063 | V2-07 / stale WriterGrant prefix-advance proof | IA-061 added a persistence-layer stale-evidence gate, but the first cut only required authenticated StateV6 `remote_anchor` to differ from the prepared Grant's `authority_anchor`. A same-height/different-hash anchor is not a proof of physical prefix advancement and must never authorize terminal stale classification, even though the normal canonical reconciliation path would already reject such a fork. | **Fixed after being recorded OPEN.** Terminal WriterGrant `stale` now requires the authenticated StateV6 anchor to use the same v2 anchor profile and have `covered_row_count` strictly greater than the prepared authority anchor. A direct-storage regression persists a MAC-valid same-height/different-hash StateV6 anchor and proves operation, State ref and ceremony outbox remain non-terminal. Full Security Validation is green on implementation head `4ecbb48ab659843e36adbbeb08b679685f924efa`. |
-| IA-064 | V2-07 / anti-churn assurance status coupling | After IA-062 correctly relabeled the V2 decision ledger's implementation table as a historical V2-03 snapshot, `architecture.test.ts` still required the old literal heading `Implementation status at this review`. The new documentation was semantically correct, but the assurance test encoded the stale wording rather than the intended anti-churn property and therefore made the full validation fail. | **OPEN.** Update the assurance test to require the historical-snapshot labeling plus explicit pointers to the current implementation audit and production release gates, while retaining the anti-churn decision checks. No protocol code change is required. |
+| IA-064 | V2-07 / anti-churn assurance status coupling | After IA-062 correctly relabeled the V2 decision ledger's implementation table as a historical V2-03 snapshot, `architecture.test.ts` still required the old literal heading `Implementation status at this review`. The new documentation was semantically correct, but the assurance test encoded the stale wording rather than the intended anti-churn property and therefore made the full validation fail. | **Fixed after being recorded OPEN.** The assurance test now requires the historical V2-03 snapshot label, explicitly requires pointers to the current implementation audit and production release gates, and retains the D-001…D-010 anti-churn checks. Full Security Validation is green on head `844034967388f34ea59c412d41854d98ca190a1f`. |
 
 
 ## Reviewed points that are not findings
@@ -349,6 +349,34 @@ Later changes must retain explicit vectors for at least:
 - cooperative Handoff blocks unresolved current-Writer `prepared/pending` domain rows but does not treat terminal `stale_writer_pending` history as unresolved work;
 
 - WriterGrant operation transitions authenticate the complete local envelope/outbox/reservation journal before deriving stale aggregates or mutating StateV6;
+
+### 2026-09-24 full-stack re-audit final disposition
+
+The V2-01…V2-07 re-audit is complete. It rechecked the frozen wire/crypto layer,
+canonical replay and historical authority, StateV6/persistence/write gates,
+Google/Recovery/Backup, productive profile upgrade, read-only Join, Cooperative
+Handoff, cross-layer Coordinator behavior, App/UI boundaries and release-status
+inventory.
+
+New findings from this pass were recorded before remediation:
+
+- IA-062: release/status inventory drift after V2-07;
+- IA-063: WriterGrant stale persistence accepted a merely different rather than
+  strictly longer authenticated remote anchor;
+- IA-064: the anti-churn architecture test encoded the stale decision-ledger
+  heading instead of the intended historical-snapshot property.
+
+All three are closed. IA-063 is the only protocol-adjacent code hardening from
+this pass; IA-062 and IA-064 are status/assurance corrections. No additional
+wire-format, cryptographic-authority, verifier, migration, Join or Cooperative
+Handoff defect remained open after the final pass.
+
+The current implementation boundary remains intentionally unchanged:
+§24 steps 1–10 are implemented and internally validated. Forced Takeover,
+native v2→v2 Rotation plus two-phase Recovery-Rekey orchestration, normal
+App/Settings/domain-materialization/UI wiring, the Live-Google
+Parallel-Append-Gate and the external production gates remain open and must not
+be described as implemented by this review.
 
 ## Anti-churn rule for later reviews
 
