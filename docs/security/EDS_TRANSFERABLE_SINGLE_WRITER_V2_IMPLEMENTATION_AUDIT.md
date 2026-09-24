@@ -73,7 +73,7 @@ Implemented the productive crash-resumable v1→v2 profile-upgrade path and revi
 
 Implemented the productive second-device read-only Join and reviewed it against
 Architecture §11 and the Exact Protocol's canonical-full/Recovery bootstrap
-rules. New findings IA-039 and IA-040 were implementation mismatches found
+rules. New findings IA-039…IA-043 were implementation mismatches found
 during this pass and are fixed in the same slice. Neither changes D-001…D-010.
 
 ## Findings and disposition
@@ -121,6 +121,9 @@ during this pass and are fixed in the same slice. Neither changes D-001…D-010.
 
 | IA-039 | V2-06 / fresh-profile admission | The first Join preflight treated any non-null v1 `migration_state_ref` as evidence of an existing local diary. On a genuinely fresh install, `ready()` itself runs and authenticates an empty legacy migration through `legacy-v1/cutover`, so a valid new-device Join would be blocked after the application's own bootstrap. | **Fixed.** Join now permits only the exact authenticated, verified `legacy-v1` cutover whose source/completed key sets are both empty and whose state-record hash matches the local MAC-bound ref. Any non-empty, non-terminal or mismatched migration evidence remains a hard overwrite block. |
 | IA-040 | V2-06 / profile-upgrade activation evidence | The first Join lineage check accepted a post-freeze v1 suffix containing multiple byte-identical copies of the one-shot profile-upgrade Announcement because every suffix row matched the expected bytes. The V2-05 cutover contract requires the Announcement to be the unique physical row immediately after the frozen Source prefix; physical duplicate rows must not be collapsed at this activation boundary. | **Fixed.** Join requires the Source suffix length to be exactly one and that sole row to equal the immutable Announcement envelope bytes before accepting profile-upgrade activation lineage. |
+| IA-041 | V2-06 / crash-resume authority binding | The persisted read-only Join plan lives in the generic immutable-operation store, whose SHA-256 is not a secret MAC. Resume used the plan's `local_writer_device_id` / `local_writer_key_id` to select a WriterDeviceKeyV2 without rebinding those IDs to MAC-authenticated StateV6, and the recorded immutable RecoveryArtifact SHA-256 was not compared to freshly discovered Recovery bytes. A storage rewrite that recomputed the plain artifact hash could therefore steer resume metadata away from the authenticated local identity contract. | **Fixed.** Resume/final-switch validation now binds plan diary/epoch/manifest/remote ID and local Writer IDs back to authenticated StateV6, loads the key only through StateV6's Writer identity, requires the exact freshly discovered immutable RecoveryArtifact SHA-256, and verifies that the originally recorded Join anchor is still extended. Regression tests rewrite the plain operation artifact and recompute its SHA-256; both Writer-ID and RecoveryArtifact-hash substitutions fail closed. |
+| IA-042 | V2-06 / final local switch freshness | The first normal Join path switched the fresh local placeholder immediately after its initial Recovery-family discovery and canonical_full. Crash-resume performed a new discovery/verify before switching, making the no-crash path weaker and leaving a wider interval in which the selected leaf could become sealed/obsolete before local activation. | **Fixed.** Every local Join switch now performs a second Recovery-family discovery and full activation/canonical verification after the local Join bundle is durable and immediately before the v1→v2 local selection transaction. A changed/sealed leaf, changed immutable RecoveryArtifact or different epoch fails closed; a regression seals the leaf between the first verify and the final switch. |
+| IA-043 | V2-06 / Join-only read-only invariant | Resume reconciled StateV6 with `writerKeyUsable=true`. If the freshly canonical Writer authority happened to match the newly generated local key, `stateAfterCanonicalVerifyV6` could persist `writer_active` before the service's later read-only assertion threw. Join itself must never grant Writer authority; promotion belongs to a subsequent verified Writer-Grant path. | **Fixed.** The final Join reconciliation always passes `writerKeyUsable=false`, persists the freshest verified Writer tuple only as read-only metadata, and requires `writer_generation` / `writer_grant_id` to remain null before local switch. A regression injects a canonical Writer tuple matching the local key and proves Join still completes read-only. |
 
 
 ## Reviewed points that are not findings
@@ -206,6 +209,9 @@ Later changes must retain explicit vectors for at least:
 - provider-bound FreshCanonicalV2Source performs a new remote read + canonical_full on every call and has no snapshot cache;
 - read-only Join permits only the exact empty authenticated legacy-cutover marker on a fresh placeholder profile and refuses any unrelated local diary persistence;
 - profile-upgrade Join requires exactly one physical v1 Announcement row after the frozen Source prefix; byte-identical duplicate physical rows are rejected at activation-lineage verification;
+- Join crash-resume plan fields that influence local Writer identity are rebound to MAC-authenticated StateV6 and the exact immutable RecoveryArtifact hash before use;
+- every Join local switch repeats Recovery-family discovery + canonical/activation verification after durable local bundle persistence;
+- Join final reconciliation remains read_only even when the freshest canonical Writer tuple matches the newly generated local WriterDeviceKeyV2;
 
 
 ## Anti-churn rule for later reviews
