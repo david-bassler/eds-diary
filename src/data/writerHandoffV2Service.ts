@@ -86,6 +86,7 @@ export class ProductiveWriterHandoffV2Service {
     private readonly session:TransferableSingleWriterV2ProviderSession,
     private readonly store=new IndexedDbV2LocalSecurityStore(),
     private readonly now:()=>string=()=>new Date().toISOString(),
+    private readonly fault?: (point:'after-prepared'|'after-append-attempt')=>Promise<void>,
   ){}
 
   private async activeContext():Promise<ActiveHandoffContextV2>{
@@ -235,6 +236,7 @@ export class ProductiveWriterHandoffV2Service {
         if(current.stage==='prepared')current=await this.markOperation(context,current,'append_unknown')
       }
       appends+=1
+      await this.fault?.('after-append-attempt')
     }
   }
 
@@ -293,6 +295,7 @@ export class ProductiveWriterHandoffV2Service {
       rootKey:context.rootKey,epochSalt:context.epochSalt,expectedOperationGeneration:reconciled.operation_generation,
       reservation,envelope,operation,
     })
+    await this.fault?.('after-prepared')
     return this.runOperation({...context,state:await this.store.loadState(context.rootKey,context.epochSalt,reconciled.epoch_id)},operation)
   }
 
