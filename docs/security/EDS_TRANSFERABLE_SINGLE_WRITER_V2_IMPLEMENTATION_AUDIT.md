@@ -172,6 +172,43 @@ Current functional boundary after V2-07 remains:
 - normal App/Settings/domain-materialization/UI wiring remains open;
 - Live-Google Parallel-Append and the external production gates remain open.
 
+### 2026-09-24 complete V2-01…V2-07 re-audit after Cooperative Handoff
+
+Re-reviewed the full implemented v2 stack, current Git ancestry, §24 inventory,
+release-gate status, cross-slice Join/Handoff/Coordinator/Backup boundaries and
+the current PR heads rather than relying on earlier review snapshots.
+
+Findings were recorded before remediation:
+- IA-065: the historical V2-03 decision-ledger table still called its rows
+  `Current implementation status`;
+- IA-066: V2-02…V2-07 contained the current V2-01 hardening semantics byte-for-byte
+  but did not contain the current V2-01 PR head in their Git ancestry.
+
+Both were remediated only after their OPEN audit entries existed. No additional
+wire-format, cryptographic, canonical-replay, Writer/Recovery-authority,
+StateV6, migration, Join or Cooperative-Handoff implementation defect was found
+in this pass.
+
+Validated stack after ancestry repair:
+- V2-01 / PR #49: `c7e2621cf05da539a0b58e9d0d9f93387bd78e19`
+- V2-02 / PR #50: `ecef8db879f59b1fed78e506a4a89da4b85edddf`
+- V2-03 / PR #52: `df80592997481d5687de615f888a0e9abbb91c7a`
+- V2-04 / PR #53: `877923734d350b78d8abd6e407cbcecf47e94b07`
+- V2-05 / PR #54: `8536724252520058c8a65931cc287a37862844de`
+- V2-06 / PR #55: `489ad3cde189d7170ce833f0cff82360e6874b13`
+- V2-07 / PR #56 pre-closure head:
+  `3d4a15d390a163f3406f5d9ddfdee821e4602b2d`
+
+Every recomposed V2-02…V2-07 head above completed the full Security Validation
+successfully; V2-01 was already fully green on its unchanged current head.
+
+Current implementation boundary remains:
+- §24 steps 1–10 implemented and internally validated;
+- productive Forced Takeover remains open;
+- native v2→v2 Rotation and two-phase Recovery-Rekey remain open;
+- normal App/Settings/domain-materialization/UI wiring remains open;
+- Live-Google Parallel-Append and external production gates remain open.
+
 ## Findings and disposition
 
 | ID | Area | Finding | Disposition |
@@ -241,8 +278,8 @@ Current functional boundary after V2-07 remains:
 | IA-062 | V2-07 / release-gate inventory drift | After Cooperative Handoff became productive and fully validated, `PRODUCTION_SECURITY_RELEASE_GATES.md` and its internal TODO still described the v2 implementation boundary as V2-01…V2-06 and listed Cooperative Handoff as open. The protocol code was correct, but the authoritative release-status inventory could cause reviewers to reason from an outdated implementation boundary. | **Fixed after being recorded OPEN.** Release gates now describe V2-01…V2-07, include productive Cooperative Handoff in implemented/tested scope, start remaining internal work at Forced Takeover, and pin the last fully green security-code head before status-only documentation cleanup (`4ecbb48ab659843e36adbbeb08b679685f924efa`). The decisions ledger's V2-03 implementation table is explicitly labeled as a historical snapshot and points reviewers to the implementation audit/release gates for current status. |
 | IA-063 | V2-07 / stale WriterGrant prefix-advance proof | IA-061 added a persistence-layer stale-evidence gate, but the first cut only required authenticated StateV6 `remote_anchor` to differ from the prepared Grant's `authority_anchor`. A same-height/different-hash anchor is not a proof of physical prefix advancement and must never authorize terminal stale classification, even though the normal canonical reconciliation path would already reject such a fork. | **Fixed after being recorded OPEN.** Terminal WriterGrant `stale` now requires the authenticated StateV6 anchor to use the same v2 anchor profile and have `covered_row_count` strictly greater than the prepared authority anchor. A direct-storage regression persists a MAC-valid same-height/different-hash StateV6 anchor and proves operation, State ref and ceremony outbox remain non-terminal. Full Security Validation is green on implementation head `4ecbb48ab659843e36adbbeb08b679685f924efa`. |
 | IA-064 | V2-07 / anti-churn assurance status coupling | After IA-062 correctly relabeled the V2 decision ledger's implementation table as a historical V2-03 snapshot, `architecture.test.ts` still required the old literal heading `Implementation status at this review`. The new documentation was semantically correct, but the assurance test encoded the stale wording rather than the intended anti-churn property and therefore made the full validation fail. | **Fixed after being recorded OPEN.** The assurance test now requires the historical V2-03 snapshot label, explicitly requires pointers to the current implementation audit and production release gates, and retains the D-001…D-010 anti-churn checks. Full Security Validation is green on head `844034967388f34ea59c412d41854d98ca190a1f`. |
-| IA-065 | V2-07 / historical decision-ledger status labeling | IA-062/IA-064 correctly marked the V2 decision-ledger implementation section as a historical V2-03 snapshot and redirected current status to the implementation audit/release gates, but the table immediately below still uses the heading `Current implementation status` and contains then-correct statements such as `v2 adapter pending` / `V2-04 must wire ...`. That heading contradicts the historical-snapshot warning and can still be read as the current V2-07 boundary. | **OPEN.** Rename the table/lead-in so every status row is explicitly historical-at-V2-03, retain the old row contents as historical evidence rather than silently rewriting history, and pin the architecture assurance test to the historical-label property plus current-status pointers instead of ambiguous `Current` wording. |
-| IA-066 | V2-01…V2-07 / stacked-branch ancestry drift | The current V2-01 PR head contains four later hardening commits (canonical protocol timestamps and canonical `migration_origin` bounds) that are byte-for-byte present in the downstream V2-02…V2-07 trees, but those downstream branches still descend from the older V2-01 commit `bea77cc64dc9b6689a875450216f853065dea950` rather than the current PR #49 head `c7e2621cf05da539a0b58e9d0d9f93387bd78e19`. The security semantics are present, but the stacked Git ancestry no longer proves that the reviewed lower slice is actually an ancestor of every upper slice, increasing merge/conflict and review-delta risk. | **OPEN.** Repair the stack bottom-up with inhaltsneutral merge commits so each current slice head contains the current immediately-lower PR head as an ancestor; verify the trees do not lose or duplicate any security changes and rerun full Security Validation on the recomposed top head. |
+| IA-065 | V2-07 / historical decision-ledger status labeling | IA-062/IA-064 correctly marked the V2 decision-ledger implementation section as a historical V2-03 snapshot and redirected current status to the implementation audit/release gates, but the table immediately below still used the heading `Current implementation status` and contained then-correct statements such as `v2 adapter pending` / `V2-04 must wire ...`. That heading contradicted the historical-snapshot warning and could still be read as the current V2-07 boundary. | **Fixed after being recorded OPEN.** The table is now explicitly labeled `Historical implementation status at V2-03 review`; its old row contents remain unchanged as historical evidence. Architecture assurance now requires that historical label, forbids the ambiguous `Current implementation status` header, and retains pointers to the current implementation audit/release gates. |
+| IA-066 | V2-01…V2-07 / stacked-branch ancestry drift | The current V2-01 PR head contained four later hardening commits (canonical protocol timestamps and canonical `migration_origin` bounds) that were byte-for-byte present in the downstream V2-02…V2-07 trees, but those downstream branches still descended from the older V2-01 commit `bea77cc64dc9b6689a875450216f853065dea950` rather than the current PR #49 head `c7e2621cf05da539a0b58e9d0d9f93387bd78e19`. The security semantics were present, but the stacked Git ancestry no longer proved that the reviewed lower slice was actually an ancestor of every upper slice. | **Fixed after being recorded OPEN.** The stack was repaired bottom-up with tree-preserving merge commits. Every current adjacent pair V2-01→V2-07 now has `behind_by=0`, every PR reports the current lower head as its base SHA, and all recomposed slice heads completed full Security Validation successfully. The V2-01 hardening files were byte-identical before the ancestry repair, so no security semantics changed during the merge repair. |
 
 
 ## Reviewed points that are not findings
