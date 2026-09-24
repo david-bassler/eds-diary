@@ -69,6 +69,13 @@ decision changed.
 
 Implemented the productive crash-resumable v1→v2 profile-upgrade path and reviewed it against Architecture §18 / Exact Protocol §21.1. New findings IA-035 and IA-036 were implementation mismatches found during this pass and are fixed with productive regression/fault coverage. No D-001…D-010 decision changed.
 
+### 2026-09-24 V2-06 read-only Join implementation/review pass
+
+Implemented the productive second-device read-only Join and reviewed it against
+Architecture §11 and the Exact Protocol's canonical-full/Recovery bootstrap
+rules. New findings IA-039 and IA-040 were implementation mismatches found
+during this pass and are fixed in the same slice. Neither changes D-001…D-010.
+
 ## Findings and disposition
 
 | ID | Area | Finding | Disposition |
@@ -111,6 +118,9 @@ Implemented the productive crash-resumable v1→v2 profile-upgrade path and revi
 | IA-036 | V2-05 / activation preparation crash-resume | `prepareActivation()` persisted the immutable ActivationArtifact before `announcement_prepared`, but on resume it returned the still-null OperationState fields instead of deriving them from that artifact. A crash in that narrow interval therefore made the otherwise one-shot cutover non-resumable. | **Fixed.** Resume derives announcement/confirmation rows, evidence/lineage hashes, artifact ID/locator/hash directly from the immutable ActivationArtifact. A dedicated `after-activation-artifact` productive faultpoint is included in the crash matrix. |
 | IA-037 | V2-05 / final local Source freeze race | The first productive freeze flow computed the final v1 snapshot/anchor and only afterwards persisted `source_frozen_verified`. A local Fachwrite could race into that interval: the later operation state would freeze an already stale snapshot even though no remote cross-device race was involved. | **Fixed.** The freeze commit carries the exact authenticated v1 `operation_generation` observed after the final full verify. `persistProfileUpgradeSourceOperationV2` rechecks it under the diary lock and rejects any intervening local mutation, forcing a fresh full verify. A productive regression injects a real write in that window and proves the first attempt aborts while a new verified attempt succeeds. |
 | IA-038 | V2-05 / v1 operation persistence transition gate | The v1-side persistence helper authenticated the resulting `rotation_state_ref` but originally accepted any individually valid `RotationOperationStateV2` snapshot for the same operation ID. An internal caller could therefore skip closed stages or replace once-set fields and have the invalid transition MAC-bound into v1 local state without going through the orchestrator's `advanceRotationOperationStateV2` check. | **Fixed.** The persistence boundary now loads and validates the previously authenticated operation record/ref under the diary lock and requires `advanceRotationOperationStateV2(prior,next)` before writing; only a brand-new `source_frozen_verified` state may initialize the record. A regression calls the persistence helper directly with `source_frozen_verified -> successor_bound` and requires rejection. |
+
+| IA-039 | V2-06 / fresh-profile admission | The first Join preflight treated any non-null v1 `migration_state_ref` as evidence of an existing local diary. On a genuinely fresh install, `ready()` itself runs and authenticates an empty legacy migration through `legacy-v1/cutover`, so a valid new-device Join would be blocked after the application's own bootstrap. | **Fixed.** Join now permits only the exact authenticated, verified `legacy-v1` cutover whose source/completed key sets are both empty and whose state-record hash matches the local MAC-bound ref. Any non-empty, non-terminal or mismatched migration evidence remains a hard overwrite block. |
+| IA-040 | V2-06 / profile-upgrade activation evidence | The first Join lineage check accepted a post-freeze v1 suffix containing multiple byte-identical copies of the one-shot profile-upgrade Announcement because every suffix row matched the expected bytes. The V2-05 cutover contract requires the Announcement to be the unique physical row immediately after the frozen Source prefix; physical duplicate rows must not be collapsed at this activation boundary. | **Fixed.** Join requires the Source suffix length to be exactly one and that sole row to equal the immutable Announcement envelope bytes before accepting profile-upgrade activation lineage. |
 
 
 ## Reviewed points that are not findings
@@ -194,6 +204,8 @@ Later changes must retain explicit vectors for at least:
 - verified Recovery staging/artifact capabilities cannot be directly constructed or forged;
 - ManifestV6 trust-root creation cryptographically binds the exact decrypted payload to the exact public cells/fingerprint;
 - provider-bound FreshCanonicalV2Source performs a new remote read + canonical_full on every call and has no snapshot cache;
+- read-only Join permits only the exact empty authenticated legacy-cutover marker on a fresh placeholder profile and refuses any unrelated local diary persistence;
+- profile-upgrade Join requires exactly one physical v1 Announcement row after the frozen Source prefix; byte-identical duplicate physical rows are rejected at activation-lineage verification;
 
 
 ## Anti-churn rule for later reviews
