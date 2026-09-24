@@ -42,8 +42,11 @@ import type { VerifiedRecoveryTakeoverStagingV2 } from '../security/v2/recoveryS
 import { openRecoveryArtifactV6, type RecoveryArtifactV6 } from '../security/v2/recovery'
 import type { CreationPersistence, CreationState } from '../sync/core/creation'
 import type { FreshCanonicalV2Source } from '../security/v2/domainWrite'
-import { deriveEpochSaltV2, generateWriterDeviceKeyV2 } from '../security/v2/crypto'
+import { deriveEpochSaltV2, generateWriterDeviceKeyV2, randomProtocolIdV2, signEd25519V2, writerGrantSigningBytesV2 } from '../security/v2/crypto'
 import { ProductiveReadOnlyJoinV2Service } from '../data/readOnlyJoinV2Service'
+import { sealRevisionEnvelopeV2 } from '../security/v2/envelopes'
+import { validateRevisionV2 } from '../security/v2/validators'
+import type { RevisionV2, WriterGrantV2 } from '../security/v2/types'
 import { createTransferDescriptorV2, ProductiveWriterHandoffV2Service } from '../data/writerHandoffV2Service'
 import { localJournalInitialV2, type EpochLocalSecurityStateV6, type StoredWriterDeviceKeyV2 } from '../security/v2/localState'
 
@@ -307,6 +310,50 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     expect(state.writer_grant_id).toBeNull()
     expect(state.activation_lineage_cache_ref).not.toBeNull()
     expect(await activeProtocolSelectionV2()).toMatchObject({epoch_id:joined.epochId,operation_id:joined.joinId})
+  },120_000)
+
+  it('rejects a direct Handoff persistence call whose predecessor Grant is not the authenticated current Writer',async()=>{
+    const createdAt='2026-09-23T12:33:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    if(!v2.remote||!v2.recovery)throw new Error('handoff fixture missing successor/recovery state')
+    const recovered=await openRecoveryArtifactV6(v2.recovery,urs),epochSalt=await deriveEpochSaltV2(fromBase64Url(recovered.payload.diary_id),fromBase64Url(recovered.payload.epoch_id))
+    const store=new IndexedDbV2LocalSecurityStore(),state=await store.loadState(recovered.rootKey,epochSalt,upgraded.successor_epoch_id)
+    if(state.writer_status!=='writer_active'||state.writer_generation===null||state.writer_grant_id===null||state.remote_anchor===null)throw new Error('source fixture is not current Writer')
+    const sourceKey=await store.loadWriterKey(state.writer_signing_key_id,state.diary_id,state.epoch_id)
+    if(!sourceKey)throw new Error('source fixture WriterDeviceKeyV2 missing')
+    const target=await generateWriterDeviceKeyV2(),targetDeviceId=base64Url(randomBytes(16))
+    const reservation=await store.reserveEnvelope(state.epoch_id,v2.remote.snapshot.rows)
+    const grant:WriterGrantV2={
+      grant_id:randomProtocolIdV2(32),
+      writer_generation:state.writer_generation+1,
+      writer_device_id:targetDeviceId,
+      writer_key_id:target.writerKeyId,
+      writer_public_key:base64Url(target.publicKeyRaw),
+      previous_grant_id:base64Url(new Uint8Array(32).fill(117)),
+      previous_writer_generation:state.writer_generation,
+      recovery_generation:state.recovery_generation,
+      reason:'handoff',
+      authority_anchor:{...state.remote_anchor},
+      authorization:{kind:'writer_handoff',signer_key_id:state.writer_signing_key_id,signature:null},
+    }
+    grant.authorization.signature=await signEd25519V2(sourceKey.private_key,writerGrantSigningBytesV2(state.diary_id,state.epoch_id,grant))
+    const revision:RevisionV2<WriterGrantV2>={
+      record_type:'writer_grant',record_schema:'writer-grant-sw-v2',record_id:base64Url(randomBytes(16)),revision_id:base64Url(randomBytes(32)),
+      parent_revision_ids:[],record_status:'control',record_data:grant,migration_origin:null,protocol_created_at:createdAt,writer_context:null,writer_signature:null,
+    }
+    await validateRevisionV2(revision)
+    const envelope=await sealRevisionEnvelopeV2(recovered.rootKey,epochSalt,{diaryId:state.diary_id,epochId:state.epoch_id},revision,fromBase64Url(reservation.envelope_id),fromBase64Url(reservation.iv))
+    const operation={
+      format:'writer-grant-operation-v2' as const,version:2 as const,operation_id:randomProtocolIdV2(32),operation_kind:'handoff' as const,
+      epoch_id:state.epoch_id,stage:'prepared' as const,authority_anchor:{...state.remote_anchor},
+      prepared_envelope:{envelope_id:envelope.envelopeId,iv:envelope.iv,ciphertext:envelope.ciphertext},
+      expected_writer_generation:grant.writer_generation,expected_writer_grant_id:grant.grant_id,
+    }
+    await expect(store.persistPreparedWriterGrantOperationBundle({
+      rootKey:recovered.rootKey,epochSalt,expectedOperationGeneration:state.operation_generation,reservation,envelope,operation,
+    })).rejects.toThrow(/does not bind the authenticated current Writer/)
+    expect(await store.loadBoundWriterGrantOperation(recovered.rootKey,epochSalt,state.epoch_id)).toBeNull()
+    expect(v2.remote.snapshot.rows.some(row=>row[0]===envelope.envelopeId)).toBe(false)
   },120_000)
 
   it('refuses TransferDescriptorV2 creation on the current Writer without locally demoting it',async()=>{
