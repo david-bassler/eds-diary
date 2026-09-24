@@ -103,8 +103,14 @@ function sessionFor(f:Awaited<ReturnType<typeof nativeJoinFixture>>,calls:{famil
 }
 
 beforeEach(async()=>{
-  await __v2LocalPersistenceTesting.reset()
   await __localDatabaseTesting.resetForTesting()
+  await new Promise<void>((resolve,reject)=>{
+    const request=indexedDB.deleteDatabase('eds-diary')
+    request.addEventListener('success',()=>resolve(),{once:true})
+    request.addEventListener('error',()=>reject(request.error),{once:true})
+    request.addEventListener('blocked',()=>reject(new Error('Local test database reset was blocked.')),{once:true})
+  })
+  await __v2LocalPersistenceTesting.reset()
 })
 
 describe('productive v2 read-only Join',()=>{
