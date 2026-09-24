@@ -15,6 +15,7 @@ import {
   putRecord,
 } from '../data/localDatabase'
 import { IndexedDbV2LocalSecurityStore, __v2LocalPersistenceTesting, type VerifiedPersistedRecoveryArtifactV6 } from '../security/v2/localPersistence'
+import { IndexedDbV2CoordinatorStore } from '../security/v2/coordinatorStore'
 import { base64Url, fromBase64Url } from '../security/crypto/bytes'
 import { randomBytes, recoveryCommitment } from '../security/crypto/core'
 import { createBestEffortRootWrap, stateTag } from '../security/localState'
@@ -489,6 +490,11 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     }).handoff(descriptor)).rejects.toThrow('handoff-crash:prepared')
     const prepared=await store.loadBoundWriterGrantOperation(recovered.rootKey,epochSalt,upgraded.successor_epoch_id)
     expect(prepared?.stage).toBe('prepared')
+    if(!prepared)throw new Error('prepared Handoff operation missing')
+    const codec=new GoogleSheetsTransferableSingleWriterV2ProfileCodec(recovered.payload.diary_id,recovered.payload.epoch_id,recovered.rootKey,v2.account)
+    const beforeGrant=await codec.verifyRemote(await v2.remote.read('successor-v2'))
+    const genericPending=await new IndexedDbV2CoordinatorStore(upgraded.successor_epoch_id,recovered.rootKey,epochSalt,store).pending(beforeGrant)
+    expect(genericPending.some(envelope=>envelope.envelopeId===prepared.prepared_envelope.envelope_id)).toBe(false)
 
     let afterAppend=true
     await expect(new ProductiveWriterHandoffV2Service(v2,store,()=>createdAt,async point=>{
