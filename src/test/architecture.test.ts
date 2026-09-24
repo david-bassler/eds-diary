@@ -91,6 +91,8 @@ describe('v2 pre-implementation hardening boundaries',()=>{
     expect(ledger).toMatch(/Rejected alternative/)
     expect(ledger).toMatch(/Revisit only if/)
     expect(ledger).toMatch(/Historical implementation snapshot at the V2-03 review/)
+    expect(ledger).toMatch(/Historical implementation status at V2-03 review/)
+    expect(ledger).not.toMatch(/\| Decision \| Current implementation status \|/)
     expect(ledger).toMatch(/not the current implementation inventory/)
     expect(ledger).toContain('EDS_TRANSFERABLE_SINGLE_WRITER_V2_IMPLEMENTATION_AUDIT.md')
     expect(ledger).toContain('PRODUCTION_SECURITY_RELEASE_GATES.md')
