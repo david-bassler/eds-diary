@@ -262,6 +262,7 @@ export class ProductiveReadOnlyJoinV2Service {
   constructor(
     private readonly session:TransferableSingleWriterV2ProviderSession,
     private readonly store=new IndexedDbV2LocalSecurityStore(),
+    private readonly fault?: (point:'after-join-bundle')=>Promise<void>,
   ){}
 
   async join(urs:Uint8Array):Promise<ReadOnlyJoinResultV2>{
@@ -343,6 +344,7 @@ export class ProductiveReadOnlyJoinV2Service {
       local_writer_device_id:writerDeviceId,local_writer_key_id:writer.writerKeyId,
     }
     await this.store.persistReadOnlyJoinBundle({artifactId,artifactValue:plan,rootKey:candidate.rootKey,epochSalt,rootWrap:wrap.wrap,bestEffortWrappingKey:wrap.bestEffortWrappingKey,writerKey:storedWriter,state,lineageCache})
+    await this.fault?.('after-join-bundle')
     await atomicSelectReadOnlyJoinV2({joinId,diaryId:state.diary_id,epochId:state.epoch_id,manifestFingerprint:state.manifest_fingerprint})
     return{joinId,diaryId:state.diary_id,epochId:state.epoch_id,manifestFingerprint:state.manifest_fingerprint,remoteResourceId:candidate.remoteId,writerDeviceId,writerKeyId:writer.writerKeyId,resumed:false}
   }
