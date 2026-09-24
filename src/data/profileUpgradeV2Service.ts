@@ -93,7 +93,7 @@ import {
 import { createBackupV6, testRestoreBackupV6, type SyncBackupV6 } from '../security/v2/backup'
 import { TransferableSingleWriterV2Verifier } from '../security/v2/verifier'
 import { createActivationLineageCacheV2 } from '../security/v2/activationLineageCache'
-import { createAnchorV2 } from '../security/v2/prefix'
+import { assertExtendsAnchorV2, createAnchorV2 } from '../security/v2/prefix'
 import { V2_SCHEMA_REGISTRY_HASH } from '../security/v2/schemaRegistry'
 import { V6_PROTOCOL_LIMITS } from '../security/v2/manifest'
 
@@ -828,8 +828,10 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
     if(!allowAnnouncement||!announcement)throw new ProfileUpgradePreCutoverStaleError('v1 Source advanced before its one-shot profile-upgrade Announcement.')
     const expected:[string,string,string]=[announcement.envelope_id,announcement.iv,announcement.ciphertext]
     const suffix=snapshot.rows.slice(source.artifact.source_anchor.covered_row_count)
-    if(suffix.length!==1||!sameJson(suffix[0],expected))throw new ProfileUpgradeSourceRaceError('profile_upgrade_source_race')
-    return{snapshot,announcementCount:1}
+    if(!sameJson(suffix[0],expected))throw new ProfileUpgradeSourceRaceError('profile_upgrade_source_race')
+    let announcementCount=0
+    while(announcementCount<suffix.length&&sameJson(suffix[announcementCount],expected))announcementCount+=1
+    return{snapshot,announcementCount}
   }
   private async verifySuccessorAtStagingOrConfirmation():Promise<{verified:VerifiedRemoteState;confirmationCount:number;activationAnchor:CanonicalFullResultV2['remote_anchor']|null}>{
     const operation=await this.load(),ctx=await this.successorContext()
@@ -842,10 +844,12 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
       const verified=await ctx.codec.verifyRemote(snapshot)
       return{verified,confirmationCount:0,activationAnchor:null}
     }
-    if(suffix.length!==1||!sameJson(suffix[0],expected))throw new ProfileUpgradeSuccessorCutoverRaceError('profile_upgrade_successor_cutover_race')
+    if(!sameJson(suffix[0],expected))throw new ProfileUpgradeSuccessorCutoverRaceError('profile_upgrade_successor_cutover_race')
+    let confirmationCount=0
+    while(confirmationCount<suffix.length&&sameJson(suffix[confirmationCount],expected))confirmationCount+=1
     const verified=await ctx.codec.verifyRemote(snapshot)
-    const activationAnchor=await createAnchorV2(ctx.plan.diary_id,ctx.plan.successor_epoch_id,snapshot.rows)
-    return{verified,confirmationCount:1,activationAnchor}
+    const activationAnchor=await createAnchorV2(ctx.plan.diary_id,ctx.plan.successor_epoch_id,snapshot.rows.slice(0,operation.successor_staging_anchor.covered_row_count+confirmationCount))
+    return{verified,confirmationCount,activationAnchor}
   }
 
   async publishOrReconcileAnnouncement(state:RotationOperationStateV2):Promise<{kind:'durable'}|{kind:'unknown'}|{kind:'stale'}|{kind:'source_race'}>{
@@ -905,9 +909,8 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
     try{
       let successor=await this.verifySuccessorAtStagingOrConfirmation()
       if(successor.confirmationCount>0){
-        const result=canonical(successor.verified)
-        await this.verifyActivationBoundary(successor.verified,result)
-        await this.commitSuccessorCanonical(successor.verified,result)
+        const result=canonical(successor.verified),fresh=await this.verifyActivationBoundary(successor.verified,result)
+        await this.commitSuccessorCanonical(fresh.verified,fresh.result)
         return{kind:'durable',activationAnchor:successor.activationAnchor!}
       }
       if(state.stage==='confirmation_unknown')return{kind:'unknown'}
@@ -923,9 +926,8 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
         successor=await this.verifySuccessorAtStagingOrConfirmation()
       }
       if(successor.confirmationCount===0)return{kind:'unknown'}
-      const result=canonical(successor.verified)
-      await this.verifyActivationBoundary(successor.verified,result)
-      await this.commitSuccessorCanonical(successor.verified,result)
+      const result=canonical(successor.verified),fresh=await this.verifyActivationBoundary(successor.verified,result)
+      await this.commitSuccessorCanonical(fresh.verified,fresh.result)
       return{kind:'durable',activationAnchor:successor.activationAnchor!}
     }catch(error){
       if(error instanceof ProfileUpgradeSuccessorCutoverRaceError)return{kind:'cutover_race'}
@@ -933,29 +935,32 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
     }
   }
 
-  private async verifyActivationBoundary(verified:VerifiedRemoteState,result:CanonicalFullResultV2):Promise<void>{
+  private async verifyActivationBoundary(verified:VerifiedRemoteState,result:CanonicalFullResultV2):Promise<{verified:VerifiedRemoteState;result:CanonicalFullResultV2}>{
     const operation=await this.load(),source=await this.frozenSource(),activation=await this.artifact<ActivationArtifactV2>('activation')
     if(!activation||!operation.successor_staging_anchor)throw new Error('Profile-upgrade activation evidence is missing.')
+    const sourceRemote=await this.verifySourceAtFrozenPrefix(true)
+    if(sourceRemote.announcementCount<1)throw new Error('Profile-upgrade activation lacks a durable immediate Source Announcement.')
+    const successorRemote=await this.verifySuccessorAtStagingOrConfirmation()
+    if(successorRemote.confirmationCount<1)throw new Error('Profile-upgrade activation lacks a durable immediate Successor Confirmation.')
+    await assertExtendsAnchorV2(result.remote_anchor,result.diary_id,result.epoch_id,successorRemote.verified.snapshot.rows)
+    const freshResult=canonical(successorRemote.verified)
     await verifyProfileUpgradeMigrationIntegrityV2({
       sourceEpochId:source.artifact.source_epoch_id,sourceManifestFingerprint:source.artifact.source_manifest_fingerprint,
-      sourceAnchor:source.artifact.source_anchor,sourceRevisions:source.material.revisions,successor:result,
+      sourceAnchor:source.artifact.source_anchor,sourceRevisions:source.material.revisions,successor:freshResult,
     })
-    const sourceRemote=await this.verifySourceAtFrozenPrefix(true)
-    if(sourceRemote.announcementCount!==1)throw new Error('Profile-upgrade activation requires exactly one physical Source Announcement.')
-    const successorRemote=await this.verifySuccessorAtStagingOrConfirmation()
-    if(successorRemote.confirmationCount!==1)throw new Error('Profile-upgrade activation requires exactly one physical Successor Confirmation.')
     const announcement=operation.announcement_envelope!,confirmation=operation.confirmation_envelope!
     if(!sameJson(activation.entry.source_anchor_before_announcement,source.artifact.source_anchor)
       ||activation.entry.source_epoch_id!==source.artifact.source_epoch_id
       ||activation.entry.source_manifest_fingerprint!==source.artifact.source_manifest_fingerprint
       ||activation.entry.source_root_key!==base64Url(source.material.rootKey)
-      ||activation.entry.successor_epoch_id!==result.epoch_id
-      ||activation.entry.successor_manifest_fingerprint!==result.manifest_fingerprint
+      ||activation.entry.successor_epoch_id!==freshResult.epoch_id
+      ||activation.entry.successor_manifest_fingerprint!==freshResult.manifest_fingerprint
       ||!sameJson(activation.entry.successor_staging_anchor,operation.successor_staging_anchor)
       ||!sameJson(activation.entry.announcement_envelope,announcement)
       ||!sameJson(activation.entry.successor_confirmation_envelope,confirmation))throw new Error('Profile-upgrade ActivationLineageV2 binding mismatch.')
-    if(result.accepted_activation_confirmation===null||result.activation_state!=='cross_epoch_evidence_present')throw new Error('Profile-upgrade canonical successor lacks accepted Confirmation evidence.')
+    if(freshResult.accepted_activation_confirmation===null||freshResult.activation_state!=='cross_epoch_evidence_present')throw new Error('Profile-upgrade canonical successor lacks accepted Confirmation evidence.')
     void verified
+    return{verified:successorRemote.verified,result:freshResult}
   }
 
   private async recoveryAdvancedBeyondArtifact(result:CanonicalFullResultV2):Promise<boolean>{
@@ -974,10 +979,10 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
     const existing=await this.artifact<BackupArtifactV2>('activated-backup')
     if(existing)return{kind:'ready',activatedBackupId:existing.backup.backup_id}
     const ctx=await this.successorContext(),verified=await ctx.codec.verifyRemote(await ctx.transport.read(ctx.remoteId)),result=canonical(verified)
-    await this.verifyActivationBoundary(verified,result)
-    if(await this.recoveryAdvancedBeyondArtifact(result))return{kind:'superseded'}
-    await this.commitSuccessorCanonical(verified,result)
-    const created=await this.createBackup('activated',verified)
+    const fresh=await this.verifyActivationBoundary(verified,result)
+    if(await this.recoveryAdvancedBeyondArtifact(fresh.result))return{kind:'superseded'}
+    await this.commitSuccessorCanonical(fresh.verified,fresh.result)
+    const created=await this.createBackup('activated',fresh.verified)
     await this.putArtifact('activated-backup',{backup:created.backup,anchor:created.anchor} satisfies BackupArtifactV2)
     return{kind:'ready',activatedBackupId:created.backup.backup_id}
   }
@@ -994,13 +999,12 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
       await this.v2Store.persistActivationLineageCache(ctx.rootKey,ctx.epochSalt,cache,state.operation_generation)
     }else await this.v2Store.loadActivationLineageCache(ctx.rootKey,ctx.epochSalt,ctx.plan.successor_epoch_id)
 
-    const verified=await ctx.codec.verifyRemote(await ctx.transport.read(ctx.remoteId)),result=canonical(verified)
-    await this.verifyActivationBoundary(verified,result)
-    if(await this.recoveryAdvancedBeyondArtifact(result))return'superseded'
+    const verified=await ctx.codec.verifyRemote(await ctx.transport.read(ctx.remoteId)),result=canonical(verified),fresh=await this.verifyActivationBoundary(verified,result)
+    if(await this.recoveryAdvancedBeyondArtifact(fresh.result))return'superseded'
     const exported=backup.anchor
-    if(result.remote_anchor.covered_row_count<exported.covered_row_count
-      ||!sameJson(await createAnchorV2(ctx.plan.diary_id,ctx.plan.successor_epoch_id,verified.snapshot.rows.slice(0,exported.covered_row_count)),exported))throw new Error('Profile-upgrade remote prefix no longer extends the activated BackupV6 anchor.')
-    await this.commitSuccessorCanonical(verified,result)
+    if(fresh.result.remote_anchor.covered_row_count<exported.covered_row_count
+      ||!sameJson(await createAnchorV2(ctx.plan.diary_id,ctx.plan.successor_epoch_id,fresh.verified.snapshot.rows.slice(0,exported.covered_row_count)),exported))throw new Error('Profile-upgrade remote prefix no longer extends the activated BackupV6 anchor.')
+    await this.commitSuccessorCanonical(fresh.verified,fresh.result)
     return'ready'
   }
 
