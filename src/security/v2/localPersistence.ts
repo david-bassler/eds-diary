@@ -545,6 +545,14 @@ export class IndexedDbV2LocalSecurityStore {
       if(operation.stage!==expectedStage)throw new Error('WriterGrantOperationStateV2 stage changed before transition.')
       advanceWriterGrantOperationStateV2(operation,next)
       const nextHash=await writerGrantOperationStateHashV2(next),db=await openDatabase()
+      if(next.stage==='durable'){
+        const readTx=db.transaction(STORES.outbox,'readonly')
+        const entry=await requestResult<V2OutboxEntry|undefined>(readTx.objectStore(STORES.outbox).get(`${epochId}:${operation.prepared_envelope.envelope_id}`))
+        await transactionDone(readTx)
+        if(!entry)throw new Error('Durable WriterGrant operation is missing its ceremony-owned outbox entry.')
+        await verifyOutboxTag(rootKey,epochSalt,entry)
+        if(entry.authority!==null||entry.status!=='durable')throw new Error('Durable WriterGrant operation requires canonical durable ceremony evidence.')
+      }
       let staleOutbox:V2OutboxEntry|null=null,staleCount=current.stale_writer_pending_count
       if(next.stage==='stale'){
         const readTx=db.transaction(STORES.outbox,'readonly')
