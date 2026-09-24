@@ -297,6 +297,85 @@ export class IndexedDbV2LocalSecurityStore {
     if(plan===null||state.manifest_fingerprint!==args.state.manifest_fingerprint||!writer||!isVerifiedRecoveryTakeoverStagingV2(staging.verified)||wrap.wrap.wrap_id!==args.rootWrap.wrap_id)throw new Error('Profile-upgrade successor planning bundle readback failed.')
   }
 
+  async persistReadOnlyJoinBundle(args:{
+    artifactId:string
+    artifactValue:unknown
+    rootKey:Uint8Array
+    epochSalt:Uint8Array
+    rootWrap:RootWrapV6
+    bestEffortWrappingKey:CryptoKey|null
+    writerKey:StoredWriterDeviceKeyV2
+    state:EpochLocalSecurityStateV6
+    lineageCache:ActivationLineageCacheV2|null
+  }):Promise<void>{
+    if(!args.artifactId)throw new Error('Read-only Join plan artifact ID is required.')
+    validateRootWrapV6(args.rootWrap)
+    validateEpochLocalSecurityStateV6(args.state)
+    if(args.state.epoch_status!=='active'||args.state.writer_status!=='read_only'
+      ||args.state.writer_generation!==null||args.state.writer_grant_id!==null
+      ||args.state.remote_binding===null||args.state.remote_anchor===null
+      ||args.state.verified_writer_device_id===null||args.state.verified_writer_key_id===null
+      ||args.state.verified_writer_generation===null||args.state.verified_writer_grant_id===null)throw new Error('Read-only Join StateV6 must be a fully verified active read-only binding.')
+    if(args.state.local_journal_count!==0||args.state.stale_writer_pending_count!==0)throw new Error('Read-only Join must start without local v2 mutations.')
+    if(args.rootWrap.epoch_id!==args.state.epoch_id
+      ||args.rootWrap.diary_id!==args.state.diary_id
+      ||args.rootWrap.key_id!==args.state.key_id
+      ||args.rootWrap.manifest_fingerprint!==args.state.manifest_fingerprint)throw new Error('Read-only Join RootWrapV6/StateV6 binding mismatch.')
+    if((args.rootWrap.mode==='best-effort')!==(args.bestEffortWrappingKey!==null))throw new Error('Read-only Join best-effort wrapping-key binding mismatch.')
+    if(args.bestEffortWrappingKey){
+      const opened=await openBestEffortRootWrapV6(args.rootWrap,args.bestEffortWrappingKey)
+      if(base64Url(opened)!==base64Url(args.rootKey))throw new Error('Read-only Join RootWrapV6 verification failed.')
+    }
+    await validateStoredWriterDeviceKeyV2(args.writerKey,args.state.diary_id,args.state.epoch_id)
+    if(args.writerKey.writer_device_id!==args.state.writer_device_id||args.writerKey.writer_signing_key_id!==args.state.writer_signing_key_id)throw new Error('Read-only Join WriterDeviceKeyV2 does not bind the local device identity.')
+
+    let cacheHash:string|null=null
+    if(args.lineageCache){
+      const lineage=await openActivationLineageCacheV2({cache:args.lineageCache,rootKey:args.rootKey,epochSalt:args.epochSalt,diaryId:args.state.diary_id,epochId:args.state.epoch_id,manifestFingerprint:args.state.manifest_fingerprint})
+      if(!lineage.length)throw new Error('Read-only Join lineage cache must contain cross-epoch activation evidence.')
+      cacheHash=await activationLineageCacheHashV2(args.lineageCache)
+      if(args.state.activation_lineage_cache_ref?.cache_id!==args.lineageCache.cache_id
+        ||args.state.activation_lineage_cache_ref.cache_record_hash!==cacheHash)throw new Error('Read-only Join lineage-cache reference mismatch.')
+    }else if(args.state.activation_lineage_cache_ref!==null)throw new Error('Read-only Join StateV6 references a missing lineage cache.')
+
+    const planBytes=new TextDecoder().decode(canonicalBytes(args.artifactValue as never))
+    const planHash=base64Url(await sha256(canonicalBytes(args.artifactValue as never)))
+    const wrapBytes=new TextDecoder().decode(canonicalBytes(args.rootWrap as never))
+    const stateTag=await localStateTagV6(args.rootKey,args.epochSalt,args.state)
+    const db=await openDatabase()
+    const stores=[STORES.operationArtifacts,STORES.rootWraps,STORES.rootWrappingKeys,STORES.writerKeys,STORES.states,...(args.lineageCache?[STORES.lineageCaches]:[])] as string[]
+    const readTx=db.transaction(stores,'readonly')
+    const requests=[
+      readTx.objectStore(STORES.operationArtifacts).get(args.artifactId),
+      readTx.objectStore(STORES.rootWraps).get(args.state.epoch_id),
+      readTx.objectStore(STORES.rootWrappingKeys).get(args.rootWrap.wrap_id),
+      readTx.objectStore(STORES.writerKeys).get(args.writerKey.writer_signing_key_id),
+      readTx.objectStore(STORES.states).get(args.state.epoch_id),
+      ...(args.lineageCache?[readTx.objectStore(STORES.lineageCaches).get(args.lineageCache.cache_id)]:[]),
+    ]
+    const existing=await Promise.all(requests.map(request=>requestResult<unknown>(request)))
+    await transactionDone(readTx)
+    if(existing.some(value=>value!==undefined))throw new Error('Read-only Join bundle collides with existing local v2 state.')
+
+    const tx=db.transaction(stores,'readwrite')
+    tx.objectStore(STORES.operationArtifacts).add({id:args.artifactId,value:structuredClone(args.artifactValue),bytes:planBytes,hash:planHash})
+    tx.objectStore(STORES.rootWraps).add({id:args.state.epoch_id,wrap:structuredClone(args.rootWrap),bytes:wrapBytes})
+    if(args.bestEffortWrappingKey)tx.objectStore(STORES.rootWrappingKeys).add({id:args.rootWrap.wrap_id,key:args.bestEffortWrappingKey})
+    tx.objectStore(STORES.writerKeys).add(args.writerKey)
+    if(args.lineageCache)tx.objectStore(STORES.lineageCaches).add({id:args.lineageCache.cache_id,cache:structuredClone(args.lineageCache),hash:cacheHash})
+    tx.objectStore(STORES.states).add({id:args.state.epoch_id,state:structuredClone(args.state),tag:stateTag})
+    await transactionDone(tx)
+
+    const [plan,state,writer,wrap]=await Promise.all([
+      this.operationArtifact<unknown>(args.artifactId),
+      this.loadState(args.rootKey,args.epochSalt,args.state.epoch_id),
+      this.loadWriterKey(args.writerKey.writer_signing_key_id,args.state.diary_id,args.state.epoch_id),
+      this.loadRootWrapV6(args.state.epoch_id),
+    ])
+    if(plan===null||state.writer_status!=='read_only'||!writer||wrap.wrap.wrap_id!==args.rootWrap.wrap_id)throw new Error('Read-only Join bundle readback failed.')
+    if(args.lineageCache)await this.loadActivationLineageCache(args.rootKey,args.epochSalt,args.state.epoch_id)
+  }
+
   async persistRootWrapV6(wrap:RootWrapV6,bestEffortWrappingKey:CryptoKey|null):Promise<void>{
     validateRootWrapV6(wrap)
     if((wrap.mode==='best-effort')!==(bestEffortWrappingKey!==null))throw new Error('RootWrapV6 best-effort key persistence mismatch.')
