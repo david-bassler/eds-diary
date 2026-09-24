@@ -534,7 +534,7 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     expect(before.remote_anchor).toEqual(operation.authority_anchor)
     await expect(store.advanceWriterGrantOperationBinding(
       recovered.rootKey,epochSalt,upgraded.successor_epoch_id,before.operation_generation,'prepared',{...operation,stage:'stale'},
-    )).rejects.toThrow(/requires authenticated remote advancement/)
+    )).rejects.toThrow(/requires authenticated remote (?:prefix )?advancement/)
     expect((await store.loadWriterGrantOperation(operation.operation_id)).stage).toBe('prepared')
     expect((await store.loadState(recovered.rootKey,epochSalt,upgraded.successor_epoch_id)).writer_operation_state_ref?.state).toBe('prepared')
     const entry=(await store.outbox(recovered.rootKey,epochSalt,upgraded.successor_epoch_id)).find(item=>item.envelope_id===operation.prepared_envelope.envelope_id)
