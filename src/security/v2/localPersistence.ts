@@ -557,9 +557,8 @@ export class IndexedDbV2LocalSecurityStore {
       if(next.stage==='stale'){
         const anchor=current.remote_anchor
         if(anchor===null
-          ||(anchor.anchor_profile===operation.authority_anchor.anchor_profile
-            &&anchor.covered_row_count===operation.authority_anchor.covered_row_count
-            &&anchor.prefix_hash===operation.authority_anchor.prefix_hash))throw new Error('Stale WriterGrant operation requires authenticated remote advancement beyond its authority anchor.')
+          ||anchor.anchor_profile!==operation.authority_anchor.anchor_profile
+          ||anchor.covered_row_count<=operation.authority_anchor.covered_row_count)throw new Error('Stale WriterGrant operation requires authenticated remote prefix advancement beyond its authority anchor.')
         const readTx=db.transaction(STORES.outbox,'readonly')
         const entryRequest=readTx.objectStore(STORES.outbox).get(`${epochId}:${operation.prepared_envelope.envelope_id}`)
         const entriesRequest=readTx.objectStore(STORES.outbox).index('byEpoch').getAll(epochId)
