@@ -87,8 +87,28 @@ the exact profile-upgrade activation rules before bottom-up merge. IA-045 and
 IA-046 were recorded **OPEN before remediation**; follow-up inspection added
 IA-047, IA-048 and IA-049, also recorded OPEN before code changes. IA-045 was a real
 protocol regression introduced by the prior IA-044 hardening; IA-046 was the
-missing productive assurance coverage that allowed it to remain green. All four
+missing productive assurance coverage that allowed it to remain green. All five
 were subsequently remediated with productive regression coverage.
+
+### 2026-09-24 implementation inventory re-audit after IA-049
+
+Rechecked the current V2-01…V2-06 heads, the §24 implementation order, the
+production release gates and the composed V2-05/V2-06 code after IA-045…IA-049.
+No additional protocol/authority implementation mismatch was identified in this
+pass before documentation cleanup.
+
+Current implementation boundary:
+- §24 steps 1–9 are implemented and internally validated;
+- Cooperative Handoff and productive Forced Takeover orchestration remain open;
+- stale-writer quarantine mechanics already exist in verifier/StateV6 persistence,
+  but they do not constitute the missing Forced Takeover ceremony;
+- native v2→v2 Rotation and the two-phase Recovery-Rekey orchestration remain open;
+- normal App/Settings/domain-materialization/UI wiring remains open;
+- the Live-Google Parallel-Append-Gate and external release gates remain open.
+
+All six current V2 PR heads have a successful complete Security Validation run.
+The fact that the PRs are currently Draft is process state, not evidence of an
+unresolved implementation finding.
 
 ## Findings and disposition
 
