@@ -542,6 +542,37 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     expect(v2.remote.snapshot.rows.some(row=>row[0]===operation.prepared_envelope.envelope_id)).toBe(false)
   },120_000)
 
+  it('rejects same-height different-hash StateV6 as stale Handoff evidence',async()=>{
+    const createdAt='2026-09-23T12:35:45.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    if(!v2.remote||!v2.recovery)throw new Error('handoff fixture missing successor/recovery state')
+    const recovered=await openRecoveryArtifactV6(v2.recovery,urs),epochSalt=await deriveEpochSaltV2(fromBase64Url(recovered.payload.diary_id),fromBase64Url(recovered.payload.epoch_id))
+    const store=new IndexedDbV2LocalSecurityStore(),state=await store.loadState(recovered.rootKey,epochSalt,upgraded.successor_epoch_id)
+    const targetPair=await generateWriterDeviceKeyV2(),targetDeviceId=base64Url(randomBytes(16)),targetKey:StoredWriterDeviceKeyV2={writer_signing_key_id:targetPair.writerKeyId,writer_device_id:targetDeviceId,writer_public_key:base64Url(targetPair.publicKeyRaw),private_key:targetPair.privateKey}
+    const descriptor=await createTransferDescriptorV2({...state,writer_status:'read_only',writer_device_id:targetDeviceId,writer_signing_key_id:targetPair.writerKeyId,writer_generation:null,writer_grant_id:null},targetKey,new Uint8Array(32).fill(55))
+    let crashed=false
+    await expect(new ProductiveWriterHandoffV2Service(v2,store,()=>createdAt,async point=>{
+      if(point==='after-prepared'&&!crashed){crashed=true;throw new Error('handoff-crash:prepared-for-same-height-fork')}
+    }).handoff(descriptor)).rejects.toThrow('handoff-crash:prepared-for-same-height-fork')
+    const operation=await store.loadBoundWriterGrantOperation(recovered.rootKey,epochSalt,upgraded.successor_epoch_id)
+    if(!operation)throw new Error('prepared Handoff operation missing')
+    const before=await store.loadState(recovered.rootKey,epochSalt,upgraded.successor_epoch_id)
+    if(!before.remote_anchor)throw new Error('prepared Handoff state missing remote anchor')
+    const forkHash=base64Url(new Uint8Array(32).fill(before.remote_anchor.prefix_hash===base64Url(new Uint8Array(32).fill(55))?56:55))
+    const forked={...before,operation_generation:before.operation_generation+1,remote_anchor:{...before.remote_anchor,prefix_hash:forkHash}}
+    await store.replaceState(recovered.rootKey,epochSalt,before.operation_generation,forked)
+    const forkState=await store.loadState(recovered.rootKey,epochSalt,upgraded.successor_epoch_id)
+    expect(forkState.remote_anchor?.covered_row_count).toBe(operation.authority_anchor.covered_row_count)
+    expect(forkState.remote_anchor?.prefix_hash).not.toBe(operation.authority_anchor.prefix_hash)
+    await expect(store.advanceWriterGrantOperationBinding(
+      recovered.rootKey,epochSalt,upgraded.successor_epoch_id,forkState.operation_generation,'prepared',{...operation,stage:'stale'},
+    )).rejects.toThrow(/requires authenticated remote prefix advancement/)
+    expect((await store.loadWriterGrantOperation(operation.operation_id)).stage).toBe('prepared')
+    expect((await store.loadState(recovered.rootKey,epochSalt,upgraded.successor_epoch_id)).writer_operation_state_ref?.state).toBe('prepared')
+    const entry=(await store.outbox(recovered.rootKey,epochSalt,upgraded.successor_epoch_id)).find(item=>item.envelope_id===operation.prepared_envelope.envelope_id)
+    expect(entry?.status).toBe('prepared')
+  },120_000)
+
   it('rejects a direct durable Handoff transition before canonical readback evidence',async()=>{
     const createdAt='2026-09-23T12:36:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
     const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
