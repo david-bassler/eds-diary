@@ -1,6 +1,8 @@
 import 'fake-indexeddb/auto'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { base64Url } from '../security/crypto/bytes'
+import { canonicalBytes } from '../security/crypto/canonical'
+import { sha256 } from '../security/crypto/core'
 import {
   deriveEpochSaltV2,
   generateRecoveryTakeoverKeyMaterialV2,
@@ -74,7 +76,11 @@ async function nativeJoinFixture(){
   return{diaryId,epochId,keyId,rootKey,urs,epochSalt,writer,writerDeviceId,cells,fingerprint,row,snapshot,verified,canonical,artifact,accountBinding}
 }
 
-function sessionFor(f:Awaited<ReturnType<typeof nativeJoinFixture>>,calls:{family:number}):TransferableSingleWriterV2ProviderSession{
+function sessionFor(
+  f:Awaited<ReturnType<typeof nativeJoinFixture>>,
+  calls:{family:number},
+  options?:{verified?:()=>VerifiedRemoteState},
+):TransferableSingleWriterV2ProviderSession{
   const remoteId='remote-native-v2'
   const transport={
     profileId:SINGLE_WRITER_V2_PROFILE,
@@ -83,7 +89,7 @@ function sessionFor(f:Awaited<ReturnType<typeof nativeJoinFixture>>,calls:{famil
     async read(){return f.snapshot},
     async authenticatedAccountBinding(){return f.accountBinding},
   }
-  const codec={async verifyRemote():Promise<VerifiedRemoteState>{return f.verified}}
+  const codec={async verifyRemote():Promise<VerifiedRemoteState>{return options?.verified?.()??f.verified}}
   return{
     providerId:'google-drive-sheets-v1',
     profileId:SINGLE_WRITER_V2_PROFILE,
@@ -113,11 +119,18 @@ beforeEach(async()=>{
   await __v2LocalPersistenceTesting.reset()
 })
 
+async function idbResult<T>(request:IDBRequest<T>):Promise<T>{
+  return new Promise((resolve,reject)=>{
+    request.addEventListener('success',()=>resolve(request.result),{once:true})
+    request.addEventListener('error',()=>reject(request.error),{once:true})
+  })
+}
+
 describe('productive v2 read-only Join',()=>{
   it('bootstraps a native v2 leaf into active/read_only with a fresh non-authorized local WriterDeviceKeyV2',async()=>{
     const f=await nativeJoinFixture(),calls={family:0},service=new ProductiveReadOnlyJoinV2Service(sessionFor(f,calls))
     const joined=await service.join(f.urs)
-    expect(calls.family).toBe(1)
+    expect(calls.family).toBe(2)
     expect(joined).toMatchObject({diaryId:f.diaryId,epochId:f.epochId,manifestFingerprint:f.fingerprint,remoteResourceId:'remote-native-v2',resumed:false})
     expect(joined.writerDeviceId).not.toBe(f.writerDeviceId)
     expect(joined.writerKeyId).not.toBe(f.writer.writerKeyId)
@@ -153,6 +166,111 @@ describe('productive v2 read-only Join',()=>{
     expect(resumed.writerDeviceId).toBe(persistedDevice)
     expect(resumed.writerKeyId).toBe(persistedKey)
     expect(await activeProtocolSelectionV2()).toMatchObject({operation_id:resumed.joinId,epoch_id:f.epochId})
+  })
+
+  it('re-verifies the active leaf immediately before local switch and blocks a newly sealed leaf',async()=>{
+    const f=await nativeJoinFixture(),calls={family:0}
+    let verifies=0
+    const session=sessionFor(f,calls,{verified:()=>{
+      verifies+=1
+      if(verifies===1)return f.verified
+      return{
+        ...f.verified,
+        profileState:{
+          ...f.canonical,
+          source_epoch_sealed:true,
+          current_writer:{...f.canonical.current_writer,source_epoch_sealed:true},
+        },
+      }
+    }})
+    await expect(new ProductiveReadOnlyJoinV2Service(session).join(f.urs)).rejects.toThrow(/no fully activated unretired canonical v2 leaf/)
+    expect(calls.family).toBe(2)
+    expect(await activeProtocolSelectionV2()).toBeNull()
+    const state=await new IndexedDbV2LocalSecurityStore().loadState(f.rootKey,f.epochSalt,f.epochId)
+    expect(state.writer_status).toBe('read_only')
+  })
+
+  it('keeps Join read_only even if the final canonical Writer authority already matches the new local key',async()=>{
+    const f=await nativeJoinFixture(),calls={family:0},store=new IndexedDbV2LocalSecurityStore()
+    let finalVerified:VerifiedRemoteState|null=null
+    const session=sessionFor(f,calls,{verified:()=>finalVerified??f.verified})
+    const service=new ProductiveReadOnlyJoinV2Service(session,store,async point=>{
+      if(point!=='after-join-bundle')return
+      const state=await store.loadState(f.rootKey,f.epochSalt,f.epochId)
+      const key=await store.loadWriterKey(state.writer_signing_key_id,state.diary_id,state.epoch_id)
+      if(!key)throw new Error('test local WriterDeviceKeyV2 missing')
+      finalVerified={
+        ...f.verified,
+        profileState:{
+          ...f.canonical,
+          current_writer:{
+            ...f.canonical.current_writer,
+            writer_generation:f.canonical.current_writer.writer_generation+1,
+            writer_grant_id:id(31,32),
+            writer_device_id:state.writer_device_id,
+            writer_key_id:state.writer_signing_key_id,
+            writer_public_key:key.writer_public_key,
+            source_epoch_sealed:false,
+          },
+        },
+      }
+    })
+    const joined=await service.join(f.urs)
+    const state=await store.loadState(f.rootKey,f.epochSalt,f.epochId)
+    expect(joined.resumed).toBe(false)
+    expect(state.verified_writer_device_id).toBe(joined.writerDeviceId)
+    expect(state.verified_writer_key_id).toBe(joined.writerKeyId)
+    expect(state.writer_status).toBe('read_only')
+    expect(state.writer_generation).toBeNull()
+    expect(state.writer_grant_id).toBeNull()
+  })
+
+  it('rejects a crash-resume Join plan whose local Writer identity was altered outside authenticated StateV6',async()=>{
+    const f=await nativeJoinFixture(),calls={family:0},store=new IndexedDbV2LocalSecurityStore()
+    const crashing=new ProductiveReadOnlyJoinV2Service(sessionFor(f,calls),store,async()=>{throw new Error('injected join crash')})
+    await expect(crashing.join(f.urs)).rejects.toThrow(/injected join crash/)
+
+    const db=await __v2LocalPersistenceTesting.openDatabase(),storeName=__v2LocalPersistenceTesting.STORES.operationArtifacts
+    const read=db.transaction(storeName,'readonly')
+    const records=await idbResult<Array<{id:string;value:Record<string,unknown>;bytes:string;hash:string}>>(read.objectStore(storeName).getAll())
+    const record=records[0]
+    if(!record)throw new Error('test Join plan missing')
+    const value={...record.value,local_writer_device_id:id(32,16)}
+    const bytesText=new TextDecoder().decode(canonicalBytes(value as never)),hash=base64Url(await sha256(canonicalBytes(value as never)))
+    const write=db.transaction(storeName,'readwrite')
+    write.objectStore(storeName).put({...record,value,bytes:bytesText,hash})
+    await new Promise<void>((resolve,reject)=>{
+      write.addEventListener('complete',()=>resolve(),{once:true})
+      write.addEventListener('abort',()=>reject(write.error),{once:true})
+      write.addEventListener('error',()=>reject(write.error),{once:true})
+    })
+
+    await expect(new ProductiveReadOnlyJoinV2Service(sessionFor(f,calls),store).join(f.urs)).rejects.toThrow(/authenticated local StateV6/)
+    expect(await activeProtocolSelectionV2()).toBeNull()
+  })
+
+  it('rejects a crash-resume Join plan whose immutable RecoveryArtifact hash changed',async()=>{
+    const f=await nativeJoinFixture(),calls={family:0},store=new IndexedDbV2LocalSecurityStore()
+    const crashing=new ProductiveReadOnlyJoinV2Service(sessionFor(f,calls),store,async()=>{throw new Error('injected join crash')})
+    await expect(crashing.join(f.urs)).rejects.toThrow(/injected join crash/)
+
+    const db=await __v2LocalPersistenceTesting.openDatabase(),storeName=__v2LocalPersistenceTesting.STORES.operationArtifacts
+    const read=db.transaction(storeName,'readonly')
+    const records=await idbResult<Array<{id:string;value:Record<string,unknown>;bytes:string;hash:string}>>(read.objectStore(storeName).getAll())
+    const record=records[0]
+    if(!record)throw new Error('test Join plan missing')
+    const value={...record.value,recovery_artifact_sha256:id(33,32)}
+    const bytesText=new TextDecoder().decode(canonicalBytes(value as never)),hash=base64Url(await sha256(canonicalBytes(value as never)))
+    const write=db.transaction(storeName,'readwrite')
+    write.objectStore(storeName).put({...record,value,bytes:bytesText,hash})
+    await new Promise<void>((resolve,reject)=>{
+      write.addEventListener('complete',()=>resolve(),{once:true})
+      write.addEventListener('abort',()=>reject(write.error),{once:true})
+      write.addEventListener('error',()=>reject(write.error),{once:true})
+    })
+
+    await expect(new ProductiveReadOnlyJoinV2Service(sessionFor(f,calls),store).join(f.urs)).rejects.toThrow(/does not match the freshly verified remote leaf/)
+    expect(await activeProtocolSelectionV2()).toBeNull()
   })
 
   it('blocks an unrelated non-fresh local profile before Recovery-family discovery',async()=>{
