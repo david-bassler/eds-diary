@@ -268,8 +268,7 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     }).upgrade()).rejects.toThrow('armed-duplicate-announcement')
     const announcement=source.transport.snapshot.rows.at(-1)!
     source.transport.snapshot.rows.push([...announcement])
-    const result=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
-    expect(result.stage).toBe('cutover_race')
+    await expect(new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()).rejects.toThrow(/profile_upgrade_source_race|exactly one physical Source Announcement/)
     expect(await activeProtocolSelectionV2()).toBeNull()
   },90_000)
 
@@ -282,8 +281,7 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     if(!v2.remote)throw new Error('successor missing in test fixture')
     const confirmation=v2.remote.snapshot.rows.at(-1)!
     v2.remote.snapshot.rows.push([...confirmation])
-    const result=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
-    expect(result.stage).toBe('post_activation_superseded')
+    await expect(new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()).rejects.toThrow(/profile_upgrade_successor_cutover_race|exactly one physical Successor Confirmation/)
     expect(await activeProtocolSelectionV2()).toBeNull()
   },90_000)
 
