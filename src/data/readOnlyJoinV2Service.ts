@@ -130,6 +130,7 @@ async function verifyProfileUpgradeLineage(args:{
     ||entry.successor_manifest_fingerprint!==candidate.payload.manifest_fingerprint)throw new Error('Profile-upgrade Join lineage leaf mismatch.')
 
   const sourceRoot=fixedBase64Url(entry.source_root_key,32,'profile_upgrade.source_root_key')
+  if(!args.session.v1TransportForEpoch)throw new Error('Authenticated v1 lineage transport is unavailable for read-only Join.')
   const sourceTransport=await args.session.v1TransportForEpoch(candidate.payload.diary_id,entry.source_epoch_id)
   const locator=await epochLocator(candidate.payload.diary_id,entry.source_epoch_id)
   const candidates=await sourceTransport.discover(locator)
@@ -214,6 +215,7 @@ async function verifyActivationForJoin(session:TransferableSingleWriterV2Provide
 
 async function discoverActiveCandidate(session:TransferableSingleWriterV2ProviderSession,urs:Uint8Array):Promise<{familyLocator:string;candidate:ActiveCandidateV2}>{
   const familyLocator=await recoveryFamilyLocatorV6(urs)
+  if(!session.discoverRecoveryFamilyArtifacts)throw new Error('Recovery-family discovery is unavailable for read-only Join.')
   const artifacts=await session.discoverRecoveryFamilyArtifacts(urs)
   if(!artifacts.length)throw new Error('No RecoveryArtifactV6 family matches this Recovery Key.')
   const active:ActiveCandidateV2[]=[]
