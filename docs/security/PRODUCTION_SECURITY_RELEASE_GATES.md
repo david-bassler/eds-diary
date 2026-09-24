@@ -7,7 +7,7 @@ EDS Diary ist **nicht** als „production secure“ freigegeben.
 | Gate | Status | Freigabekriterium |
 |---|---|---|
 | Interner Single-Writer-v1-Kern | **IMPLEMENTED / INTERN VALIDATED** | Kryptographischer Kern und produktive Integrationspfade sind fail-closed implementiert und automatisiert validiert. Der v1-Cutover verlangt einen vollständig durablen Freeze-Prefix, das Announcement als einzige unmittelbare Folgerow und einen final unveränderten retired Source-Anchor vor lokalem Switch. Widersprüchliche Multi-Client-Evidenz führt zum Fail-Stop. v1 setzt weiterhin die Single-Remote-Writer-Betriebsannahme voraus und bietet kein geräteübergreifendes kryptographisches Fencing; dieses gehört zum separaten v2-Gate. |
-| Transferable Single Writer v2 | **V2-01…V2-06 INTERN IMPLEMENTIERT / GESAMTPFAD NOCH NICHT FREIGEGEBEN** | Implementiert und intern validiert sind v2 Typen/Krypto/Signaturen, kanonischer Verifier/WriterGrant-State-Machine, StateV6 + Writer-Key-Store + fail-closed Write-Gate, ManifestV6/Google-v2/RecoveryArtifactV6/SyncBackupV6, produktiver v1→v2-Profile-Upgrade sowie kryptographischer read-only Join. Noch offen sind produktive Cooperative-Handoff- und Forced-Takeover-Orchestrierung, native v2→v2 Rotation einschließlich zweiphasigem Recovery-Rekey, V2-App-/UI-/Fachmaterialisierungs-Wiring und insbesondere das Live-Google-Parallel-Append-Gate. Ein generischer Browser-`CryptoKey` allein beweist nicht die Einzigartigkeit eines physischen Geräts. |
+| Transferable Single Writer v2 | **V2-01…V2-07 INTERN IMPLEMENTIERT / GESAMTPFAD NOCH NICHT FREIGEGEBEN** | Implementiert und intern validiert sind v2 Typen/Krypto/Signaturen, kanonischer Verifier/WriterGrant-State-Machine, StateV6 + Writer-Key-Store + fail-closed Write-Gate, ManifestV6/Google-v2/RecoveryArtifactV6/SyncBackupV6, produktiver v1→v2-Profile-Upgrade, kryptographischer read-only Join und produktiver crash-resumabler Cooperative Handoff. Noch offen sind produktiver Forced Takeover, native v2→v2 Rotation einschließlich zweiphasigem Recovery-Rekey, V2-App-/UI-/Fachmaterialisierungs-Wiring und insbesondere das Live-Google-Parallel-Append-Gate. Ein generischer Browser-`CryptoKey` allein beweist nicht die Einzigartigkeit eines physischen Geräts. |
 | Google Auth-Origin | Implementiert / Deployment **BLOCKED_EXTERNAL** | Separat baubares `/google-auth/`-Artefakt mit erlaubtem Return-Origin, einmaliger Action-Bindung, Popup→Auth-Bridge-Handoff, MessagePort-RPC und exakt begrenzten Drive-/Sheets-Endpunkten. Das Credential wird nicht an Diary-Code übergeben. Die GitHub-Pages-Testbereitstellung bleibt same-origin; Deployment auf einen zweiten Origin und echte Credentials bleiben extern. |
 | Live Google Contract | **BLOCKED_EXTERNAL** | Hostile-Grid-/Permission-/Unknown-Outcome-Suite gegen dediziertes Google-Testkonto. Zusätzlich ist der reale Mehrgerätefall ausdrücklich kein v1-Join-Pfad: ein zweites Gerät darf ein bestehendes Tagebuch erst mit v2 Join/Handoff verwenden; erneutes v1-`remote_enablement` ist dafür kein unterstützter Ersatz. |
 | WebAuthn PRF | **BLOCKED_EXTERNAL** | Der interne Browser-Adapter erzwingt `userVerification:"required"`, exakte Credential-ID und eine 32-Byte-Post-Enrollment-PRF-Assertion; vor Produktionsfreigabe bleibt die reale Authenticator-/Browsermatrix einschließlich Enrollment-, Unlock- und Recovery-Ceremony auf Zielgeräten zu validieren. |
@@ -38,9 +38,10 @@ EDS Diary ist **nicht** als „production secure“ freigegeben.
   Recovery-Schlüssels über eine vollständige `recovery_rekey`-Epoch-Rotation
   ersetzt werden. Die Recovery-Generation wird erhöht; Umschaltung erfolgt erst
   nach Full Verify, Recovery-Bootstrap und Backup-Test-Restore. Die hiervon
-  getrennte zweiphasige v2-RecoveryAuthorityTransition/Pending-Rekey-Fence-
-  Konstruktion ist Bestandteil des oben als **NICHT IMPLEMENTIERT**
-  ausgewiesenen Transferable-Single-Writer-v2-Gates.
+  getrennte v2-RecoveryAuthorityTransition-/Pending-Rekey-Verifier- und
+  Fence-Semantik ist bereits im Transferable-Single-Writer-v2-Kern vorhanden;
+  die produktive zweiphasige Recovery-Rekey-Orchestrierung bleibt jedoch ein
+  noch offener späterer v2-Slice.
 - Das verschlüsselte Recovery-Artefakt wird bei normaler v1-Rotation und
   recovery_rekey zunächst one-shot lokal persistiert und bootstrap-verifiziert.
   Vor dem Source-Announcement darf die secret-derived owner-only Recovery-
@@ -98,13 +99,18 @@ EDS Diary ist **nicht** als „production secure“ freigegeben.
   RPC-Capability ist auf die tatsächlich verwendeten Drive-/Sheets-Endpunktfamilien
   und Methoden begrenzt.
 
-- **V2-01…V2-06:** eingefrorene v2 Wire-/Schema-/Signaturprimitiven, kanonischer
+- **V2-01…V2-07:** eingefrorene v2 Wire-/Schema-/Signaturprimitiven, kanonischer
   Verifier mit Writer-/Recovery-Authority-Replay, StateV6/WriterDeviceKeyV2,
   fail-closed normaler Domain-Write-Gate, striktes Google-v2-Profil,
   RecoveryArtifactV6/RecoveryTakeoverStagingV2/SyncBackupV6, produktiver
-  crash-resumabler v1→v2-Profile-Upgrade und Recovery-Key-basierter read-only
-  Second-Device-Join. Diese Services sind noch nicht in den normalen
+  crash-resumabler v1→v2-Profile-Upgrade, Recovery-Key-basierter read-only
+  Second-Device-Join und produktiver crash-resumabler Cooperative Handoff mit
+  PoP-gebundenem TransferDescriptorV2, g+1-Grant, Unknown-Outcome-Reconciliation
+  und stale quarantine. Diese Services sind noch nicht in den normalen
   App-/Settings-Datenpfad verdrahtet; daraus folgt keine UI-/Release-Freigabe.
+  Der zuletzt vollständig grün validierte Security-Implementierungshead vor
+  dieser reinen Statusdokumentationskorrektur ist
+  `4ecbb48ab659843e36adbbeb08b679685f924efa`.
 
 ## TESTED
 
@@ -151,6 +157,12 @@ EDS Diary ist **nicht** als „production secure“ freigegeben.
   Recovery-Family-Discovery, Fresh-Profile-Schutz, atomarer lokaler Bundle-Commit,
   Crash-Resume mit identischer Geräte-/Key-Identität sowie finale erneute
   Recovery-/canonical_full-Verifikation vor lokalem Switch.
+- **V2 Cooperative Handoff:** produktiver A→B-Transfer mit PoP-validiertem
+  TransferDescriptorV2, frischem Entscheidungs-Prefix, exakt persistiertem
+  WriterGrantV2 g+1, bounded Unknown-Outcome-Retry, konkurrierenden g+1-/
+  intervenierenden Prefix-Races, terminaler stale quarantine, Source-Demotion
+  erst nach kanonischer Annahme und Target-Promotion erst nach eigenem frischen
+  Full Verify.
 
 ## BLOCKED_EXTERNAL / PRODUCTION RELEASE GATES
 
@@ -165,6 +177,6 @@ EDS Diary ist **nicht** als „production secure“ freigegeben.
 
 `SECURITY/DECISION: single-writer-v1 production hardening rationale frozen in EDS_SINGLE_WRITER_V1_HARDENING_DECISIONS.md`
 
-`TODO_INTERNAL: transferable-single-writer-v2 remaining slices — Cooperative Handoff, Forced Takeover/stale quarantine, native v2→v2 Rotation + Recovery-Rekey, App/UI integration, Live-Google Parallel-Append-Gate`
+`TODO_INTERNAL: transferable-single-writer-v2 remaining slices — Forced Takeover ceremony, native v2→v2 Rotation + Recovery-Rekey, App/UI integration, Live-Google Parallel-Append-Gate`
 
 `SECURITY/SPEC DECISION: exact transferable-single-writer-v2 wire, signature and recovery-takeover protocol frozen in EDS_TRANSFERABLE_SINGLE_WRITER_V2_EXACT_PROTOCOL.md`
