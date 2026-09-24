@@ -42,8 +42,20 @@ import type { VerifiedRecoveryTakeoverStagingV2 } from '../security/v2/recoveryS
 import { openRecoveryArtifactV6, type RecoveryArtifactV6 } from '../security/v2/recovery'
 import type { CreationPersistence, CreationState } from '../sync/core/creation'
 import type { FreshCanonicalV2Source } from '../security/v2/domainWrite'
-import { deriveEpochSaltV2 } from '../security/v2/crypto'
 import { ProductiveReadOnlyJoinV2Service } from '../data/readOnlyJoinV2Service'
+import {
+  deriveEpochSaltV2,
+  generateRecoveryTakeoverKeyMaterialV2,
+  generateWriterDeviceKeyV2,
+  recoveryCommitmentV2,
+  recoveryUrsIdV2,
+  revisionSigningBytesV2,
+  signEd25519V2,
+  writerGrantSigningBytesV2,
+} from '../security/v2/crypto'
+import { envelopeRowV2, sealRevisionEnvelopeV2 } from '../security/v2/envelopes'
+import { createAnchorV2 } from '../security/v2/prefix'
+import type { RecoveryAuthorityTransitionV2, RevisionV2, RotationAnnouncementV2, WriterGrantV2 } from '../security/v2/types'
 
 type Row=readonly[string,string,string]
 
@@ -62,9 +74,16 @@ class MemoryTransport implements RemoteTransport {
   unknownAfterAppend=false
   unknownWithoutAppend=0
   injectBeforeNextAppend:Row|null=null
+  afterNextRead:(()=>void|Promise<void>)|null=null
   async discover(locator:string):Promise<readonly RemoteCandidate[]>{return[{remoteId:this.remoteId,locator}]}
   async create():Promise<void>{}
-  async read(id:string):Promise<RemoteSnapshot>{if(id!==this.remoteId)throw new Error('wrong remote');return structuredClone(this.snapshot)}
+  async read(id:string):Promise<RemoteSnapshot>{
+    if(id!==this.remoteId)throw new Error('wrong remote')
+    const value=structuredClone(this.snapshot),hook=this.afterNextRead
+    this.afterNextRead=null
+    await hook?.()
+    return value
+  }
   async append(id:string,row:readonly[string,string,string]):Promise<void>{
     if(id!==this.remoteId)throw new Error('wrong remote')
     if(this.unknownWithoutAppend>0){this.unknownWithoutAppend-=1;throw new TransportError('unknown_outcome','simulated unresolved append')}
@@ -177,6 +196,114 @@ async function seedV1Source(urs:Uint8Array,createdAt:string):Promise<{transport:
   return{transport:remote,session:new V1Session(remote,account),sourceEpochId:source.context.epochId,diaryId:source.context.diaryId,account}
 }
 
+
+async function successorSecurityContext(v2:V2Session,urs:Uint8Array){
+  if(!v2.remote||!v2.recovery)throw new Error('successor fixture is incomplete')
+  const recovered=await openRecoveryArtifactV6(v2.recovery,urs),payload=recovered.payload
+  const epochSalt=await deriveEpochSaltV2(fromBase64Url(payload.diary_id),fromBase64Url(payload.epoch_id))
+  const store=new IndexedDbV2LocalSecurityStore(),state=await store.loadState(recovered.rootKey,epochSalt,payload.epoch_id)
+  const writer=await store.loadWriterKey(state.writer_signing_key_id,state.diary_id,state.epoch_id)
+  if(!writer||state.verified_writer_generation===null||state.verified_writer_grant_id===null
+    ||state.verified_writer_device_id===null||state.verified_writer_key_id===null)throw new Error('verified successor Writer authority is unavailable')
+  return{remote:v2.remote,recovered,payload,epochSalt,store,state,writer}
+}
+
+async function appendPostActivationDomainRow(v2:V2Session,urs:Uint8Array,createdAt:string):Promise<Row>{
+  const ctx=await successorSecurityContext(v2,urs)
+  const unsigned:RevisionV2={
+    record_type:'pain_entry',record_schema:'pain-entry/v1',
+    record_id:base64Url(randomBytes(16)),revision_id:base64Url(randomBytes(32)),
+    parent_revision_ids:[],record_status:'active',record_data:{startedAt:createdAt,endedAt:'',locations:[],intensity:4,qualities:[],cause:'',occursWhen:'',note:'post activation domain',createdAt,updatedAt:createdAt},
+    migration_origin:null,protocol_created_at:createdAt,
+    writer_context:{
+      writer_generation:ctx.state.verified_writer_generation!,
+      writer_grant_id:ctx.state.verified_writer_grant_id!,
+      writer_device_id:ctx.state.verified_writer_device_id!,
+      writer_key_id:ctx.state.verified_writer_key_id!,
+    },
+    writer_signature:null,
+  }
+  const revision={...unsigned,writer_signature:await signEd25519V2(ctx.writer.private_key,revisionSigningBytesV2(ctx.payload.diary_id,ctx.payload.epoch_id,unsigned))}
+  const envelope=await sealRevisionEnvelopeV2(ctx.recovered.rootKey,ctx.epochSalt,{diaryId:ctx.payload.diary_id,epochId:ctx.payload.epoch_id},revision,randomBytes(32),randomBytes(12))
+  const row=envelopeRowV2(envelope);await ctx.remote.append(ctx.remote.remoteId,row);return row
+}
+
+async function appendPostActivationHandoff(v2:V2Session,urs:Uint8Array,createdAt:string){
+  const ctx=await successorSecurityContext(v2,urs),target=await generateWriterDeviceKeyV2(),targetDeviceId=base64Url(randomBytes(16))
+  const grant:WriterGrantV2={
+    grant_id:base64Url(randomBytes(32)),writer_generation:ctx.state.verified_writer_generation!+1,
+    writer_device_id:targetDeviceId,writer_key_id:target.writerKeyId,writer_public_key:base64Url(target.publicKeyRaw),
+    previous_grant_id:ctx.state.verified_writer_grant_id!,previous_writer_generation:ctx.state.verified_writer_generation!,
+    recovery_generation:ctx.state.recovery_generation,reason:'handoff',
+    authority_anchor:await createAnchorV2(ctx.payload.diary_id,ctx.payload.epoch_id,ctx.remote.snapshot.rows),
+    authorization:{kind:'writer_handoff',signer_key_id:ctx.writer.writer_signing_key_id,signature:null},
+  }
+  grant.authorization.signature=await signEd25519V2(ctx.writer.private_key,writerGrantSigningBytesV2(ctx.payload.diary_id,ctx.payload.epoch_id,grant))
+  const revision:RevisionV2<WriterGrantV2>={
+    record_type:'writer_grant',record_schema:'writer-grant-sw-v2',
+    record_id:base64Url(randomBytes(16)),revision_id:base64Url(randomBytes(32)),
+    parent_revision_ids:[],record_status:'control',record_data:grant,migration_origin:null,protocol_created_at:createdAt,
+    writer_context:null,writer_signature:null,
+  }
+  const envelope=await sealRevisionEnvelopeV2(ctx.recovered.rootKey,ctx.epochSalt,{diaryId:ctx.payload.diary_id,epochId:ctx.payload.epoch_id},revision,randomBytes(32),randomBytes(12))
+  await ctx.remote.append(ctx.remote.remoteId,envelopeRowV2(envelope))
+  return{target,targetDeviceId,grant}
+}
+
+async function prepareRecoveryTransitionRow(v2:V2Session,urs:Uint8Array,createdAt:string):Promise<Row>{
+  const ctx=await successorSecurityContext(v2,urs),nextUrs=randomBytes(32),nextRecovery=await generateRecoveryTakeoverKeyMaterialV2()
+  const toGeneration=ctx.state.recovery_generation+1
+  const transition:RecoveryAuthorityTransitionV2={
+    transition_id:base64Url(randomBytes(32)),transition_kind:'recovery_rekey',
+    from_recovery_generation:ctx.state.recovery_generation,from_recovery_urs_id:ctx.state.recovery_urs_id!,
+    from_recovery_takeover_key_id:ctx.state.recovery_takeover_key_id!,
+    to_recovery_generation:toGeneration,
+    to_recovery_urs_commitment:await recoveryCommitmentV2(nextUrs,fromBase64Url(ctx.payload.diary_id),toGeneration),
+    to_recovery_urs_id:await recoveryUrsIdV2(nextUrs),
+    to_recovery_takeover_key_id:nextRecovery.recoveryTakeoverKeyId,
+    to_recovery_takeover_public_key:base64Url(nextRecovery.publicKeyRaw),
+    authority_anchor:await createAnchorV2(ctx.payload.diary_id,ctx.payload.epoch_id,ctx.remote.snapshot.rows),
+  }
+  const unsigned:RevisionV2<RecoveryAuthorityTransitionV2>={
+    record_type:'recovery_authority_transition',record_schema:'recovery-authority-transition-sw-v2',
+    record_id:base64Url(randomBytes(16)),revision_id:base64Url(randomBytes(32)),
+    parent_revision_ids:[],record_status:'control',record_data:transition,migration_origin:null,protocol_created_at:createdAt,
+    writer_context:{
+      writer_generation:ctx.state.verified_writer_generation!,writer_grant_id:ctx.state.verified_writer_grant_id!,
+      writer_device_id:ctx.state.verified_writer_device_id!,writer_key_id:ctx.state.verified_writer_key_id!,
+    },
+    writer_signature:null,
+  }
+  const revision={...unsigned,writer_signature:await signEd25519V2(ctx.writer.private_key,revisionSigningBytesV2(ctx.payload.diary_id,ctx.payload.epoch_id,unsigned))}
+  const envelope=await sealRevisionEnvelopeV2(ctx.recovered.rootKey,ctx.epochSalt,{diaryId:ctx.payload.diary_id,epochId:ctx.payload.epoch_id},revision,randomBytes(32),randomBytes(12))
+  return envelopeRowV2(envelope)
+}
+
+async function prepareSealRow(v2:V2Session,urs:Uint8Array,createdAt:string):Promise<Row>{
+  const ctx=await successorSecurityContext(v2,urs),successorEpochId=base64Url(randomBytes(16))
+  const rotation:RotationAnnouncementV2={
+    rotation_id:base64Url(randomBytes(32)),from_epoch_id:ctx.payload.epoch_id,
+    successor_epoch_id:successorEpochId,successor_creation_locator:base64Url(randomBytes(16)),
+    successor_manifest_fingerprint:base64Url(randomBytes(32)),rotation_kind:'normal',
+    source_writer_generation:ctx.state.verified_writer_generation!,source_writer_grant_id:ctx.state.verified_writer_grant_id!,
+    successor_recovery_generation:ctx.state.recovery_generation,
+    source_anchor_before_announcement:await createAnchorV2(ctx.payload.diary_id,ctx.payload.epoch_id,ctx.remote.snapshot.rows),
+    successor_staging_anchor:await createAnchorV2(ctx.payload.diary_id,successorEpochId,[]),recovery_transition_id:null,
+  }
+  const unsigned:RevisionV2<RotationAnnouncementV2>={
+    record_type:'rotation_announcement',record_schema:'rotation-announcement-sw-v2',
+    record_id:base64Url(randomBytes(16)),revision_id:base64Url(randomBytes(32)),
+    parent_revision_ids:[],record_status:'control',record_data:rotation,migration_origin:null,protocol_created_at:createdAt,
+    writer_context:{
+      writer_generation:ctx.state.verified_writer_generation!,writer_grant_id:ctx.state.verified_writer_grant_id!,
+      writer_device_id:ctx.state.verified_writer_device_id!,writer_key_id:ctx.state.verified_writer_key_id!,
+    },writer_signature:null,
+  }
+  const revision={...unsigned,writer_signature:await signEd25519V2(ctx.writer.private_key,revisionSigningBytesV2(ctx.payload.diary_id,ctx.payload.epoch_id,unsigned))}
+  const envelope=await sealRevisionEnvelopeV2(ctx.recovered.rootKey,ctx.epochSalt,{diaryId:ctx.payload.diary_id,epochId:ctx.payload.epoch_id},revision,randomBytes(32),randomBytes(12))
+  return envelopeRowV2(envelope)
+}
+
 describe('ProductiveProfileUpgradeV2Service',()=>{
   beforeEach(async()=>{
     await __localDatabaseTesting.resetForTesting()
@@ -255,6 +382,10 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     if(!v2.remote||!v2.recovery)throw new Error('productive profile-upgrade fixture did not publish successor/recovery state')
 
     const successorRemote=v2.remote,recoveryArtifact=structuredClone(v2.recovery)
+    const sourceAnnouncement=source.transport.snapshot.rows.at(-1)!
+    source.transport.snapshot.rows.push([...sourceAnnouncement])
+    const successorConfirmation=successorRemote.snapshot.rows.at(-1)!
+    successorRemote.snapshot.rows.push([...successorConfirmation])
     await __localDatabaseTesting.resetForTesting()
     await __v2LocalPersistenceTesting.reset()
     await deleteDatabase('eds-diary')
@@ -320,28 +451,93 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     expect(v2.remote).not.toBeNull()
   },90_000)
 
-  it('rejects duplicate physical profile-upgrade Announcement rows at the activation boundary',async()=>{
+  it('accepts byte-identical physical profile-upgrade Announcement retries when the first post-freeze row is the prepared Announcement',async()=>{
     const createdAt='2026-09-23T14:30:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
     let armed=false
     await expect(new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt,point=>{
-      if(point==='after-announcement_durable'&&!armed){armed=true;throw new Error('armed-duplicate-announcement')}
-    }).upgrade()).rejects.toThrow('armed-duplicate-announcement')
-    const announcement=source.transport.snapshot.rows.at(-1)!
-    source.transport.snapshot.rows.push([...announcement])
-    await expect(new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()).rejects.toThrow(/profile_upgrade_source_race|exactly one physical Source Announcement/)
-    expect(await activeProtocolSelectionV2()).toBeNull()
+      if(point==='after-staged_backup_verified'&&!armed){armed=true;throw new Error('armed-announcement-retry')}
+    }).upgrade()).rejects.toThrow('armed-announcement-retry')
+    const operation=await loadProfileUpgradeSourceOperationV2()
+    if(!operation?.announcement_envelope)throw new Error('prepared Announcement missing')
+    source.transport.injectBeforeNextAppend=[operation.announcement_envelope.envelope_id,operation.announcement_envelope.iv,operation.announcement_envelope.ciphertext]
+    const result=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    expect(result.stage).toBe('switched')
+    expect(source.transport.snapshot.rows.slice(operation.source_anchor_before_announcement.covered_row_count).filter(row=>row[0]===operation.announcement_envelope!.envelope_id)).toHaveLength(2)
   },90_000)
 
-  it('rejects duplicate physical Successor Confirmation rows at the activation boundary',async()=>{
+  it('includes immediate byte-identical Confirmation retries in successor_activation_anchor and still switches',async()=>{
     const createdAt='2026-09-23T15:30:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
     let armed=false
     await expect(new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt,point=>{
-      if(point==='after-confirmation_durable'&&!armed){armed=true;throw new Error('armed-duplicate-confirmation')}
-    }).upgrade()).rejects.toThrow('armed-duplicate-confirmation')
+      if(point==='after-announcement_durable'&&!armed){armed=true;throw new Error('armed-confirmation-retry')}
+    }).upgrade()).rejects.toThrow('armed-confirmation-retry')
+    const operation=await loadProfileUpgradeSourceOperationV2()
+    if(!operation?.confirmation_envelope||!v2.remote)throw new Error('prepared Confirmation missing')
+    v2.remote.injectBeforeNextAppend=[operation.confirmation_envelope.envelope_id,operation.confirmation_envelope.iv,operation.confirmation_envelope.ciphertext]
+    const result=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    expect(result.stage).toBe('switched')
+    expect(result.successor_activation_anchor?.covered_row_count).toBe(result.successor_staging_anchor!.covered_row_count+2)
+  },90_000)
+
+  it('accepts a valid post-activation Fachrow and includes it in the activated/final verified prefix',async()=>{
+    const createdAt='2026-09-23T15:45:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    let armed=false
+    await expect(new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt,point=>{
+      if(point==='after-confirmation_durable'&&!armed){armed=true;throw new Error('armed-post-activation-domain')}
+    }).upgrade()).rejects.toThrow('armed-post-activation-domain')
+    const row=await appendPostActivationDomainRow(v2,urs,createdAt)
+    const result=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    expect(result.stage).toBe('switched')
+    expect(v2.remote!.snapshot.rows.some(candidate=>candidate[0]===row[0])).toBe(true)
+    const ctx=await successorSecurityContext(v2,urs),state=await ctx.store.loadState(ctx.recovered.rootKey,ctx.epochSalt,ctx.payload.epoch_id)
+    expect(state.remote_anchor?.covered_row_count).toBe(v2.remote!.snapshot.rows.length)
+  },90_000)
+
+  it('accepts a valid post-activation WriterGrant and derives final local read_only status from the latest authority',async()=>{
+    const createdAt='2026-09-23T15:50:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    let armed=false
+    await expect(new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt,point=>{
+      if(point==='after-confirmation_durable'&&!armed){armed=true;throw new Error('armed-post-activation-handoff')}
+    }).upgrade()).rejects.toThrow('armed-post-activation-handoff')
+    const handoff=await appendPostActivationHandoff(v2,urs,createdAt)
+    const result=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    expect(result.stage).toBe('switched')
+    const ctx=await successorSecurityContext(v2,urs),state=await ctx.store.loadState(ctx.recovered.rootKey,ctx.epochSalt,ctx.payload.epoch_id)
+    expect(state.verified_writer_grant_id).toBe(handoff.grant.grant_id)
+    expect(state.verified_writer_device_id).toBe(handoff.targetDeviceId)
+    expect(state.writer_status).toBe('read_only')
+    expect(state.writer_generation).toBeNull()
+  },90_000)
+
+  it('uses the fresher activation-boundary read and supersedes before activated Backup when Recovery advances between reads',async()=>{
+    const createdAt='2026-09-23T15:55:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    let armed=false
+    await expect(new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt,point=>{
+      if(point==='after-confirmation_durable'&&!armed){armed=true;throw new Error('armed-split-read-recovery')}
+    }).upgrade()).rejects.toThrow('armed-split-read-recovery')
     if(!v2.remote)throw new Error('successor missing in test fixture')
-    const confirmation=v2.remote.snapshot.rows.at(-1)!
-    v2.remote.snapshot.rows.push([...confirmation])
-    await expect(new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()).rejects.toThrow(/profile_upgrade_successor_cutover_race|exactly one physical Successor Confirmation/)
+    const transitionRow=await prepareRecoveryTransitionRow(v2,urs,createdAt)
+    v2.remote.afterNextRead=()=>{v2.remote!.snapshot.rows.push([...transitionRow])}
+    const result=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    expect(result.stage).toBe('post_activation_superseded')
+    expect(result.activated_backup_id).toBeNull()
+    expect(await activeProtocolSelectionV2()).toBeNull()
+    const store=new IndexedDbV2LocalSecurityStore()
+    expect(await store.operationArtifact(`${result.operation_id}:activated-backup`)).toBeNull()
+  },90_000)
+
+  it('supersedes before activated Backup when the activated Successor is sealed by a valid v2 RotationAnnouncement',async()=>{
+    const createdAt='2026-09-23T15:57:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    let armed=false
+    await expect(new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt,point=>{
+      if(point==='after-confirmation_durable'&&!armed){armed=true;throw new Error('armed-post-activation-seal')}
+    }).upgrade()).rejects.toThrow('armed-post-activation-seal')
+    if(!v2.remote)throw new Error('successor missing in test fixture')
+    const sealRow=await prepareSealRow(v2,urs,createdAt)
+    v2.remote.snapshot.rows.push([...sealRow])
+    const result=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    expect(result.stage).toBe('post_activation_superseded')
+    expect(result.activated_backup_id).toBeNull()
     expect(await activeProtocolSelectionV2()).toBeNull()
   },90_000)
 
