@@ -172,6 +172,28 @@ export async function prepareSuccessorRootWrapV6ForActiveMode(rootKey:Uint8Array
   if(base64Url(await openBestEffortRootWrapV6(wrap,key))!==base64Url(rootKey))throw new Error('RootWrapV6 best-effort readback failed.')
   return{wrap,bestEffortWrappingKey:key}
 }
+export async function prepareReadOnlyJoinRootWrapV6ForActiveMode(rootKey:Uint8Array,identity:RootWrapIdentityV6,wrapId:Uint8Array):Promise<PreparedSuccessorRootWrapV6>{
+  const db=await openDatabase(),active=await loadEpoch(db),records=await readEpochRecords(db,active.context)
+  if(wrapId.byteLength!==16)throw new Error('RootWrapV6 wrap_id must contain 16 bytes.')
+  if(records.wrap.mode==='passphrase'){
+    const factor=unlockFactors.get(active.context.diaryId)
+    if(!factor||factor.mode!=='passphrase')throw new LocalUnlockRequiredError('passphrase')
+    const wrap=await createPassphraseRootWrapV6(rootKey,factor.passphrase,identity,wrapId)
+    if(base64Url(await openPassphraseRootWrapV6(wrap,factor.passphrase))!==base64Url(rootKey))throw new Error('Join RootWrapV6 passphrase readback failed.')
+    return{wrap,bestEffortWrappingKey:null}
+  }
+  if(records.wrap.mode==='prf'){
+    const factor=unlockFactors.get(active.context.diaryId)
+    if(!factor||factor.mode!=='prf')throw new LocalUnlockRequiredError('prf')
+    const wrap=await createPrfRootWrapV6(rootKey,{credentialId:factor.credentialId,prfEvalInput:factor.prfEvalInput,prfOutput:factor.prfOutput,rpId:factor.rpId},identity,wrapId)
+    if(base64Url(await openPrfRootWrapV6(wrap,factor.credentialId,factor.prfOutput))!==base64Url(rootKey))throw new Error('Join RootWrapV6 PRF readback failed.')
+    return{wrap,bestEffortWrappingKey:null}
+  }
+  const key=await generateBestEffortWrappingKeyV6(),wrap=await createBestEffortRootWrapV6(rootKey,key,identity,wrapId)
+  if(base64Url(await openBestEffortRootWrapV6(wrap,key))!==base64Url(rootKey))throw new Error('Join RootWrapV6 best-effort readback failed.')
+  return{wrap,bestEffortWrappingKey:key}
+}
+
 export async function openSuccessorRootWrapV6WithActiveMode(prepared:PreparedSuccessorRootWrapV6):Promise<Uint8Array>{
   const wrap=prepared.wrap
   if(wrap.mode==='best-effort'){
