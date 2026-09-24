@@ -426,15 +426,22 @@ export async function activeProtocolSelectionV2():Promise<ActiveProtocolSelectio
   await complete(tx)
   return value??null
 }
-export async function assertReadOnlyJoinLocalProfileIsFresh():Promise<void>{
-  await ready()
-  const db=await openDatabase(),source=await loadEpoch(db)
+async function assertReadOnlyJoinPlaceholderFresh(db:IDBDatabase,source:Awaited<ReturnType<typeof loadEpoch>>):Promise<void>{
   if(source.state.epoch_status!=='local_offline'
     ||source.state.remote_binding!==null
     ||source.state.remote_anchor!==null
     ||source.state.rotation_state_ref!==null
-    ||source.state.migration_state_ref!==null
     ||source.state.local_journal_count!==0)throw new Error('Read-only Join requires a fresh local profile; existing local diary state must be imported or merged explicitly.')
+  if(source.state.migration_state_ref!==null){
+    const tx=db.transaction(STORES.migration,'readonly')
+    const migration=await result<MigrationState|undefined>(tx.objectStore(STORES.migration).get('legacy-v1'))
+    await complete(tx)
+    const ref=source.state.migration_state_ref
+    if(!migration||!migration.verified||migration.phase!=='cutover'
+      ||migration.sourceKeys.length!==0||migration.completedKeys.length!==0
+      ||ref.operation_id!==migration.operationId||ref.state!=='cutover'
+      ||ref.state_record_hash!==await migrationHash(migration))throw new Error('Read-only Join requires a fresh local profile; legacy migration evidence is not an empty verified cutover.')
+  }
   const tx=db.transaction([STORES.envelopes,STORES.outbox,STORES.operations],'readonly')
   const envelopeRequest=tx.objectStore(STORES.envelopes).index('byEpoch').getAll(source.context.epochId)
   const outboxRequest=tx.objectStore(STORES.outbox).index('byEpoch').getAll(source.context.epochId)
@@ -444,6 +451,11 @@ export async function assertReadOnlyJoinLocalProfileIsFresh():Promise<void>{
   if(envelopes.length||outbox.length||operations.length)throw new Error('Read-only Join refuses to overwrite non-empty local persistence.')
 }
 
+export async function assertReadOnlyJoinLocalProfileIsFresh():Promise<void>{
+  await ready()
+  const db=await openDatabase(),source=await loadEpoch(db)
+  await assertReadOnlyJoinPlaceholderFresh(db,source)
+}
 export async function atomicSelectReadOnlyJoinV2(args:{
   joinId:string
   diaryId:string
@@ -464,19 +476,7 @@ export async function atomicSelectReadOnlyJoinV2(args:{
       if(source.state.epoch_status!=='retired')throw new Error('v2 Join selection exists without a retired local placeholder epoch.')
       return
     }
-    if(source.state.epoch_status!=='local_offline'
-      ||source.state.remote_binding!==null
-      ||source.state.remote_anchor!==null
-      ||source.state.rotation_state_ref!==null
-      ||source.state.migration_state_ref!==null
-      ||source.state.local_journal_count!==0)throw new Error('Read-only Join requires a fresh local profile; existing local diary state must be imported or merged explicitly.')
-    const txRead=db.transaction([STORES.envelopes,STORES.outbox,STORES.operations],'readonly')
-    const envelopeRequest=txRead.objectStore(STORES.envelopes).index('byEpoch').getAll(source.context.epochId)
-    const outboxRequest=txRead.objectStore(STORES.outbox).index('byEpoch').getAll(source.context.epochId)
-    const operationRequest=txRead.objectStore(STORES.operations).getAll()
-    const [envelopes,outbox,operations]=await Promise.all([result<StoredEnvelope[]>(envelopeRequest),result<StoredOutbox[]>(outboxRequest),result<unknown[]>(operationRequest)])
-    await complete(txRead)
-    if(envelopes.length||outbox.length||operations.length)throw new Error('Read-only Join refuses to overwrite non-empty local persistence.')
+    await assertReadOnlyJoinPlaceholderFresh(db,source)
     const retired={...source.state,epoch_status:'retired' as const,operation_generation:source.state.operation_generation+1}
     const tag=await stateTag(source.rootKey,source.epochSalt,retired)
     const tx=db.transaction([STORES.context,STORES.state],'readwrite')
