@@ -33,6 +33,8 @@ interface Sheet {
 }
 interface Spreadsheet {spreadsheetId?:string;sheets?:Sheet[]}
 
+export interface DiscoveredRecoveryArtifactV6 {remoteResourceId:string;artifact:RecoveryArtifactV6}
+
 const NAME_PREFIX='eds-diary-recovery-'
 const FORMAT='sync-recovery-v6'
 
@@ -170,6 +172,44 @@ export class GoogleRecoveryArtifactStoreV6 {
       }catch{result.push({id:candidate.id,kind:'conflicting'})}
     }
     return result.sort((a,b)=>a.id.localeCompare(b.id))
+  }
+
+  async discoverFamilyArtifacts(urs:Uint8Array):Promise<readonly DiscoveredRecoveryArtifactV6[]>{
+    const family=await recoveryFamilyLocatorV6(urs)
+    const query=encodeURIComponent(`appProperties has { key='recovery_family_locator' and value='${family}' } and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`)
+    const found=new Map<string,DriveFile>()
+    let token:string|undefined
+    do{
+      const suffix=token?`&pageToken=${encodeURIComponent(token)}`:''
+      const result=await this.api.request<{files?:DriveFile[];nextPageToken?:string}>(`https://www.googleapis.com/drive/v3/files?q=${query}&spaces=drive&fields=files(id,name,mimeType,trashed,ownedByMe,shared,driveId,isAppAuthorized,appProperties),nextPageToken&pageSize=1000${suffix}`)
+      for(const file of result.files??[])if(file.id)found.set(file.id,file)
+      token=result.nextPageToken
+    }while(token)
+
+    const discovered:DiscoveredRecoveryArtifactV6[]=[]
+    const seenLocators=new Set<string>(),seenEpochs=new Set<string>()
+    for(const candidate of [...found.values()].sort((a,b)=>String(a.id).localeCompare(String(b.id)))){
+      if(!candidate.id)throw new Error('RecoveryArtifactV6 family discovery returned an unidentifiable resource.')
+      const props=candidate.appProperties??{},keys=Object.keys(props).sort()
+      if(keys.join('\0')!=='app_format\0recovery_artifact_locator\0recovery_family_locator'
+        ||props.app_format!==FORMAT
+        ||props.recovery_family_locator!==family
+        ||!props.recovery_artifact_locator)throw new Error('RecoveryArtifactV6 family discovery contains a malformed protocol resource.')
+      const expected=this.expectedProperties(family,props.recovery_artifact_locator)
+      await this.verifyFile(candidate.id,expected,false)
+      if(candidate.name!==`${NAME_PREFIX}${props.recovery_artifact_locator}`)throw new Error('RecoveryArtifactV6 family filename/locator mismatch.')
+      const artifact=await this.readArtifact(candidate.id)
+      if(!artifact)throw new Error('RecoveryArtifactV6 family resource is unexpectedly empty.')
+      const payload=(await openRecoveryArtifactV6(artifact,urs)).payload
+      const locator=await recoveryArtifactLocatorV6(urs,payload.diary_id,payload.epoch_id)
+      if(locator!==props.recovery_artifact_locator)throw new Error('RecoveryArtifactV6 family resource locator does not match its decrypted identity.')
+      if(payload.google_account_binding!==await googleAccountBindingV2(payload.diary_id,this.api.identity()))throw new Error('RecoveryArtifactV6 family resource Google account binding mismatch.')
+      const epochKey=`${payload.diary_id}:${payload.epoch_id}`
+      if(seenLocators.has(locator)||seenEpochs.has(epochKey))throw new Error('RecoveryArtifactV6 family discovery is ambiguous.')
+      seenLocators.add(locator);seenEpochs.add(epochKey)
+      discovered.push({remoteResourceId:candidate.id,artifact})
+    }
+    return discovered
   }
 
   async publish(urs:Uint8Array,persisted:VerifiedPersistedRecoveryArtifactV6):Promise<string>{

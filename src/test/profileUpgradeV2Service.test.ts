@@ -36,11 +36,13 @@ import type { RecoveryArtifact } from '../security/recovery'
 import type { TransferableSingleWriterV2ProviderSession } from '../sync/google/GoogleTransferableSingleWriterV2Provider'
 import { GoogleSheetsTransferableSingleWriterV2ProfileCodec } from '../sync/google/GoogleSheetsTransferableSingleWriterV2ProfileCodec'
 import type { GoogleSheetsTransferableSingleWriterV2Transport } from '../sync/google/GoogleSheetsTransferableSingleWriterV2Transport'
+import type { GoogleSheetsSingleWriterTransport } from '../sync/google/GoogleSheetsSingleWriterTransport'
 import { manifestCellsArrayV6, manifestFingerprintV6, type ManifestCellsV6 } from '../security/v2/manifest'
 import type { VerifiedRecoveryTakeoverStagingV2 } from '../security/v2/recoveryStaging'
 import { openRecoveryArtifactV6, type RecoveryArtifactV6 } from '../security/v2/recovery'
 import type { CreationPersistence, CreationState } from '../sync/core/creation'
 import type { FreshCanonicalV2Source } from '../security/v2/domainWrite'
+import { ProductiveReadOnlyJoinV2Service } from '../data/readOnlyJoinV2Service'
 import {
   deriveEpochSaltV2,
   generateRecoveryTakeoverKeyMaterialV2,
@@ -167,7 +169,7 @@ class V2Session implements TransferableSingleWriterV2ProviderSession {
   async disconnect():Promise<void>{}
 }
 
-async function seedV1Source(urs:Uint8Array,createdAt:string):Promise<{transport:MemoryTransport;session:V1Session;sourceEpochId:string;diaryId:string}>{
+async function seedV1Source(urs:Uint8Array,createdAt:string):Promise<{transport:MemoryTransport;session:V1Session;sourceEpochId:string;diaryId:string;account:string}>{
   await putRecord(LOCAL_STORES.painEntries,pain('upgrade-active'))
   await putRecord(LOCAL_STORES.painEntries,pain('upgrade-deleted'))
   await putRecord(LOCAL_STORES.painEntries,{...pain('upgrade-deleted'),status:'deleted' as const})
@@ -191,7 +193,7 @@ async function seedV1Source(urs:Uint8Array,createdAt:string):Promise<{transport:
   tx.objectStore(__localDatabaseTesting.STORES.context).put({...source.context,manifestFingerprint:fingerprint})
   tx.objectStore(__localDatabaseTesting.STORES.wraps).put({id:source.context.epochId,wrap})
   await transactionComplete(tx)
-  return{transport:remote,session:new V1Session(remote,account),sourceEpochId:source.context.epochId,diaryId:source.context.diaryId}
+  return{transport:remote,session:new V1Session(remote,account),sourceEpochId:source.context.epochId,diaryId:source.context.diaryId,account}
 }
 
 
@@ -371,6 +373,67 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     const selection=await activeProtocolSelectionV2()
     expect(selection).toMatchObject({sync_profile:SINGLE_WRITER_V2_PROFILE,epoch_id:final.successor_epoch_id,operation_id:final.operation_id})
     expect(v2.recovery).not.toBeNull()
+  },120_000)
+
+  it('joins a fully activated productive v1->v2 successor read-only on a fresh second-device profile',async()=>{
+    const createdAt='2026-09-23T12:30:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    expect(upgraded.stage).toBe('switched')
+    if(!v2.remote||!v2.recovery)throw new Error('productive profile-upgrade fixture did not publish successor/recovery state')
+
+    const successorRemote=v2.remote,recoveryArtifact=structuredClone(v2.recovery)
+    const sourceAnnouncement=source.transport.snapshot.rows.at(-1)!
+    source.transport.snapshot.rows.push([...sourceAnnouncement])
+    const successorConfirmation=successorRemote.snapshot.rows.at(-1)!
+    successorRemote.snapshot.rows.push([...successorConfirmation])
+    await __localDatabaseTesting.resetForTesting()
+    await __v2LocalPersistenceTesting.reset()
+    await deleteDatabase('eds-diary')
+    await deleteDatabase('eds-diary-v2-security')
+    globalThis.localStorage?.clear?.()
+
+    const v2Transport={
+      providerId:'google-drive-sheets-v1',
+      profileId:SINGLE_WRITER_V2_PROFILE,
+      discover:(locator:string)=>successorRemote.discover(locator),
+      read:(remoteId:string)=>successorRemote.read(remoteId),
+      authenticatedAccountBinding:async()=>v2.account,
+    } as unknown as GoogleSheetsTransferableSingleWriterV2Transport
+    const v1Transport={
+      providerId:'google-drive-sheets-v1',
+      profileId:SINGLE_WRITER_V1_PROFILE,
+      discover:(locator:string)=>source.transport.discover(locator),
+      read:(remoteId:string)=>source.transport.read(remoteId),
+      authenticatedAccountBinding:async()=>source.account,
+    } as unknown as GoogleSheetsSingleWriterTransport
+    const joinSession:TransferableSingleWriterV2ProviderSession={
+      providerId:'google-drive-sheets-v1',
+      profileId:SINGLE_WRITER_V2_PROFILE,
+      async transportForEpoch(){return v2Transport},
+      async v1TransportForEpoch(){return v1Transport},
+      async remoteIdentityBinding(){return v2.account},
+      async codecForEpoch(diaryId,epochId,rootKey){return new GoogleSheetsTransferableSingleWriterV2ProfileCodec(diaryId,epochId,rootKey,v2.account)},
+      freshCanonicalSource(){throw new Error('unused')},
+      async creationProperties(){throw new Error('unused')},
+      async createOrReconcileEpoch(){throw new Error('unused')},
+      async publishRecoveryArtifact(){throw new Error('unused')},
+      async discoverRecoveryFamilyArtifacts(){return[{remoteResourceId:'recovery-v6',artifact:structuredClone(recoveryArtifact)}]},
+      async findRecoveryArtifact(){return structuredClone(recoveryArtifact)},
+      async loadRecoveryArtifact(){return structuredClone(recoveryArtifact)},
+      async disconnect(){},
+    }
+
+    const joined=await new ProductiveReadOnlyJoinV2Service(joinSession).join(urs)
+    expect(joined.epochId).toBe(upgraded.successor_epoch_id)
+    expect(joined.resumed).toBe(false)
+    const recovered=await openRecoveryArtifactV6(recoveryArtifact,urs)
+    const epochSalt=await deriveEpochSaltV2(fromBase64Url(joined.diaryId),fromBase64Url(joined.epochId))
+    const state=await new IndexedDbV2LocalSecurityStore().loadState(recovered.rootKey,epochSalt,joined.epochId)
+    expect(state.writer_status).toBe('read_only')
+    expect(state.writer_generation).toBeNull()
+    expect(state.writer_grant_id).toBeNull()
+    expect(state.activation_lineage_cache_ref).not.toBeNull()
+    expect(await activeProtocolSelectionV2()).toMatchObject({epoch_id:joined.epochId,operation_id:joined.joinId})
   },120_000)
 
   it('enters terminal source-race when a v1 row lands between the final read and one-shot Announcement append',async()=>{

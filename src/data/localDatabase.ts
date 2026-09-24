@@ -1,4 +1,4 @@
-import { base64Url, decodeUtf8, fromBase64Url, randomBytes } from '../security/crypto/bytes'
+import { base64Url, decodeUtf8, fixedBase64Url, fromBase64Url, randomBytes } from '../security/crypto/bytes'
 import { canonicalBytes } from '../security/crypto/canonical'
 import { deriveEpochSalt, sha256 } from '../security/crypto/core'
 import { envelopeRow, openEnvelope, prepareEnvelope, type PreparedEnvelope } from '../security/envelopes'
@@ -172,6 +172,45 @@ export async function prepareSuccessorRootWrapV6ForActiveMode(rootKey:Uint8Array
   if(base64Url(await openBestEffortRootWrapV6(wrap,key))!==base64Url(rootKey))throw new Error('RootWrapV6 best-effort readback failed.')
   return{wrap,bestEffortWrappingKey:key}
 }
+export async function prepareReadOnlyJoinRootWrapV6ForActiveMode(rootKey:Uint8Array,identity:RootWrapIdentityV6,wrapId:Uint8Array):Promise<PreparedSuccessorRootWrapV6>{
+  const db=await openDatabase(),active=await loadEpoch(db),records=await readEpochRecords(db,active.context)
+  if(wrapId.byteLength!==16)throw new Error('RootWrapV6 wrap_id must contain 16 bytes.')
+  if(records.wrap.mode==='passphrase'){
+    const factor=unlockFactors.get(active.context.diaryId)
+    if(!factor||factor.mode!=='passphrase')throw new LocalUnlockRequiredError('passphrase')
+    const wrap=await createPassphraseRootWrapV6(rootKey,factor.passphrase,identity,wrapId)
+    if(base64Url(await openPassphraseRootWrapV6(wrap,factor.passphrase))!==base64Url(rootKey))throw new Error('Join RootWrapV6 passphrase readback failed.')
+    return{wrap,bestEffortWrappingKey:null}
+  }
+  if(records.wrap.mode==='prf'){
+    const factor=unlockFactors.get(active.context.diaryId)
+    if(!factor||factor.mode!=='prf')throw new LocalUnlockRequiredError('prf')
+    const wrap=await createPrfRootWrapV6(rootKey,{credentialId:factor.credentialId,prfEvalInput:factor.prfEvalInput,prfOutput:factor.prfOutput,rpId:factor.rpId},identity,wrapId)
+    if(base64Url(await openPrfRootWrapV6(wrap,factor.credentialId,factor.prfOutput))!==base64Url(rootKey))throw new Error('Join RootWrapV6 PRF readback failed.')
+    return{wrap,bestEffortWrappingKey:null}
+  }
+  const key=await generateBestEffortWrappingKeyV6(),wrap=await createBestEffortRootWrapV6(rootKey,key,identity,wrapId)
+  if(base64Url(await openBestEffortRootWrapV6(wrap,key))!==base64Url(rootKey))throw new Error('Join RootWrapV6 best-effort readback failed.')
+  return{wrap,bestEffortWrappingKey:key}
+}
+
+export async function openReadOnlyJoinRootWrapV6WithActiveMode(prepared:PreparedSuccessorRootWrapV6):Promise<Uint8Array>{
+  const wrap=prepared.wrap
+  if(wrap.mode==='best-effort'){
+    if(!prepared.bestEffortWrappingKey)throw new Error('Join RootWrapV6 best-effort wrapping key is missing.')
+    return openBestEffortRootWrapV6(wrap,prepared.bestEffortWrappingKey)
+  }
+  const active=await loadEpoch(await openDatabase()),factor=unlockFactors.get(active.context.diaryId)
+  if(wrap.mode==='passphrase'){
+    if(!factor||factor.mode!=='passphrase')throw new LocalUnlockRequiredError('passphrase')
+    return openPassphraseRootWrapV6(wrap,factor.passphrase)
+  }
+  if(!factor||factor.mode!=='prf')throw new LocalUnlockRequiredError('prf')
+  const expectedInput=fromBase64Url(wrap.mode_metadata.prf_eval_input)
+  if(!sameBytes(expectedInput,factor.prfEvalInput)||wrap.mode_metadata.rp_id!==factor.rpId)throw new LocalUnlockRequiredError('prf')
+  return openPrfRootWrapV6(wrap,factor.credentialId,factor.prfOutput)
+}
+
 export async function openSuccessorRootWrapV6WithActiveMode(prepared:PreparedSuccessorRootWrapV6):Promise<Uint8Array>{
   const wrap=prepared.wrap
   if(wrap.mode==='best-effort'){
@@ -387,6 +426,66 @@ export async function activeProtocolSelectionV2():Promise<ActiveProtocolSelectio
   await complete(tx)
   return value??null
 }
+async function assertReadOnlyJoinPlaceholderFresh(db:IDBDatabase,source:Awaited<ReturnType<typeof loadEpoch>>):Promise<void>{
+  if(source.state.epoch_status!=='local_offline'
+    ||source.state.remote_binding!==null
+    ||source.state.remote_anchor!==null
+    ||source.state.rotation_state_ref!==null
+    ||source.state.local_journal_count!==0)throw new Error('Read-only Join requires a fresh local profile; existing local diary state must be imported or merged explicitly.')
+  if(source.state.migration_state_ref!==null){
+    const tx=db.transaction(STORES.migration,'readonly')
+    const migration=await result<MigrationState|undefined>(tx.objectStore(STORES.migration).get('legacy-v1'))
+    await complete(tx)
+    const ref=source.state.migration_state_ref
+    if(!migration||!migration.verified||migration.phase!=='cutover'
+      ||migration.sourceKeys.length!==0||migration.completedKeys.length!==0
+      ||ref.operation_id!==migration.operationId||ref.state!=='cutover'
+      ||ref.state_record_hash!==await migrationHash(migration))throw new Error('Read-only Join requires a fresh local profile; legacy migration evidence is not an empty verified cutover.')
+  }
+  const tx=db.transaction([STORES.envelopes,STORES.outbox,STORES.operations],'readonly')
+  const envelopeRequest=tx.objectStore(STORES.envelopes).index('byEpoch').getAll(source.context.epochId)
+  const outboxRequest=tx.objectStore(STORES.outbox).index('byEpoch').getAll(source.context.epochId)
+  const operationRequest=tx.objectStore(STORES.operations).getAll()
+  const [envelopes,outbox,operations]=await Promise.all([result<StoredEnvelope[]>(envelopeRequest),result<StoredOutbox[]>(outboxRequest),result<unknown[]>(operationRequest)])
+  await complete(tx)
+  if(envelopes.length||outbox.length||operations.length)throw new Error('Read-only Join refuses to overwrite non-empty local persistence.')
+}
+
+export async function assertReadOnlyJoinLocalProfileIsFresh():Promise<void>{
+  await ready()
+  const db=await openDatabase(),source=await loadEpoch(db)
+  await assertReadOnlyJoinPlaceholderFresh(db,source)
+}
+export async function atomicSelectReadOnlyJoinV2(args:{
+  joinId:string
+  diaryId:string
+  epochId:string
+  manifestFingerprint:string
+}):Promise<void>{
+  fixedBase64Url(args.joinId,32,'join_id');fixedBase64Url(args.diaryId,16,'diary_id');fixedBase64Url(args.epochId,16,'epoch_id');fixedBase64Url(args.manifestFingerprint,32,'manifest_fingerprint')
+  await ready()
+  const db=await openDatabase(),initial=await loadEpoch(db)
+  await withDiaryLock(initial.context.diaryId,async()=>{
+    const source=await loadEpoch(db)
+    const selectedTx=db.transaction(STORES.context,'readonly')
+    const prior=await result<ActiveProtocolSelectionV2|undefined>(selectedTx.objectStore(STORES.context).get(ACTIVE_PROTOCOL_SELECTION))
+    await complete(selectedTx)
+    const selection:ActiveProtocolSelectionV2={id:ACTIVE_PROTOCOL_SELECTION,sync_profile:'google-sheets-transferable-single-writer-v2',diary_id:args.diaryId,epoch_id:args.epochId,manifest_fingerprint:args.manifestFingerprint,operation_id:args.joinId}
+    if(prior){
+      if(new TextDecoder().decode(canonicalBytes(prior as never))!==new TextDecoder().decode(canonicalBytes(selection as never)))throw new Error('A different v2 epoch is already selected locally.')
+      if(source.state.epoch_status!=='retired')throw new Error('v2 Join selection exists without a retired local placeholder epoch.')
+      return
+    }
+    await assertReadOnlyJoinPlaceholderFresh(db,source)
+    const retired={...source.state,epoch_status:'retired' as const,operation_generation:source.state.operation_generation+1}
+    const tag=await stateTag(source.rootKey,source.epochSalt,retired)
+    const tx=db.transaction([STORES.context,STORES.state],'readwrite')
+    tx.objectStore(STORES.context).add(selection)
+    tx.objectStore(STORES.state).put({id:source.context.epochId,state:retired,tag} satisfies StoredState)
+    await complete(tx)
+  })
+}
+
 export async function markV1ProfileUpgradeSourceRace(operation:RotationOperationStateV2):Promise<void>{
   if(operation.stage!=='stale')throw new Error('Profile-upgrade Source race terminal state must be stale.')
   const db=await openDatabase(),initial=await loadEpoch(db)

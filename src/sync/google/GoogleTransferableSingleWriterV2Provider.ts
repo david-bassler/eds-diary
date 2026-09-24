@@ -8,7 +8,7 @@ import {
   type GoogleApiClient,
 } from './GoogleSheetsTransferableSingleWriterV2Transport'
 import { GoogleSheetsTransferableSingleWriterV2ProfileCodec } from './GoogleSheetsTransferableSingleWriterV2ProfileCodec'
-import { GoogleRecoveryArtifactStoreV6 } from './GoogleRecoveryArtifactStoreV6'
+import { GoogleRecoveryArtifactStoreV6, type DiscoveredRecoveryArtifactV6 } from './GoogleRecoveryArtifactStoreV6'
 import { deriveEpochSaltV2 } from '../../security/v2/crypto'
 import { fixedBase64Url } from '../../security/crypto/bytes'
 import {
@@ -22,11 +22,13 @@ import type { RecoveryArtifactV6 } from '../../security/v2/recovery'
 import { isVerifiedRecoveryTakeoverStagingV2, type VerifiedRecoveryTakeoverStagingV2 } from '../../security/v2/recoveryStaging'
 import type { VerifiedPersistedRecoveryArtifactV6 } from '../../security/v2/localPersistence'
 import type { FreshCanonicalV2Source } from '../../security/v2/domainWrite'
+import { GoogleSheetsSingleWriterTransport } from './GoogleSheetsSingleWriterTransport'
 
 export interface TransferableSingleWriterV2ProviderSession {
   readonly providerId:typeof GOOGLE_DRIVE_SHEETS_PROVIDER
   readonly profileId:typeof SINGLE_WRITER_V2_PROFILE
   transportForEpoch(diaryId:string,epochId:string):Promise<GoogleSheetsTransferableSingleWriterV2Transport>
+  v1TransportForEpoch?(diaryId:string,epochId:string):Promise<GoogleSheetsSingleWriterTransport>
   remoteIdentityBinding(transport:RemoteTransport):Promise<string>
   codecForEpoch(diaryId:string,epochId:string,rootKey:Uint8Array,transport:RemoteTransport):Promise<GoogleSheetsTransferableSingleWriterV2ProfileCodec>
   freshCanonicalSource(diaryId:string,epochId:string,rootKey:Uint8Array,remoteId:string):FreshCanonicalV2Source
@@ -42,6 +44,7 @@ export interface TransferableSingleWriterV2ProviderSession {
     recoveryStaging:VerifiedRecoveryTakeoverStagingV2
   }):Promise<CreationState>
   publishRecoveryArtifact(urs:Uint8Array,artifact:VerifiedPersistedRecoveryArtifactV6):Promise<string>
+  discoverRecoveryFamilyArtifacts?(urs:Uint8Array):Promise<readonly DiscoveredRecoveryArtifactV6[]>
   findRecoveryArtifact(urs:Uint8Array,diaryId:string,epochId:string):Promise<RecoveryArtifactV6|null>
   loadRecoveryArtifact(urs:Uint8Array,diaryId:string,epochId:string):Promise<RecoveryArtifactV6>
   disconnect():Promise<void>
@@ -55,6 +58,9 @@ class GoogleTransferableSingleWriterV2ProviderSession implements TransferableSin
   }
   transportForEpoch(diaryId:string,epochId:string):Promise<GoogleSheetsTransferableSingleWriterV2Transport>{
     return GoogleSheetsTransferableSingleWriterV2Transport.fromAuthenticatedSession(this.api,diaryId,epochId)
+  }
+  v1TransportForEpoch(diaryId:string,epochId:string):Promise<GoogleSheetsSingleWriterTransport>{
+    return GoogleSheetsSingleWriterTransport.fromAuthenticatedSession(this.api,diaryId,epochId)
   }
   async remoteIdentityBinding(transport:RemoteTransport):Promise<string>{
     if(!isAuthenticatedGoogleV2Transport(transport))throw new Error('Google v2 identity binding requires the authenticated v2 transport.')
@@ -115,6 +121,9 @@ class GoogleTransferableSingleWriterV2ProviderSession implements TransferableSin
   }
   publishRecoveryArtifact(urs:Uint8Array,artifact:VerifiedPersistedRecoveryArtifactV6):Promise<string>{
     return new GoogleRecoveryArtifactStoreV6(this.api).publish(urs,artifact)
+  }
+  discoverRecoveryFamilyArtifacts(urs:Uint8Array):Promise<readonly DiscoveredRecoveryArtifactV6[]>{
+    return new GoogleRecoveryArtifactStoreV6(this.api).discoverFamilyArtifacts(urs)
   }
   findRecoveryArtifact(urs:Uint8Array,diaryId:string,epochId:string):Promise<RecoveryArtifactV6|null>{
     return new GoogleRecoveryArtifactStoreV6(this.api).find(urs,diaryId,epochId)
