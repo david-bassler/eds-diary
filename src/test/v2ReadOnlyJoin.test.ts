@@ -28,6 +28,7 @@ import { ProductiveReadOnlyJoinV2Service } from '../data/readOnlyJoinV2Service'
 import { ProductiveWriterHandoffV2Service } from '../data/writerHandoffV2Service'
 import { ProductiveForcedTakeoverV2Service } from '../data/forcedTakeoverV2Service'
 import { verifyTransferDescriptorV2 } from '../security/v2/validators'
+import { TransferableSingleWriterV2WriteAuthority } from '../security/v2/writeAuthority'
 import { __localDatabaseTesting, activeEpochSyncContext, activeProtocolSelectionV2 } from '../data/localDatabase'
 
 const id=(fill:number,length:number)=>base64Url(new Uint8Array(length).fill(fill))
@@ -479,6 +480,9 @@ describe('productive v2 read-only Join',()=>{
     expect(state.writer_status).toBe('writer_active')
     expect(state.recovery_rekey_rotation_required).toBe(true)
     expect(state.recovery_rekey_transition_id).toBe(f.canonical.current_recovery.recovery_rekey_transition_id)
+    const verified=await new GoogleSheetsTransferableSingleWriterV2ProfileCodec(f.diaryId,f.epochId,f.rootKey,f.accountBinding).verifyRemote(f.snapshot)
+    const authority=new TransferableSingleWriterV2WriteAuthority(()=>state,()=>null)
+    expect(await authority.canPrepareDomainWrite(verified)).toBe('read_only')
   })
 
 
