@@ -744,7 +744,7 @@ export class ProductiveNativeRotationV2Service implements ProfileUpgradeOrchestr
   async persistLineageAndReverifyBeforeSwitch():Promise<'ready'|'superseded'>{
     const ctx=await this.successorContext(),activation=await this.artifact<NativeActivationArtifactV2>('activation'),backup=await this.artifact<NativeBackupArtifactV2>('activated-backup')
     if(!activation||!backup)throw new Error('Native v2 final activation artifacts are incomplete.')
-    let state=await this.store.loadState(ctx.rootKey,ctx.epochSalt,ctx.plan.successor_epoch_id)
+    const state=await this.store.loadState(ctx.rootKey,ctx.epochSalt,ctx.plan.successor_epoch_id)
     if(state.activation_lineage_cache_ref===null){
       const cache=await createActivationLineageCacheV2({rootKey:ctx.rootKey,epochSalt:ctx.epochSalt,diaryId:ctx.plan.diary_id,epochId:ctx.plan.successor_epoch_id,manifestFingerprint:ctx.plan.manifest_fingerprint,activationLineage:activation.lineage})
       await this.store.persistActivationLineageCache(ctx.rootKey,ctx.epochSalt,cache,state.operation_generation)
