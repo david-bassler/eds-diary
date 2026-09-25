@@ -343,16 +343,16 @@ export interface RotationOperationStateV2 {
   format:'rotation-operation-v2'
   version:2
   operation_id:string
-  rotation_kind:'profile_upgrade'
+  rotation_kind:'profile_upgrade'|'normal'|'recovery_rekey'
   source_epoch_id:string
   successor_epoch_id:string
   stage:RotationOperationStageV2
-  source_anchor_before_announcement:RemoteAnchorV1
+  source_anchor_before_announcement:RemoteAnchorV1|RemoteAnchorV2
   successor_staging_anchor:RemoteAnchorV2|null
   successor_activation_anchor:RemoteAnchorV2|null
   successor_creation_locator:string|null
   successor_manifest_fingerprint:string|null
-  source_recovery_transition_id:null
+  source_recovery_transition_id:string|null
   activation_lineage_sha256:string|null
   announcement_envelope:PreparedEnvelopeRowV2|null
   confirmation_envelope:PreparedEnvelopeRowV2|null
@@ -396,11 +396,20 @@ function validateRow(row:PreparedEnvelopeRowV2,label:string):void{
 }
 export function validateRotationOperationStateV2(value:RotationOperationStateV2):RotationOperationStateV2{
   if(!value||typeof value!=='object'||Object.keys(value).sort().join('\0')!==[...STATE_KEYS].sort().join('\0'))throw new Error('RotationOperationStateV2 schema mismatch.')
-  if(value.format!=='rotation-operation-v2'||value.version!==2||value.rotation_kind!=='profile_upgrade'||!ROTATION_OPERATION_STAGES_V2.includes(value.stage))throw new Error('RotationOperationStateV2 profile mismatch.')
+  if(value.format!=='rotation-operation-v2'||value.version!==2||!['profile_upgrade','normal','recovery_rekey'].includes(value.rotation_kind)||!ROTATION_OPERATION_STAGES_V2.includes(value.stage))throw new Error('RotationOperationStateV2 profile mismatch.')
   fixedBase64Url(value.operation_id,32,'operation_id');fixedBase64Url(value.source_epoch_id,16,'source_epoch_id');fixedBase64Url(value.successor_epoch_id,16,'successor_epoch_id')
   if(value.source_epoch_id===value.successor_epoch_id)throw new Error('RotationOperationStateV2 successor must differ from Source.')
-  validateAnchorV1(value.source_anchor_before_announcement)
-  if(value.source_recovery_transition_id!==null)throw new Error('Profile upgrade must not bind a recovery transition.')
+  if(value.rotation_kind==='profile_upgrade'){
+    validateAnchorV1(value.source_anchor_before_announcement as RemoteAnchorV1)
+    if(value.source_recovery_transition_id!==null)throw new Error('Profile upgrade must not bind a recovery transition.')
+  }else{
+    validateAnchorV2(value.source_anchor_before_announcement as RemoteAnchorV2,'source_anchor_before_announcement')
+    if(value.rotation_kind==='normal'&&value.source_recovery_transition_id!==null)throw new Error('Normal v2 rotation must not bind a recovery transition.')
+    if(value.rotation_kind==='recovery_rekey'){
+      if(value.source_recovery_transition_id===null)throw new Error('Recovery-rekey rotation requires a recovery transition.')
+      fixedBase64Url(value.source_recovery_transition_id,32,'source_recovery_transition_id')
+    }
+  }
 
   if(value.successor_creation_locator!==null)fixedBase64Url(value.successor_creation_locator,16,'successor_creation_locator')
   if(value.successor_manifest_fingerprint!==null)fixedBase64Url(value.successor_manifest_fingerprint,32,'successor_manifest_fingerprint')
