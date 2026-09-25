@@ -23,7 +23,7 @@ import { activeRemoteDurabilityStatus, type ActiveRemoteDurabilityStatus } from 
 type StatusKind = 'neutral' | 'good' | 'bad'
 interface StatusMessage { message: string; kind: StatusKind }
 interface ExportArtifacts { recovery: unknown; backup: unknown }
-interface StorageSetupState { requiresEnablement: boolean; recoveryArtifactAvailable: boolean }
+interface StorageSetupState { requiresEnablement: boolean; recoveryArtifactAvailable: boolean; profile:'v1'|'v2' }
 
 function syncDescription(snapshot: SyncSnapshot): string {
   if (snapshot.state === 'syncing') return 'Synchronisierung läuft …'
@@ -45,6 +45,7 @@ function downloadJson(filename: string, value: unknown): void {
 
 async function readStorageSetupState(): Promise<StorageSetupState> {
   const value = await remoteSessionStatus()
+  if(value.profile==='v2')return{requiresEnablement:false,recoveryArtifactAvailable:false,profile:'v2'}
   const recoveryArtifactAvailable = await currentRecoveryArtifact().then(
     () => true,
     () => false,
@@ -52,6 +53,7 @@ async function readStorageSetupState(): Promise<StorageSetupState> {
   return {
     requiresEnablement: value.mode === 'local_offline',
     recoveryArtifactAvailable,
+    profile:'v1',
   }
 }
 
@@ -65,6 +67,7 @@ export function GoogleSyncSettings() {
   const [preparationError, setPreparationError] = useState<string | null>(null)
   const [requiresEnablement, setRequiresEnablement] = useState<boolean | null>(null)
   const [recoveryArtifactAvailable, setRecoveryArtifactAvailable] = useState(false)
+  const [protocolProfile, setProtocolProfile] = useState<'v1'|'v2'|null>(null)
   const [recoverySecret, setRecoverySecret] = useState('')
   const [recoverySaved, setRecoverySaved] = useState(false)
   const [artifacts, setArtifacts] = useState<ExportArtifacts | null>(null)
@@ -73,7 +76,13 @@ export function GoogleSyncSettings() {
   const [replacementSaved, setReplacementSaved] = useState(false)
 
   useEffect(() => {
-    const refreshDurability = () => { void activeRemoteDurabilityStatus().then((value) => { if (!cancelled) setRemoteDurability(value) }).catch(() => undefined) }
+    const refreshDurability = () => {
+      void remoteSessionStatus().then(async value=>{
+        if(cancelled)return
+        if(value.profile==='v2'){setRemoteDurability(null);return}
+        setRemoteDurability(await activeRemoteDurabilityStatus())
+      }).catch(() => undefined)
+    }
     const removeSyncListener = onSyncState((snapshot) => { setSyncSnapshot(snapshot); refreshDurability() })
     let cancelled = false
     refreshDurability()
@@ -83,6 +92,7 @@ export function GoogleSyncSettings() {
         if (cancelled) return
         setRequiresEnablement(value.requiresEnablement)
         setRecoveryArtifactAvailable(value.recoveryArtifactAvailable)
+        setProtocolProfile(value.profile)
         setPreparationError(null)
         setPreparing(false)
       },
@@ -107,6 +117,7 @@ export function GoogleSyncSettings() {
       (value) => {
         setRequiresEnablement(value.requiresEnablement)
         setRecoveryArtifactAvailable(value.recoveryArtifactAvailable)
+        setProtocolProfile(value.profile)
         setPreparationError(null)
         setPreparing(false)
       },
@@ -242,6 +253,7 @@ export function GoogleSyncSettings() {
       const secret=fromBase64Url(replacementSecret)
       if(secret.byteLength!==32||base64Url(secret)!==replacementSecret)throw new Error('Der neue Recovery-Schlüssel ist ungültig.')
       const result=await replaceRecoverySecret(session,secret)
+      if(!('recovery' in result)||!('backup' in result))throw new Error('Diese v1-Einstellung kann keinen v2 Recovery-Rekey darstellen.')
       setArtifacts({recovery:result.recovery,backup:result.backup})
       setRecoveryArtifactAvailable(true)
       setStatus({message:'Recovery-Schlüssel wurde ersetzt. Der neue Schlüssel und das neue Recovery-Artefakt sind verifiziert; das Artefakt ist zusätzlich im gebundenen Google-Konto gespeichert.',kind:'good'})
@@ -261,6 +273,12 @@ export function GoogleSyncSettings() {
     }catch(cause){
       setStatus({message:cause instanceof Error?cause.message:'Origin-Umzugspaket konnte nicht erstellt werden.',kind:'bad'})
     }finally{setBusy(false)}
+  }
+
+  if(protocolProfile==='v2'){
+    return <section className="google-sync-settings" aria-labelledby="google-sync-settings-heading">
+      <header className="google-sync-settings__header"><div><h2 id="google-sync-settings-heading">Google-Synchronisierung</h2><p className="google-sync-settings__state">Dieses Tagebuch verwendet Transferable Single Writer v2. Verbindung, Writer-Wechsel und Recovery-Key-Fortsetzung werden im Bereich „Mehrgeräte-Schreibzugriff (v2)“ verwaltet.</p></div><span className="google-sync-settings__badge">v2</span></header>
+    </section>
   }
 
   return (
