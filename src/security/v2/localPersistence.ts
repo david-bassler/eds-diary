@@ -307,6 +307,65 @@ export class IndexedDbV2LocalSecurityStore {
     if(plan===null||state.manifest_fingerprint!==args.state.manifest_fingerprint||!writer||!isVerifiedRecoveryTakeoverStagingV2(staging.verified)||wrap.wrap.wrap_id!==args.rootWrap.wrap_id)throw new Error('Profile-upgrade successor planning bundle readback failed.')
   }
 
+  async persistNativeRotationSuccessorPlanBundle(args:{
+    artifactId:string
+    artifactValue:unknown
+    rootKey:Uint8Array
+    epochSalt:Uint8Array
+    rootWrap:RootWrapV6
+    bestEffortWrappingKey:CryptoKey|null
+    writerKey:StoredWriterDeviceKeyV2
+    recoveryStaging:RecoveryTakeoverStagingV2
+    urs:Uint8Array
+    state:EpochLocalSecurityStateV6
+  }):Promise<void>{
+    if(!args.artifactId)throw new Error('Native v2 rotation plan artifact ID is required.')
+    validateRootWrapV6(args.rootWrap);validateEpochLocalSecurityStateV6(args.state)
+    if(args.state.epoch_status!=='local_offline'||args.state.writer_status!=='read_only'||args.state.remote_binding!==null||args.state.remote_anchor!==null)throw new Error('Native v2 rotation Successor must start local_offline/read_only and unbound.')
+    if(args.rootWrap.epoch_id!==args.state.epoch_id||args.rootWrap.diary_id!==args.state.diary_id||args.rootWrap.key_id!==args.state.key_id||args.rootWrap.manifest_fingerprint!==args.state.manifest_fingerprint)throw new Error('Native v2 rotation RootWrapV6/StateV6 binding mismatch.')
+    if((args.rootWrap.mode==='best-effort')!==(args.bestEffortWrappingKey!==null))throw new Error('Native v2 rotation best-effort wrapping-key binding mismatch.')
+    if(args.bestEffortWrappingKey&&base64Url(await openBestEffortRootWrapV6(args.rootWrap,args.bestEffortWrappingKey))!==base64Url(args.rootKey))throw new Error('Native v2 rotation RootWrapV6 readback failed.')
+    await validateStoredWriterDeviceKeyV2(args.writerKey,args.state.diary_id,args.state.epoch_id)
+    if(args.writerKey.writer_device_id!==args.state.writer_device_id||args.writerKey.writer_signing_key_id!==args.state.writer_signing_key_id)throw new Error('Native v2 rotation carried WriterDeviceKeyV2 binding mismatch.')
+    const verifiedStaging=await verifyRecoveryTakeoverStagingV2(args.recoveryStaging,args.urs)
+    if(!isVerifiedRecoveryTakeoverStagingV2(verifiedStaging)||args.recoveryStaging.diary_id!==args.state.diary_id||args.recoveryStaging.epoch_id!==args.state.epoch_id||args.recoveryStaging.manifest_fingerprint!==args.state.manifest_fingerprint)throw new Error('Native v2 rotation RecoveryTakeoverStagingV2 binding mismatch.')
+
+    const planBytes=new TextDecoder().decode(canonicalBytes(args.artifactValue as never)),planHash=base64Url(await sha256(canonicalBytes(args.artifactValue as never)))
+    const wrapBytes=new TextDecoder().decode(canonicalBytes(args.rootWrap as never)),stateTag=await localStateTagV6(args.rootKey,args.epochSalt,args.state)
+    const stagingId=`${args.recoveryStaging.epoch_id}:${args.recoveryStaging.recovery_generation}:${args.recoveryStaging.recovery_takeover_key_id}:${args.recoveryStaging.manifest_fingerprint}`
+    const db=await openDatabase(),readTx=db.transaction([STORES.operationArtifacts,STORES.rootWraps,STORES.rootWrappingKeys,STORES.writerKeys,STORES.recoveryStaging,STORES.states],'readonly')
+    const [planPrior,wrapPrior,wrapKeyPrior,writerPrior,stagingPrior,statePrior]=await Promise.all([
+      requestResult<unknown>(readTx.objectStore(STORES.operationArtifacts).get(args.artifactId)),
+      requestResult<unknown>(readTx.objectStore(STORES.rootWraps).get(args.state.epoch_id)),
+      requestResult<unknown>(readTx.objectStore(STORES.rootWrappingKeys).get(args.rootWrap.wrap_id)),
+      requestResult<StoredWriterDeviceKeyV2|undefined>(readTx.objectStore(STORES.writerKeys).get(args.writerKey.writer_signing_key_id)),
+      requestResult<unknown>(readTx.objectStore(STORES.recoveryStaging).get(stagingId)),
+      requestResult<unknown>(readTx.objectStore(STORES.states).get(args.state.epoch_id)),
+    ])
+    await transactionDone(readTx)
+    if(planPrior!==undefined||wrapPrior!==undefined||wrapKeyPrior!==undefined||stagingPrior!==undefined||statePrior!==undefined)throw new Error('Native v2 rotation Successor plan collides with existing local state.')
+    if(writerPrior){
+      await validateStoredWriterDeviceKeyV2(writerPrior,args.state.diary_id,args.state.epoch_id)
+      if(writerPrior.writer_device_id!==args.writerKey.writer_device_id||writerPrior.writer_public_key!==args.writerKey.writer_public_key)throw new Error('Native v2 rotation carried WriterDeviceKeyV2 collision.')
+    }
+
+    const tx=db.transaction([STORES.operationArtifacts,STORES.rootWraps,STORES.rootWrappingKeys,STORES.writerKeys,STORES.recoveryStaging,STORES.states],'readwrite')
+    tx.objectStore(STORES.operationArtifacts).add({id:args.artifactId,value:structuredClone(args.artifactValue),bytes:planBytes,hash:planHash})
+    tx.objectStore(STORES.rootWraps).add({id:args.state.epoch_id,wrap:structuredClone(args.rootWrap),bytes:wrapBytes})
+    if(args.bestEffortWrappingKey)tx.objectStore(STORES.rootWrappingKeys).add({id:args.rootWrap.wrap_id,key:args.bestEffortWrappingKey})
+    if(!writerPrior)tx.objectStore(STORES.writerKeys).add(args.writerKey)
+    tx.objectStore(STORES.recoveryStaging).add({id:stagingId,staging:structuredClone(args.recoveryStaging)})
+    tx.objectStore(STORES.states).add({id:args.state.epoch_id,state:structuredClone(args.state),tag:stateTag})
+    await transactionDone(tx)
+    const [plan,state,writer,staging,wrap]=await Promise.all([
+      this.operationArtifact<unknown>(args.artifactId),this.loadState(args.rootKey,args.epochSalt,args.state.epoch_id),
+      this.loadWriterKey(args.writerKey.writer_signing_key_id,args.state.diary_id,args.state.epoch_id),
+      this.loadRecoveryTakeoverStagingMaterial({epochId:args.state.epoch_id,recoveryGeneration:args.recoveryStaging.recovery_generation,recoveryTakeoverKeyId:args.recoveryStaging.recovery_takeover_key_id,manifestFingerprint:args.state.manifest_fingerprint,urs:args.urs}),
+      this.loadRootWrapV6(args.state.epoch_id),
+    ])
+    if(plan===null||state.epoch_status!=='local_offline'||!writer||!isVerifiedRecoveryTakeoverStagingV2(staging.verified)||wrap.wrap.wrap_id!==args.rootWrap.wrap_id)throw new Error('Native v2 rotation Successor planning bundle readback failed.')
+  }
+
   async persistReadOnlyJoinBundle(args:{
     artifactId:string
     artifactValue:unknown
@@ -838,6 +897,55 @@ export class IndexedDbV2LocalSecurityStore {
     tx.objectStore(STORES.states).put({id:epochId,state:structuredClone(next),tag})
     await transactionDone(tx)
     return this.loadState(rootKey,epochSalt,epochId)
+  }
+
+  async bindSourceRotationOperationToState(
+    rootKey:Uint8Array,
+    epochSalt:Uint8Array,
+    epochId:string,
+    operation:RotationOperationStateV2,
+    expectedOperationGeneration:number,
+  ):Promise<EpochLocalSecurityStateV6>{
+    const persisted=await this.loadRotationOperation(operation.operation_id)
+    if(await rotationOperationStateHashV2(persisted)!==await rotationOperationStateHashV2(operation))throw new Error('Source RotationOperationStateV2 binding mismatch.')
+    const current=await this.loadState(rootKey,epochSalt,epochId)
+    if(current.operation_generation!==expectedOperationGeneration)throw new Error('Stale Source StateV6 generation during rotation binding.')
+    if(current.epoch_id!==operation.source_epoch_id||epochId!==operation.source_epoch_id)throw new Error('Rotation operation does not bind this Source epoch.')
+    if(current.rotation_state_ref&&current.rotation_state_ref.operation_id!==operation.operation_id&&!TERMINAL_ROTATION_OPERATION_STATES_V2.has(current.rotation_state_ref.state))throw new Error('Another Rotation operation is already bound to the Source epoch.')
+    const hash=await rotationOperationStateHashV2(operation),next:EpochLocalSecurityStateV6={...current,operation_generation:current.operation_generation+1,rotation_state_ref:{operation_id:operation.operation_id,state:operation.stage,state_record_hash:hash}}
+    validateEpochLocalSecurityStateV6(next)
+    const tag=await localStateTagV6(rootKey,epochSalt,next),db=await openDatabase(),tx=db.transaction(STORES.states,'readwrite')
+    tx.objectStore(STORES.states).put({id:epochId,state:structuredClone(next),tag});await transactionDone(tx)
+    return this.loadState(rootKey,epochSalt,epochId)
+  }
+
+  async switchNativeRotationEpochStates(args:{
+    operation:RotationOperationStateV2
+    sourceRootKey:Uint8Array
+    sourceEpochSalt:Uint8Array
+    successorRootKey:Uint8Array
+    successorEpochSalt:Uint8Array
+  }):Promise<void>{
+    if(args.operation.stage!=='activated_backup_verified')throw new Error('Native v2 rotation requires activated_backup_verified before local StateV6 switch.')
+    if(args.operation.rotation_kind==='profile_upgrade')throw new Error('Profile upgrade cannot use the native v2 StateV6 switch.')
+    const source=await this.loadState(args.sourceRootKey,args.sourceEpochSalt,args.operation.source_epoch_id)
+    const successor=await this.loadState(args.successorRootKey,args.successorEpochSalt,args.operation.successor_epoch_id)
+    if(source.diary_id!==successor.diary_id||source.epoch_status!=='active'||successor.epoch_status!=='remote_bound')throw new Error('Native v2 rotation local source/successor lifecycle mismatch.')
+    const hash=await rotationOperationStateHashV2(args.operation)
+    if(source.rotation_state_ref?.operation_id!==args.operation.operation_id||source.rotation_state_ref.state!==args.operation.stage||source.rotation_state_ref.state_record_hash!==hash
+      ||successor.rotation_state_ref?.operation_id!==args.operation.operation_id||successor.rotation_state_ref.state!==args.operation.stage||successor.rotation_state_ref.state_record_hash!==hash)throw new Error('Native v2 rotation StateV6 operation bindings are not switch-ready.')
+    if(!successor.remote_anchor||successor.verified_writer_generation===null||successor.verified_writer_grant_id===null||successor.verified_writer_device_id===null||successor.verified_writer_key_id===null)throw new Error('Native v2 rotation Successor lacks final canonical authority.')
+    const localWriter=successor.writer_device_id===successor.verified_writer_device_id&&successor.writer_signing_key_id===successor.verified_writer_key_id
+    const sourceNext:EpochLocalSecurityStateV6={...source,epoch_status:'retired',writer_status:'read_only',writer_generation:null,writer_grant_id:null,operation_generation:source.operation_generation+1}
+    const successorNext:EpochLocalSecurityStateV6={...successor,epoch_status:'active',writer_status:localWriter?'writer_active':'read_only',writer_generation:localWriter?successor.verified_writer_generation:null,writer_grant_id:localWriter?successor.verified_writer_grant_id:null,operation_generation:successor.operation_generation+1}
+    validateEpochLocalSecurityStateV6(sourceNext);validateEpochLocalSecurityStateV6(successorNext)
+    const sourceTag=await localStateTagV6(args.sourceRootKey,args.sourceEpochSalt,sourceNext),successorTag=await localStateTagV6(args.successorRootKey,args.successorEpochSalt,successorNext)
+    const db=await openDatabase(),tx=db.transaction(STORES.states,'readwrite')
+    tx.objectStore(STORES.states).put({id:sourceNext.epoch_id,state:structuredClone(sourceNext),tag:sourceTag})
+    tx.objectStore(STORES.states).put({id:successorNext.epoch_id,state:structuredClone(successorNext),tag:successorTag})
+    await transactionDone(tx)
+    const [sourceRead,successorRead]=await Promise.all([this.loadState(args.sourceRootKey,args.sourceEpochSalt,sourceNext.epoch_id),this.loadState(args.successorRootKey,args.successorEpochSalt,successorNext.epoch_id)])
+    if(sourceRead.epoch_status!=='retired'||successorRead.epoch_status!=='active')throw new Error('Native v2 rotation local StateV6 switch readback failed.')
   }
 
   async persistActivationLineageCache(
