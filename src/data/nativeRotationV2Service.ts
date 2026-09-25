@@ -675,21 +675,34 @@ export class ProductiveNativeRotationV2Service implements ProfileUpgradeOrchestr
   async publishOrReconcileAnnouncement(state:RotationOperationStateV2):Promise<{kind:'durable'}|{kind:'unknown'}|{kind:'stale'}|{kind:'source_race'}>{
     const operation=await this.load()
     if(!operation.announcement_envelope||!operation.successor_staging_anchor)throw new Error('Native v2 Announcement is not prepared.')
-    let source:Awaited<ReturnType<ProductiveNativeRotationV2Service['exactFrozenSource']>>,successor:Awaited<ReturnType<ProductiveNativeRotationV2Service['successorAtStagingOrConfirmation']>>
-    try{source=await this.exactFrozenSource(true);successor=await this.successorAtStagingOrConfirmation()}catch(error){if(error instanceof NativeRotationPreCutoverStaleError||error instanceof NativeRotationCutoverRaceError)return{kind:'stale'};throw error}
-    if(source.announcementCount===0&&(successor.confirmationCount!==0||!same(successor.result.remote_anchor,operation.successor_staging_anchor)))return{kind:'stale'}
-    if(source.announcementCount>0){await this.reconcileSource(source);return{kind:'durable'}}
-    if(state.stage==='announcement_unknown')return{kind:'unknown'}
-    const row:[string,string,string]=[operation.announcement_envelope.envelope_id,operation.announcement_envelope.iv,operation.announcement_envelope.ciphertext];let unknown=false
-    try{await source.context.transport.append(source.context.freeze.source_remote_id,row)}catch(error){if(!(error instanceof TransportError)||error.code!=='unknown_outcome')throw error;unknown=true}
-    await this.fault?.('after-source-append')
-    try{source=await this.exactFrozenSource(true)}catch(error){if(error instanceof NativeRotationPreCutoverStaleError)return{kind:'stale'};throw error}
-    if(source.announcementCount===0&&unknown){
-      try{await source.context.transport.append(source.context.freeze.source_remote_id,row)}catch(error){if(!(error instanceof TransportError)||error.code!=='unknown_outcome')throw error}
-      try{source=await this.exactFrozenSource(true)}catch(error){if(error instanceof NativeRotationPreCutoverStaleError)return{kind:'stale'};throw error}
+    const inspect=async():Promise<
+      |{kind:'durable'}
+      |{kind:'stale'}
+      |{kind:'ready';source:Awaited<ReturnType<ProductiveNativeRotationV2Service['exactFrozenSource']>>}
+    >=>{
+      try{
+        const source=await this.exactFrozenSource(true),successor=await this.successorAtStagingOrConfirmation()
+        if(source.announcementCount>0){await this.reconcileSource(source);return{kind:'durable'}}
+        if(successor.confirmationCount!==0||!same(successor.result.remote_anchor,operation.successor_staging_anchor))return{kind:'stale'}
+        return{kind:'ready',source}
+      }catch(error){
+        if(error instanceof NativeRotationPreCutoverStaleError||error instanceof NativeRotationCutoverRaceError)return{kind:'stale'}
+        throw error
+      }
     }
-    if(source.announcementCount===0)return{kind:'unknown'}
-    await this.reconcileSource(source);return{kind:'durable'}
+    const row:[string,string,string]=[operation.announcement_envelope.envelope_id,operation.announcement_envelope.iv,operation.announcement_envelope.ciphertext]
+    const maxAttempts=state.stage==='announcement_unknown'?1:2
+    for(let attempt=0;attempt<maxAttempts;attempt+=1){
+      const before=await inspect()
+      if(before.kind!=='ready')return before
+      let unknown=false
+      try{await before.source.context.transport.append(before.source.context.freeze.source_remote_id,row)}catch(error){if(!(error instanceof TransportError)||error.code!=='unknown_outcome')throw error;unknown=true}
+      await this.fault?.('after-source-append')
+      const after=await inspect()
+      if(after.kind!=='ready')return after
+      if(!unknown)return{kind:'unknown'}
+    }
+    return{kind:'unknown'}
   }
 
   private async verifyActivatedCandidate(value:Awaited<ReturnType<ProductiveNativeRotationV2Service['successorAtStagingOrConfirmation']>>):Promise<ActiveCandidateV2>{
@@ -704,24 +717,41 @@ export class ProductiveNativeRotationV2Service implements ProfileUpgradeOrchestr
 
   async publishOrReconcileConfirmation(state:RotationOperationStateV2):Promise<{kind:'durable';activationAnchor:CanonicalFullResultV2['remote_anchor']}|{kind:'unknown'}|{kind:'cutover_race'}>{
     const operation=await this.load()
-    if(!operation.confirmation_envelope)throw new Error('Native v2 Confirmation is not prepared.')
-    const source=await this.exactFrozenSource(true);if(source.announcementCount===0)throw new Error('Native v2 Confirmation is forbidden before durable Source Announcement.')
-    try{
-      let successor=await this.successorAtStagingOrConfirmation()
-      if(successor.confirmationCount>0){await this.verifyActivatedCandidate(successor);await this.commitSuccessorCanonical(successor.verified,successor.result);return{kind:'durable',activationAnchor:successor.activationAnchor!}}
-      if(state.stage==='confirmation_unknown')return{kind:'unknown'}
-      const ctx=await this.successorContext(),row:[string,string,string]=[operation.confirmation_envelope.envelope_id,operation.confirmation_envelope.iv,operation.confirmation_envelope.ciphertext];let unknown=false
-      try{await ctx.transport.append(ctx.remoteId,row)}catch(error){if(!(error instanceof TransportError)||error.code!=='unknown_outcome')throw error;unknown=true}
-      await this.fault?.('after-confirmation-append');successor=await this.successorAtStagingOrConfirmation()
-      if(successor.confirmationCount===0&&unknown){
+    if(!operation.confirmation_envelope||!operation.successor_staging_anchor)throw new Error('Native v2 Confirmation is not prepared.')
+    const inspect=async():Promise<
+      |{kind:'durable';activationAnchor:CanonicalFullResultV2['remote_anchor']}
+      |{kind:'ready';transport:GoogleSheetsTransferableSingleWriterV2Transport;remoteId:string}
+      |{kind:'cutover_race'}
+    >=>{
+      const source=await this.exactFrozenSource(true)
+      if(source.announcementCount===0)throw new Error('Native v2 Confirmation is forbidden before durable Source Announcement.')
+      try{
+        const successor=await this.successorAtStagingOrConfirmation()
+        if(successor.confirmationCount>0){
+          await this.verifyActivatedCandidate(successor);await this.commitSuccessorCanonical(successor.verified,successor.result)
+          return{kind:'durable',activationAnchor:successor.activationAnchor!}
+        }
         if(!same(successor.result.remote_anchor,operation.successor_staging_anchor))return{kind:'cutover_race'}
-        try{await ctx.transport.append(ctx.remoteId,row)}catch(error){if(!(error instanceof TransportError)||error.code!=='unknown_outcome')throw error}
-        successor=await this.successorAtStagingOrConfirmation()
+        const ctx=await this.successorContext()
+        return{kind:'ready',transport:ctx.transport,remoteId:ctx.remoteId}
+      }catch(error){
+        if(error instanceof NativeRotationCutoverRaceError)return{kind:'cutover_race'}
+        throw error
       }
-      if(successor.confirmationCount===0)return{kind:'unknown'}
-      await this.verifyActivatedCandidate(successor);await this.commitSuccessorCanonical(successor.verified,successor.result)
-      return{kind:'durable',activationAnchor:successor.activationAnchor!}
-    }catch(error){if(error instanceof NativeRotationCutoverRaceError)return{kind:'cutover_race'};throw error}
+    }
+    const row:[string,string,string]=[operation.confirmation_envelope.envelope_id,operation.confirmation_envelope.iv,operation.confirmation_envelope.ciphertext]
+    const maxAttempts=state.stage==='confirmation_unknown'?1:2
+    for(let attempt=0;attempt<maxAttempts;attempt+=1){
+      const before=await inspect()
+      if(before.kind!=='ready')return before
+      let unknown=false
+      try{await before.transport.append(before.remoteId,row)}catch(error){if(!(error instanceof TransportError)||error.code!=='unknown_outcome')throw error;unknown=true}
+      await this.fault?.('after-confirmation-append')
+      const after=await inspect()
+      if(after.kind!=='ready')return after
+      if(!unknown)return{kind:'unknown'}
+    }
+    return{kind:'unknown'}
   }
 
   private async recoveryAdvanced(result:CanonicalFullResultV2):Promise<boolean>{
