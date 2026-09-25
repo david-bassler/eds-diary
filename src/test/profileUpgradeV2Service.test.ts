@@ -1295,4 +1295,77 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     expect(await blockedAuthority.canPrepareDomainWrite(verified)).toBe('read_only')
   },120_000)
 
+
+  it('resumes Recovery-Rekey after the durable artifact-publish-attempt fence without regenerating the operation',async()=>{
+    const createdAt='2026-09-25T07:55:00.000Z',urs=randomBytes(32),newUrs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    let crashed=false
+    await expect(new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt,async point=>{
+      if(point==='after-publish-attempt-fence'&&!crashed){crashed=true;throw new Error('rekey-crash:publish-fence')}
+    }).rekey(newUrs)).rejects.toThrow('rekey-crash:publish-fence')
+
+    const oldArtifact=await v2.loadRecoveryArtifact(urs,source.diaryId,upgraded.successor_epoch_id)
+    const oldOpened=await openRecoveryArtifactV6(oldArtifact,urs),salt=await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(upgraded.successor_epoch_id))
+    const operation=await store.loadBoundRecoveryRekeyOperation(oldOpened.rootKey,salt,upgraded.successor_epoch_id)
+    if(!operation)throw new Error('Recovery-Rekey operation missing after publish-attempt fence crash')
+    expect(operation.stage).toBe('new_material_staged')
+    expect(operation.artifact_publish_attempted).toBe(true)
+    const operationId=operation.operation_id,artifactSha=operation.recovery_artifact_sha256,transition={...operation.transition_envelope}
+
+    const resumed=await new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt).rekey(newUrs)
+    expect(resumed.stage).toBe('completed')
+    expect(resumed.operationId).toBe(operationId)
+    const final=await store.loadRecoveryRekeyOperation(operationId)
+    expect(final.recovery_artifact_sha256).toBe(artifactSha)
+    expect(final.transition_envelope).toEqual(transition)
+  },120_000)
+
+  it('stales a native rotation if the Source physical prefix advances after staged backup but before Announcement',async()=>{
+    const createdAt='2026-09-25T08:00:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    let crashed=false
+    await expect(new ProductiveNativeRotationV2Service(v2,urs,store,()=>createdAt,async point=>{
+      if(point==='after-staged_backup_verified'&&!crashed){crashed=true;throw new Error('native-rotation-crash:staged-backup')}
+    }).rotate('normal')).rejects.toThrow('native-rotation-crash:staged-backup')
+
+    const sourceTransport=await v2.transportForEpoch(source.diaryId,upgraded.successor_epoch_id) as unknown as MemoryTransport
+    const duplicate=sourceTransport.snapshot.rows[0]
+    if(!duplicate||duplicate.length!==3)throw new Error('active v2 source has no row to use as physical retry')
+    await sourceTransport.append(sourceTransport.remoteId,[duplicate[0]!,duplicate[1]!,duplicate[2]!])
+
+    const result=await new ProductiveNativeRotationV2Service(v2,urs,store,()=>createdAt).rotate('normal')
+    expect(result.stage).toBe('stale')
+    expect((await activeProtocolSelectionV2())?.epoch_id).toBe(upgraded.successor_epoch_id)
+    const successorArtifact=await v2.findRecoveryArtifact(urs,source.diaryId,result.successor_epoch_id)
+    expect(successorArtifact).not.toBeNull()
+    const successorOpened=await openRecoveryArtifactV6(successorArtifact!,urs),successorSalt=await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(result.successor_epoch_id))
+    const successorState=await store.loadState(successorOpened.rootKey,successorSalt,result.successor_epoch_id)
+    expect(successorState.epoch_status).toBe('orphaned')
+    expect(successorState.writer_status).toBe('read_only')
+  },120_000)
+
+  it('adopts a canonically durable Pending-Rekey after local RecoveryRekey operation metadata is lost',async()=>{
+    const createdAt='2026-09-25T08:05:00.000Z',urs=randomBytes(32),newUrs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    let crashed=false
+    await expect(new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt,async point=>{
+      if(point==='after-transition-durable'&&!crashed){crashed=true;throw new Error('rekey-crash:transition-durable')}
+    }).rekey(newUrs)).rejects.toThrow('rekey-crash:transition-durable')
+
+    const newArtifact=await v2.loadRecoveryArtifact(newUrs,source.diaryId,upgraded.successor_epoch_id),opened=await openRecoveryArtifactV6(newArtifact,newUrs)
+    const salt=await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(upgraded.successor_epoch_id))
+    const pending=await store.loadState(opened.rootKey,salt,upgraded.successor_epoch_id)
+    expect(pending.recovery_rekey_rotation_required).toBe(true)
+    expect(pending.recovery_operation_state_ref?.state).toBe('transition_durable')
+    await store.replaceState(opened.rootKey,salt,pending.operation_generation,{...pending,operation_generation:pending.operation_generation+1,recovery_operation_state_ref:null})
+
+    const adopted=await new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt).adoptPending(newUrs)
+    expect(adopted.stage).toBe('completed')
+    expect(adopted.successorEpochId).not.toBeNull()
+    const adoptedOperation=await store.loadRecoveryRekeyOperation(adopted.operationId)
+    expect(adoptedOperation.operation_origin).toBe('remote_pending_rekey_adoption')
+    expect(adoptedOperation.stage).toBe('completed')
+    expect((await activeProtocolSelectionV2())?.epoch_id).toBe(adopted.successorEpochId)
+  },120_000)
+
 })
