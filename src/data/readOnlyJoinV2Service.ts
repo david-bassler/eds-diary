@@ -101,7 +101,7 @@ function exactRecoveryBinding(payload:RecoveryPayloadV6,result:CanonicalFullResu
     ||!same(payload.recovery_credential_history,result.recovery_credential_history))throw new Error('RecoveryArtifactV6 is not current for the canonical v2 Recovery authority.')
 }
 
-async function verifyCurrentRecoveryTransitionForJoin(candidate:ActiveCandidateV2):Promise<void>{
+export async function verifyCurrentRecoveryTransitionForJoin(candidate:ActiveCandidateV2):Promise<void>{
   const recovery=candidate.result.current_recovery,proof=candidate.payload.recovery_authority_transition_proof
   if(!recovery.recovery_rekey_rotation_required){
     if(recovery.recovery_rekey_transition_id!==null)throw new Error('Canonical Recovery state has an inconsistent Pending-Rekey transition reference.')
