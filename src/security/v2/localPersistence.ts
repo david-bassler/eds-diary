@@ -965,6 +965,23 @@ export class IndexedDbV2LocalSecurityStore {
       if(current.rotation_state_ref&&!TERMINAL_ROTATION_OPERATION_STATES_V2.has(current.rotation_state_ref.state))throw new Error('Another non-terminal Rotation operation is already bound.')
       if(current.writer_operation_state_ref&&!TERMINAL_WRITER_GRANT_OPERATION_STATES_V2.has(current.writer_operation_state_ref.state))throw new Error('Native Source rotation is blocked by WriterGrant operation.')
       if(current.migration_state_ref!==null)throw new Error('Native Source rotation is blocked by migration state.')
+      if(args.operation.rotation_kind==='normal'){
+        if(current.recovery_rekey_rotation_required||current.recovery_rekey_transition_id!==null||args.operation.source_recovery_transition_id!==null)throw new Error('Normal native Source rotation is forbidden while Recovery-Rekey is pending.')
+        if(current.recovery_operation_state_ref){
+          const recoveryOperation=await this.loadRecoveryRekeyOperation(current.recovery_operation_state_ref.operation_id)
+          if(recoveryOperation.stage!==current.recovery_operation_state_ref.state
+            ||await recoveryRekeyOperationStateHashV2(recoveryOperation)!==current.recovery_operation_state_ref.state_record_hash)throw new Error('Native Source rotation RecoveryRekeyOperationStateV2 binding failed.')
+          if(!TERMINAL_RECOVERY_OPERATION_STATES_V2.has(recoveryOperation.stage))throw new Error('Normal native Source rotation is blocked by non-terminal Recovery-Rekey.')
+        }
+      }else{
+        if(!current.recovery_rekey_rotation_required||current.recovery_rekey_transition_id===null
+          ||args.operation.source_recovery_transition_id!==current.recovery_rekey_transition_id)throw new Error('Recovery-rekey native Source rotation does not bind the authenticated current transition.')
+        const recoveryRef=current.recovery_operation_state_ref
+        if(!recoveryRef)throw new Error('Recovery-rekey native Source rotation requires a bound RecoveryRekeyOperationStateV2.')
+        const recoveryOperation=await this.loadRecoveryRekeyOperation(recoveryRef.operation_id)
+        if(recoveryOperation.stage!==recoveryRef.state||await recoveryRekeyOperationStateHashV2(recoveryOperation)!==recoveryRef.state_record_hash
+          ||recoveryOperation.stage!=='successor_rotation_required'||recoveryOperation.transition_id!==args.operation.source_recovery_transition_id)throw new Error('Recovery-rekey native Source rotation requires the exact successor_rotation_required Phase-A state.')
+      }
       const opHash=await rotationOperationStateHashV2(args.operation),artifactBytes=new TextDecoder().decode(canonicalBytes(args.artifactValue as never)),artifactHash=base64Url(await sha256(canonicalBytes(args.artifactValue as never)))
       const next:EpochLocalSecurityStateV6={...current,operation_generation:current.operation_generation+1,rotation_state_ref:{operation_id:args.operation.operation_id,state:args.operation.stage,state_record_hash:opHash}}
       validateEpochLocalSecurityStateV6(next)
