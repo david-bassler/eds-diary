@@ -9,9 +9,11 @@ import {
   generateWriterDeviceKeyV2,
   recoveryCommitmentV2,
   recoveryUrsIdV2,
+  revisionSigningBytesV2,
+  signEd25519V2,
 } from '../security/v2/crypto'
 import { V2_SCHEMA_REGISTRY_HASH } from '../security/v2/schemaRegistry'
-import { SINGLE_WRITER_V2_SCHEMA_ALLOWLIST, type RevisionV2, type WriterGrantV2 } from '../security/v2/types'
+import { SINGLE_WRITER_V2_SCHEMA_ALLOWLIST, type RecoveryAuthorityTransitionV2, type RevisionV2, type WriterGrantV2 } from '../security/v2/types'
 import { manifestCellsArrayV6, manifestFingerprintV6, prepareManifestV6, V6_PROTOCOL_LIMITS, type ProtectedManifestV6 } from '../security/v2/manifest'
 import { createAnchorV2 } from '../security/v2/prefix'
 import { envelopeRowV2, sealRevisionEnvelopeV2 } from '../security/v2/envelopes'
@@ -77,6 +79,52 @@ async function nativeJoinFixture(){
     recovery_authority_transition_proof:null,created_at:createdAt,
   },urs,bytes(14,16),bytes(15,32),bytes(16,12))
   return{diaryId,epochId,keyId,rootKey,urs,epochSalt,writer,writerDeviceId,cells,fingerprint,row,snapshot,verified,canonical,artifact,accountBinding}
+}
+
+
+async function pendingRekeyJoinFixture(){
+  const f=await nativeJoinFixture(),nextUrs=bytes(40,32),nextRecovery=await generateRecoveryTakeoverKeyMaterialV2()
+  const nextUrsId=await recoveryUrsIdV2(nextUrs),nextCommitment=await recoveryCommitmentV2(nextUrs,bytes(1,16),1)
+  const transition:RecoveryAuthorityTransitionV2={
+    transition_id:id(41,32),transition_kind:'recovery_rekey',
+    from_recovery_generation:0,from_recovery_urs_id:f.canonical.current_recovery.recovery_urs_id,
+    from_recovery_takeover_key_id:f.canonical.current_recovery.recovery_takeover_key_id,
+    to_recovery_generation:1,to_recovery_urs_commitment:nextCommitment,to_recovery_urs_id:nextUrsId,
+    to_recovery_takeover_key_id:nextRecovery.recoveryTakeoverKeyId,to_recovery_takeover_public_key:base64Url(nextRecovery.publicKeyRaw),
+    authority_anchor:{...f.canonical.remote_anchor},
+  }
+  const unsigned:RevisionV2<RecoveryAuthorityTransitionV2>={
+    record_type:'recovery_authority_transition',record_schema:'recovery-authority-transition-sw-v2',
+    record_id:id(42,16),revision_id:id(43,32),parent_revision_ids:[],record_status:'control',record_data:transition,
+    migration_origin:null,protocol_created_at:createdAt,
+    writer_context:{writer_generation:1,writer_grant_id:f.canonical.current_writer.writer_grant_id,writer_device_id:f.writerDeviceId,writer_key_id:f.writer.writerKeyId},
+    writer_signature:null,
+  }
+  const revision={...unsigned,writer_signature:await signEd25519V2(f.writer.privateKey,revisionSigningBytesV2(f.diaryId,f.epochId,unsigned))}
+  const envelope=await sealRevisionEnvelopeV2(f.rootKey,f.epochSalt,{diaryId:f.diaryId,epochId:f.epochId},revision,bytes(44,32),bytes(45,12))
+  const transitionRow=envelopeRowV2(envelope)
+  f.snapshot.rows.push([...transitionRow])
+  const codec=new GoogleSheetsTransferableSingleWriterV2ProfileCodec(f.diaryId,f.epochId,f.rootKey,f.accountBinding)
+  const verified=await codec.verifyRemote(f.snapshot),canonical=verified.profileState as Awaited<ReturnType<TransferableSingleWriterV2Verifier['verifyCanonicalFull']>>
+  const history=[...canonical.recovery_credential_history]
+  const artifact=await createRecoveryArtifactV6({
+    diary_id:f.diaryId,epoch_id:f.epochId,key_id:f.keyId,RK_epoch:base64Url(f.rootKey),
+    manifest_fingerprint:f.fingerprint,remote_anchor:{...f.canonical.remote_anchor},google_account_binding:f.accountBinding,
+    recovery_generation:1,recovery_urs_commitment:nextCommitment,recovery_urs_id:nextUrsId,recovery_credential_history:history,
+    recovery_takeover_key_id:nextRecovery.recoveryTakeoverKeyId,recovery_takeover_public_key:base64Url(nextRecovery.publicKeyRaw),
+    recovery_takeover_private_key_pkcs8:base64Url(nextRecovery.privateKeyPkcs8),activation_lineage:[],
+    recovery_authority_transition_proof:{
+      format:'recovery-authority-transition-proof-v2',version:2,source_epoch_id:f.epochId,source_manifest_fingerprint:f.fingerprint,
+      authority_anchor_before_transition:{...transition.authority_anchor},
+      from_recovery_generation:transition.from_recovery_generation,from_recovery_urs_id:transition.from_recovery_urs_id,
+      from_recovery_takeover_key_id:transition.from_recovery_takeover_key_id,to_recovery_generation:transition.to_recovery_generation,
+      to_recovery_urs_commitment:transition.to_recovery_urs_commitment,to_recovery_urs_id:transition.to_recovery_urs_id,
+      to_recovery_takeover_key_id:transition.to_recovery_takeover_key_id,to_recovery_takeover_public_key:transition.to_recovery_takeover_public_key,
+      transition_envelope:{envelope_id:envelope.envelopeId,iv:envelope.iv,ciphertext:envelope.ciphertext},
+    },
+    created_at:createdAt,
+  },nextUrs,bytes(46,16),bytes(47,32),bytes(48,12))
+  return{...f,urs:nextUrs,artifact,verified,canonical}
 }
 
 function sessionFor(
@@ -409,6 +457,28 @@ describe('productive v2 read-only Join',()=>{
     await expect(new ProductiveForcedTakeoverV2Service(session,store,()=>createdAt).takeover(bytes(99,32))).rejects.toBeTruthy()
     expect(await store.loadBoundWriterGrantOperation(f.rootKey,f.epochSalt,f.epochId)).toBeNull()
     expect((await store.loadState(f.rootKey,f.epochSalt,f.epochId)).writer_status).toBe('read_only')
+  })
+
+
+  it('recovers from device loss during Pending-Rekey and takes over only as maintenance-only Writer',async()=>{
+    const f=await pendingRekeyJoinFixture(),calls={family:0},session=sessionFor(f,calls),store=new IndexedDbV2LocalSecurityStore()
+    expect(f.canonical.current_recovery.recovery_rekey_rotation_required).toBe(true)
+    const joined=await new ProductiveReadOnlyJoinV2Service(session,store).join(f.urs)
+    const afterJoin=await store.loadState(f.rootKey,f.epochSalt,f.epochId)
+    expect(afterJoin.writer_status).toBe('read_only')
+    expect(afterJoin.recovery_rekey_rotation_required).toBe(true)
+    expect(afterJoin.recovery_rekey_transition_id).toBe(f.canonical.current_recovery.recovery_rekey_transition_id)
+
+    const result=await new ProductiveForcedTakeoverV2Service(session,store,()=>createdAt).takeover(f.urs)
+    expect(result.stage).toBe('durable')
+    expect(result.maintenanceOnly).toBe(true)
+    expect(result.writerDeviceId).toBe(joined.writerDeviceId)
+    expect(result.writerKeyId).toBe(joined.writerKeyId)
+
+    const state=await store.loadState(f.rootKey,f.epochSalt,f.epochId)
+    expect(state.writer_status).toBe('writer_active')
+    expect(state.recovery_rekey_rotation_required).toBe(true)
+    expect(state.recovery_rekey_transition_id).toBe(f.canonical.current_recovery.recovery_rekey_transition_id)
   })
 
 
