@@ -13,11 +13,14 @@ import { openBestEffortRootWrapV6, validateRootWrapV6, type RootWrapV6 } from '.
 import { advanceWriterGrantOperationStateV2, validateWriterGrantOperationStateV2, writerGrantOperationStateHashV2, type WriterGrantOperationStageV2, type WriterGrantOperationStateV2 } from './writerGrantOperation'
 import { advanceRecoveryRekeyOperationStateV2, recoveryRekeyOperationStateHashV2, validateRecoveryRekeyOperationStateV2, type RecoveryRekeyOperationStateV2, type RecoveryRekeyStageV2 } from './recoveryRekeyOperation'
 import type { CreationPersistence, CreationState } from '../../sync/core/creation'
+import type { RemoteSnapshot } from '../../sync/core/contracts'
+import { createAnchorV2 } from './prefix'
+import { manifestFingerprintV6, parseManifestCellsV6 } from './manifest'
 import type { RecoveryAuthorityTransitionV2, WriterGrantV2 } from './types'
 
 const DATABASE_NAME='eds-diary-v2-security'
-const DATABASE_VERSION=10
-const STORES={states:'epochSecurityStateV6',writerKeys:'writerDeviceKeysV2',reservations:'envelopeReservationsV6',envelopes:'envelopesV6',outbox:'outboxV6',recoveryStaging:'recoveryTakeoverStagingV2',recoveryArtifacts:'recoveryArtifactsV6',rotationOperations:'rotationOperationsV2',writerGrantOperations:'writerGrantOperationsV2',lineageCaches:'activationLineageCachesV2',rootWraps:'rootWrapsV6',rootWrappingKeys:'rootWrappingKeysV6',creationOperations:'creationOperationsV2',operationArtifacts:'operationArtifactsV2'} as const
+const DATABASE_VERSION=11
+const STORES={states:'epochSecurityStateV6',writerKeys:'writerDeviceKeysV2',reservations:'envelopeReservationsV6',envelopes:'envelopesV6',outbox:'outboxV6',verifiedSnapshots:'verifiedRemoteSnapshotsV2',recoveryStaging:'recoveryTakeoverStagingV2',recoveryArtifacts:'recoveryArtifactsV6',rotationOperations:'rotationOperationsV2',writerGrantOperations:'writerGrantOperationsV2',lineageCaches:'activationLineageCachesV2',rootWraps:'rootWrapsV6',rootWrappingKeys:'rootWrappingKeysV6',creationOperations:'creationOperationsV2',operationArtifacts:'operationArtifactsV2'} as const
 
 const TERMINAL_ROTATION_OPERATION_STATES_V2=new Set(['switched','stale','cutover_race','post_activation_superseded'])
 const TERMINAL_WRITER_GRANT_OPERATION_STATES_V2=new Set(['durable','stale'])
@@ -42,6 +45,7 @@ export interface PreparedEnvelopeAuthorityV2 {
   writer_key_id:string
 }
 export interface VerifiedDispositionContextV2 {
+  remote_manifest:ReadonlyArray<string>
   remote_rows:ReadonlyArray<readonly string[]>
   current_writer:PreparedEnvelopeAuthorityV2
   source_epoch_sealed:boolean
@@ -59,6 +63,33 @@ export interface V2OutboxEntryCore {
   ceremony_owner?:V2OutboxCeremonyOwner
 }
 export interface V2OutboxEntry extends V2OutboxEntryCore {tag:string}
+export interface VerifiedRemoteSnapshotV2Core {
+  id:string
+  diary_id:string
+  epoch_id:string
+  manifest_fingerprint:string
+  remote_anchor:NonNullable<EpochLocalSecurityStateV6['remote_anchor']>
+  manifest:string[]
+  rows:string[][]
+}
+export interface VerifiedRemoteSnapshotV2 extends VerifiedRemoteSnapshotV2Core {tag:string}
+async function verifiedSnapshotTag(rootKey:Uint8Array,epochSalt:Uint8Array,value:VerifiedRemoteSnapshotV2Core):Promise<string>{
+  return base64Url(await hmacSha256(await deriveLocalStateMacKeyV2(rootKey,epochSalt),canonicalBytes(value as never)))
+}
+async function verifySnapshotTag(rootKey:Uint8Array,epochSalt:Uint8Array,value:VerifiedRemoteSnapshotV2):Promise<void>{
+  const {tag,...core}=value
+  const expected=fromBase64Url(await verifiedSnapshotTag(rootKey,epochSalt,core))
+  if(!equalBytes(fixedBase64Url(tag,32,'verified_snapshot_tag'),expected))throw new Error('Verified v2 remote snapshot MAC failed.')
+}
+function sameRemoteAnchor(
+  left:EpochLocalSecurityStateV6['remote_anchor'],
+  right:EpochLocalSecurityStateV6['remote_anchor'],
+):boolean{
+  return left!==null&&right!==null
+    &&left.anchor_profile===right.anchor_profile
+    &&left.covered_row_count===right.covered_row_count
+    &&left.prefix_hash===right.prefix_hash
+}
 async function outboxTag(rootKey:Uint8Array,epochSalt:Uint8Array,entry:V2OutboxEntryCore):Promise<string>{
   return base64Url(await hmacSha256(await deriveLocalStateMacKeyV2(rootKey,epochSalt),canonicalBytes(entry as never)))
 }
@@ -134,6 +165,7 @@ async function openDatabase():Promise<IDBDatabase>{
       }
       if(!db.objectStoreNames.contains(STORES.envelopes)){const store=db.createObjectStore(STORES.envelopes,{keyPath:'id'});store.createIndex('byEpoch','epoch_id');store.createIndex('bySequence',['epoch_id','local_sequence'],{unique:true})}
       if(!db.objectStoreNames.contains(STORES.outbox)){const store=db.createObjectStore(STORES.outbox,{keyPath:'id'});store.createIndex('byEpoch','epoch_id')}
+      if(!db.objectStoreNames.contains(STORES.verifiedSnapshots))db.createObjectStore(STORES.verifiedSnapshots,{keyPath:'id'})
       if(!db.objectStoreNames.contains(STORES.recoveryStaging))db.createObjectStore(STORES.recoveryStaging,{keyPath:'id'})
       if(!db.objectStoreNames.contains(STORES.recoveryArtifacts))db.createObjectStore(STORES.recoveryArtifacts,{keyPath:'id'})
       if(!db.objectStoreNames.contains(STORES.rotationOperations))db.createObjectStore(STORES.rotationOperations,{keyPath:'id'})
@@ -1416,18 +1448,55 @@ export class IndexedDbV2LocalSecurityStore {
       const finalState={...nextState,stale_writer_pending_count:staleCount}
       validateEpochLocalSecurityStateV6(finalState)
       assertStateTransition(current,finalState)
+      if(finalState.remote_anchor===null)throw new Error('Verified canonical v2 disposition requires a remote anchor.')
+      let snapshot:VerifiedRemoteSnapshotV2|null=null
+      // Some narrow unit fixtures exercise StateV6/outbox semantics with an
+      // intentionally empty manifest. Real canonical provider reads always
+      // carry the exact four ManifestV6 cells; non-empty malformed input remains
+      // a hard failure rather than silently disabling the cache.
+      if(context.remote_manifest.length){
+        if(await manifestFingerprintV6(parseManifestCellsV6(context.remote_manifest))!==finalState.manifest_fingerprint)throw new Error('Verified v2 snapshot ManifestV6 fingerprint does not match StateV6.')
+        const snapshotAnchor=await createAnchorV2(finalState.diary_id,finalState.epoch_id,context.remote_rows)
+        if(!sameRemoteAnchor(snapshotAnchor,finalState.remote_anchor))throw new Error('Verified v2 snapshot rows do not match the authenticated StateV6 anchor.')
+        const snapshotCore:VerifiedRemoteSnapshotV2Core={
+          id:finalState.epoch_id,
+          diary_id:finalState.diary_id,
+          epoch_id:finalState.epoch_id,
+          manifest_fingerprint:finalState.manifest_fingerprint,
+          remote_anchor:structuredClone(finalState.remote_anchor),
+          manifest:[...context.remote_manifest],
+          rows:context.remote_rows.map(row=>[...row]),
+        }
+        snapshot={...snapshotCore,tag:await verifiedSnapshotTag(rootKey,epochSalt,snapshotCore)}
+      }
       const tag=await localStateTagV6(rootKey,epochSalt,finalState),db=await openDatabase()
       const authenticatedUpdated:V2OutboxEntry[]=[]
       for(const entry of updated){
         const core:V2OutboxEntryCore={id:entry.id,epoch_id:entry.epoch_id,envelope_id:entry.envelope_id,status:entry.status,authority:structuredClone(entry.authority),...(entry.ceremony_owner?{ceremony_owner:entry.ceremony_owner}:{})}
         authenticatedUpdated.push({...core,tag:await outboxTag(rootKey,epochSalt,core)})
       }
-      const tx=db.transaction([STORES.outbox,STORES.states],'readwrite')
+      const tx=db.transaction([STORES.outbox,STORES.states,STORES.verifiedSnapshots],'readwrite')
       for(const entry of authenticatedUpdated)tx.objectStore(STORES.outbox).put(entry)
       tx.objectStore(STORES.states).put({id:finalState.epoch_id,state:structuredClone(finalState),tag})
+      if(snapshot)tx.objectStore(STORES.verifiedSnapshots).put(snapshot)
       await transactionDone(tx)
       return this.loadState(rootKey,epochSalt,finalState.epoch_id)
     })
+  }
+
+  async loadVerifiedRemoteSnapshot(rootKey:Uint8Array,epochSalt:Uint8Array,epochId:string):Promise<RemoteSnapshot>{
+    const state=await this.loadState(rootKey,epochSalt,epochId)
+    const db=await openDatabase(),tx=db.transaction(STORES.verifiedSnapshots,'readonly')
+    const snapshot=await requestResult<VerifiedRemoteSnapshotV2|undefined>(tx.objectStore(STORES.verifiedSnapshots).get(epochId))
+    await transactionDone(tx)
+    if(!snapshot)throw new Error('No verified v2 remote snapshot is cached locally; authenticate and synchronize first.')
+    await verifySnapshotTag(rootKey,epochSalt,snapshot)
+    if(snapshot.id!==epochId||snapshot.epoch_id!==epochId||snapshot.diary_id!==state.diary_id
+      ||snapshot.manifest_fingerprint!==state.manifest_fingerprint||!sameRemoteAnchor(snapshot.remote_anchor,state.remote_anchor))throw new Error('Verified v2 remote snapshot does not match authenticated StateV6.')
+    if(await manifestFingerprintV6(parseManifestCellsV6(snapshot.manifest))!==state.manifest_fingerprint)throw new Error('Verified v2 remote snapshot ManifestV6 fingerprint mismatch.')
+    const anchor=await createAnchorV2(state.diary_id,state.epoch_id,snapshot.rows)
+    if(!sameRemoteAnchor(anchor,state.remote_anchor))throw new Error('Verified v2 remote snapshot anchor mismatch.')
+    return{manifest:[...snapshot.manifest],rows:snapshot.rows.map(row=>[...row])}
   }
 
   async updateOutboxStatus(

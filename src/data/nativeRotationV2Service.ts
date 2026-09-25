@@ -265,7 +265,7 @@ export class ProductiveNativeRotationV2Service implements ProfileUpgradeOrchestr
     const current=await this.store.loadState(value.context.rootKey,value.context.epochSalt,value.context.state.epoch_id)
     const next=await stateAfterCanonicalVerifyV6(current,value.result,value.snapshot.rows,key!==null&&key.writer_device_id===current.writer_device_id)
     return this.store.commitVerifiedDispositions(value.context.rootKey,value.context.epochSalt,current.operation_generation,next,value.verified.acceptedEnvelopeIds,value.verified.staleWriterEnvelopeIds,{
-      remote_rows:value.snapshot.rows,current_writer:{
+      remote_manifest:value.snapshot.manifest,remote_rows:value.snapshot.rows,current_writer:{
         writer_generation:value.result.current_writer.writer_generation,writer_grant_id:value.result.current_writer.writer_grant_id,
         writer_device_id:value.result.current_writer.writer_device_id,writer_key_id:value.result.current_writer.writer_key_id,
       },source_epoch_sealed:value.result.source_epoch_sealed,recovery_rekey_rotation_required:value.result.current_recovery.recovery_rekey_rotation_required,
@@ -528,7 +528,7 @@ export class ProductiveNativeRotationV2Service implements ProfileUpgradeOrchestr
     const ctx=await this.successorContext(),state=await this.store.loadState(ctx.rootKey,ctx.epochSalt,ctx.plan.successor_epoch_id),key=await this.carriedWriter(ctx.plan)
     const next=await stateAfterCanonicalVerifyV6(state,result,verified.snapshot.rows,key.writer_device_id===ctx.plan.writer_device_id)
     await this.store.commitVerifiedDispositions(ctx.rootKey,ctx.epochSalt,state.operation_generation,next,verified.acceptedEnvelopeIds,verified.staleWriterEnvelopeIds,{
-      remote_rows:verified.snapshot.rows,current_writer:{writer_generation:result.current_writer.writer_generation,writer_grant_id:result.current_writer.writer_grant_id,writer_device_id:result.current_writer.writer_device_id,writer_key_id:result.current_writer.writer_key_id},
+      remote_manifest:verified.snapshot.manifest,remote_rows:verified.snapshot.rows,current_writer:{writer_generation:result.current_writer.writer_generation,writer_grant_id:result.current_writer.writer_grant_id,writer_device_id:result.current_writer.writer_device_id,writer_key_id:result.current_writer.writer_key_id},
       source_epoch_sealed:result.source_epoch_sealed,recovery_rekey_rotation_required:result.current_recovery.recovery_rekey_rotation_required,
     })
   }

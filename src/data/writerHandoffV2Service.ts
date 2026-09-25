@@ -118,6 +118,7 @@ export class ProductiveWriterHandoffV2Service {
       context.rootKey,context.epochSalt,before.operation_generation,next,
       fresh.verified.acceptedEnvelopeIds,fresh.verified.staleWriterEnvelopeIds,
       {
+        remote_manifest:fresh.verified.snapshot.manifest,
         remote_rows:fresh.verified.snapshot.rows,
         current_writer:{
           writer_generation:fresh.result.current_writer.writer_generation,

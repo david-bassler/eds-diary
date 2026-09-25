@@ -121,7 +121,7 @@ export class ProductiveRecoveryRekeyV2Service {
     const key=await this.store.loadWriterKey(current.writer_signing_key_id,current.diary_id,current.epoch_id)
     const next=await stateAfterCanonicalVerifyV6(current,result,verified.snapshot.rows,key!==null&&key.writer_device_id===current.writer_device_id)
     return this.store.commitVerifiedDispositions(context.rootKey,context.epochSalt,current.operation_generation,next,verified.acceptedEnvelopeIds,verified.staleWriterEnvelopeIds,{
-      remote_rows:verified.snapshot.rows,current_writer:{writer_generation:result.current_writer.writer_generation,writer_grant_id:result.current_writer.writer_grant_id,writer_device_id:result.current_writer.writer_device_id,writer_key_id:result.current_writer.writer_key_id},
+      remote_manifest:verified.snapshot.manifest,remote_rows:verified.snapshot.rows,current_writer:{writer_generation:result.current_writer.writer_generation,writer_grant_id:result.current_writer.writer_grant_id,writer_device_id:result.current_writer.writer_device_id,writer_key_id:result.current_writer.writer_key_id},
       source_epoch_sealed:result.source_epoch_sealed,recovery_rekey_rotation_required:result.current_recovery.recovery_rekey_rotation_required,
     })
   }
