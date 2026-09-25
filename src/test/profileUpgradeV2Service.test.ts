@@ -67,7 +67,7 @@ import { ProductiveRecoveryRekeyV2Service } from '../data/recoveryRekeyV2Service
 import { ProductiveForcedTakeoverV2Service } from '../data/forcedTakeoverV2Service'
 import type { RotationOperationStateV2 } from '../security/v2/profileUpgrade'
 import { TransferableSingleWriterV2WriteAuthority } from '../security/v2/writeAuthority'
-import { installAuthenticatedRemoteSession } from '../data/initializeDataLayer'
+import { continuePendingRecoveryRekeyV2, forceTakeoverV2, installAuthenticatedRemoteSession, joinExistingV2Diary, remoteSessionStatus } from '../data/initializeDataLayer'
 import { __v2ApplicationRuntimeTesting } from '../data/v2ApplicationRuntime'
 import { createPainEntry, listPainEntries } from '../features/pain/painRepository'
 
@@ -1426,19 +1426,22 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     globalThis.localStorage?.clear?.()
 
     const replacementStore=new IndexedDbV2LocalSecurityStore()
-    const joined=await new ProductiveReadOnlyJoinV2Service(v2,replacementStore).join(newUrs)
+    const joined=await joinExistingV2Diary(v2,newUrs)
     expect(joined.epochId).toBe(upgraded.successor_epoch_id)
     const replacementState=await replacementStore.loadState((await openRecoveryArtifactV6(await v2.loadRecoveryArtifact(newUrs,source.diaryId,upgraded.successor_epoch_id),newUrs)).rootKey,await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(upgraded.successor_epoch_id)),upgraded.successor_epoch_id)
     expect(replacementState.writer_status).toBe('read_only')
     expect(replacementState.recovery_rekey_rotation_required).toBe(true)
+    expect(await remoteSessionStatus()).toMatchObject({profile:'v2',writerStatus:'read_only',recoveryRekeyRequired:true})
 
-    const takeover=await new ProductiveForcedTakeoverV2Service(v2,replacementStore,()=>createdAt).takeover(newUrs)
+    const takeover=await forceTakeoverV2(v2,newUrs)
     expect(takeover.stage).toBe('durable')
     expect(takeover.maintenanceOnly).toBe(true)
+    expect(await remoteSessionStatus()).toMatchObject({profile:'v2',writerStatus:'writer_active',recoveryRekeyRequired:true})
 
-    const adopted=await new ProductiveRecoveryRekeyV2Service(v2,replacementStore,()=>createdAt).adoptPending(newUrs)
+    const adopted=await continuePendingRecoveryRekeyV2(v2,newUrs)
     expect(adopted.stage).toBe('completed')
     expect(adopted.successorEpochId).not.toBeNull()
+    expect(await remoteSessionStatus()).toMatchObject({profile:'v2',writerStatus:'writer_active',recoveryRekeyRequired:false})
     const adoptedOperation=await replacementStore.loadRecoveryRekeyOperation(adopted.operationId)
     expect(adoptedOperation.operation_origin).toBe('remote_pending_rekey_adoption')
     expect(adoptedOperation.stage).toBe('completed')
