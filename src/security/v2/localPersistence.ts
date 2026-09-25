@@ -1,10 +1,10 @@
 import { base64Url, equalBytes, fixedBase64Url, fromBase64Url, randomBytes } from '../crypto/bytes'
 import { canonicalBytes } from '../crypto/canonical'
 import { hmacSha256, sha256 } from '../crypto/core'
-import { deriveLocalStateMacKeyV2, recoveryTakeoverKeyIdV2, verifyEd25519V2, writerGrantSigningBytesV2 } from './crypto'
+import { deriveLocalStateMacKeyV2, recoveryTakeoverKeyIdV2, revisionSigningBytesV2, verifyEd25519V2, writerGrantSigningBytesV2 } from './crypto'
 import { openRevisionEnvelopeV2 } from './envelopes'
 import type { PreparedEnvelope } from '../envelopes'
-import { localJournalInitialV2, localJournalNextV2, localStateTagV6, validateEpochLocalSecurityStateV6, validateStoredWriterDeviceKeyV2, verifyLocalStateTagV6, withDiaryLockV2, type EpochLocalSecurityStateV6, type StoredWriterDeviceKeyV2 } from './localState'
+import { localJournalInitialV2, localJournalNextV2, localStateTagV6, recoveryCredentialHistoryHashV2, validateEpochLocalSecurityStateV6, validateStoredWriterDeviceKeyV2, verifyLocalStateTagV6, withDiaryLockV2, type EpochLocalSecurityStateV6, type StoredWriterDeviceKeyV2 } from './localState'
 import { isVerifiedRecoveryTakeoverStagingV2, openRecoveryTakeoverStagingV2, verifyRecoveryTakeoverStagingV2, type RecoveryTakeoverStagingV2, type VerifiedRecoveryTakeoverStagingV2 } from './recoveryStaging'
 import { openRecoveryArtifactV6, recoveryArtifactHashV6, recoveryArtifactLocatorV6, recoveryFamilyLocatorV6, type RecoveryArtifactV6 } from './recovery'
 import { activationLineageCacheHashV2, openActivationLineageCacheV2, type ActivationLineageCacheV2 } from './activationLineageCache'
@@ -13,7 +13,7 @@ import { openBestEffortRootWrapV6, validateRootWrapV6, type RootWrapV6 } from '.
 import { advanceWriterGrantOperationStateV2, validateWriterGrantOperationStateV2, writerGrantOperationStateHashV2, type WriterGrantOperationStageV2, type WriterGrantOperationStateV2 } from './writerGrantOperation'
 import { advanceRecoveryRekeyOperationStateV2, recoveryRekeyOperationStateHashV2, validateRecoveryRekeyOperationStateV2, type RecoveryRekeyOperationStateV2, type RecoveryRekeyStageV2 } from './recoveryRekeyOperation'
 import type { CreationPersistence, CreationState } from '../../sync/core/creation'
-import type { WriterGrantV2 } from './types'
+import type { RecoveryAuthorityTransitionV2, WriterGrantV2 } from './types'
 
 const DATABASE_NAME='eds-diary-v2-security'
 const DATABASE_VERSION=10
@@ -683,6 +683,111 @@ export class IndexedDbV2LocalSecurityStore {
   }
 
   private recoveryRekeyRecordId(operationId:string):string{return`recovery-rekey:${operationId}`}
+
+  async persistPreparedRecoveryRekeyBundle(args:{
+    rootKey:Uint8Array
+    epochSalt:Uint8Array
+    newUrs:Uint8Array
+    expectedOperationGeneration:number
+    reservation:EnvelopeReservationV6
+    envelope:PreparedEnvelope
+    operation:RecoveryRekeyOperationStateV2
+    artifact:RecoveryArtifactV6
+  }):Promise<EpochLocalSecurityStateV6>{
+    validateRecoveryRekeyOperationStateV2(args.operation)
+    if(args.operation.operation_origin!=='local_rekey'||args.operation.stage!=='new_material_staged'||args.operation.artifact_publish_attempted)throw new Error('Prepared Recovery-Rekey bundle must start as unattempted local new_material_staged.')
+    if(args.newUrs.byteLength!==32)throw new Error('Prepared Recovery-Rekey bundle requires a 32-byte new URS.')
+    if(args.reservation.state!=='reserved'||args.reservation.epoch_id!==args.operation.epoch_id||args.reservation.envelope_id!==args.envelope.envelopeId||args.reservation.iv!==args.envelope.iv)throw new Error('Recovery-Rekey transition reservation mismatch.')
+    if(args.operation.transition_envelope.envelope_id!==args.envelope.envelopeId||args.operation.transition_envelope.iv!==args.envelope.iv||args.operation.transition_envelope.ciphertext!==args.envelope.ciphertext)throw new Error('RecoveryRekeyOperationStateV2 does not bind transition envelope bytes.')
+    return withDiaryLockV2((await this.loadState(args.rootKey,args.epochSalt,args.operation.epoch_id)).diary_id,async()=>{
+      await this.verifyLocalJournal(args.rootKey,args.epochSalt,args.operation.epoch_id)
+      const current=await this.loadState(args.rootKey,args.epochSalt,args.operation.epoch_id)
+      if(current.operation_generation!==args.expectedOperationGeneration)throw new Error('Stale StateV6 generation during Recovery-Rekey preparation.')
+      if(current.epoch_status!=='active'||current.writer_status!=='writer_active'||current.writer_generation===null||current.writer_grant_id===null||current.remote_anchor===null||current.remote_binding===null)throw new Error('Recovery-Rekey preparation requires the active authenticated local Writer.')
+      if(current.rotation_state_ref&&!TERMINAL_ROTATION_OPERATION_STATES_V2.has(current.rotation_state_ref.state))throw new Error('Recovery-Rekey preparation is blocked by Rotation.')
+      if(current.writer_operation_state_ref&&!TERMINAL_WRITER_GRANT_OPERATION_STATES_V2.has(current.writer_operation_state_ref.state))throw new Error('Recovery-Rekey preparation is blocked by WriterGrant ceremony.')
+      if(current.migration_state_ref!==null)throw new Error('Recovery-Rekey preparation is blocked by migration state.')
+      const existingRef=current.recovery_operation_state_ref
+      if(existingRef){
+        const existing=await this.loadRecoveryRekeyOperation(existingRef.operation_id)
+        if(existing.stage!==existingRef.state||await recoveryRekeyOperationStateHashV2(existing)!==existingRef.state_record_hash)throw new Error('Existing Recovery-Rekey binding failed.')
+        if(args.operation.supersedes_transition_id!==existing.transition_id||TERMINAL_RECOVERY_OPERATION_STATES_V2.has(existing.stage))throw new Error('Recovery-Rekey preparation does not explicitly supersede the active pending operation.')
+      }else if(args.operation.supersedes_transition_id!==null)throw new Error('Recovery-Rekey supersession references no local active operation.')
+
+      const revision=await openRevisionEnvelopeV2(args.rootKey,args.epochSalt,{diaryId:current.diary_id,epochId:current.epoch_id},args.envelope)
+      const transition=revision.record_data as RecoveryAuthorityTransitionV2
+      if(revision.record_schema!=='recovery-authority-transition-sw-v2'||revision.record_type!=='recovery_authority_transition'||revision.record_status!=='control'||!revision.writer_context||!revision.writer_signature||!transition)throw new Error('Recovery-Rekey prepared envelope is not a writer-signed RecoveryAuthorityTransitionV2.')
+      if(transition.transition_id!==args.operation.transition_id||transition.from_recovery_generation!==current.recovery_generation||transition.from_recovery_urs_id!==current.recovery_urs_id
+        ||transition.from_recovery_takeover_key_id!==current.recovery_takeover_key_id||transition.to_recovery_generation!==args.operation.to_recovery_generation
+        ||transition.to_recovery_urs_commitment!==args.operation.to_recovery_urs_commitment||transition.to_recovery_urs_id!==args.operation.to_recovery_urs_id
+        ||transition.to_recovery_takeover_key_id!==args.operation.to_recovery_takeover_key_id
+        ||transition.authority_anchor.covered_row_count!==current.remote_anchor.covered_row_count||transition.authority_anchor.prefix_hash!==current.remote_anchor.prefix_hash)throw new Error('Prepared RecoveryAuthorityTransitionV2 does not bind current StateV6 Recovery/Anchor state.')
+      const authority:PreparedEnvelopeAuthorityV2={writer_generation:current.writer_generation,writer_grant_id:current.writer_grant_id,writer_device_id:current.writer_device_id,writer_key_id:current.writer_signing_key_id}
+      await assertAuthorityMatchesEnvelope(args.rootKey,args.epochSalt,current.diary_id,current.epoch_id,args.envelope,authority)
+      const writer=await this.loadWriterKey(current.writer_signing_key_id,current.diary_id,current.epoch_id)
+      if(!writer||writer.writer_device_id!==current.writer_device_id||writer.writer_public_key!==transition.to_recovery_takeover_public_key&&false)void 0
+      if(!writer||writer.writer_device_id!==current.writer_device_id||!await verifyEd25519V2(fixedBase64Url(writer.writer_public_key,32,'writer_public_key'),revision.writer_signature,revisionSigningBytesV2(current.diary_id,current.epoch_id,revision)))throw new Error('Prepared RecoveryAuthorityTransitionV2 Writer signature failed against authenticated local WriterDeviceKeyV2.')
+
+      const recovered=await openRecoveryArtifactV6(args.artifact,args.newUrs),payload=recovered.payload
+      if(base64Url(recovered.rootKey)!==base64Url(args.rootKey)||payload.diary_id!==current.diary_id||payload.epoch_id!==current.epoch_id||payload.key_id!==current.key_id
+        ||payload.manifest_fingerprint!==current.manifest_fingerprint||payload.google_account_binding!==current.remote_binding.remote_identity_binding
+        ||payload.recovery_generation!==args.operation.to_recovery_generation||payload.recovery_urs_commitment!==args.operation.to_recovery_urs_commitment
+        ||payload.recovery_urs_id!==args.operation.to_recovery_urs_id||payload.recovery_takeover_key_id!==args.operation.to_recovery_takeover_key_id
+        ||payload.recovery_takeover_public_key!==transition.to_recovery_takeover_public_key||payload.remote_anchor.covered_row_count!==current.remote_anchor.covered_row_count
+        ||payload.remote_anchor.prefix_hash!==current.remote_anchor.prefix_hash)throw new Error('Prepared RecoveryArtifactV6 does not bind Recovery-Rekey to-State/current epoch.')
+      const proof=payload.recovery_authority_transition_proof
+      if(!proof||proof.source_epoch_id!==current.epoch_id||proof.source_manifest_fingerprint!==current.manifest_fingerprint
+        ||proof.transition_envelope.envelope_id!==args.envelope.envelopeId||proof.transition_envelope.iv!==args.envelope.iv||proof.transition_envelope.ciphertext!==args.envelope.ciphertext
+        ||proof.from_recovery_generation!==transition.from_recovery_generation||proof.from_recovery_urs_id!==transition.from_recovery_urs_id||proof.from_recovery_takeover_key_id!==transition.from_recovery_takeover_key_id
+        ||proof.to_recovery_generation!==transition.to_recovery_generation||proof.to_recovery_urs_commitment!==transition.to_recovery_urs_commitment||proof.to_recovery_urs_id!==transition.to_recovery_urs_id
+        ||proof.to_recovery_takeover_key_id!==transition.to_recovery_takeover_key_id||proof.to_recovery_takeover_public_key!==transition.to_recovery_takeover_public_key)throw new Error('Prepared RecoveryArtifactV6 transition proof mismatch.')
+      const proofHash=base64Url(await sha256(canonicalBytes(proof as never)))
+      if(proofHash!==args.operation.transition_proof_sha256||args.artifact.recovery_artifact_id!==args.operation.recovery_artifact_id
+        ||await recoveryArtifactHashV6(args.artifact)!==args.operation.recovery_artifact_sha256
+        ||await recoveryArtifactLocatorV6(args.newUrs,current.diary_id,current.epoch_id)!==args.operation.recovery_artifact_locator)throw new Error('RecoveryRekeyOperationStateV2 artifact/proof identity mismatch.')
+      if(payload.recovery_credential_history.length<2)throw new Error('Recovery-Rekey artifact credential history is incomplete.')
+      const priorHistory=payload.recovery_credential_history.slice(0,-1),last=payload.recovery_credential_history.at(-1)!
+      if(await recoveryCredentialHistoryHashV2(priorHistory)!==current.recovery_credential_history_sha256
+        ||last.recovery_generation!==args.operation.to_recovery_generation||last.recovery_urs_id!==args.operation.to_recovery_urs_id||last.recovery_takeover_key_id!==args.operation.to_recovery_takeover_key_id)throw new Error('Recovery-Rekey artifact does not append exactly one fresh credential-history entry.')
+      if(payload.activation_lineage.length){
+        const cache=await this.loadActivationLineageCache(args.rootKey,args.epochSalt,current.epoch_id)
+        const lineage=await openActivationLineageCacheV2({cache,rootKey:args.rootKey,epochSalt:args.epochSalt,diaryId:current.diary_id,epochId:current.epoch_id,manifestFingerprint:current.manifest_fingerprint})
+        if(new TextDecoder().decode(canonicalBytes(lineage as never))!==new TextDecoder().decode(canonicalBytes(payload.activation_lineage as never)))throw new Error('Recovery-Rekey artifact activation lineage differs from authenticated local cache.')
+      }else if(current.activation_lineage_cache_ref!==null)throw new Error('Recovery-Rekey artifact unexpectedly drops authenticated activation lineage.')
+
+      const db=await openDatabase(),checkTx=db.transaction([STORES.reservations,STORES.operationArtifacts,STORES.recoveryArtifacts],'readonly')
+      const [storedReservation,priorOperation,priorArtifact]=await Promise.all([
+        requestResult<EnvelopeReservationV6|undefined>(checkTx.objectStore(STORES.reservations).get(args.reservation.id)),
+        requestResult<unknown>(checkTx.objectStore(STORES.operationArtifacts).get(this.recoveryRekeyRecordId(args.operation.operation_id))),
+        requestResult<unknown>(checkTx.objectStore(STORES.recoveryArtifacts).get(`${current.epoch_id}:${args.artifact.recovery_artifact_id}`)),
+      ])
+      await transactionDone(checkTx)
+      if(!storedReservation||storedReservation.state!=='reserved'||storedReservation.envelope_id!==args.envelope.envelopeId||storedReservation.iv!==args.envelope.iv)throw new Error('Recovery-Rekey transition reservation is missing or changed.')
+      if(priorOperation!==undefined||priorArtifact!==undefined)throw new Error('Recovery-Rekey prepared bundle collides with existing operation/artifact.')
+
+      const sequence=current.local_journal_count+1,operationHash=await recoveryRekeyOperationStateHashV2(args.operation)
+      const next:EpochLocalSecurityStateV6={...current,operation_generation:current.operation_generation+1,recovery_operation_state_ref:{operation_id:args.operation.operation_id,state:args.operation.stage,state_record_hash:operationHash},
+        local_journal_count:sequence,local_journal_hash:await localJournalNextV2(current.local_journal_hash,sequence,args.envelope)}
+      validateEpochLocalSecurityStateV6(next)
+      const stateTag=await localStateTagV6(args.rootKey,args.epochSalt,next),outboxCore:V2OutboxEntryCore={id:args.reservation.id,epoch_id:current.epoch_id,envelope_id:args.envelope.envelopeId,status:'prepared',authority,ceremony_owner:'recovery_rekey'}
+      const outboxEntry:V2OutboxEntry={...outboxCore,tag:await outboxTag(args.rootKey,args.epochSalt,outboxCore)}
+      const operationBytes=new TextDecoder().decode(canonicalBytes(args.operation as never)),artifactBytes=new TextDecoder().decode(canonicalBytes(args.artifact as never))
+      const familyLocator=await recoveryFamilyLocatorV6(args.newUrs),artifactLocator=await recoveryArtifactLocatorV6(args.newUrs,current.diary_id,current.epoch_id)
+      const tx=db.transaction([STORES.reservations,STORES.envelopes,STORES.outbox,STORES.operationArtifacts,STORES.recoveryArtifacts,STORES.states],'readwrite')
+      tx.objectStore(STORES.reservations).put({...storedReservation,state:'sealed'} satisfies EnvelopeReservationV6)
+      tx.objectStore(STORES.envelopes).add({...args.envelope,id:args.reservation.id,epoch_id:current.epoch_id,local_sequence:sequence} satisfies PersistedEnvelopeV6)
+      tx.objectStore(STORES.outbox).add(outboxEntry)
+      tx.objectStore(STORES.operationArtifacts).add({id:this.recoveryRekeyRecordId(args.operation.operation_id),value:structuredClone(args.operation),bytes:operationBytes,hash:operationHash})
+      tx.objectStore(STORES.recoveryArtifacts).add({id:`${current.epoch_id}:${args.artifact.recovery_artifact_id}`,artifactBytes,artifactSha256:args.operation.recovery_artifact_sha256,familyLocator,artifactLocator})
+      tx.objectStore(STORES.states).put({id:current.epoch_id,state:structuredClone(next),tag:stateTag})
+      await transactionDone(tx)
+      await this.verifyLocalJournal(args.rootKey,args.epochSalt,current.epoch_id)
+      await this.loadRecoveryRekeyOperation(args.operation.operation_id)
+      await this.persistRecoveryArtifactV6(args.newUrs,current.diary_id,current.epoch_id,args.artifact)
+      return this.loadState(args.rootKey,args.epochSalt,current.epoch_id)
+    })
+  }
+
 
   async loadRecoveryRekeyOperation(operationId:string):Promise<RecoveryRekeyOperationStateV2>{
     fixedBase64Url(operationId,32,'operation_id')
