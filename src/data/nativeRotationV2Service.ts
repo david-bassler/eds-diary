@@ -18,10 +18,7 @@ import {
   verifyCurrentRecoveryTransitionForJoin,
   type ActiveCandidateV2,
 } from './readOnlyJoinV2Service'
-import {
-  deriveEpochSaltV2,
-  recoveryUrsIdV2,
-} from '../security/v2/crypto'
+import { deriveEpochSaltV2 } from '../security/v2/crypto'
 import {
   manifestCellsArrayV6,
   openManifestV6,
@@ -43,6 +40,7 @@ import {
   type StoredWriterDeviceKeyV2,
 } from '../security/v2/localState'
 import {
+  createRecoveryArtifactV6,
   openRecoveryArtifactV6,
   recoveryArtifactHashV6,
   recoveryArtifactLocatorV6,
@@ -81,7 +79,7 @@ import {
 import { V2_SCHEMA_REGISTRY_HASH } from '../security/v2/schemaRegistry'
 import { stateAfterCanonicalVerifyV6 } from '../security/v2/stateReconciliation'
 import { assertExtendsAnchorV2, createAnchorV2 } from '../security/v2/prefix'
-import type { CanonicalFullResultV2, WriterAuthoritySnapshotV2 } from '../security/v2/verifier'
+import { TransferableSingleWriterV2Verifier, type CanonicalFullResultV2, type WriterAuthoritySnapshotV2 } from '../security/v2/verifier'
 import { createBackupV6, testRestoreBackupV6, type SyncBackupV6 } from '../security/v2/backup'
 import { createActivationLineageCacheV2 } from '../security/v2/activationLineageCache'
 import type { RecoveryRekeyOperationStateV2 } from '../security/v2/recoveryRekeyOperation'
@@ -294,14 +292,14 @@ export class ProductiveNativeRotationV2Service implements ProfileUpgradeOrchestr
     if(unresolved.length)throw new Error('Native v2 rotation requires all normal Writer outbox rows to be canonically resolved before freeze.')
 
     const transport=await this.session.transportForEpoch(state.diary_id,state.epoch_id)
-    if(await this.session.remoteIdentityBinding(transport)!==state.remote_binding.remote_identity_binding)throw new Error('Native v2 Source authenticated identity changed.')
-    const codec=await this.session.codecForEpoch(state.diary_id,state.epoch_id,rootKey,transport),snapshot=await transport.read(state.remote_binding.remote_resource_id)
+    if(await this.session.remoteIdentityBinding(transport)!==binding.remote_identity_binding)throw new Error('Native v2 Source authenticated identity changed.')
+    const codec=await this.session.codecForEpoch(state.diary_id,state.epoch_id,rootKey,transport),snapshot=await transport.read(binding.remote_resource_id)
     const verified=await codec.verifyRemote(snapshot),result=canonical(verified)
     if(result.source_epoch_sealed||result.activation_state==='staged_confirmation_missing')throw new Error('Native v2 rotation Source is not an active fully activated epoch.')
     state=await this.reconcileSource({context:{freeze:{
       format:'native-v2-source-freeze-v2',operation_id:base64Url(new Uint8Array(32)),rotation_kind:kind,recovery_transition_id:transitionId,
-      diary_id:state.diary_id,source_epoch_id:state.epoch_id,source_manifest_fingerprint:state.manifest_fingerprint,source_remote_id:state.remote_binding.remote_resource_id,
-      source_account_binding:state.remote_binding.remote_identity_binding,source_anchor:result.remote_anchor,source_writer:result.current_writer,source_recovery:result.current_recovery,
+      diary_id:state.diary_id,source_epoch_id:state.epoch_id,source_manifest_fingerprint:state.manifest_fingerprint,source_remote_id:binding.remote_resource_id,
+      source_account_binding:binding.remote_identity_binding,source_anchor:result.remote_anchor,source_writer:result.current_writer,source_recovery:result.current_recovery,
       recovery_credential_history:result.recovery_credential_history,source_recovery_artifact_sha256:base64Url(new Uint8Array(32)),source_activation_lineage:[],
       source_activation_lineage_sha256:base64Url(new Uint8Array(32)),source_semantic_snapshot_hash:base64Url(new Uint8Array(32)),source_lineage_snapshot_hash:base64Url(new Uint8Array(32)),
       source_active_head_count:0,source_tombstone_head_count:0,source_head_revision_ids:[],created_at:this.now(),
@@ -312,12 +310,12 @@ export class ProductiveNativeRotationV2Service implements ProfileUpgradeOrchestr
     if(!key||key.writer_device_id!==state.writer_device_id||key.writer_public_key!==result.current_writer.writer_public_key)throw new Error('Native v2 Source WriterDeviceKeyV2 is missing or changed.')
 
     const artifact=await this.session.loadRecoveryArtifact(this.urs,state.diary_id,state.epoch_id),opened=await openRecoveryArtifactV6(artifact,this.urs),manifest=await openManifestV6(rootKey,epochSalt,{diaryId:state.diary_id,epochId:state.epoch_id},parseManifestCellsV6(snapshot.manifest))
-    if(base64Url(opened.rootKey)!==base64Url(rootKey)||opened.payload.manifest_fingerprint!==state.manifest_fingerprint||opened.payload.google_account_binding!==state.remote_binding.remote_identity_binding
+    if(base64Url(opened.rootKey)!==base64Url(rootKey)||opened.payload.manifest_fingerprint!==state.manifest_fingerprint||opened.payload.google_account_binding!==binding.remote_identity_binding
       ||opened.payload.recovery_generation!==result.current_recovery.recovery_generation||opened.payload.recovery_urs_commitment!==result.current_recovery.recovery_urs_commitment
       ||opened.payload.recovery_urs_id!==result.current_recovery.recovery_urs_id||opened.payload.recovery_takeover_key_id!==result.current_recovery.recovery_takeover_key_id
       ||opened.payload.recovery_takeover_public_key!==result.current_recovery.recovery_takeover_public_key||!same(opened.payload.recovery_credential_history,result.recovery_credential_history))throw new Error('Native v2 Source RecoveryArtifactV6 is not current.')
     await assertExtendsAnchorV2(opened.payload.remote_anchor,state.diary_id,state.epoch_id,snapshot.rows)
-    const candidate:ActiveCandidateV2={artifact,artifactSha256:await recoveryArtifactHashV6(artifact),rootKey,payload:opened.payload,manifest,snapshot,verified,result,remoteId:state.remote_binding.remote_resource_id,accountBinding:state.remote_binding.remote_identity_binding}
+    const candidate:ActiveCandidateV2={artifact,artifactSha256:await recoveryArtifactHashV6(artifact),rootKey,payload:opened.payload,manifest,snapshot,verified,result,remoteId:binding.remote_resource_id,accountBinding:binding.remote_identity_binding}
     await verifyCurrentRecoveryTransitionForJoin(candidate);await verifyActivationForJoin(this.session,candidate)
     if(opened.payload.activation_lineage.length){
       const cache=await this.store.loadActivationLineageCache(rootKey,epochSalt,state.epoch_id)
@@ -330,7 +328,7 @@ export class ProductiveNativeRotationV2Service implements ProfileUpgradeOrchestr
     const freeze:NativeSourceFreezeArtifactV2={
       format:'native-v2-source-freeze-v2',operation_id:operationId,rotation_kind:kind,recovery_transition_id:transitionId,
       diary_id:state.diary_id,source_epoch_id:state.epoch_id,source_manifest_fingerprint:state.manifest_fingerprint,
-      source_remote_id:state.remote_binding.remote_resource_id,source_account_binding:state.remote_binding.remote_identity_binding,
+      source_remote_id:binding.remote_resource_id,source_account_binding:binding.remote_identity_binding,
       source_anchor:{...result.remote_anchor},source_writer:{...result.current_writer},source_recovery:{...result.current_recovery},
       recovery_credential_history:result.recovery_credential_history.map(entry=>({...entry})),source_recovery_artifact_sha256:await recoveryArtifactHashV6(artifact),
       source_activation_lineage:structuredClone(opened.payload.activation_lineage),source_activation_lineage_sha256:await activationLineageHashV2(opened.payload.activation_lineage),
@@ -646,7 +644,7 @@ export class ProductiveNativeRotationV2Service implements ProfileUpgradeOrchestr
     const result=canonical(verified),rows=verified.snapshot.rows.map(row=>[row[0]!,row[1]!,row[2]!] as Row),local=await this.backupRows()
     const backup=await createBackupV6({rootKey:ctx.rootKey,epochSalt:ctx.epochSalt,urs:this.urs,diaryId:ctx.plan.diary_id,epochId:ctx.plan.successor_epoch_id,keyId:ctx.plan.key_id,
       epochManifestPublic:ctx.plan.manifest_cells,canonical:result,recoveryArtifact:activation.recovery_artifact,recordRows:rows,pendingOutboxRows:local.pending,staleWriterPendingRows:local.stale,activationState,createdAt:ctx.plan.created_at})
-    const restored=await testRestoreBackupV6({rootKey:ctx.rootKey,epochSalt:ctx.epochSalt,urs:this.urs,diaryId:ctx.plan.diary_id,epochId:ctx.plan.successor_epoch_id,keyId:ctx.plan.key_id},backup,(await import('../security/v2/verifier')).TransferableSingleWriterV2Verifier?new (await import('../security/v2/verifier')).TransferableSingleWriterV2Verifier():never)
+    const restored=await testRestoreBackupV6({rootKey:ctx.rootKey,epochSalt:ctx.epochSalt,urs:this.urs,diaryId:ctx.plan.diary_id,epochId:ctx.plan.successor_epoch_id,keyId:ctx.plan.key_id},backup,new TransferableSingleWriterV2Verifier())
     if(restored.access!=='read_only'||restored.activation_state!==activationState||!same(restored.canonical.remote_anchor,result.remote_anchor))throw new Error('Native v2 BackupV6 test restore did not reproduce export anchor.')
     return{backup,anchor:result.remote_anchor}
   }
@@ -734,7 +732,7 @@ export class ProductiveNativeRotationV2Service implements ProfileUpgradeOrchestr
 
   async createAndVerifyActivatedBackup():Promise<{kind:'ready';activatedBackupId:string}|{kind:'superseded'}>{
     const existing=await this.artifact<NativeBackupArtifactV2>('activated-backup');if(existing)return{kind:'ready',activatedBackupId:existing.backup.backup_id}
-    const ctx=await this.successorContext(),successor=await this.successorAtStagingOrConfirmation()
+    const successor=await this.successorAtStagingOrConfirmation()
     if(successor.confirmationCount===0)throw new Error('Native v2 activated BackupV6 requires durable Confirmation.')
     if(await this.recoveryAdvanced(successor.result))return{kind:'superseded'}
     await this.verifyActivatedCandidate(successor);await this.commitSuccessorCanonical(successor.verified,successor.result)
