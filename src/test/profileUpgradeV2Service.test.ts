@@ -64,7 +64,6 @@ import { createTransferDescriptorV2, ProductiveWriterHandoffV2Service } from '..
 import { localJournalInitialV2, type EpochLocalSecurityStateV6, type StoredWriterDeviceKeyV2 } from '../security/v2/localState'
 import { ProductiveNativeRotationV2Service } from '../data/nativeRotationV2Service'
 import { ProductiveRecoveryRekeyV2Service } from '../data/recoveryRekeyV2Service'
-import { ProductiveForcedTakeoverV2Service } from '../data/forcedTakeoverV2Service'
 import type { RotationOperationStateV2 } from '../security/v2/profileUpgrade'
 import { TransferableSingleWriterV2WriteAuthority } from '../security/v2/writeAuthority'
 import { continuePendingRecoveryRekeyV2, forceTakeoverV2, installAuthenticatedRemoteSession, joinExistingV2Diary, remoteSessionStatus } from '../data/initializeDataLayer'
