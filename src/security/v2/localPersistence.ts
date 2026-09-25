@@ -21,12 +21,6 @@ const STORES={states:'epochSecurityStateV6',writerKeys:'writerDeviceKeysV2',rese
 const TERMINAL_ROTATION_OPERATION_STATES_V2=new Set(['switched','stale','cutover_race','post_activation_superseded'])
 const TERMINAL_WRITER_GRANT_OPERATION_STATES_V2=new Set(['durable','stale'])
 const TERMINAL_RECOVERY_OPERATION_STATES_V2=new Set(['completed','stale','superseded'])
-function blockingSecurityOperationRef(state:EpochLocalSecurityStateV6):boolean{
-  return (state.rotation_state_ref!==null&&!TERMINAL_ROTATION_OPERATION_STATES_V2.has(state.rotation_state_ref.state))
-    ||state.migration_state_ref!==null
-    ||(state.writer_operation_state_ref!==null&&!TERMINAL_WRITER_GRANT_OPERATION_STATES_V2.has(state.writer_operation_state_ref.state))
-    ||(state.recovery_operation_state_ref!==null&&!TERMINAL_RECOVERY_OPERATION_STATES_V2.has(state.recovery_operation_state_ref.state))
-}
 
 export interface EnvelopeReservationV6 {
   id:string
