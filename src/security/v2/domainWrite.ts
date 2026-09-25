@@ -75,6 +75,7 @@ export class V2DomainWritePreparer {
       verified.acceptedEnvelopeIds,
       verified.staleWriterEnvelopeIds,
       {
+        remote_manifest:verified.snapshot.manifest,
         remote_rows:verified.snapshot.rows,
         current_writer:{
           writer_generation:remote.current_writer.writer_generation,
