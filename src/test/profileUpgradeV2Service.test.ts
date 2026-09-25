@@ -62,6 +62,11 @@ import type { RecoveryAuthorityTransitionV2, RevisionV2, RotationAnnouncementV2,
 import type { CanonicalFullResultV2 } from '../security/v2/verifier'
 import { createTransferDescriptorV2, ProductiveWriterHandoffV2Service } from '../data/writerHandoffV2Service'
 import { localJournalInitialV2, type EpochLocalSecurityStateV6, type StoredWriterDeviceKeyV2 } from '../security/v2/localState'
+import { ProductiveNativeRotationV2Service } from '../data/nativeRotationV2Service'
+import { ProductiveRecoveryRekeyV2Service } from '../data/recoveryRekeyV2Service'
+import { ProductiveForcedTakeoverV2Service } from '../data/forcedTakeoverV2Service'
+import type { RotationOperationStateV2 } from '../security/v2/profileUpgrade'
+import { TransferableSingleWriterV2WriteAuthority } from '../security/v2/writeAuthority'
 
 type Row=readonly[string,string,string]
 
@@ -75,11 +80,17 @@ class MemoryTransport implements RemoteTransport {
     readonly profileId:string,
     readonly remoteId:string,
     readonly snapshot:RemoteSnapshot&{manifest:string[];rows:string[][]},
+    readonly authenticatedBinding:string|null=null,
   ){}
+  async authenticatedAccountBinding():Promise<string>{
+    if(this.authenticatedBinding===null)throw new Error('Fixture authenticated account binding is unavailable.')
+    return this.authenticatedBinding
+  }
   appendCounts=new Map<string,number>()
   appendAttempts=0
   unknownAfterAppend=false
   unknownWithoutAppend=0
+  onUnknownWithoutAppend:(()=>void|Promise<void>)|null=null
   injectBeforeNextAppend:Row|null=null
   afterNextRead:(()=>void|Promise<void>)|null=null
   async discover(locator:string):Promise<readonly RemoteCandidate[]>{return[{remoteId:this.remoteId,locator}]}
@@ -94,7 +105,13 @@ class MemoryTransport implements RemoteTransport {
   async append(id:string,row:readonly[string,string,string]):Promise<void>{
     if(id!==this.remoteId)throw new Error('wrong remote')
     this.appendAttempts+=1
-    if(this.unknownWithoutAppend>0){this.unknownWithoutAppend-=1;throw new TransportError('unknown_outcome','simulated unresolved append')}
+    if(this.unknownWithoutAppend>0){
+      this.unknownWithoutAppend-=1
+      const hook=this.onUnknownWithoutAppend
+      this.onUnknownWithoutAppend=null
+      await hook?.()
+      throw new TransportError('unknown_outcome','simulated unresolved append')
+    }
     if(this.injectBeforeNextAppend){this.snapshot.rows.push([...this.injectBeforeNextAppend]);this.injectBeforeNextAppend=null}
     this.snapshot.rows.push([...row])
     this.appendCounts.set(row[0],(this.appendCounts.get(row[0])??0)+1)
@@ -134,12 +151,23 @@ class V2Session implements TransferableSingleWriterV2ProviderSession {
   readonly account=base64Url(new Uint8Array(32).fill(91))
   remote:MemoryTransport|null=null
   private readonly preCreationTransport=new MemoryTransport(SINGLE_WRITER_V2_PROFILE,'successor-v2',{manifest:[],rows:[]})
+  private readonly remotesByEpoch=new Map<string,MemoryTransport>()
+  private readonly v1RemotesByEpoch=new Map<string,MemoryTransport>()
   recovery:RecoveryArtifactV6|null=null
+  private readonly recoveryByEpoch=new Map<string,RecoveryArtifactV6>()
+  private readonly recoveryByEpochAndUrs=new Map<string,RecoveryArtifactV6>()
+  private recoveryKey(epochId:string,urs:Uint8Array):string{return `${epochId}:${base64Url(urs)}`}
   creates=0
   private readonly creation=new Map<string,CreationState>()
   async transportForEpoch(diaryId:string,epochId:string):Promise<GoogleSheetsTransferableSingleWriterV2Transport>{
-    void diaryId;void epochId
-    return (this.remote??this.preCreationTransport) as unknown as GoogleSheetsTransferableSingleWriterV2Transport
+    void diaryId
+    return (this.remotesByEpoch.get(epochId)??this.preCreationTransport) as unknown as GoogleSheetsTransferableSingleWriterV2Transport
+  }
+  registerV1Epoch(epochId:string,transport:MemoryTransport):void{this.v1RemotesByEpoch.set(epochId,transport)}
+  async v1TransportForEpoch(_diaryId:string,epochId:string):Promise<GoogleSheetsSingleWriterTransport>{
+    const transport=this.v1RemotesByEpoch.get(epochId)
+    if(!transport)throw new Error('Authenticated v1 lineage transport is unavailable.')
+    return transport as unknown as GoogleSheetsSingleWriterTransport
   }
   async remoteIdentityBinding():Promise<string>{return this.account}
   async codecForEpoch(diaryId:string,epochId:string,rootKey:Uint8Array,transport:RemoteTransport):Promise<GoogleSheetsTransferableSingleWriterV2ProfileCodec>{
@@ -157,8 +185,9 @@ class V2Session implements TransferableSingleWriterV2ProviderSession {
     void args.transport;void args.recoveryStaging
     const existing=this.creation.get(args.creationLocator)
     if(existing)return structuredClone(existing)
-    const remoteId='successor-v2'
-    this.remote=new MemoryTransport(SINGLE_WRITER_V2_PROFILE,remoteId,{manifest:[...manifestCellsArrayV6(args.manifest)],rows:[]})
+    const remoteId=this.creates===0?'successor-v2':`successor-v2-${this.creates+1}`
+    this.remote=new MemoryTransport(SINGLE_WRITER_V2_PROFILE,remoteId,{manifest:[...manifestCellsArrayV6(args.manifest)],rows:[]},this.account)
+    this.remotesByEpoch.set(args.epochId,this.remote)
     this.creates+=1
     const clean:CreationState={
       locator:args.creationLocator,manifestFingerprint:await manifestFingerprintV6(args.manifest),status:'bound',remoteId,
@@ -171,9 +200,27 @@ class V2Session implements TransferableSingleWriterV2ProviderSession {
     this.creation.set(args.creationLocator,persisted)
     return structuredClone(persisted)
   }
-  async publishRecoveryArtifact(_urs:Uint8Array,persisted:VerifiedPersistedRecoveryArtifactV6):Promise<string>{this.recovery=structuredClone(persisted.artifact);return'recovery-v6'}
-  async findRecoveryArtifact():Promise<RecoveryArtifactV6|null>{return this.recovery?structuredClone(this.recovery):null}
-  async loadRecoveryArtifact():Promise<RecoveryArtifactV6>{if(!this.recovery)throw new Error('missing recovery');return structuredClone(this.recovery)}
+  async publishRecoveryArtifact(urs:Uint8Array,persisted:VerifiedPersistedRecoveryArtifactV6):Promise<string>{
+    this.recovery=structuredClone(persisted.artifact)
+    this.recoveryByEpoch.set(persisted.epochId,structuredClone(persisted.artifact))
+    this.recoveryByEpochAndUrs.set(this.recoveryKey(persisted.epochId,urs),structuredClone(persisted.artifact))
+    return'recovery-v6'
+  }
+  async discoverRecoveryFamilyArtifacts(urs:Uint8Array):Promise<readonly {remoteResourceId:string;artifact:RecoveryArtifactV6}[]>{
+    const suffix=`:${base64Url(urs)}`
+    return [...this.recoveryByEpochAndUrs.entries()]
+      .filter(([key])=>key.endsWith(suffix))
+      .map(([key,artifact])=>({remoteResourceId:`recovery-${key.slice(0,key.length-suffix.length)}`,artifact:structuredClone(artifact)}))
+  }
+  async findRecoveryArtifact(urs?:Uint8Array,_diaryId?:string,epochId?:string):Promise<RecoveryArtifactV6|null>{
+    const artifact=epochId&&urs?this.recoveryByEpochAndUrs.get(this.recoveryKey(epochId,urs)):epochId?this.recoveryByEpoch.get(epochId):this.recovery
+    return artifact?structuredClone(artifact):null
+  }
+  async loadRecoveryArtifact(urs?:Uint8Array,_diaryId?:string,epochId?:string):Promise<RecoveryArtifactV6>{
+    const artifact=epochId&&urs?this.recoveryByEpochAndUrs.get(this.recoveryKey(epochId,urs)):epochId?this.recoveryByEpoch.get(epochId):this.recovery
+    if(!artifact)throw new Error('missing recovery')
+    return structuredClone(artifact)
+  }
   async disconnect():Promise<void>{}
 }
 
@@ -190,7 +237,7 @@ async function seedV1Source(urs:Uint8Array,createdAt:string):Promise<{transport:
     record_schema_allowlist:[...SCHEMA_ALLOWLIST],record_schema_registry_hash:await schemaRegistryHash(DOMAIN_SCHEMA_REGISTRY),
     protocol_limits:{max_payload_bytes:16380,padding_buckets:[1024,2048,4096,8192,16384],max_unique_envelopes:100000,max_unique_canonical_bytes:134217728,max_remote_physical_rows:100000,max_remote_physical_canonical_bytes:134217728,max_canonical_row_bytes:21936},
   })
-  const fingerprint=await manifestFingerprint(manifest),remote=new MemoryTransport(SINGLE_WRITER_V1_PROFILE,'source-v1',{manifest:[manifest.format,manifest.version,manifest.manifestIv,manifest.manifestCiphertext],rows:rows.map(row=>[...row])})
+  const fingerprint=await manifestFingerprint(manifest),remote=new MemoryTransport(SINGLE_WRITER_V1_PROFILE,'source-v1',{manifest:[manifest.format,manifest.version,manifest.manifestIv,manifest.manifestCiphertext],rows:rows.map(row=>[...row])},account)
   const db=await __localDatabaseTesting.openDatabase(),keyTx=db.transaction(__localDatabaseTesting.STORES.wrappingKeys,'readonly')
   const key=await new Promise<CryptoKey>((resolve,reject)=>{const request=keyTx.objectStore(__localDatabaseTesting.STORES.wrappingKeys).get(source.context.wrapId);request.onsuccess=()=>resolve((request.result as {key:CryptoKey}).key);request.onerror=()=>reject(request.error)})
   await transactionComplete(keyTx)
@@ -1090,4 +1137,475 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     expect([...source.transport.appendCounts.values()].every(count=>count===1)).toBe(true)
     expect([...v2.remote!.appendCounts.values()].every(count=>count===1)).toBe(true)
   },90_000)
+
+  it('performs a productive native v2 to v2 normal rotation and carries Writer/Recovery authority',async()=>{
+    const createdAt='2026-09-25T07:20:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session();v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    const sourceEpochId=upgraded.successor_epoch_id
+    const result=await new ProductiveNativeRotationV2Service(v2,urs,new IndexedDbV2LocalSecurityStore(),()=>createdAt).rotate('normal')
+    expect(result.stage).toBe('switched')
+    expect(result.rotation_kind).toBe('normal')
+    expect(result.source_epoch_id).toBe(sourceEpochId)
+    expect(result.successor_epoch_id).not.toBe(sourceEpochId)
+    expect(v2.creates).toBe(2)
+    expect((await activeProtocolSelectionV2())?.epoch_id).toBe(result.successor_epoch_id)
+
+    const successorArtifact=await v2.loadRecoveryArtifact(urs,source.diaryId,result.successor_epoch_id)
+    const successorRecovered=await openRecoveryArtifactV6(successorArtifact,urs)
+    expect(successorRecovered.payload.activation_lineage).toHaveLength(2)
+    expect(successorRecovered.payload.activation_lineage.at(-1)?.kind).toBe('v2_rotation')
+    const successorSalt=await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(result.successor_epoch_id))
+    const successorState=await new IndexedDbV2LocalSecurityStore().loadState(successorRecovered.rootKey,successorSalt,result.successor_epoch_id)
+    expect(successorState.epoch_status).toBe('active')
+    expect(successorState.writer_status).toBe('writer_active')
+    expect(successorState.recovery_rekey_rotation_required).toBe(false)
+
+    const sourceArtifact=await v2.loadRecoveryArtifact(urs,source.diaryId,sourceEpochId)
+    const sourceRecovered=await openRecoveryArtifactV6(sourceArtifact,urs)
+    const sourceSalt=await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(sourceEpochId))
+    const sourceState=await new IndexedDbV2LocalSecurityStore().loadState(sourceRecovered.rootKey,sourceSalt,sourceEpochId)
+    expect(sourceState.epoch_status).toBe('retired')
+    expect(sourceState.writer_status).toBe('read_only')
+  },120_000)
+
+  it('resumes native v2 rotation after crashing immediately after the durable Source freeze',async()=>{
+    const createdAt='2026-09-25T07:25:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    let crashed=false
+    await expect(new ProductiveNativeRotationV2Service(v2,urs,store,()=>createdAt,async point=>{
+      if(point==='after-source-freeze'&&!crashed){crashed=true;throw new Error('native-rotation-crash:source-freeze')}
+    }).rotate('normal')).rejects.toThrow('native-rotation-crash:source-freeze')
+    const selectedBefore=await activeProtocolSelectionV2()
+    if(!selectedBefore)throw new Error('active v2 source selection missing after injected crash')
+    const sourceArtifact=await v2.loadRecoveryArtifact(urs,source.diaryId,selectedBefore.epoch_id)
+    const sourceRecovered=await openRecoveryArtifactV6(sourceArtifact,urs),sourceSalt=await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(selectedBefore.epoch_id))
+    const frozen=await store.loadState(sourceRecovered.rootKey,sourceSalt,selectedBefore.epoch_id)
+    expect(frozen.rotation_state_ref?.state).toBe('source_frozen_verified')
+
+    const resumed=await new ProductiveNativeRotationV2Service(v2,urs,store,()=>createdAt).rotate('normal')
+    expect(resumed.stage).toBe('switched')
+    expect((await activeProtocolSelectionV2())?.epoch_id).toBe(resumed.successor_epoch_id)
+  },120_000)
+
+  it('completes two-phase Recovery-Rekey through mandatory recovery_rekey successor rotation',async()=>{
+    const createdAt='2026-09-25T07:30:00.000Z',urs=randomBytes(32),newUrs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    const sourceEpochId=upgraded.successor_epoch_id
+    const result=await new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt).rekey(newUrs)
+    expect(result.stage).toBe('completed')
+    expect(result.toRecoveryGeneration).toBe(1)
+    expect(result.successorEpochId).not.toBeNull()
+    expect(result.successorEpochId).not.toBe(sourceEpochId)
+    expect((await activeProtocolSelectionV2())?.epoch_id).toBe(result.successorEpochId)
+
+    const successorArtifact=await v2.loadRecoveryArtifact(newUrs,source.diaryId,result.successorEpochId!)
+    const successorRecovered=await openRecoveryArtifactV6(successorArtifact,newUrs)
+    expect(successorRecovered.payload.recovery_generation).toBe(1)
+    await expect(openRecoveryArtifactV6(successorArtifact,urs)).rejects.toBeTruthy()
+    const successorSalt=await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(result.successorEpochId!))
+    const successorState=await store.loadState(successorRecovered.rootKey,successorSalt,result.successorEpochId!)
+    expect(successorState.epoch_status).toBe('active')
+    expect(successorState.recovery_generation).toBe(1)
+    expect(successorState.recovery_rekey_rotation_required).toBe(false)
+
+    const sourceArtifact=await v2.loadRecoveryArtifact(newUrs,source.diaryId,sourceEpochId)
+    const sourceRecovered=await openRecoveryArtifactV6(sourceArtifact,newUrs),sourceSalt=await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(sourceEpochId))
+    const operation=await store.loadRecoveryRekeyOperation(result.operationId)
+    expect(operation.stage).toBe('completed')
+    expect(operation.completed_successor_epoch_id).toBe(result.successorEpochId)
+    const sourceState=await store.loadState(sourceRecovered.rootKey,sourceSalt,sourceEpochId)
+    expect(sourceState.epoch_status).toBe('retired')
+  },120_000)
+
+  it('resumes Recovery-Rekey from the exact prepared bundle after crash',async()=>{
+    const createdAt='2026-09-25T07:35:00.000Z',urs=randomBytes(32),newUrs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    let crashed=false
+    await expect(new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt,async point=>{
+      if(point==='after-prepared-bundle'&&!crashed){crashed=true;throw new Error('rekey-crash:prepared')}
+    }).rekey(newUrs)).rejects.toThrow('rekey-crash:prepared')
+
+    const sourceArtifact=await v2.loadRecoveryArtifact(urs,source.diaryId,upgraded.successor_epoch_id)
+    const recovered=await openRecoveryArtifactV6(sourceArtifact,urs),salt=await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(upgraded.successor_epoch_id))
+    const prepared=await store.loadBoundRecoveryRekeyOperation(recovered.rootKey,salt,upgraded.successor_epoch_id)
+    if(!prepared)throw new Error('prepared Recovery-Rekey operation missing')
+    expect(prepared.stage).toBe('new_material_staged')
+    expect(prepared.artifact_publish_attempted).toBe(false)
+    const exactTransition={...prepared.transition_envelope}
+
+    const resumed=await new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt).rekey(newUrs)
+    expect(resumed.stage).toBe('completed')
+    const finalOperation=await store.loadRecoveryRekeyOperation(prepared.operation_id)
+    expect(finalOperation.transition_envelope).toEqual(exactTransition)
+    expect(finalOperation.stage).toBe('completed')
+  },120_000)
+
+
+  it('keeps Recovery-Rekey ceremony disposition exclusively owned when generic Coordinator pulls the accepted transition',async()=>{
+    const createdAt='2026-09-25T07:40:00.000Z',urs=randomBytes(32),newUrs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    let crashed=false
+    await expect(new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt,async point=>{
+      if(point==='after-transition-append'&&!crashed){crashed=true;throw new Error('rekey-crash:after-transition-append')}
+    }).rekey(newUrs)).rejects.toThrow('rekey-crash:after-transition-append')
+
+    const newArtifact=await v2.loadRecoveryArtifact(newUrs,source.diaryId,upgraded.successor_epoch_id)
+    const opened=await openRecoveryArtifactV6(newArtifact,newUrs),salt=await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(upgraded.successor_epoch_id))
+    const operation=await store.loadBoundRecoveryRekeyOperation(opened.rootKey,salt,upgraded.successor_epoch_id)
+    if(!operation)throw new Error('Recovery-Rekey operation missing after transition append crash')
+    const beforeEntry=(await store.outbox(opened.rootKey,salt,upgraded.successor_epoch_id)).find(entry=>entry.envelope_id===operation.transition_envelope.envelope_id)
+    expect(beforeEntry?.ceremony_owner).toBe('recovery_rekey')
+    expect(beforeEntry?.status).toBe('prepared')
+
+    const remote=await v2.transportForEpoch(source.diaryId,upgraded.successor_epoch_id)
+    const codec=await v2.codecForEpoch(source.diaryId,upgraded.successor_epoch_id,opened.rootKey,remote)
+    const verified=await codec.verifyRemote(await remote.read((remote as unknown as MemoryTransport).remoteId))
+    const canonical=verified.profileState as CanonicalFullResultV2
+    expect(verified.acceptedEnvelopeIds.has(operation.transition_envelope.envelope_id)).toBe(true)
+    const state=await store.loadState(opened.rootKey,salt,upgraded.successor_epoch_id)
+    const coordinator=new IndexedDbV2CoordinatorStore(upgraded.successor_epoch_id,opened.rootKey,salt,store)
+    await coordinator.commitVerifiedPull(verified,canonical.remote_anchor,state.operation_generation)
+    const afterGenericPull=(await store.outbox(opened.rootKey,salt,upgraded.successor_epoch_id)).find(entry=>entry.envelope_id===operation.transition_envelope.envelope_id)
+    expect(afterGenericPull?.status).toBe('prepared')
+    const reconciledState=await store.loadState(opened.rootKey,salt,upgraded.successor_epoch_id)
+    const stillPending=await store.loadRecoveryRekeyOperation(operation.operation_id)
+    expect(['transition_pending','transition_unknown']).toContain(stillPending.stage)
+    await expect(store.advanceRecoveryRekeyOperationBinding(
+      opened.rootKey,salt,upgraded.successor_epoch_id,reconciledState.operation_generation,stillPending.stage,{...stillPending,stage:'stale'},
+    )).rejects.toThrow(/current Recovery transition cannot be terminalized as stale/)
+    expect((await store.loadRecoveryRekeyOperation(operation.operation_id)).stage).toBe(stillPending.stage)
+
+    const syntheticSuperseding={...stillPending,
+      operation_id:base64Url(randomBytes(32)),operation_origin:'local_rekey' as const,stage:'new_material_staged' as const,
+      supersedes_transition_id:stillPending.transition_id,superseded_by_transition_id:null,transition_id:base64Url(randomBytes(32)),
+      artifact_publish_attempted:false,completed_successor_epoch_id:null,completed_successor_manifest_fingerprint:null,
+    }
+    await expect(store.initializeRecoveryRekeyOperationBinding(
+      opened.rootKey,salt,reconciledState.operation_generation,syntheticSuperseding,
+    )).rejects.toThrow(/post-durable pending operation/)
+    expect((await store.loadState(opened.rootKey,salt,upgraded.successor_epoch_id)).recovery_operation_state_ref?.operation_id).toBe(operation.operation_id)
+
+    const resumed=await new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt).rekey(newUrs)
+    expect(resumed.stage).toBe('completed')
+  },120_000)
+
+  it('rejects direct recovery_rekey Source-rotation persistence without exact successor_rotation_required Phase-A state',async()=>{
+    const createdAt='2026-09-25T07:45:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    const artifact=await v2.loadRecoveryArtifact(urs,source.diaryId,upgraded.successor_epoch_id),opened=await openRecoveryArtifactV6(artifact,urs)
+    const salt=await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(upgraded.successor_epoch_id))
+    const state=await store.loadState(opened.rootKey,salt,upgraded.successor_epoch_id)
+    if(!state.remote_anchor)throw new Error('active v2 source anchor missing')
+    const operation:RotationOperationStateV2={
+      format:'rotation-operation-v2',version:2,operation_id:base64Url(randomBytes(32)),rotation_kind:'recovery_rekey',
+      source_epoch_id:upgraded.successor_epoch_id,successor_epoch_id:base64Url(randomBytes(16)),stage:'source_frozen_verified',
+      source_anchor_before_announcement:{...state.remote_anchor},successor_staging_anchor:null,successor_activation_anchor:null,
+      successor_creation_locator:null,successor_manifest_fingerprint:null,source_recovery_transition_id:base64Url(randomBytes(32)),
+      activation_lineage_sha256:null,announcement_envelope:null,confirmation_envelope:null,activation_evidence_sha256:null,
+      recovery_artifact_id:null,recovery_artifact_locator:null,recovery_artifact_sha256:null,staged_backup_id:null,activated_backup_id:null,
+    }
+    await expect(store.initializeNativeSourceRotationBundle({
+      rootKey:opened.rootKey,epochSalt:salt,expectedOperationGeneration:state.operation_generation,
+      operation,artifactId:`test-direct-rekey-rotation:${operation.operation_id}`,artifactValue:{kind:'invalid-direct-rekey-rotation'},
+    })).rejects.toThrow(/authenticated current transition|Recovery-rekey/)
+    const after=await store.loadState(opened.rootKey,salt,upgraded.successor_epoch_id)
+    expect(after.rotation_state_ref).not.toMatchObject({operation_id:operation.operation_id})
+  },120_000)
+
+
+  it('does not keep normal writes fenced solely by a terminal stale Recovery-Rekey operation ref',async()=>{
+    const createdAt='2026-09-25T07:50:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    const artifact=await v2.loadRecoveryArtifact(urs,source.diaryId,upgraded.successor_epoch_id),opened=await openRecoveryArtifactV6(artifact,urs)
+    const salt=await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(upgraded.successor_epoch_id))
+    const state=await store.loadState(opened.rootKey,salt,upgraded.successor_epoch_id)
+    const remote=await v2.transportForEpoch(source.diaryId,upgraded.successor_epoch_id),codec=await v2.codecForEpoch(source.diaryId,upgraded.successor_epoch_id,opened.rootKey,remote)
+    const verified=await codec.verifyRemote(await remote.read((remote as unknown as MemoryTransport).remoteId))
+    const terminal:EpochLocalSecurityStateV6={...state,recovery_operation_state_ref:{operation_id:base64Url(randomBytes(32)),state:'stale',state_record_hash:base64Url(randomBytes(32))}}
+    const terminalAuthority=new TransferableSingleWriterV2WriteAuthority(()=>terminal,()=>null)
+    expect(await terminalAuthority.canPrepareDomainWrite(verified)).toBe('writer')
+    const nonTerminal:EpochLocalSecurityStateV6={...state,recovery_operation_state_ref:{operation_id:base64Url(randomBytes(32)),state:'transition_durable',state_record_hash:base64Url(randomBytes(32))}}
+    const blockedAuthority=new TransferableSingleWriterV2WriteAuthority(()=>nonTerminal,()=>null)
+    expect(await blockedAuthority.canPrepareDomainWrite(verified)).toBe('read_only')
+  },120_000)
+
+
+  it('resumes Recovery-Rekey after the durable artifact-publish-attempt fence without regenerating the operation',async()=>{
+    const createdAt='2026-09-25T07:55:00.000Z',urs=randomBytes(32),newUrs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    let crashed=false
+    await expect(new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt,async point=>{
+      if(point==='after-publish-attempt-fence'&&!crashed){crashed=true;throw new Error('rekey-crash:publish-fence')}
+    }).rekey(newUrs)).rejects.toThrow('rekey-crash:publish-fence')
+
+    const oldArtifact=await v2.loadRecoveryArtifact(urs,source.diaryId,upgraded.successor_epoch_id)
+    const oldOpened=await openRecoveryArtifactV6(oldArtifact,urs),salt=await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(upgraded.successor_epoch_id))
+    const operation=await store.loadBoundRecoveryRekeyOperation(oldOpened.rootKey,salt,upgraded.successor_epoch_id)
+    if(!operation)throw new Error('Recovery-Rekey operation missing after publish-attempt fence crash')
+    expect(operation.stage).toBe('new_material_staged')
+    expect(operation.artifact_publish_attempted).toBe(true)
+    const operationId=operation.operation_id,artifactSha=operation.recovery_artifact_sha256,transition={...operation.transition_envelope}
+
+    const resumed=await new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt).rekey(newUrs)
+    expect(resumed.stage).toBe('completed')
+    expect(resumed.operationId).toBe(operationId)
+    const final=await store.loadRecoveryRekeyOperation(operationId)
+    expect(final.recovery_artifact_sha256).toBe(artifactSha)
+    expect(final.transition_envelope).toEqual(transition)
+  },120_000)
+
+  it('stales a native rotation if the Source physical prefix advances after staged backup but before Announcement',async()=>{
+    const createdAt='2026-09-25T08:00:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    let crashed=false
+    await expect(new ProductiveNativeRotationV2Service(v2,urs,store,()=>createdAt,async point=>{
+      if(point==='after-staged_backup_verified'&&!crashed){crashed=true;throw new Error('native-rotation-crash:staged-backup')}
+    }).rotate('normal')).rejects.toThrow('native-rotation-crash:staged-backup')
+
+    const sourceTransport=await v2.transportForEpoch(source.diaryId,upgraded.successor_epoch_id) as unknown as MemoryTransport
+    const duplicate=sourceTransport.snapshot.rows[0]
+    if(!duplicate||duplicate.length!==3)throw new Error('active v2 source has no row to use as physical retry')
+    await sourceTransport.append(sourceTransport.remoteId,[duplicate[0]!,duplicate[1]!,duplicate[2]!])
+
+    const result=await new ProductiveNativeRotationV2Service(v2,urs,store,()=>createdAt).rotate('normal')
+    expect(result.stage).toBe('stale')
+    expect((await activeProtocolSelectionV2())?.epoch_id).toBe(upgraded.successor_epoch_id)
+    const successorArtifact=await v2.findRecoveryArtifact(urs,source.diaryId,result.successor_epoch_id)
+    expect(successorArtifact).not.toBeNull()
+    const successorOpened=await openRecoveryArtifactV6(successorArtifact!,urs),successorSalt=await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(result.successor_epoch_id))
+    const successorState=await store.loadState(successorOpened.rootKey,successorSalt,result.successor_epoch_id)
+    expect(successorState.epoch_status).toBe('orphaned')
+    expect(successorState.writer_status).toBe('read_only')
+  },120_000)
+
+  it('adopts a canonically durable Pending-Rekey after local RecoveryRekey operation metadata is lost',async()=>{
+    const createdAt='2026-09-25T08:05:00.000Z',urs=randomBytes(32),newUrs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    let crashed=false
+    await expect(new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt,async point=>{
+      if(point==='after-transition-durable'&&!crashed){crashed=true;throw new Error('rekey-crash:transition-durable')}
+    }).rekey(newUrs)).rejects.toThrow('rekey-crash:transition-durable')
+
+    const newArtifact=await v2.loadRecoveryArtifact(newUrs,source.diaryId,upgraded.successor_epoch_id),opened=await openRecoveryArtifactV6(newArtifact,newUrs)
+    const salt=await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(upgraded.successor_epoch_id))
+    const pending=await store.loadState(opened.rootKey,salt,upgraded.successor_epoch_id)
+    expect(pending.recovery_rekey_rotation_required).toBe(true)
+    expect(pending.recovery_operation_state_ref?.state).toBe('transition_durable')
+    await store.replaceState(opened.rootKey,salt,pending.operation_generation,{...pending,operation_generation:pending.operation_generation+1,recovery_operation_state_ref:null})
+
+    const adopted=await new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt).adoptPending(newUrs)
+    expect(adopted.stage).toBe('completed')
+    expect(adopted.successorEpochId).not.toBeNull()
+    const adoptedOperation=await store.loadRecoveryRekeyOperation(adopted.operationId)
+    expect(adoptedOperation.operation_origin).toBe('remote_pending_rekey_adoption')
+    expect(adoptedOperation.stage).toBe('completed')
+    expect((await activeProtocolSelectionV2())?.epoch_id).toBe(adopted.successorEpochId)
+  },120_000)
+
+
+  it('completes Pending-Rekey after full device loss via fresh Join, Forced Takeover, adoption and Phase B',async()=>{
+    const createdAt='2026-09-25T08:10:00.000Z',urs=randomBytes(32),newUrs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    let crashed=false
+    await expect(new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt,async point=>{
+      if(point==='after-transition-durable'&&!crashed){crashed=true;throw new Error('rekey-crash:device-loss')}
+    }).rekey(newUrs)).rejects.toThrow('rekey-crash:device-loss')
+
+    const sourceRemote=await v2.transportForEpoch(source.diaryId,upgraded.successor_epoch_id),sourceCodec=await v2.codecForEpoch(source.diaryId,upgraded.successor_epoch_id,(await openRecoveryArtifactV6(await v2.loadRecoveryArtifact(newUrs,source.diaryId,upgraded.successor_epoch_id),newUrs)).rootKey,sourceRemote)
+    const pendingRemote=(await sourceCodec.verifyRemote(await sourceRemote.read((sourceRemote as unknown as MemoryTransport).remoteId))).profileState as CanonicalFullResultV2
+    expect(pendingRemote.current_recovery.recovery_rekey_rotation_required).toBe(true)
+
+    await __localDatabaseTesting.resetForTesting()
+    await __v2LocalPersistenceTesting.reset()
+    await deleteDatabase('eds-diary')
+    await deleteDatabase('eds-diary-v2-security')
+    globalThis.localStorage?.clear?.()
+
+    const replacementStore=new IndexedDbV2LocalSecurityStore()
+    const joined=await new ProductiveReadOnlyJoinV2Service(v2,replacementStore).join(newUrs)
+    expect(joined.epochId).toBe(upgraded.successor_epoch_id)
+    const replacementState=await replacementStore.loadState((await openRecoveryArtifactV6(await v2.loadRecoveryArtifact(newUrs,source.diaryId,upgraded.successor_epoch_id),newUrs)).rootKey,await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(upgraded.successor_epoch_id)),upgraded.successor_epoch_id)
+    expect(replacementState.writer_status).toBe('read_only')
+    expect(replacementState.recovery_rekey_rotation_required).toBe(true)
+
+    const takeover=await new ProductiveForcedTakeoverV2Service(v2,replacementStore,()=>createdAt).takeover(newUrs)
+    expect(takeover.stage).toBe('durable')
+    expect(takeover.maintenanceOnly).toBe(true)
+
+    const adopted=await new ProductiveRecoveryRekeyV2Service(v2,replacementStore,()=>createdAt).adoptPending(newUrs)
+    expect(adopted.stage).toBe('completed')
+    expect(adopted.successorEpochId).not.toBeNull()
+    const adoptedOperation=await replacementStore.loadRecoveryRekeyOperation(adopted.operationId)
+    expect(adoptedOperation.operation_origin).toBe('remote_pending_rekey_adoption')
+    expect(adoptedOperation.stage).toBe('completed')
+    expect((await activeProtocolSelectionV2())?.epoch_id).toBe(adopted.successorEpochId)
+  },120_000)
+
+
+  it('atomically supersedes an older durable Recovery-Rekey when a newer transition becomes canonical',async()=>{
+    const createdAt='2026-09-25T08:15:00.000Z',urs=randomBytes(32),firstUrs=randomBytes(32),secondUrs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    let crashed=false
+    await expect(new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt,async point=>{
+      if(point==='after-transition-durable'&&!crashed){crashed=true;throw new Error('rekey-crash:first-durable')}
+    }).rekey(firstUrs)).rejects.toThrow('rekey-crash:first-durable')
+
+    const selection=await activeProtocolSelectionV2()
+    if(!selection)throw new Error('active v2 source missing after first durable rekey')
+    const firstArtifact=await v2.loadRecoveryArtifact(firstUrs,source.diaryId,selection.epoch_id),firstOpened=await openRecoveryArtifactV6(firstArtifact,firstUrs)
+    const salt=await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(selection.epoch_id))
+    const firstOperation=await store.loadBoundRecoveryRekeyOperation(firstOpened.rootKey,salt,selection.epoch_id)
+    if(!firstOperation)throw new Error('first durable Recovery-Rekey operation missing')
+    expect(firstOperation.stage).toBe('transition_durable')
+
+    const second=await new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt).rekey(secondUrs)
+    expect(second.stage).toBe('completed')
+    const superseded=await store.loadRecoveryRekeyOperation(firstOperation.operation_id)
+    expect(superseded.stage).toBe('superseded')
+    expect(superseded.superseded_by_transition_id).toBe(second.transitionId)
+    const secondOperation=await store.loadRecoveryRekeyOperation(second.operationId)
+    expect(secondOperation.supersedes_transition_id).toBe(firstOperation.transition_id)
+    expect(secondOperation.stage).toBe('completed')
+    expect((await activeProtocolSelectionV2())?.epoch_id).toBe(second.successorEpochId)
+  },120_000)
+
+  it('rebinds the older durable Recovery-Rekey when a newer superseding transition loses its immediate-prefix race',async()=>{
+    const createdAt='2026-09-25T08:20:00.000Z',urs=randomBytes(32),firstUrs=randomBytes(32),secondUrs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    let crashed=false
+    await expect(new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt,async point=>{
+      if(point==='after-transition-durable'&&!crashed){crashed=true;throw new Error('rekey-crash:first-durable-race')}
+    }).rekey(firstUrs)).rejects.toThrow('rekey-crash:first-durable-race')
+
+    const firstArtifact=await v2.loadRecoveryArtifact(firstUrs,source.diaryId,upgraded.successor_epoch_id),firstOpened=await openRecoveryArtifactV6(firstArtifact,firstUrs)
+    const salt=await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(upgraded.successor_epoch_id))
+    const firstOperation=await store.loadBoundRecoveryRekeyOperation(firstOpened.rootKey,salt,upgraded.successor_epoch_id)
+    if(!firstOperation)throw new Error('first durable Recovery-Rekey operation missing before race')
+    expect(firstOperation.stage).toBe('transition_durable')
+
+    const transport=await v2.transportForEpoch(source.diaryId,upgraded.successor_epoch_id) as unknown as MemoryTransport
+    const duplicate=transport.snapshot.rows.at(-1)
+    if(!duplicate||duplicate.length!==3)throw new Error('source has no durable row for supersession race injection')
+    transport.injectBeforeNextAppend=[duplicate[0]!,duplicate[1]!,duplicate[2]!]
+    const second=await new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt).rekey(secondUrs)
+    expect(second.stage).toBe('stale')
+    const secondOperation=await store.loadRecoveryRekeyOperation(second.operationId)
+    expect(secondOperation.supersedes_transition_id).toBe(firstOperation.transition_id)
+    expect(secondOperation.stage).toBe('stale')
+    const rebound=await store.loadBoundRecoveryRekeyOperation(firstOpened.rootKey,salt,upgraded.successor_epoch_id)
+    expect(rebound?.operation_id).toBe(firstOperation.operation_id)
+    expect(rebound?.stage).toBe('transition_durable')
+
+    const resumedFirst=await new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt).rekey(firstUrs)
+    expect(resumedFirst.stage).toBe('completed')
+    expect(resumedFirst.operationId).toBe(firstOperation.operation_id)
+  },120_000)
+
+
+  it('allows only the exact pre-publish Recovery-Rekey abort to terminal stale without setting the publish fence',async()=>{
+    const createdAt='2026-09-25T08:25:00.000Z',urs=randomBytes(32),newUrs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    let crashed=false
+    await expect(new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt,async point=>{
+      if(point==='after-prepared-bundle'&&!crashed){crashed=true;throw new Error('rekey-crash:abort-before-publish')}
+    }).rekey(newUrs)).rejects.toThrow('rekey-crash:abort-before-publish')
+
+    const artifact=await v2.loadRecoveryArtifact(urs,source.diaryId,upgraded.successor_epoch_id),opened=await openRecoveryArtifactV6(artifact,urs)
+    const salt=await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(upgraded.successor_epoch_id))
+    const state=await store.loadState(opened.rootKey,salt,upgraded.successor_epoch_id)
+    const prepared=await store.loadBoundRecoveryRekeyOperation(opened.rootKey,salt,upgraded.successor_epoch_id)
+    if(!prepared)throw new Error('prepared Recovery-Rekey operation missing for pre-publish abort')
+    expect(prepared.stage).toBe('new_material_staged')
+    expect(prepared.artifact_publish_attempted).toBe(false)
+    await store.advanceRecoveryRekeyOperationBinding(
+      opened.rootKey,salt,upgraded.successor_epoch_id,state.operation_generation,'new_material_staged',{...prepared,stage:'stale'},
+    )
+    const stale=await store.loadRecoveryRekeyOperation(prepared.operation_id)
+    expect(stale.stage).toBe('stale')
+    expect(stale.artifact_publish_attempted).toBe(false)
+  },120_000)
+
+
+  it('retries exact Recovery-Rekey transition bytes on a later resume after unresolved no-commit unknown outcomes',async()=>{
+    const createdAt='2026-09-25T08:30:00.000Z',urs=randomBytes(32),newUrs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    const sourceTransport=await v2.transportForEpoch(source.diaryId,upgraded.successor_epoch_id) as unknown as MemoryTransport
+    sourceTransport.unknownWithoutAppend=2
+
+    const first=await new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt).rekey(newUrs)
+    expect(first.stage).toBe('transition_unknown')
+    const firstOperation=await store.loadRecoveryRekeyOperation(first.operationId)
+    expect(firstOperation.stage).toBe('transition_unknown')
+    expect(sourceTransport.snapshot.rows.some(row=>row[0]===firstOperation.transition_envelope.envelope_id)).toBe(false)
+
+    const resumed=await new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt).rekey(newUrs)
+    expect(resumed.stage).toBe('completed')
+    expect(resumed.operationId).toBe(first.operationId)
+    expect(sourceTransport.snapshot.rows.filter(row=>row[0]===firstOperation.transition_envelope.envelope_id)).toHaveLength(1)
+  },120_000)
+
+  it('resumes a persisted native Announcement unknown state with one fresh exact-byte append',async()=>{
+    const createdAt='2026-09-25T08:35:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    const sourceTransport=await v2.transportForEpoch(source.diaryId,upgraded.successor_epoch_id) as unknown as MemoryTransport
+    const service=new ProductiveNativeRotationV2Service(v2,urs,store,()=>createdAt,point=>{
+      if(point==='after-staged_backup_verified')sourceTransport.unknownWithoutAppend=2
+    })
+    const unresolved=await service.rotate('normal')
+    expect(unresolved.stage).toBe('announcement_unknown')
+    if(!unresolved.announcement_envelope)throw new Error('unknown Announcement operation lost its prepared envelope')
+    expect(sourceTransport.snapshot.rows.some(row=>row[0]===unresolved.announcement_envelope!.envelope_id)).toBe(false)
+
+    const resumed=await new ProductiveNativeRotationV2Service(v2,urs,store,()=>createdAt).rotate('normal')
+    expect(resumed.stage).toBe('switched')
+    expect(resumed.operation_id).toBe(unresolved.operation_id)
+    expect(sourceTransport.snapshot.rows.filter(row=>row[0]===unresolved.announcement_envelope!.envelope_id)).toHaveLength(1)
+  },120_000)
+
+  it('resumes a persisted native Confirmation unknown state with one fresh exact-byte append',async()=>{
+    const createdAt='2026-09-25T08:40:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    let armed=false
+    const service=new ProductiveNativeRotationV2Service(v2,urs,store,()=>createdAt,point=>{
+      if(point==='after-announcement_durable'&&!armed){
+        armed=true
+        if(!v2.remote)throw new Error('native Successor transport missing at Confirmation fault point')
+        v2.remote.unknownWithoutAppend=2
+      }
+    })
+    const unresolved=await service.rotate('normal')
+    expect(unresolved.stage).toBe('confirmation_unknown')
+    if(!unresolved.confirmation_envelope||!v2.remote)throw new Error('unknown Confirmation operation lost its prepared envelope/Successor')
+    expect(v2.remote.snapshot.rows.some(row=>row[0]===unresolved.confirmation_envelope!.envelope_id)).toBe(false)
+
+    const resumed=await new ProductiveNativeRotationV2Service(v2,urs,store,()=>createdAt).rotate('normal')
+    expect(resumed.stage).toBe('switched')
+    expect(resumed.operation_id).toBe(unresolved.operation_id)
+    expect(v2.remote.snapshot.rows.filter(row=>row[0]===unresolved.confirmation_envelope!.envelope_id)).toHaveLength(1)
+  },120_000)
+
+  it('rechecks the Successor before Announcement retry and refuses Source seal after an intervening Successor row',async()=>{
+    const createdAt='2026-09-25T08:45:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    const sourceTransport=await v2.transportForEpoch(source.diaryId,upgraded.successor_epoch_id) as unknown as MemoryTransport
+    let armed=false
+    const result=await new ProductiveNativeRotationV2Service(v2,urs,store,()=>createdAt,point=>{
+      if(point==='after-staged_backup_verified'&&!armed){
+        armed=true
+        if(!v2.remote)throw new Error('native Successor transport missing at Announcement fault point')
+        const successor=v2.remote
+        const duplicate=successor.snapshot.rows.at(-1)
+        if(!duplicate||duplicate.length!==3)throw new Error('native Successor has no staging row for race injection')
+        sourceTransport.unknownWithoutAppend=1
+        sourceTransport.onUnknownWithoutAppend=()=>{successor.snapshot.rows.push([duplicate[0]!,duplicate[1]!,duplicate[2]!])}
+      }
+    }).rotate('normal')
+    expect(result.stage).toBe('stale')
+    if(!result.announcement_envelope)throw new Error('stale native rotation lost its Announcement envelope')
+    expect(sourceTransport.snapshot.rows.some(row=>row[0]===result.announcement_envelope!.envelope_id)).toBe(false)
+    const verified=await (await v2.codecForEpoch(source.diaryId,upgraded.successor_epoch_id,(await openRecoveryArtifactV6(await v2.loadRecoveryArtifact(urs,source.diaryId,upgraded.successor_epoch_id),urs)).rootKey,sourceTransport)).verifyRemote(await sourceTransport.read(sourceTransport.remoteId))
+    const canonical=verified.profileState as CanonicalFullResultV2
+    expect(canonical.source_epoch_sealed).toBe(false)
+  },120_000)
+
 })

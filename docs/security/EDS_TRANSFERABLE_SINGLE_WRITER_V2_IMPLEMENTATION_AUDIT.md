@@ -259,6 +259,57 @@ changed. The implemented internal boundary now reaches Architecture §23 item 12
 Recovery-Rekey orchestration, App/UI/domain wiring, Live-Google parallel-append
 validation and external production gates remain open.
 
+### 2026-09-25 V2-09 native v2 Rotation / two-phase Recovery-Rekey implementation/review pass
+
+Implemented the productive native v2→v2 Rotation and same-epoch two-phase
+Recovery-Rekey ceremonies on top of the V2-08 Forced-Takeover boundary.
+
+The final implementation keeps the irreversible decisions explicitly ordered:
+- native rotation freezes a fully verified active Source, snapshots semantic and
+  lineage state, prepares a fresh-RK Successor, verifies its exact staging
+  prefix, persists one-shot Announcement/Confirmation bytes plus activation
+  proof and RecoveryArtifactV6, then switches locally only after durable Source
+  seal, durable Successor confirmation, activated BackupV6 and lineage reverify;
+- Recovery-Rekey first persists the new immutable same-epoch RecoveryArtifactV6
+  and exact writer-signed RecoveryAuthorityTransitionV2, makes that transition
+  canonically durable, creates/test-restores the mandatory activated Source
+  BackupV6, and only then requires a native rotation_kind="recovery_rekey"
+  Successor with a new RK;
+- crash/Unknown-Outcome paths never regenerate control bytes. Persisted unknown
+  stages may make one later exact-byte retry only after fresh bound-prefix
+  verification; Announcement retries additionally reverify the Successor staging
+  prefix before the irreversible Source seal;
+- Recovery-Rekey supersession is allowed only from the exact remote-current
+  post-durable predecessor and is committed atomically; a losing pre-durable
+  supersession rebinds the still-current older operation;
+- after device loss, a fresh profile can prove the new RecoveryArtifact, Join
+  read-only, Forced-Takeover into maintenance-only Writer authority, adopt the
+  remote Pending-Rekey without the lost local operation state, and finish Phase B;
+- native Successor local protection is inherited from the authenticated active
+  v2 Source RootWrapV6 rather than the unrelated retired v1 placeholder.
+
+Adversarial review findings IA-068…IA-080 were recorded before remediation.
+They cover ceremony outbox ownership, persistence-layer phase binding, terminal
+operation fences, same-epoch backup anchors, supersession/stale semantics,
+release-status drift, Forced-Takeover operation locking, pre-publish abort
+reachability, bounded Unknown-Outcome liveness, cross-remote Announcement retry
+checks and replacement-device RootWrap inheritance.
+
+Full Security Validation is green on security-code head
+`8f508ba096d2af6634ab4127f51c4de71f339d76`: TypeScript, the full 256-test
+unit suite (including 49 productive profile-upgrade/rotation/rekey tests),
+crypto/local protection, Google/auth, state-machine/reconciliation,
+recovery/backup/bootstrap, legacy migration, productive rotation crash matrix,
+production build, ESLint, Stylelint, Storybook, the configured Playwright matrix
+and whitespace checks all pass.
+
+No wire format, signature input or D-001…D-010 architecture decision changed.
+The current internal implementation boundary now includes native v2→v2 Rotation
+and two-phase Recovery-Rekey. Normal App/Settings/domain-materialization/UI
+wiring, the Live-Google parallel-append gate and external production gates remain
+open.
+
+
 
 ## Findings and disposition
 
@@ -333,6 +384,20 @@ validation and external production gates remain open.
 | IA-066 | V2-01…V2-07 / stacked-branch ancestry drift | The current V2-01 PR head contained four later hardening commits (canonical protocol timestamps and canonical `migration_origin` bounds) that were byte-for-byte present in the downstream V2-02…V2-07 trees, but those downstream branches still descended from the older V2-01 commit `bea77cc64dc9b6689a875450216f853065dea950` rather than the current PR #49 head `c7e2621cf05da539a0b58e9d0d9f93387bd78e19`. The security semantics were present, but the stacked Git ancestry no longer proved that the reviewed lower slice was actually an ancestor of every upper slice. | **Fixed after being recorded OPEN.** The stack was repaired bottom-up with tree-preserving merge commits. Every current adjacent pair V2-01→V2-07 now has `behind_by=0`, every PR reports the current lower head as its base SHA, and all recomposed slice heads completed full Security Validation successfully. The V2-01 hardening files were byte-identical before the ancestry repair, so no security semantics changed during the merge repair. |
 | IA-067 | V2-08 / implementation-audit status tail drift | After the V2-08 implementation section was added, the later V2-07 final-disposition paragraph still called its old boundary `current` and listed Forced Takeover as open. Because that paragraph appears later in the file than the V2-08 section, a reviewer reading bottom-up could incorrectly treat the historical V2-07 boundary as current. | **Fixed after being recorded OPEN.** The trailing V2-07 paragraph is now explicitly labeled as the boundary at the conclusion of the 2026-09-24 V2-07 review, its historical evidence is preserved, and a separate current V2-08 boundary states that Architecture §23 item 12 is implemented while native v2→v2 Rotation/Recovery-Rekey, App/UI, Live-Google and external gates remain open. |
 
+
+| IA-068 | V2-09 / Maintenance-Control outbox ownership | Native v2 Rotation and Recovery-Rekey require writer-signed one-shot Maintenance-Control envelopes (RecoveryAuthorityTransitionV2, RotationAnnouncementV2 and successor-side migration/confirmation controls) to survive crashes in local persistence. The existing generic v2 Coordinator excludes WriterGrant ceremony rows only through `authority=null`; a writer-signed Maintenance-Control persisted with normal Writer provenance would therefore be returned by `pending()`. While its persistent rotation/recovery operation lock is active, normal WriteAuthority is intentionally read-only, so a concurrent/resumed generic Coordinator could terminally quarantine that exact ceremony envelope as `stale_writer_pending` before its owning protocol service reconciles it. That would turn the safety lock itself into a crash-resume denial of service. | **Fixed after being recorded OPEN.** Ceremony-owned writer-signed Maintenance-Control outbox rows now carry authenticated `ceremony_owner` metadata in the outbox MAC. Generic Coordinator `pending()` excludes them and generic verified pulls preserve their disposition; only the owning rotation/rekey ceremony finalizes them. A productive regression proves a remotely accepted Recovery transition remains locally `prepared` across a generic pull and is then completed by its owner. |
+| IA-069 | V2-09 / productive ceremony assurance gap | The new ProductiveNativeRotationV2Service and ProductiveRecoveryRekeyV2Service are present on the V2-09 branch, but no V2-09-specific productive regression file is part of the PR diff. A green pre-existing Security Validation would therefore not exercise normal native rotation, two-phase Recovery-Rekey, crash/Unknown-Outcome resume, Pending-Rekey adoption after device loss, or final local switch invariants through these new services. | **Fixed after being recorded OPEN.** Productive V2-09 regressions now cover normal v2→v2 rotation, Source-freeze crash resume, full two-phase Recovery-Rekey, prepared/publish/append crash boundaries, bounded Unknown-Outcome resume, Source/Successor race classification, direct persistence gates, supersession/fallback, terminal WriteAuthority semantics, remote Pending-Rekey adoption, and the full replacement-device `Join -> Forced Takeover -> adoption -> Phase B` path. The final security-code head passes the complete validation matrix. |
+| IA-070 | V2-09 / native rotation persistence phase binding | ProductiveNativeRotationV2Service checks that a `recovery_rekey` rotation binds the exact authenticated current transition and a local RecoveryRekeyOperationStateV2 at `successor_rotation_required`, but `initializeNativeSourceRotationBundle()` did not independently enforce that coupling. A direct internal persistence caller could therefore bind a `recovery_rekey` RotationOperationStateV2 to StateV6 without the mandatory completed Phase-A state; conversely a normal rotation persistence call did not itself reject Pending-Rekey. | **Fixed after being recorded OPEN.** `initializeNativeSourceRotationBundle()` independently enforces normal-vs-`recovery_rekey` state, exact authenticated transition ID, and for rekey rotation the exact bound `RecoveryRekeyOperationStateV2` at `successor_rotation_required`. Direct-storage regression coverage rejects bypass attempts. |
+| IA-071 | V2-09 / terminal Recovery-Rekey WriteAuthority fence | The pre-V2-09 WriteAuthority conservatively blocked normal writes whenever `recovery_operation_state_ref !== null`, because no productive RecoveryRekeyOperationStateV2 existed yet. With V2-09, terminal `stale`, `superseded`, or `completed` Recovery-Rekey refs are legitimate historical evidence. Keeping the old blanket check would leave an otherwise active, non-Pending-Rekey Writer permanently read-only after a terminal Rekey attempt. | **Fixed after being recorded OPEN.** WriteAuthority now treats only non-terminal Recovery-Rekey operation refs as the local operation fence; historical terminal `completed`, `stale`, and `superseded` refs no longer permanently force read-only. The independent authenticated Pending-Rekey fence remains fail-closed. Regression coverage proves terminal stale permits normal Writer authority while a non-terminal ref does not. |
+| IA-072 | V2-09 / BackupV6 same-epoch Recovery-Rekey anchor | BackupV6 activation validation required every non-native RecoveryArtifactV6 `remote_anchor` to equal the epoch's original `successor_staging_anchor`. That is correct for the activation-time artifact, but impossible for the §16 same-epoch Recovery-Rekey artifact: the new artifact carries a RecoveryAuthorityTransitionProofV2 prepared at the later `authority_anchor_before_transition`, and the mandatory activated Source backup is created only after that transition becomes durable. The old invariant therefore makes the normative Phase-A Source backup unconstructable for every migrated/rotated non-native epoch. | **Fixed after being recorded OPEN.** BackupV6 keeps the exact Successor staging-anchor rule for activation artifacts without a same-epoch transition proof. A Recovery-Rekey artifact with `RecoveryAuthorityTransitionProofV2` instead binds `remote_anchor` to the proof's exact `authority_anchor_before_transition`; the anchor must still reproduce as a real backup-row prefix and the canonical end-Recovery state is fully reverified. Productive Recovery-Rekey Source-backup/test-restore coverage is green. |
+| IA-073 | V2-09 / Recovery-Rekey supersession persistence stage | The productive service reconciles an older Recovery-Rekey to a remote-current post-durable state before allowing a newer local Rekey to supersede it, but both prepared-bundle/binding persistence boundaries only required the old referenced operation to be non-terminal. If the remote Transition had become current while the local old operation still lagged at `transition_pending`/`transition_unknown`, a direct internal caller could bind a superseding operation without first reconciling the old ceremony to durable evidence. | **Fixed after being recorded OPEN.** Both Recovery-Rekey persistence entry points allow supersession only when the exact locally bound old operation is post-durable (`transition_durable`, `source_backup_verified`, or `successor_rotation_required`) and matches the authenticated remote-current transition. Pre-durable local state must reconcile first. Productive supersession and stale-fallback regressions are green. |
+| IA-074 | V2-09 / false stale after durable Recovery transition | `advanceRecoveryRekeyOperationBinding(... -> stale)` required authenticated prefix advancement after `artifact_publish_attempted=true`, but did not reject the case where StateV6 already proves that this operation's own Transition is the canonical current Recovery authority. A direct internal caller could therefore terminalize a remotely durable/current Rekey as `stale` merely because its own accepted transition lengthened the prefix, breaking mandatory Phase-B completion. | **Fixed after being recorded OPEN.** Persistence now rejects `-> stale` when authenticated StateV6 already proves this operation's exact transition/to-Recovery tuple is canonical current Pending-Rekey. Such a state must reconcile to `transition_durable`. A direct regression exercises the crash window where the remote transition is durable while the local operation still lags. |
+| IA-075 | V2-09 / release-gate and audit boundary drift | After native v2→v2 Rotation and two-phase Recovery-Rekey became productive and regression-covered, `PRODUCTION_SECURITY_RELEASE_GATES.md` and the trailing current-boundary paragraph in this audit still identified V2-08 as the implemented frontier and listed Rotation/Recovery-Rekey as open. That stale inventory would make later reviewers reason from the wrong protocol boundary and could hide regressions behind an obsolete TODO. | **Fixed after being recorded OPEN.** Release gates and the audit tail now advance the current internal boundary to V2-01…V2-09, record productive native rotation/two-phase Recovery-Rekey and their device-loss continuation, and leave App/UI/domain wiring, Live-Google parallel append and external production gates open. Historical V2-07/V2-08 boundary paragraphs remain explicitly historical. The last fully green security-code head before this status-only correction is `8f508ba096d2af6634ab4127f51c4de71f339d76`. |
+| IA-076 | V2-09 / Forced-Takeover vs local Recovery-Rekey operation lock | `ProductiveForcedTakeoverV2Service.nonTerminalSecurityOperation()` exempted a non-terminal local `recovery_operation_state_ref` whenever `recovery_rekey_rotation_required=true`. That exception is unnecessary for the device-loss path (a fresh replacement device has no local Rekey operation yet) and contradicts Exact Protocol §16 Operation-Locking: on the same device, Forced Takeover is blocked while a local RecoveryRekeyOperationStateV2 exists; only after device loss may the replacement device takeover first and adopt the remote Pending-Rekey afterwards. | **Fixed after being recorded OPEN.** Forced Takeover now treats every local non-terminal Recovery-Rekey operation as a lock both in the service gate and the WriterGrant persistence boundary; the old Pending-Rekey exception is gone. A replacement device still works because fresh Join has no lost local Rekey operation: the end-to-end regression completes `Join -> Forced Takeover (maintenance-only) -> remote_pending_rekey_adoption -> Phase B`. |
+| IA-077 | V2-09 / unreachable pre-publish Recovery-Rekey abort | `RECOVERY_REKEY_STAGES_V2`/`ALLOWED` explicitly permit `new_material_staged -> stale` before any remote RecoveryArtifact publish attempt, matching Exact Protocol §16 crash/abort rules. But `validateRecoveryRekeyOperationStateV2()` required `artifact_publish_attempted=true` for every stage except `new_material_staged`, so the resulting terminal `stale` state with a false publish fence was rejected and the advertised transition was unreachable. | **Fixed after being recorded OPEN.** The validator permits `artifact_publish_attempted=false` only for `new_material_staged` and terminal `stale`, while the transition function permits false-fence stale only directly from an unattempted `new_material_staged`. Every later stale path retains the monotone publish fence. Regression coverage exercises the exact pre-publish abort. |
+| IA-078 | V2-09 / Unknown-Outcome resume liveness | Recovery-Rekey moved an absent/unresolved Transition append to `transition_unknown`, but a later resume only re-read and returned the same state without the §14-authorized exact-byte retry. Native Rotation similarly performed at most one in-call retry, then persisted `announcement_unknown`/`confirmation_unknown`; later resumes returned `unknown` without another append even when fresh canonical_full proved the exact bound Source/Successor prefixes unchanged. These paths are fail-safe but can become permanently stuck after an Unknown Outcome that did not commit. | **Fixed after being recorded OPEN.** Persisted `transition_unknown`, `announcement_unknown`, and `confirmation_unknown` states now allow one exact-byte append on each later explicit resume only after fresh canonical verification of their bound prefixes. Initial unknown chains remain bounded; no semantic bytes are regenerated and no blind third append occurs. No-commit Unknown-Outcome regressions prove eventual completion after a later fresh resume. |
+| IA-079 | V2-09 / Announcement retry omitted fresh Successor staging check | `ProductiveNativeRotationV2Service.publishOrReconcileAnnouncement()` initially verified both the frozen Source and Successor staging prefix, but after an `unknown_outcome` with the Announcement still absent it re-read only the Source before issuing its second exact-byte append. Exact Protocol §14 requires every RotationAnnouncement retry to prove both Source=`source_anchor_before_announcement` and Successor=`successor_staging_anchor`. A Successor row arriving between the first unknown request and the retry could otherwise lead to an irreversible Source seal for a no-longer-staged Successor. | **Fixed after being recorded OPEN.** Every native Announcement append/retry now freshly checks both the frozen Source and the exact Successor staging prefix. An injected Successor row between the first no-commit unknown outcome and the retry causes stale/cutover classification and proves the Source Announcement is never appended/sealed. |
+| IA-080 | V2-09 / native v2 rotation inherited local protection from active v1 placeholder | `ProductiveNativeRotationV2Service.planSuccessor()` reused `prepareSuccessorRootWrapV6ForActiveMode()`, whose security-mode inheritance is intentionally anchored to the active v1 diary for profile-upgrade. After a fresh-device v2 Join, the local v1 slot is only a retired unrelated placeholder diary, so mandatory recovery_rekey Phase B failed with `RootWrapV6 successor diary does not match the active v1 diary.` This makes the normative device-loss continuation `Join -> Forced Takeover -> remote_pending_rekey_adoption -> recovery_rekey rotation` impossible on a replacement profile. | **Fixed after being recorded OPEN.** Native v2→v2 planning now derives Successor local protection from the authenticated active v2 Source `RootWrapV6`, verifies that Source wrap against the active v2 selection, uses a fresh best-effort wrapping key when appropriate, and reuses only an already-unlocked passphrase/PRF factor that actually opens the authenticated Source wrap. The v1-based helper remains profile-upgrade-specific. The full replacement-device Pending-Rekey continuation now passes end-to-end. |
 
 ## Reviewed points that are not findings
 
@@ -468,11 +533,19 @@ Forced Takeover, native v2→v2 Rotation plus two-phase Recovery-Rekey orchestra
 normal App/Settings/domain-materialization/UI wiring, the Live-Google
 Parallel-Append-Gate and the external production gates were still open.
 
-The current boundary after the 2026-09-25 V2-08 pass above reaches Architecture
-§23 item 12: productive Forced Takeover plus stale-pending quarantine is now
-implemented and internally validated. Native v2→v2 Rotation/two-phase
-Recovery-Rekey orchestration, App/UI/domain wiring, Live-Google parallel-append
-validation and the external production gates remain open.
+The boundary at the conclusion of the 2026-09-25 V2-08 pass above reached
+Architecture §23 item 12: productive Forced Takeover plus stale-pending
+quarantine. At that historical point native v2→v2 Rotation/two-phase
+Recovery-Rekey, App/UI/domain wiring, Live-Google parallel-append validation and
+the external production gates were still open.
+
+The current boundary after the 2026-09-25 V2-09 pass now additionally includes
+productive native v2→v2 Rotation and complete two-phase Recovery-Rekey,
+including bounded Unknown-Outcome resume, supersession, replacement-device
+Pending-Rekey continuation and v2-Source RootWrap inheritance. App/UI/domain
+wiring, Live-Google parallel-append validation and the external production gates
+remain open. The fully green security-code evidence head is
+`8f508ba096d2af6634ab4127f51c4de71f339d76`.
 
 ## Anti-churn rule for later reviews
 

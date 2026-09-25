@@ -63,8 +63,7 @@ function nonTerminalSecurityOperation(state:EpochLocalSecurityStateV6,allowWrite
     &&state.writer_operation_state_ref.operation_id!==allowWriterOperationId
     &&!TERMINAL_WRITER.has(state.writer_operation_state_ref.state))return true
   if(state.recovery_operation_state_ref
-    &&!TERMINAL_RECOVERY.has(state.recovery_operation_state_ref.state)
-    &&!state.recovery_rekey_rotation_required)return true
+    &&!TERMINAL_RECOVERY.has(state.recovery_operation_state_ref.state))return true
   return state.migration_state_ref!==null
 }
 function toResult(operation:WriterGrantOperationStateV2,grant:WriterGrantV2,maintenanceOnly:boolean):ForcedTakeoverResultV2{

@@ -33,11 +33,15 @@ function localWriterMatches(local:EpochLocalSecurityStateV6,remote:CanonicalFull
 
 const TERMINAL_ROTATION_STATES=new Set(['switched','stale','cutover_race','post_activation_superseded'])
 const TERMINAL_WRITER_STATES=new Set(['durable','stale'])
+const TERMINAL_RECOVERY_STATES=new Set(['completed','stale','superseded'])
 function hasNonTerminalRotationRef(ref:EpochLocalSecurityStateV6['rotation_state_ref']):boolean{
   return ref!==null&&!TERMINAL_ROTATION_STATES.has(ref.state)
 }
 function hasNonTerminalWriterRef(ref:EpochLocalSecurityStateV6['writer_operation_state_ref']):boolean{
   return ref!==null&&!TERMINAL_WRITER_STATES.has(ref.state)
+}
+function hasNonTerminalRecoveryRef(ref:EpochLocalSecurityStateV6['recovery_operation_state_ref']):boolean{
+  return ref!==null&&!TERMINAL_RECOVERY_STATES.has(ref.state)
 }
 function mutationBlocked(local:EpochLocalSecurityStateV6,remote:CanonicalFullResultV2):boolean{
   return local.diary_id!==remote.diary_id
@@ -51,7 +55,7 @@ function mutationBlocked(local:EpochLocalSecurityStateV6,remote:CanonicalFullRes
     || hasNonTerminalRotationRef(local.rotation_state_ref)
     || local.migration_state_ref!==null
     || hasNonTerminalWriterRef(local.writer_operation_state_ref)
-    || local.recovery_operation_state_ref!==null
+    || hasNonTerminalRecoveryRef(local.recovery_operation_state_ref)
     || !sameAnchor(local,remote)
     || !localWriterMatches(local,remote)
 }

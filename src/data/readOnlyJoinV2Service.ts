@@ -26,10 +26,11 @@ import {
   type RecoveryArtifactV6,
   type RecoveryPayloadV6,
 } from '../security/v2/recovery'
-import { sourceAnnouncementEnvelopeHashV2, verifyProfileUpgradeMigrationIntegrityV2 } from '../security/v2/profileUpgrade'
+import { sourceAnnouncementEnvelopeHashV2 as profileUpgradeSourceAnnouncementEnvelopeHashV2, verifyProfileUpgradeMigrationIntegrityV2 } from '../security/v2/profileUpgrade'
+import { sourceAnnouncementEnvelopeHashV2 as v2SourceAnnouncementEnvelopeHashV2, verifyNativeV2MigrationIntegrity, verifyRecoveryActivationProofV2 } from '../security/v2/nativeRotation'
 import { stateAfterCanonicalVerifyV6 } from '../security/v2/stateReconciliation'
 import type { CanonicalFullResultV2 } from '../security/v2/verifier'
-import type { RecoveryAuthorityTransitionV2 } from '../security/v2/types'
+import type { RecoveryAuthorityTransitionV2, RotationAnnouncementV2 } from '../security/v2/types'
 import {
   DOMAIN_SCHEMA_REGISTRY,
   activeProtocolSelectionV2,
@@ -65,7 +66,7 @@ export interface ReadOnlyJoinResultV2 {
   resumed:boolean
 }
 
-interface ActiveCandidateV2 {
+export interface ActiveCandidateV2 {
   artifact:RecoveryArtifactV6
   artifactSha256:string
   rootKey:Uint8Array
@@ -100,7 +101,7 @@ function exactRecoveryBinding(payload:RecoveryPayloadV6,result:CanonicalFullResu
     ||!same(payload.recovery_credential_history,result.recovery_credential_history))throw new Error('RecoveryArtifactV6 is not current for the canonical v2 Recovery authority.')
 }
 
-async function verifyCurrentRecoveryTransitionForJoin(candidate:ActiveCandidateV2):Promise<void>{
+export async function verifyCurrentRecoveryTransitionForJoin(candidate:ActiveCandidateV2):Promise<void>{
   const recovery=candidate.result.current_recovery,proof=candidate.payload.recovery_authority_transition_proof
   if(!recovery.recovery_rekey_rotation_required){
     if(recovery.recovery_rekey_transition_id!==null)throw new Error('Canonical Recovery state has an inconsistent Pending-Rekey transition reference.')
@@ -151,102 +152,195 @@ async function sourceRevisionsAtAnchor(args:{
   return revisions
 }
 
-async function verifyProfileUpgradeLineage(args:{
+interface VerifiedLineageEpochV2 {
+  rootKey:Uint8Array
+  manifest:ProtectedManifestV6
+  snapshot:RemoteSnapshot
+  verified:VerifiedRemoteState
+  result:CanonicalFullResultV2
+  remoteId:string
+  accountBinding:string
+}
+async function loadLineageEpochV2(args:{
   session:TransferableSingleWriterV2ProviderSession
-  candidate:ActiveCandidateV2
+  diaryId:string
+  epochId:string
+  manifestFingerprint:string
+  rootKey:Uint8Array
+}):Promise<VerifiedLineageEpochV2>{
+  const transport=await args.session.transportForEpoch(args.diaryId,args.epochId)
+  const candidates=await transport.discover(await epochLocatorV2(args.diaryId,args.epochId))
+  if(candidates.length!==1)throw new Error('ActivationLineageV2 requires exactly one authenticated v2 epoch candidate.')
+  const remoteId=candidates[0]!.remoteId,snapshot=await transport.read(remoteId),accountBinding=await transport.authenticatedAccountBinding()
+  const salt=await deriveEpochSaltV2(fixedBase64Url(args.diaryId,16),fixedBase64Url(args.epochId,16))
+  const manifest=await openManifestV6(args.rootKey,salt,{diaryId:args.diaryId,epochId:args.epochId},parseManifestCellsV6(snapshot.manifest))
+  if(manifest.google_account_binding!==accountBinding)throw new Error('ActivationLineageV2 v2 Source account binding mismatch.')
+  const codec=await args.session.codecForEpoch(args.diaryId,args.epochId,args.rootKey,transport)
+  const verified=await codec.verifyRemote(snapshot),result=canonicalResult(verified)
+  if(result.diary_id!==args.diaryId||result.epoch_id!==args.epochId||result.manifest_fingerprint!==args.manifestFingerprint)throw new Error('ActivationLineageV2 v2 epoch identity mismatch.')
+  return{rootKey:args.rootKey,manifest,snapshot,verified,result,remoteId,accountBinding}
+}
+
+async function verifyProfileUpgradeLineageStep(args:{
+  session:TransferableSingleWriterV2ProviderSession
+  diaryId:string
   entry:ProfileUpgradeActivationEntryV2
+  successor:VerifiedLineageEpochV2
 }):Promise<void>{
-  const {candidate,entry}=args
-  if(candidate.manifest.predecessor_epochs.length!==1
-    ||candidate.manifest.predecessor_epochs[0]!.epoch_id!==entry.source_epoch_id
-    ||candidate.manifest.predecessor_epochs[0]!.manifest_fingerprint!==entry.source_manifest_fingerprint)throw new Error('Profile-upgrade Join predecessor binding mismatch.')
-  if(entry.successor_epoch_id!==candidate.payload.epoch_id
-    ||entry.successor_manifest_fingerprint!==candidate.payload.manifest_fingerprint)throw new Error('Profile-upgrade Join lineage leaf mismatch.')
+  const {entry,successor}=args
+  if(successor.manifest.predecessor_epochs.length!==1
+    ||successor.manifest.predecessor_epochs[0]!.epoch_id!==entry.source_epoch_id
+    ||successor.manifest.predecessor_epochs[0]!.manifest_fingerprint!==entry.source_manifest_fingerprint)throw new Error('Profile-upgrade activation predecessor binding mismatch.')
+  if(entry.successor_epoch_id!==successor.result.epoch_id||entry.successor_manifest_fingerprint!==successor.result.manifest_fingerprint)throw new Error('Profile-upgrade activation lineage leaf mismatch.')
 
   const sourceRoot=fixedBase64Url(entry.source_root_key,32,'profile_upgrade.source_root_key')
-  if(!args.session.v1TransportForEpoch)throw new Error('Authenticated v1 lineage transport is unavailable for read-only Join.')
-  const sourceTransport=await args.session.v1TransportForEpoch(candidate.payload.diary_id,entry.source_epoch_id)
-  const locator=await epochLocator(candidate.payload.diary_id,entry.source_epoch_id)
-  const candidates=await sourceTransport.discover(locator)
-  if(candidates.length!==1)throw new Error('Profile-upgrade Join requires exactly one authenticated v1 Source candidate.')
-  const sourceId=candidates[0]!.remoteId,sourceSnapshot=await sourceTransport.read(sourceId)
-  const sourceCells=parseManifestCells(sourceSnapshot.manifest)
-  if(await manifestFingerprint(sourceCells)!==entry.source_manifest_fingerprint)throw new Error('Profile-upgrade Join Source manifest fingerprint mismatch.')
-  const sourceSalt=await deriveEpochSalt(fixedBase64Url(candidate.payload.diary_id,16),fixedBase64Url(entry.source_epoch_id,16))
-  const sourceManifest=await openManifest(sourceRoot,sourceSalt,{diaryId:candidate.payload.diary_id,epochId:entry.source_epoch_id},sourceCells)
+  if(!args.session.v1TransportForEpoch)throw new Error('Authenticated v1 lineage transport is unavailable.')
+  const sourceTransport=await args.session.v1TransportForEpoch(args.diaryId,entry.source_epoch_id)
+  const candidates=await sourceTransport.discover(await epochLocator(args.diaryId,entry.source_epoch_id))
+  if(candidates.length!==1)throw new Error('Profile-upgrade activation requires exactly one authenticated v1 Source.')
+  const sourceSnapshot=await sourceTransport.read(candidates[0]!.remoteId),sourceCells=parseManifestCells(sourceSnapshot.manifest)
+  if(await manifestFingerprint(sourceCells)!==entry.source_manifest_fingerprint)throw new Error('Profile-upgrade activation Source manifest fingerprint mismatch.')
+  const sourceSalt=await deriveEpochSalt(fixedBase64Url(args.diaryId,16),fixedBase64Url(entry.source_epoch_id,16))
+  const sourceManifest=await openManifest(sourceRoot,sourceSalt,{diaryId:args.diaryId,epochId:entry.source_epoch_id},sourceCells)
   const account=await sourceTransport.authenticatedAccountBinding()
-  if(sourceManifest.google_account_binding!==account)throw new Error('Profile-upgrade Join Source Google account binding mismatch.')
-
+  if(sourceManifest.google_account_binding!==account)throw new Error('Profile-upgrade activation Source account binding mismatch.')
   const verifier=new SingleWriterV1RemoteVerifier({
-    rootKey:sourceRoot,
-    diaryId:candidate.payload.diary_id,
-    epochId:entry.source_epoch_id,
-    expectedManifestFingerprint:entry.source_manifest_fingerprint,
-    expectedKeyId:sourceManifest.key_id,
-    expectedRecoveryGeneration:sourceManifest.recovery_generation,
-    expectedRecoveryCommitment:sourceManifest.recovery_urs_commitment,
-    expectedGoogleAccountBinding:account,
-    schemas:DOMAIN_SCHEMA_REGISTRY,
-    oldAnchor:entry.source_anchor_before_announcement,
-    localEnvelopes:[],
-    localHeadRevisionIds:new Set(),
+    rootKey:sourceRoot,diaryId:args.diaryId,epochId:entry.source_epoch_id,expectedManifestFingerprint:entry.source_manifest_fingerprint,
+    expectedKeyId:sourceManifest.key_id,expectedRecoveryGeneration:sourceManifest.recovery_generation,
+    expectedRecoveryCommitment:sourceManifest.recovery_urs_commitment,expectedGoogleAccountBinding:account,schemas:DOMAIN_SCHEMA_REGISTRY,
+    oldAnchor:entry.source_anchor_before_announcement,localEnvelopes:[],localHeadRevisionIds:new Set(),
   })
-  const sourceVerified=await verifier.verify(sourceSnapshot)
-  if(!sourceVerified.retired)throw new Error('Profile-upgrade Join Source is not durably retired.')
-
+  if(!(await verifier.verify(sourceSnapshot)).retired)throw new Error('Profile-upgrade activation Source is not durably retired.')
   const sourcePrefix=sourceSnapshot.rows.slice(0,entry.source_anchor_before_announcement.covered_row_count)
-  if(!same(await createAnchorV1(candidate.payload.diary_id,entry.source_epoch_id,sourcePrefix),entry.source_anchor_before_announcement))throw new Error('Profile-upgrade Join Source frozen prefix mismatch.')
-  const suffix=sourceSnapshot.rows.slice(entry.source_anchor_before_announcement.covered_row_count)
-  const announcementRow=[entry.announcement_envelope.envelope_id,entry.announcement_envelope.iv,entry.announcement_envelope.ciphertext]
-  if(!suffix.length||!same(suffix[0],announcementRow))throw new Error('Profile-upgrade Join Source Announcement is not the immediate first post-freeze row.')
+  if(!same(await createAnchorV1(args.diaryId,entry.source_epoch_id,sourcePrefix),entry.source_anchor_before_announcement))throw new Error('Profile-upgrade activation Source frozen prefix mismatch.')
+  const suffix=sourceSnapshot.rows.slice(entry.source_anchor_before_announcement.covered_row_count),announcementRow=[entry.announcement_envelope.envelope_id,entry.announcement_envelope.iv,entry.announcement_envelope.ciphertext]
+  if(!suffix.length||!same(suffix[0],announcementRow))throw new Error('Profile-upgrade activation Announcement is not the immediate first post-freeze row.')
+  const announcement=await openEnvelope(sourceRoot,sourceSalt,{diaryId:args.diaryId,epochId:entry.source_epoch_id},prepared(entry.announcement_envelope)),data=announcement.record_data as Record<string,unknown>
+  if(announcement.record_schema!=='rotation-announcement-sw-v1'||data.from_epoch_id!==entry.source_epoch_id||data.successor_epoch_id!==successor.result.epoch_id
+    ||data.successor_manifest_fingerprint!==successor.result.manifest_fingerprint||data.successor_creation_locator!==successor.manifest.creation_locator||data.rotation_kind!=='profile_upgrade')throw new Error('Profile-upgrade activation Announcement binding mismatch.')
 
-  const announcement=await openEnvelope(sourceRoot,sourceSalt,{diaryId:candidate.payload.diary_id,epochId:entry.source_epoch_id},prepared(entry.announcement_envelope))
-  const data=announcement.record_data as Record<string,unknown>
-  if(announcement.record_schema!=='rotation-announcement-sw-v1'
-    ||data.from_epoch_id!==entry.source_epoch_id
-    ||data.successor_epoch_id!==candidate.payload.epoch_id
-    ||data.successor_manifest_fingerprint!==candidate.payload.manifest_fingerprint
-    ||data.successor_creation_locator!==candidate.manifest.creation_locator
-    ||data.rotation_kind!=='profile_upgrade')throw new Error('Profile-upgrade Join Source Announcement binding mismatch.')
-
-  const stagingRows=candidate.snapshot.rows.slice(0,entry.successor_staging_anchor.covered_row_count)
-  if(!same(await createAnchorV2(candidate.payload.diary_id,candidate.payload.epoch_id,stagingRows),entry.successor_staging_anchor))throw new Error('Profile-upgrade Join Successor staging anchor mismatch.')
-  const firstAfterStaging=candidate.snapshot.rows[entry.successor_staging_anchor.covered_row_count]
-  const confirmationRow=[entry.successor_confirmation_envelope.envelope_id,entry.successor_confirmation_envelope.iv,entry.successor_confirmation_envelope.ciphertext]
-  if(!firstAfterStaging||!same(firstAfterStaging,confirmationRow))throw new Error('Profile-upgrade Join Confirmation is not the first Successor row after staging.')
-
-  const confirmation=candidate.result.accepted_activation_confirmation
-  if(!confirmation
-    ||confirmation.activation_kind!=='profile_upgrade'
-    ||confirmation.source_profile!==SINGLE_WRITER_V1_PROFILE
-    ||confirmation.source_epoch_id!==entry.source_epoch_id
-    ||confirmation.source_manifest_fingerprint!==entry.source_manifest_fingerprint
+  const stagingRows=successor.snapshot.rows.slice(0,entry.successor_staging_anchor.covered_row_count)
+  if(!same(await createAnchorV2(args.diaryId,successor.result.epoch_id,stagingRows),entry.successor_staging_anchor))throw new Error('Profile-upgrade activation Successor staging anchor mismatch.')
+  const firstAfter=successor.snapshot.rows[entry.successor_staging_anchor.covered_row_count],confirmationRow=[entry.successor_confirmation_envelope.envelope_id,entry.successor_confirmation_envelope.iv,entry.successor_confirmation_envelope.ciphertext]
+  if(!firstAfter||!same(firstAfter,confirmationRow))throw new Error('Profile-upgrade activation Confirmation is not the first Successor row after staging.')
+  const confirmation=successor.result.accepted_activation_confirmation
+  if(!confirmation||confirmation.activation_kind!=='profile_upgrade'||confirmation.source_profile!==SINGLE_WRITER_V1_PROFILE
+    ||confirmation.source_epoch_id!==entry.source_epoch_id||confirmation.source_manifest_fingerprint!==entry.source_manifest_fingerprint
     ||!same(confirmation.source_anchor_before_announcement,entry.source_anchor_before_announcement)
-    ||confirmation.successor_epoch_id!==candidate.payload.epoch_id
-    ||confirmation.successor_manifest_fingerprint!==candidate.payload.manifest_fingerprint
+    ||confirmation.successor_epoch_id!==successor.result.epoch_id||confirmation.successor_manifest_fingerprint!==successor.result.manifest_fingerprint
     ||!same(confirmation.successor_staging_anchor,entry.successor_staging_anchor)
-    ||confirmation.source_announcement_envelope_sha256!==await sourceAnnouncementEnvelopeHashV2(prepared(entry.announcement_envelope)))throw new Error('Profile-upgrade Join Confirmation evidence mismatch.')
-
+    ||confirmation.source_announcement_envelope_sha256!==await profileUpgradeSourceAnnouncementEnvelopeHashV2(prepared(entry.announcement_envelope)))throw new Error('Profile-upgrade activation Confirmation evidence mismatch.')
   await verifyProfileUpgradeMigrationIntegrityV2({
-    sourceEpochId:entry.source_epoch_id,
-    sourceManifestFingerprint:entry.source_manifest_fingerprint,
-    sourceAnchor:entry.source_anchor_before_announcement,
-    sourceRevisions:await sourceRevisionsAtAnchor({rootKey:sourceRoot,diaryId:candidate.payload.diary_id,epochId:entry.source_epoch_id,snapshot:sourceSnapshot,coveredRows:entry.source_anchor_before_announcement.covered_row_count}),
-    successor:candidate.result,
+    sourceEpochId:entry.source_epoch_id,sourceManifestFingerprint:entry.source_manifest_fingerprint,sourceAnchor:entry.source_anchor_before_announcement,
+    sourceRevisions:await sourceRevisionsAtAnchor({rootKey:sourceRoot,diaryId:args.diaryId,epochId:entry.source_epoch_id,snapshot:sourceSnapshot,coveredRows:entry.source_anchor_before_announcement.covered_row_count}),
+    successor:successor.result,
   })
 }
 
-async function verifyActivationForJoin(session:TransferableSingleWriterV2ProviderSession,candidate:ActiveCandidateV2):Promise<void>{
-  const lineage=candidate.payload.activation_lineage
-  if(candidate.result.activation_state==='native_active'){
-    if(candidate.manifest.predecessor_epochs.length!==0||lineage.length!==0)throw new Error('Native-v2 Join activation evidence mismatch.')
+async function verifyV2RotationLineageStep(args:{
+  session:TransferableSingleWriterV2ProviderSession
+  diaryId:string
+  sourceRoot:Uint8Array
+  successor:VerifiedLineageEpochV2
+  entry:Extract<RecoveryPayloadV6['activation_lineage'][number],{kind:'v2_rotation'}>
+}):Promise<void>{
+  const proof=args.entry.proof
+  if(proof.successor_epoch_id!==args.successor.result.epoch_id||proof.successor_manifest_fingerprint!==args.successor.result.manifest_fingerprint)throw new Error('v2 rotation ActivationLineageV2 successor binding mismatch.')
+  if(args.successor.manifest.predecessor_epochs.length!==1||args.successor.manifest.predecessor_epochs[0]!.epoch_id!==proof.source_epoch_id
+    ||args.successor.manifest.predecessor_epochs[0]!.manifest_fingerprint!==proof.source_manifest_fingerprint)throw new Error('v2 rotation ActivationLineageV2 predecessor binding mismatch.')
+  if(args.successor.manifest.recovery_generation!==proof.successor_recovery_generation)throw new Error('v2 rotation ActivationLineageV2 successor Recovery generation mismatch.')
+  const source=await loadLineageEpochV2({session:args.session,diaryId:args.diaryId,epochId:proof.source_epoch_id,manifestFingerprint:proof.source_manifest_fingerprint,rootKey:args.sourceRoot})
+  const prefixRows=source.snapshot.rows.slice(0,proof.source_anchor_before_announcement.covered_row_count)
+  if(!same(await createAnchorV2(args.diaryId,proof.source_epoch_id,prefixRows),proof.source_anchor_before_announcement))throw new Error('v2 rotation activation Source prefix mismatch.')
+  const sourceTransport=await args.session.transportForEpoch(args.diaryId,proof.source_epoch_id),sourceCodec=await args.session.codecForEpoch(args.diaryId,proof.source_epoch_id,args.sourceRoot,sourceTransport)
+  const prefixVerified=await sourceCodec.verifyRemote({...source.snapshot,rows:prefixRows}),prefix=canonicalResult(prefixVerified)
+  if(prefix.source_epoch_sealed||!same(prefix.remote_anchor,proof.source_anchor_before_announcement))throw new Error('v2 rotation activation Source decision prefix is not active.')
+  if(proof.rotation_kind==='normal'){
+    if(prefix.current_recovery.recovery_rekey_rotation_required||proof.recovery_transition_id!==null)throw new Error('Normal v2 rotation activation binds a Pending-Rekey Source.')
+  }else if(!prefix.current_recovery.recovery_rekey_rotation_required||prefix.current_recovery.recovery_rekey_transition_id!==proof.recovery_transition_id)throw new Error('Recovery-rekey activation transition binding mismatch.')
+  await verifyRecoveryActivationProofV2({proof,source:prefix,announcementEnvelope:prepared(proof.announcement_envelope),confirmationEnvelope:prepared(proof.successor_confirmation_envelope)})
+  if(!source.result.source_epoch_sealed||!source.verified.acceptedEnvelopeIds.has(proof.announcement_envelope.envelope_id))throw new Error('v2 rotation activation Source Announcement is not canonically durable.')
+  const suffix=source.snapshot.rows.slice(proof.source_anchor_before_announcement.covered_row_count),announcementRow=[proof.announcement_envelope.envelope_id,proof.announcement_envelope.iv,proof.announcement_envelope.ciphertext]
+  if(!suffix.length||!same(suffix[0],announcementRow))throw new Error('v2 rotation activation Announcement is not the immediate first post-freeze row.')
+  const sourceSalt=await deriveEpochSaltV2(fixedBase64Url(args.diaryId,16),fixedBase64Url(proof.source_epoch_id,16))
+  const revision=await openRevisionEnvelopeV2(args.sourceRoot,sourceSalt,{diaryId:args.diaryId,epochId:proof.source_epoch_id},prepared(proof.announcement_envelope))
+  const announcement=revision.record_data as RotationAnnouncementV2
+  if(revision.record_schema!=='rotation-announcement-sw-v2'||revision.record_type!=='rotation_announcement'||revision.record_status!=='control'||!announcement
+    ||announcement.from_epoch_id!==proof.source_epoch_id||announcement.successor_epoch_id!==proof.successor_epoch_id
+    ||announcement.successor_manifest_fingerprint!==proof.successor_manifest_fingerprint||announcement.successor_creation_locator!==args.successor.manifest.creation_locator
+    ||announcement.rotation_kind!==proof.rotation_kind||announcement.source_writer_generation!==proof.source_writer_generation
+    ||announcement.source_writer_grant_id!==proof.source_writer_grant_id||announcement.successor_recovery_generation!==proof.successor_recovery_generation
+    ||!same(announcement.source_anchor_before_announcement,proof.source_anchor_before_announcement)||!same(announcement.successor_staging_anchor,proof.successor_staging_anchor)
+    ||announcement.recovery_transition_id!==proof.recovery_transition_id)throw new Error('v2 rotation activation Announcement semantic binding mismatch.')
+  const stagingRows=args.successor.snapshot.rows.slice(0,proof.successor_staging_anchor.covered_row_count)
+  if(!same(await createAnchorV2(args.diaryId,proof.successor_epoch_id,stagingRows),proof.successor_staging_anchor))throw new Error('v2 rotation activation Successor staging anchor mismatch.')
+  const firstAfter=args.successor.snapshot.rows[proof.successor_staging_anchor.covered_row_count],confirmationRow=[proof.successor_confirmation_envelope.envelope_id,proof.successor_confirmation_envelope.iv,proof.successor_confirmation_envelope.ciphertext]
+  if(!firstAfter||!same(firstAfter,confirmationRow)||!args.successor.verified.acceptedEnvelopeIds.has(proof.successor_confirmation_envelope.envelope_id))throw new Error('v2 rotation activation Confirmation is not canonically first after staging.')
+  const confirmation=args.successor.result.accepted_activation_confirmation
+  if(!confirmation||confirmation.activation_kind!=='v2_rotation'||confirmation.source_profile!==SINGLE_WRITER_V2_PROFILE
+    ||confirmation.source_epoch_id!==proof.source_epoch_id||confirmation.source_manifest_fingerprint!==proof.source_manifest_fingerprint
+    ||!same(confirmation.source_anchor_before_announcement,proof.source_anchor_before_announcement)
+    ||confirmation.successor_epoch_id!==proof.successor_epoch_id||confirmation.successor_manifest_fingerprint!==proof.successor_manifest_fingerprint
+    ||!same(confirmation.successor_staging_anchor,proof.successor_staging_anchor)
+    ||confirmation.source_announcement_envelope_sha256!==await v2SourceAnnouncementEnvelopeHashV2(prepared(proof.announcement_envelope)))throw new Error('v2 rotation activation Confirmation evidence mismatch.')
+  await verifyNativeV2MigrationIntegrity({source:prefix,successor:args.successor.result,rotationKind:proof.rotation_kind,recoveryTransitionId:proof.recovery_transition_id})
+}
+
+export interface CanonicalActivationLineageContextV2 {
+  diaryId:string
+  epochId:string
+  rootKey:Uint8Array
+  manifest:ProtectedManifestV6
+  snapshot:RemoteSnapshot
+  verified:VerifiedRemoteState
+  result:CanonicalFullResultV2
+  remoteId:string
+  accountBinding:string
+  activationLineage:RecoveryPayloadV6['activation_lineage']
+}
+export async function verifyActivationLineageForCanonicalEpoch(
+  session:TransferableSingleWriterV2ProviderSession,
+  context:CanonicalActivationLineageContextV2,
+):Promise<void>{
+  const lineage=context.activationLineage
+  if(context.result.activation_state==='native_active'){
+    if(context.manifest.predecessor_epochs.length!==0||lineage.length!==0)throw new Error('Native-v2 activation evidence mismatch.')
     return
   }
-  if(candidate.result.activation_state!=='cross_epoch_evidence_present')throw new Error('Staged v2 Successor is not joinable.')
-  if(lineage.length!==1||lineage[0]?.kind!=='profile_upgrade')throw new Error('V2-06 only accepts the implemented profile-upgrade activation lineage.')
-  await verifyProfileUpgradeLineage({session,candidate,entry:lineage[0]})
+  if(context.result.activation_state!=='cross_epoch_evidence_present'||lineage.length===0)throw new Error('Staged or evidence-free v2 Successor is not activatable.')
+  const leafCandidate:ActiveCandidateV2={
+    artifact:{} as RecoveryArtifactV6,artifactSha256:'',rootKey:context.rootKey,payload:{diary_id:context.diaryId,epoch_id:context.epochId,activation_lineage:lineage} as RecoveryPayloadV6,
+    manifest:context.manifest,snapshot:context.snapshot,verified:context.verified,result:context.result,remoteId:context.remoteId,accountBinding:context.accountBinding,
+  }
+  for(let index=0;index<lineage.length;index+=1){
+    const entry=lineage[index]!,successorEpoch=entry.kind==='profile_upgrade'?entry.successor_epoch_id:entry.proof.successor_epoch_id
+    let successorRoot:Uint8Array
+    if(successorEpoch===context.epochId)successorRoot=context.rootKey
+    else{
+      const next=lineage[index+1]
+      if(!next||next.kind!=='v2_rotation'||next.proof.source_epoch_id!==successorEpoch)throw new Error('ActivationLineageV2 cannot resolve an intermediate Successor root.')
+      successorRoot=fixedBase64Url(next.source_root_key,32,'v2_rotation.source_root_key')
+    }
+    const successor=successorEpoch===context.epochId
+      ?{rootKey:context.rootKey,manifest:context.manifest,snapshot:context.snapshot,verified:context.verified,result:context.result,remoteId:context.remoteId,accountBinding:context.accountBinding}
+      :await loadLineageEpochV2({session,diaryId:context.diaryId,epochId:successorEpoch,manifestFingerprint:entry.kind==='profile_upgrade'?entry.successor_manifest_fingerprint:entry.proof.successor_manifest_fingerprint,rootKey:successorRoot})
+    if(entry.kind==='profile_upgrade'){
+      if(index!==0)throw new Error('Profile-upgrade ActivationLineageV2 entry must be first.')
+      await verifyProfileUpgradeLineageStep({session,diaryId:context.diaryId,entry,successor})
+    }else{
+      const sourceRoot=fixedBase64Url(entry.source_root_key,32,'v2_rotation.source_root_key')
+      await verifyV2RotationLineageStep({session,diaryId:context.diaryId,sourceRoot,successor,entry})
+    }
+  }
+  void leafCandidate
 }
-
+export async function verifyActivationForJoin(session:TransferableSingleWriterV2ProviderSession,candidate:ActiveCandidateV2):Promise<void>{
+  return verifyActivationLineageForCanonicalEpoch(session,{
+    diaryId:candidate.payload.diary_id,epochId:candidate.payload.epoch_id,rootKey:candidate.rootKey,manifest:candidate.manifest,
+    snapshot:candidate.snapshot,verified:candidate.verified,result:candidate.result,remoteId:candidate.remoteId,accountBinding:candidate.accountBinding,
+    activationLineage:candidate.payload.activation_lineage,
+  })
+}
 async function discoverActiveCandidate(session:TransferableSingleWriterV2ProviderSession,urs:Uint8Array):Promise<{familyLocator:string;candidate:ActiveCandidateV2}>{
   const familyLocator=await recoveryFamilyLocatorV6(urs)
   if(!session.discoverRecoveryFamilyArtifacts)throw new Error('Recovery-family discovery is unavailable for read-only Join.')
