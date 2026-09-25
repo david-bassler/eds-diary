@@ -4,7 +4,7 @@ import {
   LOCAL_STORES,
   putRecord,
   putRecords,
-} from '../../data/localDatabase'
+} from '../../data/profileAwareRecords'
 import { markDirty } from '../../data/syncManager'
 import type { ActivityEntry, NewActivityEntry } from './activityEntry'
 import {
