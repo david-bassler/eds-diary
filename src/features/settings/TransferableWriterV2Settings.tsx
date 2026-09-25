@@ -57,19 +57,32 @@ export function TransferableWriterV2Settings(){
   async function join():Promise<void>{
     const urs=parseRecoveryKey(recoveryKey)
     const session=await new GoogleTransferableSingleWriterV2Provider(authOrigin()).authenticate(actionId())
-    const result=await joinExistingV2Diary(session,urs)
-    setV2Session(session)
-    setStatus(`Tagebuch read-only verbunden (Epoche ${result.epochId}).`)
+    let installed=false
+    try{
+      const result=await joinExistingV2Diary(session,urs)
+      installed=true
+      setV2Session(session)
+      setStatus(`Tagebuch read-only verbunden (Epoche ${result.epochId}).`)
+    }finally{
+      if(!installed)await session.disconnect().catch(()=>undefined)
+    }
   }
   async function upgrade():Promise<void>{
     const urs=parseRecoveryKey(recoveryKey),origin=authOrigin()
     const source=await new GoogleSingleWriterProvider(origin).authenticate(actionId())
-    const successor=await new GoogleTransferableSingleWriterV2Provider(origin).authenticate(actionId())
-    const result=await upgradeAuthenticatedRemoteSessionToV2(source,successor,urs)
-    if(result.stage==='switched'){
-      setV2Session(successor)
-      setStatus('Tagebuch wurde vollständig auf Transferable Single Writer v2 umgestellt.')
-    }else setStatus(`V2-Upgrade steht bei ${result.stage}; der Vorgang bleibt crash-resumierbar.`)
+    let successor:TransferableSingleWriterV2ProviderSession|null=null,installed=false
+    try{
+      successor=await new GoogleTransferableSingleWriterV2Provider(origin).authenticate(actionId())
+      const result=await upgradeAuthenticatedRemoteSessionToV2(source,successor,urs)
+      if(result.stage==='switched'){
+        installed=true
+        setV2Session(successor)
+        setStatus('Tagebuch wurde vollständig auf Transferable Single Writer v2 umgestellt.')
+      }else setStatus(`V2-Upgrade steht bei ${result.stage}; der Vorgang bleibt crash-resumierbar.`)
+    }finally{
+      await source.disconnect().catch(()=>undefined)
+      if(successor&&!installed)await successor.disconnect().catch(()=>undefined)
+    }
   }
   async function connect():Promise<void>{
     const session=await connectedV2()
