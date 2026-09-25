@@ -98,7 +98,6 @@ function exactRecoveryBinding(payload:RecoveryPayloadV6,result:CanonicalFullResu
     ||payload.recovery_takeover_key_id!==recovery.recovery_takeover_key_id
     ||payload.recovery_takeover_public_key!==recovery.recovery_takeover_public_key
     ||!same(payload.recovery_credential_history,result.recovery_credential_history))throw new Error('RecoveryArtifactV6 is not current for the canonical v2 Recovery authority.')
-  if(recovery.recovery_rekey_rotation_required||recovery.recovery_rekey_transition_id!==null)throw new Error('Read-only Join is blocked while v2 Recovery-Rekey is pending.')
 }
 
 async function verifyCurrentRecoveryTransitionForJoin(candidate:ActiveCandidateV2):Promise<void>{
