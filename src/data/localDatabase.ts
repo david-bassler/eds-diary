@@ -283,6 +283,47 @@ export async function openSuccessorRootWrapV6WithActiveMode(prepared:PreparedSuc
   return openPrfRootWrapV6(wrap,factor.credentialId,factor.prfOutput)
 }
 
+
+/** Opens the currently selected v2 epoch independently of how it originally
+ * entered this profile (profile-upgrade, read-only Join or native rotation).
+ * Strong local protection is accepted only when an already-unlocked factor
+ * actually opens the authenticated RootWrapV6. */
+export async function openActiveV2RootWrapV6WithActiveMode(prepared:PreparedSuccessorRootWrapV6):Promise<Uint8Array>{
+  const wrap=prepared.wrap
+  validateRootWrapV6(wrap)
+  const selected=await activeProtocolSelectionV2()
+  if(!selected||selected.diary_id!==wrap.diary_id||selected.epoch_id!==wrap.epoch_id||selected.manifest_fingerprint!==wrap.manifest_fingerprint)throw new Error('RootWrapV6 does not match the active v2 protocol selection.')
+  if(wrap.mode==='best-effort'){
+    if(!prepared.bestEffortWrappingKey)throw new Error('Active v2 RootWrapV6 best-effort wrapping key is missing.')
+    return openBestEffortRootWrapV6(wrap,prepared.bestEffortWrappingKey)
+  }
+  if(prepared.bestEffortWrappingKey)throw new Error('Active strong RootWrapV6 unexpectedly carries a best-effort key.')
+  const preferred=unlockFactors.get(wrap.diary_id)
+  const factors=preferred?[preferred,...[...unlockFactors.values()].filter(value=>value!==preferred)]:[...unlockFactors.values()]
+  if(wrap.mode==='passphrase'){
+    for(const factor of factors){
+      if(factor.mode!=='passphrase')continue
+      try{
+        const root=await openPassphraseRootWrapV6(wrap,factor.passphrase)
+        unlockFactors.set(wrap.diary_id,factor)
+        return root
+      }catch{/* another unlocked passphrase factor may belong to another diary */}
+    }
+    throw new LocalUnlockRequiredError('passphrase')
+  }
+  for(const factor of factors){
+    if(factor.mode!=='prf')continue
+    try{
+      const expectedInput=fromBase64Url(wrap.mode_metadata.prf_eval_input)
+      if(!sameBytes(expectedInput,factor.prfEvalInput)||wrap.mode_metadata.rp_id!==factor.rpId)continue
+      const root=await openPrfRootWrapV6(wrap,factor.credentialId,factor.prfOutput)
+      unlockFactors.set(wrap.diary_id,factor)
+      return root
+    }catch{/* another unlocked PRF factor may belong to another diary */}
+  }
+  throw new LocalUnlockRequiredError('prf')
+}
+
 export interface LocalRootWrapStatus{initialized:boolean;mode:'best-effort'|'passphrase'|'prf';locked:boolean;credentialId?:string;prfEvalInput?:string;rpId?:string}
 export async function localRootWrapStatus():Promise<LocalRootWrapStatus>{const db=await openDatabase(),tx=db.transaction(STORES.context,'readonly'),done=complete(tx),context=await result<EpochContext|undefined>(tx.objectStore(STORES.context).get(ACTIVE_CONTEXT));await done;if(!context)return{initialized:false,mode:'best-effort',locked:false};const {wrap}=await readEpochRecords(db,context);if(wrap.mode==='prf')return{initialized:true,mode:'prf',locked:!unlockedRoots.has(context.epochId),credentialId:wrap.mode_metadata.credential_id,prfEvalInput:wrap.mode_metadata.prf_eval_input,rpId:wrap.mode_metadata.rp_id};return{initialized:true,mode:wrap.mode,locked:wrap.mode!=='best-effort'&&!unlockedRoots.has(context.epochId)}}
 export async function unlockActiveRootWithPassphrase(passphrase:string):Promise<void>{const db=await openDatabase(),tx=db.transaction(STORES.context,'readonly'),context=await result<EpochContext|undefined>(tx.objectStore(STORES.context).get(ACTIVE_CONTEXT));await complete(tx);if(!context)throw new Error('No active epoch exists.');const{wrap,stored}=await readEpochRecords(db,context);if(wrap.mode!=='passphrase')throw new Error('Active root wrap is not passphrase mode.');const rootKey=await openPassphraseRootWrap(wrap,passphrase),salt=await deriveEpochSalt(fromBase64Url(context.diaryId),fromBase64Url(context.epochId));await verifyStateTag(rootKey,salt,stored.state,stored.tag);unlockFactors.set(context.diaryId,{mode:'passphrase',passphrase});unlockedRoots.set(context.epochId,new Uint8Array(rootKey));readyPromise=null}
