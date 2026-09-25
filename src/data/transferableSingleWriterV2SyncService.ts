@@ -5,7 +5,7 @@ import { IndexedDbV2CoordinatorStore } from '../security/v2/coordinatorStore'
 import { IndexedDbV2LocalSecurityStore } from '../security/v2/localPersistence'
 import { TransferableSingleWriterV2WriteAuthority } from '../security/v2/writeAuthority'
 import { SingleWriterCoordinator } from '../sync/core/coordinator'
-import type { TransferableSingleWriterV2ProviderSession } from '../sync/google/GoogleTransferableSingleWriterV2Provider'
+import type { TransferableWriterV2RuntimeSession } from '../sync/core/provider'
 import { activeProtocolSelectionV2, openSuccessorRootWrapV6WithActiveMode } from './localDatabase'
 
 export interface ActiveV2RuntimeContext {
@@ -23,14 +23,14 @@ export class TransferableSingleWriterV2SyncService {
   private readonly store:IndexedDbV2LocalSecurityStore
 
   private constructor(
-    private readonly session:TransferableSingleWriterV2ProviderSession,
+    private readonly session:TransferableWriterV2RuntimeSession,
     store?:IndexedDbV2LocalSecurityStore,
   ){
     this.store=store??new IndexedDbV2LocalSecurityStore()
   }
 
   static async createAuthenticated(
-    session:TransferableSingleWriterV2ProviderSession,
+    session:TransferableWriterV2RuntimeSession,
     store?:IndexedDbV2LocalSecurityStore,
   ):Promise<TransferableSingleWriterV2SyncService>{
     const service=new TransferableSingleWriterV2SyncService(session,store)
