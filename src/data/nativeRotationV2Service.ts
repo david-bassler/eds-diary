@@ -278,6 +278,7 @@ export class ProductiveNativeRotationV2Service implements ProfileUpgradeOrchestr
     const rootKey=await this.rootForEpoch(selection.epoch_id),epochSalt=await deriveEpochSaltV2(fixedBase64Url(selection.diary_id,16),fixedBase64Url(selection.epoch_id,16))
     let state=await this.store.loadState(rootKey,epochSalt,selection.epoch_id)
     if(state.diary_id!==selection.diary_id||state.manifest_fingerprint!==selection.manifest_fingerprint||state.epoch_status!=='active'||state.writer_status!=='writer_active'||!state.remote_binding||!state.remote_anchor)throw new Error('Native v2 rotation requires the active authenticated local Writer.')
+    const binding=state.remote_binding
     if(state.writer_operation_state_ref&& !['durable','stale'].includes(state.writer_operation_state_ref.state))throw new Error('Native v2 rotation is blocked by a WriterGrant ceremony.')
     if(state.migration_state_ref!==null)throw new Error('Native v2 rotation is blocked by migration state.')
     const recoveryOp=state.recovery_operation_state_ref?await this.store.loadBoundRecoveryRekeyOperation(rootKey,epochSalt,state.epoch_id):null
