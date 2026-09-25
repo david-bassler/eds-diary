@@ -4,7 +4,7 @@ import { canonicalBytes } from '../crypto/canonical'
 import { randomBytes, sha256 } from '../crypto/core'
 import type { PreparedEnvelope } from '../envelopes'
 import { revisionSigningBytesV2, signEd25519V2, verifyEd25519V2 } from './crypto'
-import type { PreparedEnvelopeRowV2, RecoveryActivationProofV2, V2RotationActivationEntryV2 } from './recovery'
+import type { ActivationLineageV2, PreparedEnvelopeRowV2, RecoveryActivationProofV2, V2RotationActivationEntryV2 } from './recovery'
 import type {
   EpochMigrationV2,
   RemoteAnchorV2,
@@ -274,12 +274,12 @@ export async function createRecoveryActivationProofV2(args:{
 export async function recoveryActivationProofHashV2(proof:RecoveryActivationProofV2):Promise<string>{
   return base64Url(await sha256(canonicalBytes(proof as never)))
 }
-export function extendActivationLineageV2(sourceRootKey:Uint8Array,sourceLineage:readonly unknown[],proof:RecoveryActivationProofV2):V2RotationActivationEntryV2[]{
+export function extendActivationLineageV2(sourceRootKey:Uint8Array,sourceLineage:ActivationLineageV2,proof:RecoveryActivationProofV2):ActivationLineageV2{
   if(sourceRootKey.byteLength!==32)throw new Error('Native v2 rotation source RK must contain 32 bytes.')
   const entry:V2RotationActivationEntryV2={kind:'v2_rotation',source_profile:SINGLE_WRITER_V2_PROFILE,source_root_key:base64Url(sourceRootKey),proof}
-  return[...(structuredClone(sourceLineage) as V2RotationActivationEntryV2[]),entry]
+  return[...structuredClone(sourceLineage),entry]
 }
-export async function activationLineageHashV2(lineage:readonly unknown[]):Promise<string>{
+export async function activationLineageHashV2(lineage:ActivationLineageV2):Promise<string>{
   return base64Url(await sha256(canonicalBytes(lineage as never)))
 }
 export async function verifyRecoveryActivationProofV2(args:{
