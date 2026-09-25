@@ -24,6 +24,7 @@ import type { TransferableSingleWriterV2ProviderSession } from '../sync/google/G
 import { IndexedDbV2LocalSecurityStore, __v2LocalPersistenceTesting } from '../security/v2/localPersistence'
 import { ProductiveReadOnlyJoinV2Service } from '../data/readOnlyJoinV2Service'
 import { ProductiveWriterHandoffV2Service } from '../data/writerHandoffV2Service'
+import { ProductiveForcedTakeoverV2Service } from '../data/forcedTakeoverV2Service'
 import { verifyTransferDescriptorV2 } from '../security/v2/validators'
 import { __localDatabaseTesting, activeEpochSyncContext, activeProtocolSelectionV2 } from '../data/localDatabase'
 
@@ -89,9 +90,11 @@ function sessionFor(
     providerId:'google-drive-sheets-v1',
     async discover(){return[{remoteId,locator:'ignored'}]},
     async read(){return f.snapshot},
+    async append(_id:string,row:readonly[string,string,string]){f.snapshot.rows.push([...row])},
     async authenticatedAccountBinding(){return f.accountBinding},
   }
-  const codec={async verifyRemote():Promise<VerifiedRemoteState>{return options?.verified?.()??f.verified}}
+  const realCodec=new GoogleSheetsTransferableSingleWriterV2ProfileCodec(f.diaryId,f.epochId,f.rootKey,f.accountBinding)
+  const codec={async verifyRemote(snapshot= f.snapshot):Promise<VerifiedRemoteState>{return options?.verified?.()??realCodec.verifyRemote(snapshot)}}
   return{
     providerId:'google-drive-sheets-v1',
     profileId:SINGLE_WRITER_V2_PROFILE,
@@ -331,4 +334,82 @@ describe('productive v2 read-only Join',()=>{
     const store=new IndexedDbV2LocalSecurityStore()
     await expect(store.loadState(f.rootKey,f.epochSalt,f.epochId)).rejects.toThrow(/missing/)
   })
+  it('performs a productive Forced Takeover from the joined read-only identity',async()=>{
+    const f=await nativeJoinFixture(),calls={family:0},session=sessionFor(f,calls),store=new IndexedDbV2LocalSecurityStore()
+    const joined=await new ProductiveReadOnlyJoinV2Service(session,store).join(f.urs)
+    const before=await store.loadState(f.rootKey,f.epochSalt,f.epochId)
+    expect(before.writer_status).toBe('read_only')
+    expect(before.writer_device_id).toBe(joined.writerDeviceId)
+
+    const result=await new ProductiveForcedTakeoverV2Service(session,store,()=>createdAt).takeover(f.urs)
+    expect(result.stage).toBe('durable')
+    expect(result.maintenanceOnly).toBe(false)
+    expect(result.writerDeviceId).toBe(joined.writerDeviceId)
+    expect(result.writerKeyId).toBe(joined.writerKeyId)
+    expect(result.expectedWriterGeneration).toBe(2)
+
+    const after=await store.loadState(f.rootKey,f.epochSalt,f.epochId)
+    expect(after.writer_status).toBe('writer_active')
+    expect(after.writer_device_id).toBe(joined.writerDeviceId)
+    expect(after.writer_signing_key_id).toBe(joined.writerKeyId)
+    expect(after.writer_generation).toBe(result.expectedWriterGeneration)
+    expect(after.writer_grant_id).toBe(result.expectedWriterGrantId)
+
+    const canonical=(await new GoogleSheetsTransferableSingleWriterV2ProfileCodec(f.diaryId,f.epochId,f.rootKey,f.accountBinding).verifyRemote(f.snapshot)).profileState as Awaited<ReturnType<TransferableSingleWriterV2Verifier['verifyCanonicalFull']>>
+    expect(canonical.current_writer.writer_device_id).toBe(joined.writerDeviceId)
+    expect(canonical.current_writer.writer_key_id).toBe(joined.writerKeyId)
+    expect(canonical.current_writer.writer_grant_id).toBe(result.expectedWriterGrantId)
+  })
+
+  it('resumes an exact prepared Forced Takeover after crash without requiring the Recovery Key again',async()=>{
+    const f=await nativeJoinFixture(),calls={family:0},session=sessionFor(f,calls),store=new IndexedDbV2LocalSecurityStore()
+    await new ProductiveReadOnlyJoinV2Service(session,store).join(f.urs)
+    let crashed=false
+    await expect(new ProductiveForcedTakeoverV2Service(session,store,()=>createdAt,async point=>{
+      if(point==='after-prepared'&&!crashed){crashed=true;throw new Error('takeover-crash:prepared')}
+    }).takeover(f.urs)).rejects.toThrow('takeover-crash:prepared')
+
+    const operation=await store.loadBoundWriterGrantOperation(f.rootKey,f.epochSalt,f.epochId)
+    if(!operation)throw new Error('prepared Forced Takeover operation missing')
+    expect(operation.operation_kind).toBe('forced_takeover')
+    expect(operation.stage).toBe('prepared')
+    expect(f.snapshot.rows.some(row=>row[0]===operation.prepared_envelope.envelope_id)).toBe(false)
+
+    const resumed=await new ProductiveForcedTakeoverV2Service(session,store,()=>createdAt).takeover()
+    expect(resumed.stage).toBe('durable')
+    expect(f.snapshot.rows.filter(row=>row[0]===operation.prepared_envelope.envelope_id)).toHaveLength(1)
+    expect((await store.loadState(f.rootKey,f.epochSalt,f.epochId)).writer_status).toBe('writer_active')
+  })
+
+  it('quarantines an absent prepared Forced Takeover when the physical authority prefix advances before resume',async()=>{
+    const f=await nativeJoinFixture(),calls={family:0},session=sessionFor(f,calls),store=new IndexedDbV2LocalSecurityStore()
+    await new ProductiveReadOnlyJoinV2Service(session,store).join(f.urs)
+    let crashed=false
+    await expect(new ProductiveForcedTakeoverV2Service(session,store,()=>createdAt,async point=>{
+      if(point==='after-prepared'&&!crashed){crashed=true;throw new Error('takeover-crash:stale')}
+    }).takeover(f.urs)).rejects.toThrow('takeover-crash:stale')
+
+    const operation=await store.loadBoundWriterGrantOperation(f.rootKey,f.epochSalt,f.epochId)
+    if(!operation)throw new Error('prepared Forced Takeover operation missing')
+    const duplicate=f.snapshot.rows.at(-1)
+    if(!duplicate)throw new Error('native v2 fixture has no canonical row')
+    f.snapshot.rows.push([...duplicate])
+
+    const resumed=await new ProductiveForcedTakeoverV2Service(session,store,()=>createdAt).takeover()
+    expect(resumed.stage).toBe('stale')
+    expect(f.snapshot.rows.some(row=>row[0]===operation.prepared_envelope.envelope_id)).toBe(false)
+    const entry=(await store.outbox(f.rootKey,f.epochSalt,f.epochId)).find(item=>item.envelope_id===operation.prepared_envelope.envelope_id)
+    expect(entry?.status).toBe('stale_writer_pending')
+    expect((await store.loadState(f.rootKey,f.epochSalt,f.epochId)).writer_status).toBe('read_only')
+  })
+
+  it('rejects a wrong Recovery Key before preparing Forced Takeover state',async()=>{
+    const f=await nativeJoinFixture(),calls={family:0},session=sessionFor(f,calls),store=new IndexedDbV2LocalSecurityStore()
+    await new ProductiveReadOnlyJoinV2Service(session,store).join(f.urs)
+    await expect(new ProductiveForcedTakeoverV2Service(session,store,()=>createdAt).takeover(bytes(99,32))).rejects.toBeTruthy()
+    expect(await store.loadBoundWriterGrantOperation(f.rootKey,f.epochSalt,f.epochId)).toBeNull()
+    expect((await store.loadState(f.rootKey,f.epochSalt,f.epochId)).writer_status).toBe('read_only')
+  })
+
+
 })
