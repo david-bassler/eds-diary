@@ -725,7 +725,6 @@ export class IndexedDbV2LocalSecurityStore {
       const authority:PreparedEnvelopeAuthorityV2={writer_generation:current.writer_generation,writer_grant_id:current.writer_grant_id,writer_device_id:current.writer_device_id,writer_key_id:current.writer_signing_key_id}
       await assertAuthorityMatchesEnvelope(args.rootKey,args.epochSalt,current.diary_id,current.epoch_id,args.envelope,authority)
       const writer=await this.loadWriterKey(current.writer_signing_key_id,current.diary_id,current.epoch_id)
-      if(!writer||writer.writer_device_id!==current.writer_device_id||writer.writer_public_key!==transition.to_recovery_takeover_public_key&&false)void 0
       if(!writer||writer.writer_device_id!==current.writer_device_id||!await verifyEd25519V2(fixedBase64Url(writer.writer_public_key,32,'writer_public_key'),revision.writer_signature,revisionSigningBytesV2(current.diary_id,current.epoch_id,revision)))throw new Error('Prepared RecoveryAuthorityTransitionV2 Writer signature failed against authenticated local WriterDeviceKeyV2.')
 
       const recovered=await openRecoveryArtifactV6(args.artifact,args.newUrs),payload=recovered.payload
