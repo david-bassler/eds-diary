@@ -841,6 +841,46 @@ export class IndexedDbV2LocalSecurityStore {
     })
   }
 
+  async initializeNativeSourceRotationBundle(args:{
+    rootKey:Uint8Array
+    epochSalt:Uint8Array
+    expectedOperationGeneration:number
+    operation:RotationOperationStateV2
+    artifactId:string
+    artifactValue:unknown
+  }):Promise<EpochLocalSecurityStateV6>{
+    validateRotationOperationStateV2(args.operation)
+    if(args.operation.rotation_kind==='profile_upgrade'||args.operation.stage!=='source_frozen_verified')throw new Error('Native Source rotation bundle must start at source_frozen_verified.')
+    if(!args.artifactId)throw new Error('Native Source rotation freeze artifact ID is required.')
+    return withDiaryLockV2((await this.loadState(args.rootKey,args.epochSalt,args.operation.source_epoch_id)).diary_id,async()=>{
+      await this.verifyLocalJournal(args.rootKey,args.epochSalt,args.operation.source_epoch_id)
+      const current=await this.loadState(args.rootKey,args.epochSalt,args.operation.source_epoch_id)
+      if(current.operation_generation!==args.expectedOperationGeneration)throw new Error('Stale StateV6 generation during native Source rotation freeze.')
+      if(current.epoch_id!==args.operation.source_epoch_id||current.epoch_status!=='active'||current.writer_status!=='writer_active')throw new Error('Native Source rotation freeze requires the active local Writer.')
+      if(current.rotation_state_ref&&!TERMINAL_ROTATION_OPERATION_STATES_V2.has(current.rotation_state_ref.state))throw new Error('Another non-terminal Rotation operation is already bound.')
+      if(current.writer_operation_state_ref&&!TERMINAL_WRITER_GRANT_OPERATION_STATES_V2.has(current.writer_operation_state_ref.state))throw new Error('Native Source rotation is blocked by WriterGrant operation.')
+      if(current.migration_state_ref!==null)throw new Error('Native Source rotation is blocked by migration state.')
+      const opHash=await rotationOperationStateHashV2(args.operation),artifactBytes=new TextDecoder().decode(canonicalBytes(args.artifactValue as never)),artifactHash=base64Url(await sha256(canonicalBytes(args.artifactValue as never)))
+      const next:EpochLocalSecurityStateV6={...current,operation_generation:current.operation_generation+1,rotation_state_ref:{operation_id:args.operation.operation_id,state:args.operation.stage,state_record_hash:opHash}}
+      validateEpochLocalSecurityStateV6(next)
+      const tag=await localStateTagV6(args.rootKey,args.epochSalt,next),db=await openDatabase(),readTx=db.transaction([STORES.rotationOperations,STORES.operationArtifacts],'readonly')
+      const [priorOp,priorArtifact]=await Promise.all([
+        requestResult<unknown>(readTx.objectStore(STORES.rotationOperations).get(args.operation.operation_id)),
+        requestResult<unknown>(readTx.objectStore(STORES.operationArtifacts).get(args.artifactId)),
+      ])
+      await transactionDone(readTx)
+      if(priorOp!==undefined||priorArtifact!==undefined)throw new Error('Native Source rotation freeze bundle collides with existing operation state.')
+      const tx=db.transaction([STORES.rotationOperations,STORES.operationArtifacts,STORES.states],'readwrite')
+      tx.objectStore(STORES.rotationOperations).add({id:args.operation.operation_id,state:structuredClone(args.operation),hash:opHash})
+      tx.objectStore(STORES.operationArtifacts).add({id:args.artifactId,value:structuredClone(args.artifactValue),bytes:artifactBytes,hash:artifactHash})
+      tx.objectStore(STORES.states).put({id:next.epoch_id,state:structuredClone(next),tag})
+      await transactionDone(tx)
+      const [op,artifact,state]=await Promise.all([this.loadRotationOperation(args.operation.operation_id),this.operationArtifact<unknown>(args.artifactId),this.loadState(args.rootKey,args.epochSalt,next.epoch_id)])
+      if(op.stage!=='source_frozen_verified'||artifact===null||state.rotation_state_ref?.state_record_hash!==opHash)throw new Error('Native Source rotation freeze bundle readback failed.')
+      return state
+    })
+  }
+
   async initializeRotationOperation(state:RotationOperationStateV2):Promise<RotationOperationStateV2>{
     validateRotationOperationStateV2(state)
     const hash=await rotationOperationStateHashV2(state),db=await openDatabase(),readTx=db.transaction(STORES.rotationOperations,'readonly')
