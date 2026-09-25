@@ -21,6 +21,9 @@ import {
   loadActiveV2CanonicalFromCache,
 } from './transferableSingleWriterV2SyncService'
 
+export { LOCAL_STORES }
+export type { LocalStoreName, StoreRecordConflict }
+
 let v2Runtime:TransferableSingleWriterV2SyncService|null=null
 
 export function installV2RecordRuntime(runtime:TransferableSingleWriterV2SyncService):void{v2Runtime=runtime}
