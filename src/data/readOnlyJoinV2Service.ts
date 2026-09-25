@@ -286,35 +286,61 @@ async function verifyV2RotationLineageStep(args:{
   await verifyNativeV2MigrationIntegrity({source:prefix,successor:args.successor.result,rotationKind:proof.rotation_kind,recoveryTransitionId:proof.recovery_transition_id})
 }
 
-export async function verifyActivationForJoin(session:TransferableSingleWriterV2ProviderSession,candidate:ActiveCandidateV2):Promise<void>{
-  const lineage=candidate.payload.activation_lineage
-  if(candidate.result.activation_state==='native_active'){
-    if(candidate.manifest.predecessor_epochs.length!==0||lineage.length!==0)throw new Error('Native-v2 Join activation evidence mismatch.')
+export interface CanonicalActivationLineageContextV2 {
+  diaryId:string
+  epochId:string
+  rootKey:Uint8Array
+  manifest:ProtectedManifestV6
+  snapshot:RemoteSnapshot
+  verified:VerifiedRemoteState
+  result:CanonicalFullResultV2
+  remoteId:string
+  accountBinding:string
+  activationLineage:RecoveryPayloadV6['activation_lineage']
+}
+export async function verifyActivationLineageForCanonicalEpoch(
+  session:TransferableSingleWriterV2ProviderSession,
+  context:CanonicalActivationLineageContextV2,
+):Promise<void>{
+  const lineage=context.activationLineage
+  if(context.result.activation_state==='native_active'){
+    if(context.manifest.predecessor_epochs.length!==0||lineage.length!==0)throw new Error('Native-v2 activation evidence mismatch.')
     return
   }
-  if(candidate.result.activation_state!=='cross_epoch_evidence_present'||lineage.length===0)throw new Error('Staged or evidence-free v2 Successor is not joinable.')
+  if(context.result.activation_state!=='cross_epoch_evidence_present'||lineage.length===0)throw new Error('Staged or evidence-free v2 Successor is not activatable.')
+  const leafCandidate:ActiveCandidateV2={
+    artifact:{} as RecoveryArtifactV6,artifactSha256:'',rootKey:context.rootKey,payload:{diary_id:context.diaryId,epoch_id:context.epochId,activation_lineage:lineage} as RecoveryPayloadV6,
+    manifest:context.manifest,snapshot:context.snapshot,verified:context.verified,result:context.result,remoteId:context.remoteId,accountBinding:context.accountBinding,
+  }
   for(let index=0;index<lineage.length;index+=1){
     const entry=lineage[index]!,successorEpoch=entry.kind==='profile_upgrade'?entry.successor_epoch_id:entry.proof.successor_epoch_id
     let successorRoot:Uint8Array
-    if(successorEpoch===candidate.payload.epoch_id)successorRoot=candidate.rootKey
+    if(successorEpoch===context.epochId)successorRoot=context.rootKey
     else{
       const next=lineage[index+1]
       if(!next||next.kind!=='v2_rotation'||next.proof.source_epoch_id!==successorEpoch)throw new Error('ActivationLineageV2 cannot resolve an intermediate Successor root.')
       successorRoot=fixedBase64Url(next.source_root_key,32,'v2_rotation.source_root_key')
     }
-    const successor=successorEpoch===candidate.payload.epoch_id
-      ?{rootKey:candidate.rootKey,manifest:candidate.manifest,snapshot:candidate.snapshot,verified:candidate.verified,result:candidate.result,remoteId:candidate.remoteId,accountBinding:candidate.accountBinding}
-      :await loadLineageEpochV2({session,diaryId:candidate.payload.diary_id,epochId:successorEpoch,manifestFingerprint:entry.kind==='profile_upgrade'?entry.successor_manifest_fingerprint:entry.proof.successor_manifest_fingerprint,rootKey:successorRoot})
+    const successor=successorEpoch===context.epochId
+      ?{rootKey:context.rootKey,manifest:context.manifest,snapshot:context.snapshot,verified:context.verified,result:context.result,remoteId:context.remoteId,accountBinding:context.accountBinding}
+      :await loadLineageEpochV2({session,diaryId:context.diaryId,epochId:successorEpoch,manifestFingerprint:entry.kind==='profile_upgrade'?entry.successor_manifest_fingerprint:entry.proof.successor_manifest_fingerprint,rootKey:successorRoot})
     if(entry.kind==='profile_upgrade'){
       if(index!==0)throw new Error('Profile-upgrade ActivationLineageV2 entry must be first.')
-      await verifyProfileUpgradeLineageStep({session,diaryId:candidate.payload.diary_id,entry,successor})
+      await verifyProfileUpgradeLineageStep({session,diaryId:context.diaryId,entry,successor})
     }else{
       const sourceRoot=fixedBase64Url(entry.source_root_key,32,'v2_rotation.source_root_key')
-      await verifyV2RotationLineageStep({session,diaryId:candidate.payload.diary_id,sourceRoot,successor,entry})
+      await verifyV2RotationLineageStep({session,diaryId:context.diaryId,sourceRoot,successor,entry})
     }
   }
+  void leafCandidate
 }
-
+export async function verifyActivationForJoin(session:TransferableSingleWriterV2ProviderSession,candidate:ActiveCandidateV2):Promise<void>{
+  return verifyActivationLineageForCanonicalEpoch(session,{
+    diaryId:candidate.payload.diary_id,epochId:candidate.payload.epoch_id,rootKey:candidate.rootKey,manifest:candidate.manifest,
+    snapshot:candidate.snapshot,verified:candidate.verified,result:candidate.result,remoteId:candidate.remoteId,accountBinding:candidate.accountBinding,
+    activationLineage:candidate.payload.activation_lineage,
+  })
+}
 async function discoverActiveCandidate(session:TransferableSingleWriterV2ProviderSession,urs:Uint8Array):Promise<{familyLocator:string;candidate:ActiveCandidateV2}>{
   const familyLocator=await recoveryFamilyLocatorV6(urs)
   if(!session.discoverRecoveryFamilyArtifacts)throw new Error('Recovery-family discovery is unavailable for read-only Join.')
