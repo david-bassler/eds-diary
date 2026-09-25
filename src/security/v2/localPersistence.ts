@@ -522,7 +522,6 @@ export class IndexedDbV2LocalSecurityStore {
       if(isForced&&current.writer_status!=='read_only')throw new Error('Forced Takeover preparation requires read_only StateV6.')
       const recoveryOperationBlocks=current.recovery_operation_state_ref!==null
         &&!TERMINAL_RECOVERY_OPERATION_STATES_V2.has(current.recovery_operation_state_ref.state)
-        &&!(isForced&&current.recovery_rekey_rotation_required)
       const operationBlocked=(current.rotation_state_ref!==null&&!TERMINAL_ROTATION_OPERATION_STATES_V2.has(current.rotation_state_ref.state))
         ||current.migration_state_ref!==null
         ||(current.writer_operation_state_ref!==null&&!TERMINAL_WRITER_GRANT_OPERATION_STATES_V2.has(current.writer_operation_state_ref.state))
