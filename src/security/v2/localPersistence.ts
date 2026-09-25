@@ -1416,7 +1416,7 @@ export class IndexedDbV2LocalSecurityStore {
         this.envelopes(nextState.epoch_id),
       ])
       const localById=new Map(envelopes.map(envelope=>[envelope.envelopeId,envelope]))
-      const remoteById=new Map<string<|DELIM_k|> {row:readonly[string,string,string];index:number}>()
+      const remoteById=new Map<string,{row:readonly[string,string,string];index:number}>()
       for(let index=0;index<context.remote_rows.length;index+=1){
         const row=context.remote_rows[index]!
         if(row.length!==3||!row[0]||!row[1]||!row[2])throw new Error('Verified remote row shape is invalid.')
