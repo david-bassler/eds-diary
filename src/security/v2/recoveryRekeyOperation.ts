@@ -113,9 +113,11 @@ const IMMUTABLE=[
 export function advanceRecoveryRekeyOperationStateV2(current:RecoveryRekeyOperationStateV2,next:RecoveryRekeyOperationStateV2):RecoveryRekeyOperationStateV2{
   validateRecoveryRekeyOperationStateV2(current);validateRecoveryRekeyOperationStateV2(next)
   const edge=`${current.stage}->${next.stage}`
-  if(!ALLOWED.has(edge))throw new Error(`Illegal RecoveryRekeyOperationStateV2 transition: ${edge}.`)
+  const publishFenceOnly=current.stage==='new_material_staged'&&next.stage==='new_material_staged'&&!current.artifact_publish_attempted&&next.artifact_publish_attempted
+  if(!ALLOWED.has(edge)&&!publishFenceOnly)throw new Error(`Illegal RecoveryRekeyOperationStateV2 transition: ${edge}.`)
   for(const field of IMMUTABLE)if(!canonicalEqual(current[field],next[field]))throw new Error(`RecoveryRekeyOperationStateV2 immutable field changed: ${field}.`)
   if(current.artifact_publish_attempted&&!next.artifact_publish_attempted)throw new Error('RecoveryRekeyOperationStateV2 publish-attempt fence cannot be cleared.')
+  if(publishFenceOnly&&(next.superseded_by_transition_id!==current.superseded_by_transition_id||next.completed_successor_epoch_id!==null||next.completed_successor_manifest_fingerprint!==null))throw new Error('RecoveryRekeyOperationStateV2 publish-attempt fence changed unrelated fields.')
   if(current.stage!=='superseded'&&next.stage!=='superseded'&&next.superseded_by_transition_id!==null)throw new Error('RecoveryRekeyOperationStateV2 supersession binding is premature.')
   return next
 }
