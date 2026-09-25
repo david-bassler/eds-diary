@@ -147,7 +147,7 @@ export async function replaceRecoverySecret(
 export async function rotateAuthenticatedRemoteSession(
   session:AuthenticatedProviderSession,
   urs:Uint8Array,
-):Promise<CompletedRotation|NativeRotationResultV2>{
+):Promise<CompletedRotation|NativeRotationV2Result>{
   if(await activeProtocolSelectionV2()){
     if(!isV2Session(session))throw new Error('Native v2 rotation requires a v2 provider session.')
     const result=await new ProductiveNativeRotationV2Service(session,urs).rotate('normal')
