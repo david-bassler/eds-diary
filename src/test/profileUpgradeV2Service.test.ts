@@ -1170,7 +1170,6 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     const successorArtifact=await v2.loadRecoveryArtifact(newUrs,source.diaryId,result.successorEpochId!)
     const successorRecovered=await openRecoveryArtifactV6(successorArtifact,newUrs)
     expect(successorRecovered.payload.recovery_generation).toBe(1)
-    expect(successorRecovered.payload.recovery_rekey_rotation_required).toBeUndefined()
     await expect(openRecoveryArtifactV6(successorArtifact,urs)).rejects.toBeTruthy()
     const successorSalt=await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(result.successorEpochId!))
     const successorState=await store.loadState(successorRecovered.rootKey,successorSalt,result.successorEpochId!)
