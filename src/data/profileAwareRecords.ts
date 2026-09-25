@@ -2,6 +2,7 @@ import { fixedBase64Url, fromBase64Url } from '../security/crypto/bytes'
 import { legacyRecordId, singletonRecordId } from '../security/revisions'
 import type { DomainRecordTypeV2 } from '../security/v2/domainWrite'
 import type { RevisionV2 } from '../security/v2/types'
+import type { CanonicalFullResultV2 } from '../security/v2/verifier'
 import {
   LOCAL_STORES,
   UnresolvedRecordConflictError,
@@ -48,7 +49,7 @@ function compareIds(left:string,right:string):number{
   for(let i=0;i<limit;i++){const delta=a[i]!-b[i]!;if(delta!==0)return delta}
   return a.byteLength-b.byteLength
 }
-function headsFor(result:Awaited<ReturnType<typeof loadActiveV2CanonicalFromCache>> extends infer R?R extends {result:infer T}?T:never:never,recordId:string):RevisionV2[]{
+function headsFor(result:CanonicalFullResultV2,recordId:string):RevisionV2[]{
   if(!result)throw new Error('Canonical v2 result is unavailable.')
   const ids=result.accepted_revision_graph.heads_by_record.get(recordId)??new Set<string>()
   return [...ids].sort(compareIds).map(id=>{
