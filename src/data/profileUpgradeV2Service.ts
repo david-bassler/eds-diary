@@ -597,7 +597,7 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
     const ctx=await this.successorContext(),state=await this.v2Store.loadState(ctx.rootKey,ctx.epochSalt,ctx.plan.successor_epoch_id),key=await this.writer(ctx.plan)
     const reconciled=await stateAfterCanonicalVerifyV6(state,result,verified.snapshot.rows,key.writer_device_id===ctx.plan.writer_device_id)
     await this.v2Store.commitVerifiedDispositions(ctx.rootKey,ctx.epochSalt,state.operation_generation,reconciled,verified.acceptedEnvelopeIds,verified.staleWriterEnvelopeIds,{
-      remote_rows:verified.snapshot.rows,current_writer:{
+      remote_manifest:verified.snapshot.manifest,remote_rows:verified.snapshot.rows,current_writer:{
         writer_generation:result.current_writer.writer_generation,writer_grant_id:result.current_writer.writer_grant_id,
         writer_device_id:result.current_writer.writer_device_id,writer_key_id:result.current_writer.writer_key_id,
       },source_epoch_sealed:result.source_epoch_sealed,recovery_rekey_rotation_required:result.current_recovery.recovery_rekey_rotation_required,
