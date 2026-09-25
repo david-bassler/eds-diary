@@ -1633,7 +1633,7 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     })
     expect(v2.remote.snapshot.rows.length).toBeGreaterThan(beforeRows)
 
-    const codec=new GoogleSheetsTransferableSingleWriterV2ProfileCodec(source.diaryId,upgraded.successor_epoch_id,(await openRecoveryArtifactV6(await v2.loadRecoveryArtifact(urs,source.diaryId,upgraded.successor_epoch_id),urs)).rootKey,source.accountBinding)
+    const codec=new GoogleSheetsTransferableSingleWriterV2ProfileCodec(source.diaryId,upgraded.successor_epoch_id,(await openRecoveryArtifactV6(await v2.loadRecoveryArtifact(urs,source.diaryId,upgraded.successor_epoch_id),urs)).rootKey,source.account)
     const canonical=(await codec.verifyRemote(v2.remote.snapshot)).profileState as CanonicalFullResultV2
     const matching=[...canonical.accepted_revision_graph.revisions.values()].filter(revision=>revision.record_type==='pain_entry'&&revision.record_data&&typeof revision.record_data==='object'&&(revision.record_data as {note?:unknown}).note==='v2 app routing')
     expect(matching).toHaveLength(1)
