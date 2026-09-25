@@ -1146,7 +1146,7 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
   },120_000)
 
   it('resumes native v2 rotation after crashing immediately after the durable Source freeze',async()=>{
-    const createdAt='2026-09-25T07:25:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session();v2.registerV1Epoch(source.sourceEpochId,source.transport),store=new IndexedDbV2LocalSecurityStore()
+    const createdAt='2026-09-25T07:25:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
     await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
     let crashed=false
     await expect(new ProductiveNativeRotationV2Service(v2,urs,store,()=>createdAt,async point=>{
@@ -1165,7 +1165,7 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
   },120_000)
 
   it('completes two-phase Recovery-Rekey through mandatory recovery_rekey successor rotation',async()=>{
-    const createdAt='2026-09-25T07:30:00.000Z',urs=randomBytes(32),newUrs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session();v2.registerV1Epoch(source.sourceEpochId,source.transport),store=new IndexedDbV2LocalSecurityStore()
+    const createdAt='2026-09-25T07:30:00.000Z',urs=randomBytes(32),newUrs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
     const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
     const sourceEpochId=upgraded.successor_epoch_id
     const result=await new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt).rekey(newUrs)
@@ -1195,7 +1195,7 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
   },120_000)
 
   it('resumes Recovery-Rekey from the exact prepared bundle after crash',async()=>{
-    const createdAt='2026-09-25T07:35:00.000Z',urs=randomBytes(32),newUrs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session();v2.registerV1Epoch(source.sourceEpochId,source.transport),store=new IndexedDbV2LocalSecurityStore()
+    const createdAt='2026-09-25T07:35:00.000Z',urs=randomBytes(32),newUrs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
     const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
     let crashed=false
     await expect(new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt,async point=>{
@@ -1219,7 +1219,7 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
 
 
   it('keeps Recovery-Rekey ceremony disposition exclusively owned when generic Coordinator pulls the accepted transition',async()=>{
-    const createdAt='2026-09-25T07:40:00.000Z',urs=randomBytes(32),newUrs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session();v2.registerV1Epoch(source.sourceEpochId,source.transport),store=new IndexedDbV2LocalSecurityStore()
+    const createdAt='2026-09-25T07:40:00.000Z',urs=randomBytes(32),newUrs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
     const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
     let crashed=false
     await expect(new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt,async point=>{
@@ -1250,7 +1250,7 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
   },120_000)
 
   it('rejects direct recovery_rekey Source-rotation persistence without exact successor_rotation_required Phase-A state',async()=>{
-    const createdAt='2026-09-25T07:45:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session();v2.registerV1Epoch(source.sourceEpochId,source.transport),store=new IndexedDbV2LocalSecurityStore()
+    const createdAt='2026-09-25T07:45:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
     const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
     const artifact=await v2.loadRecoveryArtifact(urs,source.diaryId,upgraded.successor_epoch_id),opened=await openRecoveryArtifactV6(artifact,urs)
     const salt=await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(upgraded.successor_epoch_id))
