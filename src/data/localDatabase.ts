@@ -426,6 +426,33 @@ export async function activeProtocolSelectionV2():Promise<ActiveProtocolSelectio
   await complete(tx)
   return value??null
 }
+export async function atomicSelectRotatedV2(args:{
+  operation:RotationOperationStateV2
+  diaryId:string
+  sourceManifestFingerprint:string
+  successorManifestFingerprint:string
+}):Promise<void>{
+  if(args.operation.stage!=='activated_backup_verified')throw new Error('Native v2 rotation selection requires activated_backup_verified.')
+  if(args.operation.rotation_kind==='profile_upgrade')throw new Error('Profile upgrade cannot use native v2 selection.')
+  fixedBase64Url(args.diaryId,16,'diary_id');fixedBase64Url(args.sourceManifestFingerprint,32,'source_manifest_fingerprint');fixedBase64Url(args.successorManifestFingerprint,32,'successor_manifest_fingerprint')
+  const db=await openDatabase(),tx=db.transaction(STORES.context,'readwrite'),store=tx.objectStore(STORES.context)
+  const prior=await result<ActiveProtocolSelectionV2|undefined>(store.get(ACTIVE_PROTOCOL_SELECTION))
+  if(!prior){tx.abort();throw new Error('Native v2 rotation requires an existing active v2 protocol selection.')}
+  const successor:ActiveProtocolSelectionV2={
+    id:ACTIVE_PROTOCOL_SELECTION,sync_profile:'google-sheets-transferable-single-writer-v2',
+    diary_id:args.diaryId,epoch_id:args.operation.successor_epoch_id,manifest_fingerprint:args.successorManifestFingerprint,operation_id:args.operation.operation_id,
+  }
+  if(prior.epoch_id===successor.epoch_id){
+    if(new TextDecoder().decode(canonicalBytes(prior as never))!==new TextDecoder().decode(canonicalBytes(successor as never))){tx.abort();throw new Error('Native v2 rotation successor selection conflicts with an existing selection.')}
+    await complete(tx);return
+  }
+  if(prior.sync_profile!=='google-sheets-transferable-single-writer-v2'||prior.diary_id!==args.diaryId||prior.epoch_id!==args.operation.source_epoch_id||prior.manifest_fingerprint!==args.sourceManifestFingerprint){tx.abort();throw new Error('Native v2 rotation active Source selection changed before switch.')}
+  store.put(successor)
+  await complete(tx)
+  const check=await activeProtocolSelectionV2()
+  if(!check||new TextDecoder().decode(canonicalBytes(check as never))!==new TextDecoder().decode(canonicalBytes(successor as never)))throw new Error('Native v2 rotation active selection readback failed.')
+}
+
 async function assertReadOnlyJoinPlaceholderFresh(db:IDBDatabase,source:Awaited<ReturnType<typeof loadEpoch>>):Promise<void>{
   if(source.state.epoch_status!=='local_offline'
     ||source.state.remote_binding!==null
