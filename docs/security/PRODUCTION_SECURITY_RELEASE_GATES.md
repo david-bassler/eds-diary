@@ -7,7 +7,7 @@ EDS Diary ist **nicht** als „production secure“ freigegeben.
 | Gate | Status | Freigabekriterium |
 |---|---|---|
 | Interner Single-Writer-v1-Kern | **IMPLEMENTED / INTERN VALIDATED** | Kryptographischer Kern und produktive Integrationspfade sind fail-closed implementiert und automatisiert validiert. Der v1-Cutover verlangt einen vollständig durablen Freeze-Prefix, das Announcement als einzige unmittelbare Folgerow und einen final unveränderten retired Source-Anchor vor lokalem Switch. Widersprüchliche Multi-Client-Evidenz führt zum Fail-Stop. v1 setzt weiterhin die Single-Remote-Writer-Betriebsannahme voraus und bietet kein geräteübergreifendes kryptographisches Fencing; dieses gehört zum separaten v2-Gate. |
-| Transferable Single Writer v2 | **V2-01…V2-08 INTERN IMPLEMENTIERT / GESAMTPFAD NOCH NICHT FREIGEGEBEN** | Implementiert und intern validiert sind v2 Typen/Krypto/Signaturen, kanonischer Verifier/WriterGrant-State-Machine, StateV6 + Writer-Key-Store + fail-closed Write-Gate, ManifestV6/Google-v2/RecoveryArtifactV6/SyncBackupV6, produktiver v1→v2-Profile-Upgrade, kryptographischer read-only Join, produktiver crash-resumabler Cooperative Handoff und Recovery-Key-autorisierter Forced Takeover einschließlich stale-pending quarantine und Pending-Rekey-maintenance-only-Fence. Noch offen sind native v2→v2 Rotation einschließlich vollständiger zweiphasiger Recovery-Rekey-Orchestrierung, V2-App-/UI-/Fachmaterialisierungs-Wiring und insbesondere das Live-Google-Parallel-Append-Gate. Ein generischer Browser-`CryptoKey` allein beweist nicht die Einzigartigkeit eines physischen Geräts. |
+| Transferable Single Writer v2 | **V2-01…V2-09 INTERN IMPLEMENTIERT / GESAMTPFAD NOCH NICHT FREIGEGEBEN** | Implementiert und intern validiert sind v2 Typen/Krypto/Signaturen, kanonischer Verifier/WriterGrant-State-Machine, StateV6 + Writer-Key-Store + fail-closed Write-Gate, ManifestV6/Google-v2/RecoveryArtifactV6/SyncBackupV6, produktiver v1→v2-Profile-Upgrade, kryptographischer read-only Join, produktiver crash-resumabler Cooperative Handoff, Recovery-Key-autorisierter Forced Takeover einschließlich stale-pending quarantine/Pending-Rekey-maintenance-only-Fence sowie native v2→v2 Rotation und vollständige zweiphasige Recovery-Rekey-Orchestrierung. Abgedeckt sind bounded Unknown-Outcome resume, Supersession, same-epoch Recovery-Backup und der Ersatzgerätepfad Join → Forced Takeover → Pending-Rekey-Adoption → Phase-B-Rotation. Noch offen sind V2-App-/UI-/Fachmaterialisierungs-Wiring und insbesondere das Live-Google-Parallel-Append-Gate. Ein generischer Browser-`CryptoKey` allein beweist nicht die Einzigartigkeit eines physischen Geräts. |
 | Google Auth-Origin | Implementiert / Deployment **BLOCKED_EXTERNAL** | Separat baubares `/google-auth/`-Artefakt mit erlaubtem Return-Origin, einmaliger Action-Bindung, Popup→Auth-Bridge-Handoff, MessagePort-RPC und exakt begrenzten Drive-/Sheets-Endpunkten. Das Credential wird nicht an Diary-Code übergeben. Die GitHub-Pages-Testbereitstellung bleibt same-origin; Deployment auf einen zweiten Origin und echte Credentials bleiben extern. |
 | Live Google Contract | **BLOCKED_EXTERNAL** | Hostile-Grid-/Permission-/Unknown-Outcome-Suite gegen dediziertes Google-Testkonto. Zusätzlich ist der reale Mehrgerätefall ausdrücklich kein v1-Join-Pfad: ein zweites Gerät darf ein bestehendes Tagebuch erst mit v2 Join/Handoff verwenden; erneutes v1-`remote_enablement` ist dafür kein unterstützter Ersatz. |
 | WebAuthn PRF | **BLOCKED_EXTERNAL** | Der interne Browser-Adapter erzwingt `userVerification:"required"`, exakte Credential-ID und eine 32-Byte-Post-Enrollment-PRF-Assertion; vor Produktionsfreigabe bleibt die reale Authenticator-/Browsermatrix einschließlich Enrollment-, Unlock- und Recovery-Ceremony auf Zielgeräten zu validieren. |
@@ -39,9 +39,9 @@ EDS Diary ist **nicht** als „production secure“ freigegeben.
   ersetzt werden. Die Recovery-Generation wird erhöht; Umschaltung erfolgt erst
   nach Full Verify, Recovery-Bootstrap und Backup-Test-Restore. Die hiervon
   getrennte v2-RecoveryAuthorityTransition-/Pending-Rekey-Verifier- und
-  Fence-Semantik ist bereits im Transferable-Single-Writer-v2-Kern vorhanden;
-  die produktive zweiphasige Recovery-Rekey-Orchestrierung bleibt jedoch ein
-  noch offener späterer v2-Slice.
+  Fence-Semantik sowie die produktive zweiphasige Recovery-Rekey-Orchestrierung
+  sind im Transferable-Single-Writer-v2-Kern inzwischen vollständig
+  implementiert und intern regressionsvalidiert.
 - Das verschlüsselte Recovery-Artefakt wird bei normaler v1-Rotation und
   recovery_rekey zunächst one-shot lokal persistiert und bootstrap-verifiziert.
   Vor dem Source-Announcement darf die secret-derived owner-only Recovery-
@@ -99,21 +99,25 @@ EDS Diary ist **nicht** als „production secure“ freigegeben.
   RPC-Capability ist auf die tatsächlich verwendeten Drive-/Sheets-Endpunktfamilien
   und Methoden begrenzt.
 
-- **V2-01…V2-08:** eingefrorene v2 Wire-/Schema-/Signaturprimitiven, kanonischer
+- **V2-01…V2-09:** eingefrorene v2 Wire-/Schema-/Signaturprimitiven, kanonischer
   Verifier mit Writer-/Recovery-Authority-Replay, StateV6/WriterDeviceKeyV2,
   fail-closed normaler Domain-Write-Gate, striktes Google-v2-Profil,
   RecoveryArtifactV6/RecoveryTakeoverStagingV2/SyncBackupV6, produktiver
   crash-resumabler v1→v2-Profile-Upgrade, Recovery-Key-basierter read-only
-  Second-Device-Join, produktiver crash-resumabler Cooperative Handoff mit
-  PoP-gebundenem TransferDescriptorV2 sowie produktiver Forced Takeover mit
-  Recovery-Key-Capability, exakter g+1-Grant-/Anchor-Bindung, Unknown-Outcome-
-  Reconciliation, stale quarantine und Pending-Rekey-maintenance-only-Fence.
-  Der Geräteverlustfall nach durabler RecoveryAuthorityTransition ist über
-  proof-gebundenen read-only Join + Forced Takeover abgedeckt. Diese Services
-  sind noch nicht in den normalen App-/Settings-Datenpfad verdrahtet; daraus
-  folgt keine UI-/Release-Freigabe. Der zuletzt vollständig grün validierte
-  Security-Codehead vor dieser Statusdokumentationskorrektur ist
-  `83b69f0e818755319c980d0e4102541aad1f8e4b`.
+  Second-Device-Join, produktiver crash-resumabler Cooperative Handoff,
+  produktiver Forced Takeover und native v2→v2 Rotation einschließlich
+  vollständiger zweiphasiger Recovery-Rekey-Orchestrierung. Die V2-09-Pfade
+  binden Maintenance-Control-Outbox-Eigentum, exact-byte Unknown-Outcome-Retry,
+  Recovery-Rekey-Supersession, same-epoch Source-Backup, aktivierungsgebundene
+  Successor-Confirmation sowie lokale RootWrap-Vererbung an den aktiven v2
+  Source. Der Geräteverlustfall nach durabler RecoveryAuthorityTransition ist
+  end-to-end über proof-gebundenen read-only Join, maintenance-only Forced
+  Takeover, remote Pending-Rekey-Adoption und verpflichtende Phase-B-Rotation
+  abgedeckt. Diese Services sind noch nicht in den normalen App-/Settings-
+  Datenpfad verdrahtet; daraus folgt keine UI-/Release-Freigabe. Der zuletzt
+  vollständig grün validierte Security-Codehead vor dieser
+  Statusdokumentationskorrektur ist
+  `8f508ba096d2af6634ab4127f51c4de71f339d76`.
 
 ## TESTED
 
@@ -180,6 +184,6 @@ EDS Diary ist **nicht** als „production secure“ freigegeben.
 
 `SECURITY/DECISION: single-writer-v1 production hardening rationale frozen in EDS_SINGLE_WRITER_V1_HARDENING_DECISIONS.md`
 
-`TODO_INTERNAL: transferable-single-writer-v2 remaining slices — native v2→v2 Rotation + Recovery-Rekey, App/UI integration, Live-Google Parallel-Append-Gate`
+`TODO_INTERNAL: transferable-single-writer-v2 remaining slices — App/UI/domain-materialization integration, Live-Google Parallel-Append-Gate`
 
 `SECURITY/SPEC DECISION: exact transferable-single-writer-v2 wire, signature and recovery-takeover protocol frozen in EDS_TRANSFERABLE_SINGLE_WRITER_V2_EXACT_PROTOCOL.md`
