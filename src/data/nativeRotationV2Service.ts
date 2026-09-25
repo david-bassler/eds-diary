@@ -11,7 +11,7 @@ import {
   atomicSelectRotatedV2,
   openReadOnlyJoinRootWrapV6WithActiveMode,
   openSuccessorRootWrapV6WithActiveMode,
-  prepareSuccessorRootWrapV6ForActiveMode,
+  prepareNativeV2SuccessorRootWrapV6ForActiveMode,
 } from './localDatabase'
 import {
   verifyActivationForJoin,
@@ -443,7 +443,8 @@ export class ProductiveNativeRotationV2Service implements ProfileUpgradeOrchestr
       recoveryTakeoverPrivateKeyPkcs8:privatePkcs8,manifestFingerprint:fingerprint,urs:this.urs,
     })
     privatePkcs8.fill(0)
-    const preparedWrap=await prepareSuccessorRootWrapV6ForActiveMode(rootKey,{diary_id:source.freeze.diary_id,epoch_id:operation.successor_epoch_id,key_id:keyId,manifest_fingerprint:fingerprint},wrapId)
+    const sourceWrap=await this.store.loadRootWrapV6(source.freeze.source_epoch_id)
+    const preparedWrap=await prepareNativeV2SuccessorRootWrapV6ForActiveMode(source.context.rootKey,sourceWrap,rootKey,{diary_id:source.freeze.diary_id,epoch_id:operation.successor_epoch_id,key_id:keyId,manifest_fingerprint:fingerprint},wrapId)
     const state:EpochLocalSecurityStateV6={
       local_state_version:6,diary_id:source.freeze.diary_id,epoch_id:operation.successor_epoch_id,key_id:keyId,manifest_fingerprint:fingerprint,
       recovery_generation:recovery.recovery_generation,recovery_urs_commitment:recovery.recovery_urs_commitment,recovery_urs_id:recovery.recovery_urs_id,
