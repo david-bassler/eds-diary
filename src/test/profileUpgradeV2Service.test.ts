@@ -1411,7 +1411,7 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     const replacementStore=new IndexedDbV2LocalSecurityStore()
     const joined=await new ProductiveReadOnlyJoinV2Service(v2,replacementStore).join(newUrs)
     expect(joined.epochId).toBe(upgraded.successor_epoch_id)
-    let replacementState=await replacementStore.loadState((await openRecoveryArtifactV6(await v2.loadRecoveryArtifact(newUrs,source.diaryId,upgraded.successor_epoch_id),newUrs)).rootKey,await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(upgraded.successor_epoch_id)),upgraded.successor_epoch_id)
+    const replacementState=await replacementStore.loadState((await openRecoveryArtifactV6(await v2.loadRecoveryArtifact(newUrs,source.diaryId,upgraded.successor_epoch_id),newUrs)).rootKey,await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(upgraded.successor_epoch_id)),upgraded.successor_epoch_id)
     expect(replacementState.writer_status).toBe('read_only')
     expect(replacementState.recovery_rekey_rotation_required).toBe(true)
 
