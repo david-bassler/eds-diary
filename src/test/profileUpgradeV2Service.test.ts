@@ -64,6 +64,7 @@ import { createTransferDescriptorV2, ProductiveWriterHandoffV2Service } from '..
 import { localJournalInitialV2, type EpochLocalSecurityStateV6, type StoredWriterDeviceKeyV2 } from '../security/v2/localState'
 import { ProductiveNativeRotationV2Service } from '../data/nativeRotationV2Service'
 import { ProductiveRecoveryRekeyV2Service } from '../data/recoveryRekeyV2Service'
+import { ProductiveForcedTakeoverV2Service } from '../data/forcedTakeoverV2Service'
 import type { RotationOperationStateV2 } from '../security/v2/profileUpgrade'
 import { TransferableSingleWriterV2WriteAuthority } from '../security/v2/writeAuthority'
 
@@ -194,6 +195,9 @@ class V2Session implements TransferableSingleWriterV2ProviderSession {
     this.recovery=structuredClone(persisted.artifact)
     this.recoveryByEpoch.set(persisted.epochId,structuredClone(persisted.artifact))
     return'recovery-v6'
+  }
+  async discoverRecoveryFamilyArtifacts():Promise<readonly {remoteResourceId:string;artifact:RecoveryArtifactV6}[]>{
+    return [...this.recoveryByEpoch.entries()].map(([epochId,artifact])=>({remoteResourceId:`recovery-${epochId}`,artifact:structuredClone(artifact)}))
   }
   async findRecoveryArtifact(_urs?:Uint8Array,_diaryId?:string,epochId?:string):Promise<RecoveryArtifactV6|null>{
     const artifact=epochId?this.recoveryByEpoch.get(epochId):this.recovery
@@ -1380,6 +1384,45 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     expect(adopted.stage).toBe('completed')
     expect(adopted.successorEpochId).not.toBeNull()
     const adoptedOperation=await store.loadRecoveryRekeyOperation(adopted.operationId)
+    expect(adoptedOperation.operation_origin).toBe('remote_pending_rekey_adoption')
+    expect(adoptedOperation.stage).toBe('completed')
+    expect((await activeProtocolSelectionV2())?.epoch_id).toBe(adopted.successorEpochId)
+  },120_000)
+
+
+  it('completes Pending-Rekey after full device loss via fresh Join, Forced Takeover, adoption and Phase B',async()=>{
+    const createdAt='2026-09-25T08:10:00.000Z',urs=randomBytes(32),newUrs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    let crashed=false
+    await expect(new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt,async point=>{
+      if(point==='after-transition-durable'&&!crashed){crashed=true;throw new Error('rekey-crash:device-loss')}
+    }).rekey(newUrs)).rejects.toThrow('rekey-crash:device-loss')
+
+    const sourceRemote=await v2.transportForEpoch(source.diaryId,upgraded.successor_epoch_id),sourceCodec=await v2.codecForEpoch(source.diaryId,upgraded.successor_epoch_id,(await openRecoveryArtifactV6(await v2.loadRecoveryArtifact(newUrs,source.diaryId,upgraded.successor_epoch_id),newUrs)).rootKey,sourceRemote)
+    const pendingRemote=(await sourceCodec.verifyRemote(await sourceRemote.read((sourceRemote as unknown as MemoryTransport).remoteId))).profileState as CanonicalFullResultV2
+    expect(pendingRemote.current_recovery.recovery_rekey_rotation_required).toBe(true)
+
+    await __localDatabaseTesting.resetForTesting()
+    await __v2LocalPersistenceTesting.reset()
+    await deleteDatabase('eds-diary')
+    await deleteDatabase('eds-diary-v2-security')
+    globalThis.localStorage?.clear?.()
+
+    const replacementStore=new IndexedDbV2LocalSecurityStore()
+    const joined=await new ProductiveReadOnlyJoinV2Service(v2,replacementStore).join(newUrs)
+    expect(joined.epochId).toBe(upgraded.successor_epoch_id)
+    let replacementState=await replacementStore.loadState((await openRecoveryArtifactV6(await v2.loadRecoveryArtifact(newUrs,source.diaryId,upgraded.successor_epoch_id),newUrs)).rootKey,await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(upgraded.successor_epoch_id)),upgraded.successor_epoch_id)
+    expect(replacementState.writer_status).toBe('read_only')
+    expect(replacementState.recovery_rekey_rotation_required).toBe(true)
+
+    const takeover=await new ProductiveForcedTakeoverV2Service(v2,replacementStore,()=>createdAt).takeover(newUrs)
+    expect(takeover.stage).toBe('durable')
+    expect(takeover.maintenanceOnly).toBe(true)
+
+    const adopted=await new ProductiveRecoveryRekeyV2Service(v2,replacementStore,()=>createdAt).adoptPending(newUrs)
+    expect(adopted.stage).toBe('completed')
+    expect(adopted.successorEpochId).not.toBeNull()
+    const adoptedOperation=await replacementStore.loadRecoveryRekeyOperation(adopted.operationId)
     expect(adoptedOperation.operation_origin).toBe('remote_pending_rekey_adoption')
     expect(adoptedOperation.stage).toBe('completed')
     expect((await activeProtocolSelectionV2())?.epoch_id).toBe(adopted.successorEpochId)
