@@ -1662,7 +1662,7 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     await installAuthenticatedRemoteSession(v2)
     const localStore=new IndexedDbV2LocalSecurityStore()
     const before=(await localStore.envelopes(joined.epochId)).length
-    await expect(createPainEntry({intensity:5,note:'must-not-persist'})).rejects.toThrow(/read-only|Writer authority|writer/i)
+    await expect(createPainEntry({intensity:5,note:'must-not-persist'})).rejects.toThrow(/read-only|authority|writer/i)
     const after=(await localStore.envelopes(joined.epochId)).length
     expect(after).toBe(before)
     expect((await listPainEntries({includeDeleted:true})).some(entry=>entry.note==='must-not-persist')).toBe(false)
@@ -1684,6 +1684,36 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     store.put({...model,tag:base64Url(new Uint8Array(32).fill(201))})
     await transactionComplete(tx)
     await expect(listPainEntries({includeDeleted:true})).rejects.toThrow(/read-model MAC failed/)
+  },120_000)
+
+
+  it('does not import a foreign physical stale-writer row into a fresh read-only device outbox',async()=>{
+    const createdAt='2026-09-25T09:15:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    expect(upgraded.stage).toBe('switched')
+    await appendPostActivationHandoff(v2,urs,'2026-09-25T09:16:00.000Z')
+    const staleRow=await appendPostActivationDomainRow(v2,urs,'2026-09-25T09:17:00.000Z')
+    if(!v2.remote)throw new Error('v2 remote missing for foreign stale-row regression')
+    const codec=new GoogleSheetsTransferableSingleWriterV2ProfileCodec(source.diaryId,upgraded.successor_epoch_id,(await openRecoveryArtifactV6(await v2.loadRecoveryArtifact(urs,source.diaryId,upgraded.successor_epoch_id),urs)).rootKey,source.account)
+    const remoteVerified=await codec.verifyRemote(v2.remote.snapshot)
+    expect(remoteVerified.staleWriterEnvelopeIds.has(staleRow[0])).toBe(true)
+
+    await __localDatabaseTesting.resetForTesting()
+    await __v2LocalPersistenceTesting.reset()
+    await deleteDatabase('eds-diary')
+    await deleteDatabase('eds-diary-v2-security')
+    __v2ApplicationRuntimeTesting.reset()
+    globalThis.localStorage?.clear?.()
+
+    const joined=await new ProductiveReadOnlyJoinV2Service(v2).join(urs)
+    await installAuthenticatedRemoteSession(v2)
+    const artifact=await v2.loadRecoveryArtifact(urs,source.diaryId,joined.epochId),opened=await openRecoveryArtifactV6(artifact,urs)
+    const salt=await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(joined.epochId)),store=new IndexedDbV2LocalSecurityStore()
+    const state=await store.loadState(opened.rootKey,salt,joined.epochId)
+    expect(state.stale_writer_pending_count).toBe(0)
+    expect((await store.envelopes(joined.epochId)).some(envelope=>envelope.envelopeId===staleRow[0])).toBe(false)
+    expect((await store.outbox(opened.rootKey,salt,joined.epochId)).some(entry=>entry.envelope_id===staleRow[0])).toBe(false)
   },120_000)
 
 })
