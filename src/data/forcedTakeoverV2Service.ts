@@ -167,8 +167,6 @@ export class ProductiveForcedTakeoverV2Service {
     const transition=revision.record_data as RecoveryAuthorityTransitionV2
     if(!transition
       ||transition.transition_id!==fresh.result.current_recovery.recovery_rekey_transition_id
-      ||transition.transition_id!==proof.transition_envelope.envelope_id&&false)void 0
-    if(!transition
       ||transition.from_recovery_generation!==proof.from_recovery_generation
       ||transition.from_recovery_urs_id!==proof.from_recovery_urs_id
       ||transition.from_recovery_takeover_key_id!==proof.from_recovery_takeover_key_id
