@@ -12,6 +12,7 @@ import {
   installAuthenticatedRemoteSession,
   joinExistingV2Diary,
   remoteSessionStatus,
+  replaceRecoverySecret,
   synchronizeDataLayer,
   upgradeAuthenticatedRemoteSessionToV2,
   type RemoteSessionStatus,
@@ -34,6 +35,8 @@ export function TransferableWriterV2Settings(){
   const [recoveryKey,setRecoveryKey]=useState('')
   const [descriptor,setDescriptor]=useState('')
   const [incomingDescriptor,setIncomingDescriptor]=useState('')
+  const [newRecoveryKey,setNewRecoveryKey]=useState('')
+  const [newRecoverySaved,setNewRecoverySaved]=useState(false)
   const [status,setStatus]=useState('')
   const [busy,setBusy]=useState(false)
   const [v2Session,setV2Session]=useState<TransferableSingleWriterV2ProviderSession|null>(null)
@@ -115,6 +118,20 @@ export function TransferableWriterV2Settings(){
     setStatus('Dieses Gerät hat den kanonisch erteilten Schreibzugriff übernommen.')
   }
 
+  function generateNewRecoveryKey():void{
+    setNewRecoveryKey(base64Url(randomBytes(32)))
+    setNewRecoverySaved(false)
+    setStatus('Neuer Recovery-Schlüssel erstellt. Speichere ihn außerhalb der App, bevor du den Wechsel startest.')
+  }
+  async function startRecoveryRekey():Promise<void>{
+    if(!newRecoverySaved)throw new Error('Bestätige zuerst, dass der neue Recovery-Schlüssel extern gespeichert wurde.')
+    const result=await replaceRecoverySecret(await connectedV2(),parseRecoveryKey(newRecoveryKey))
+    if(!('stage' in result))throw new Error('Unerwartetes v1-Ergebnis im v2 Recovery-Key-Wechsel.')
+    setStatus(result.stage==='completed'?'Recovery-Key-Wechsel einschließlich Phase B abgeschlossen.':`Recovery-Key-Wechsel steht bei ${result.stage}.`)
+    setNewRecoveryKey('')
+    setNewRecoverySaved(false)
+  }
+
   if(!remote)return <section><h2>Mehrgeräte-Schreibzugriff (v2)</h2><p>{status||'Status wird geprüft …'}</p></section>
 
   return <section className="google-sync-settings" aria-labelledby="transferable-writer-v2-heading">
@@ -165,13 +182,17 @@ export function TransferableWriterV2Settings(){
             :null}
         </div>
 
-        {remote.writerStatus==='read_only'&&!remote.recoveryRekeyRequired?<div className="google-sync-settings__setup">
-          <h3>Schreibzugriff übernehmen</h3>
-          <p>Forced Takeover ist eine Recovery-Ceremony. Nutze ihn nur, wenn ein kooperativer Transfer vom aktuellen Writer nicht möglich ist.</p>
+        {remote.writerStatus==='read_only'?<div className="google-sync-settings__setup">
+          <h3>{remote.recoveryRekeyRequired?'Recovery-Schreibzugriff übernehmen':'Schreibzugriff übernehmen'}</h3>
+          <p>{remote.recoveryRekeyRequired
+            ?'Der vorherige Writer ist während eines Recovery-Key-Wechsels verloren gegangen. Forced Takeover stellt nur maintenance-only Writer-Authority her; danach muss Phase B abgeschlossen werden.'
+            :'Forced Takeover ist eine Recovery-Ceremony. Nutze ihn nur, wenn ein kooperativer Transfer vom aktuellen Writer nicht möglich ist.'}</p>
           <button type="button" disabled={busy||!recoveryKey} onClick={()=>void withBusy(takeover)}>Forced Takeover mit Recovery-Schlüssel</button>
-          <button type="button" disabled={busy} onClick={()=>void withBusy(createDescriptor)}>Descriptor für kooperativen Transfer erstellen</button>
-          {descriptor?<textarea readOnly rows={6} value={descriptor} aria-label="Transfer-Descriptor"/>:null}
-          <button type="button" disabled={busy} onClick={()=>void withBusy(adopt)}>Bereits erteilten Schreibzugriff übernehmen</button>
+          {!remote.recoveryRekeyRequired?<>
+            <button type="button" disabled={busy} onClick={()=>void withBusy(createDescriptor)}>Descriptor für kooperativen Transfer erstellen</button>
+            {descriptor?<textarea readOnly rows={6} value={descriptor} aria-label="Transfer-Descriptor"/>:null}
+            <button type="button" disabled={busy} onClick={()=>void withBusy(adopt)}>Bereits erteilten Schreibzugriff übernehmen</button>
+          </>:null}
         </div>:null}
 
         {remote.writerStatus==='writer_active'&&!remote.recoveryRekeyRequired?<div className="google-sync-settings__setup">
@@ -179,6 +200,14 @@ export function TransferableWriterV2Settings(){
           <p>Füge den vom read-only Zielgerät erzeugten Transfer-Descriptor ein.</p>
           <textarea rows={6} value={incomingDescriptor} onChange={event=>setIncomingDescriptor(event.target.value)} aria-label="Transfer-Descriptor des Zielgeräts"/>
           <button type="button" disabled={busy||!incomingDescriptor.trim()} onClick={()=>void withBusy(handoff)}>Schreibzugriff sicher übertragen</button>
+        </div>:null}
+        {remote.writerStatus==='writer_active'&&!remote.recoveryRekeyRequired?<div className="google-sync-settings__setup">
+          <h3>Recovery-Schlüssel ersetzen</h3>
+          {!newRecoveryKey?<button type="button" disabled={busy} onClick={generateNewRecoveryKey}>Neuen Recovery-Schlüssel erstellen</button>:<>
+            <label>Neuer Recovery-Schlüssel<input type="text" readOnly value={newRecoveryKey}/></label>
+            <label><input type="checkbox" checked={newRecoverySaved} onChange={event=>setNewRecoverySaved(event.target.checked)}/> Ich habe den neuen Schlüssel außerhalb dieser App gespeichert.</label>
+            <button type="button" disabled={busy||!newRecoverySaved} onClick={()=>void withBusy(startRecoveryRekey)}>Recovery-Key-Wechsel starten</button>
+          </>}
         </div>:null}
       </>:null}
 
