@@ -110,13 +110,13 @@ export class V2DomainWritePreparer {
       }else{
         parentRevisionIds=[...input.parentRevisionIds]
         if(parentRevisionIds.length>8)throw new Error('Explicit v2 merge parents exceed the protocol parent bound.')
-        if(parentRevisionIds.length&&parentRevisionIds.some(parent=>!currentHeads.includes(parent)))throw new Error('Explicit v2 merge parents must be current canonical heads.')
       }
       for(const parentId of parentRevisionIds){
         const parent=remote.accepted_revision_graph.revisions.get(parentId)
         if(!parent)throw new Error('Domain revision parent is not in the freshly verified accepted graph.')
         if(parent.record_id!==input.recordId||parent.record_type!==input.recordType||parent.record_schema!==recordSchema)throw new Error('Domain revision parent belongs to a different record.')
       }
+      if(input.parentRevisionIds!==undefined&&parentRevisionIds.length&&parentRevisionIds.some(parent=>!currentHeads.includes(parent)))throw new Error('Explicit v2 merge parents must be current canonical heads.')
       if(input.status==='active'){
         if(input.data===null)throw new Error('Active domain revision requires record_data.')
         validateDomainData(schema,input.data)
