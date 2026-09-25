@@ -64,6 +64,7 @@ import { createTransferDescriptorV2, ProductiveWriterHandoffV2Service } from '..
 import { localJournalInitialV2, type EpochLocalSecurityStateV6, type StoredWriterDeviceKeyV2 } from '../security/v2/localState'
 import { ProductiveNativeRotationV2Service } from '../data/nativeRotationV2Service'
 import { ProductiveRecoveryRekeyV2Service } from '../data/recoveryRekeyV2Service'
+import type { RotationOperationStateV2 } from '../security/v2/profileUpgrade'
 
 type Row=readonly[string,string,string]
 
@@ -1207,6 +1208,61 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     const finalOperation=await store.loadRecoveryRekeyOperation(prepared.operation_id)
     expect(finalOperation.transition_envelope).toEqual(exactTransition)
     expect(finalOperation.stage).toBe('completed')
+  },120_000)
+
+
+  it('keeps Recovery-Rekey ceremony disposition exclusively owned when generic Coordinator pulls the accepted transition',async()=>{
+    const createdAt='2026-09-25T07:40:00.000Z',urs=randomBytes(32),newUrs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore()
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    let crashed=false
+    await expect(new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt,async point=>{
+      if(point==='after-transition-append'&&!crashed){crashed=true;throw new Error('rekey-crash:after-transition-append')}
+    }).rekey(newUrs)).rejects.toThrow('rekey-crash:after-transition-append')
+
+    const newArtifact=await v2.loadRecoveryArtifact(newUrs,source.diaryId,upgraded.successor_epoch_id)
+    const opened=await openRecoveryArtifactV6(newArtifact,newUrs),salt=await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(upgraded.successor_epoch_id))
+    const operation=await store.loadBoundRecoveryRekeyOperation(opened.rootKey,salt,upgraded.successor_epoch_id)
+    if(!operation)throw new Error('Recovery-Rekey operation missing after transition append crash')
+    const beforeEntry=(await store.outbox(opened.rootKey,salt,upgraded.successor_epoch_id)).find(entry=>entry.envelope_id===operation.transition_envelope.envelope_id)
+    expect(beforeEntry?.ceremony_owner).toBe('recovery_rekey')
+    expect(beforeEntry?.status).toBe('prepared')
+
+    const remote=await v2.transportForEpoch(source.diaryId,upgraded.successor_epoch_id)
+    const codec=await v2.codecForEpoch(source.diaryId,upgraded.successor_epoch_id,opened.rootKey,remote)
+    const verified=await codec.verifyRemote(await remote.read((remote as unknown as MemoryTransport).remoteId))
+    const canonical=verified.profileState as CanonicalFullResultV2
+    expect(verified.acceptedEnvelopeIds.has(operation.transition_envelope.envelope_id)).toBe(true)
+    const state=await store.loadState(opened.rootKey,salt,upgraded.successor_epoch_id)
+    const coordinator=new IndexedDbV2CoordinatorStore(upgraded.successor_epoch_id,opened.rootKey,salt,store)
+    await coordinator.commitVerifiedPull(verified,canonical.remote_anchor,state.operation_generation)
+    const afterGenericPull=(await store.outbox(opened.rootKey,salt,upgraded.successor_epoch_id)).find(entry=>entry.envelope_id===operation.transition_envelope.envelope_id)
+    expect(afterGenericPull?.status).toBe('prepared')
+
+    const resumed=await new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt).rekey(newUrs)
+    expect(resumed.stage).toBe('completed')
+  },120_000)
+
+  it('rejects direct recovery_rekey Source-rotation persistence without exact successor_rotation_required Phase-A state',async()=>{
+    const createdAt='2026-09-25T07:45:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore()
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    const artifact=await v2.loadRecoveryArtifact(urs,source.diaryId,upgraded.successor_epoch_id),opened=await openRecoveryArtifactV6(artifact,urs)
+    const salt=await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(upgraded.successor_epoch_id))
+    const state=await store.loadState(opened.rootKey,salt,upgraded.successor_epoch_id)
+    if(!state.remote_anchor)throw new Error('active v2 source anchor missing')
+    const operation:RotationOperationStateV2={
+      format:'rotation-operation-v2',version:2,operation_id:base64Url(randomBytes(32)),rotation_kind:'recovery_rekey',
+      source_epoch_id:upgraded.successor_epoch_id,successor_epoch_id:base64Url(randomBytes(16)),stage:'source_frozen_verified',
+      source_anchor_before_announcement:{...state.remote_anchor},successor_staging_anchor:null,successor_activation_anchor:null,
+      successor_creation_locator:null,successor_manifest_fingerprint:null,source_recovery_transition_id:base64Url(randomBytes(32)),
+      activation_lineage_sha256:null,announcement_envelope:null,confirmation_envelope:null,activation_evidence_sha256:null,
+      recovery_artifact_id:null,recovery_artifact_locator:null,recovery_artifact_sha256:null,staged_backup_id:null,activated_backup_id:null,
+    }
+    await expect(store.initializeNativeSourceRotationBundle({
+      rootKey:opened.rootKey,epochSalt:salt,expectedOperationGeneration:state.operation_generation,
+      operation,artifactId:`test-direct-rekey-rotation:${operation.operation_id}`,artifactValue:{kind:'invalid-direct-rekey-rotation'},
+    })).rejects.toThrow(/authenticated current transition|Recovery-rekey/)
+    const after=await store.loadState(opened.rootKey,salt,upgraded.successor_epoch_id)
+    expect(after.rotation_state_ref).not.toMatchObject({operation_id:operation.operation_id})
   },120_000)
 
 })
