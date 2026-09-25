@@ -92,7 +92,7 @@ export function validateRecoveryRekeyOperationStateV2(value:RecoveryRekeyOperati
     if(value.supersedes_transition_id!==null||!value.artifact_publish_attempted)throw new Error('Remote pending-Rekey adoption invariants failed.')
     if(['new_material_staged','recovery_artifact_published','transition_pending','transition_unknown','stale'].includes(value.stage))throw new Error('Remote pending-Rekey adoption must start from durable transition evidence.')
   }
-  if(value.stage!=='new_material_staged'&&!value.artifact_publish_attempted)throw new Error('RecoveryRekeyOperationStateV2 publish-attempt fence is missing.')
+  if(!['new_material_staged','stale'].includes(value.stage)&&!value.artifact_publish_attempted)throw new Error('RecoveryRekeyOperationStateV2 publish-attempt fence is missing.')
   return value
 }
 
@@ -117,6 +117,7 @@ export function advanceRecoveryRekeyOperationStateV2(current:RecoveryRekeyOperat
   if(!ALLOWED.has(edge)&&!publishFenceOnly)throw new Error(`Illegal RecoveryRekeyOperationStateV2 transition: ${edge}.`)
   for(const field of IMMUTABLE)if(!canonicalEqual(current[field],next[field]))throw new Error(`RecoveryRekeyOperationStateV2 immutable field changed: ${field}.`)
   if(current.artifact_publish_attempted&&!next.artifact_publish_attempted)throw new Error('RecoveryRekeyOperationStateV2 publish-attempt fence cannot be cleared.')
+  if(next.stage==='stale'&&!next.artifact_publish_attempted&&(current.stage!=='new_material_staged'||current.artifact_publish_attempted))throw new Error('Only an unattempted new_material_staged Recovery-Rekey may become stale without a publish fence.')
   if(publishFenceOnly&&(next.superseded_by_transition_id!==current.superseded_by_transition_id||next.completed_successor_epoch_id!==null||next.completed_successor_manifest_fingerprint!==null))throw new Error('RecoveryRekeyOperationStateV2 publish-attempt fence changed unrelated fields.')
   if(current.stage!=='superseded'&&next.stage!=='superseded'&&next.superseded_by_transition_id!==null)throw new Error('RecoveryRekeyOperationStateV2 supersession binding is premature.')
   return next
