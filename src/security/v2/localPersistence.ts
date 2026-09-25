@@ -1,5 +1,5 @@
 import { base64Url, equalBytes, fixedBase64Url, fromBase64Url, randomBytes } from '../crypto/bytes'
-import { canonicalBytes } from '../crypto/canonical'
+import { canonicalBytes, parseCanonicalJson } from '../crypto/canonical'
 import { hmacSha256, sha256 } from '../crypto/core'
 import { deriveLocalStateMacKeyV2, recoveryTakeoverKeyIdV2, revisionSigningBytesV2, verifyEd25519V2, writerGrantSigningBytesV2 } from './crypto'
 import { openRevisionEnvelopeV2 } from './envelopes'
@@ -1171,6 +1171,25 @@ export class IndexedDbV2LocalSecurityStore {
     tx.objectStore(STORES.states).put({id:next.epoch_id,state:structuredClone(next),tag})
     await transactionDone(tx)
     await this.loadState(rootKey,epochSalt,next.epoch_id)
+  }
+
+  async loadPersistedRecoveryArtifactV6(
+    urs:Uint8Array,
+    diaryId:string,
+    epochId:string,
+    recoveryArtifactId:string,
+  ):Promise<VerifiedPersistedRecoveryArtifactV6>{
+    fixedBase64Url(recoveryArtifactId,16,'recovery_artifact_id')
+    const id=`${epochId}:${recoveryArtifactId}`,db=await openDatabase(),tx=db.transaction(STORES.recoveryArtifacts,'readonly')
+    const stored=await requestResult<{id:string;artifactBytes:string;artifactSha256:string;familyLocator:string;artifactLocator:string}|undefined>(tx.objectStore(STORES.recoveryArtifacts).get(id))
+    await transactionDone(tx)
+    if(!stored||stored.id!==id)throw new Error('Persisted RecoveryArtifactV6 is missing.')
+    const artifact=parseCanonicalJson(new TextEncoder().encode(stored.artifactBytes)) as unknown as RecoveryArtifactV6
+    const opened=await openRecoveryArtifactV6(artifact,urs)
+    if(opened.payload.diary_id!==diaryId||opened.payload.epoch_id!==epochId||artifact.recovery_artifact_id!==recoveryArtifactId)throw new Error('Persisted RecoveryArtifactV6 context mismatch.')
+    const hash=await recoveryArtifactHashV6(artifact),family=await recoveryFamilyLocatorV6(urs),locator=await recoveryArtifactLocatorV6(urs,diaryId,epochId)
+    if(hash!==stored.artifactSha256||family!==stored.familyLocator||locator!==stored.artifactLocator)throw new Error('Persisted RecoveryArtifactV6 locator/hash integrity failed.')
+    return new VerifiedPersistedRecoveryArtifactV6(structuredClone(artifact),hash,family,locator,diaryId,epochId,VERIFIED_PERSISTED_RECOVERY_ARTIFACT_TOKEN)
   }
 
   async persistRecoveryArtifactV6(urs:Uint8Array,diaryId:string,epochId:string,artifact:RecoveryArtifactV6):Promise<VerifiedPersistedRecoveryArtifactV6>{
