@@ -62,6 +62,8 @@ import type { RecoveryAuthorityTransitionV2, RevisionV2, RotationAnnouncementV2,
 import type { CanonicalFullResultV2 } from '../security/v2/verifier'
 import { createTransferDescriptorV2, ProductiveWriterHandoffV2Service } from '../data/writerHandoffV2Service'
 import { localJournalInitialV2, type EpochLocalSecurityStateV6, type StoredWriterDeviceKeyV2 } from '../security/v2/localState'
+import { ProductiveNativeRotationV2Service } from '../data/nativeRotationV2Service'
+import { ProductiveRecoveryRekeyV2Service } from '../data/recoveryRekeyV2Service'
 
 type Row=readonly[string,string,string]
 
@@ -134,12 +136,14 @@ class V2Session implements TransferableSingleWriterV2ProviderSession {
   readonly account=base64Url(new Uint8Array(32).fill(91))
   remote:MemoryTransport|null=null
   private readonly preCreationTransport=new MemoryTransport(SINGLE_WRITER_V2_PROFILE,'successor-v2',{manifest:[],rows:[]})
+  private readonly remotesByEpoch=new Map<string,MemoryTransport>()
   recovery:RecoveryArtifactV6|null=null
+  private readonly recoveryByEpoch=new Map<string,RecoveryArtifactV6>()
   creates=0
   private readonly creation=new Map<string,CreationState>()
   async transportForEpoch(diaryId:string,epochId:string):Promise<GoogleSheetsTransferableSingleWriterV2Transport>{
-    void diaryId;void epochId
-    return (this.remote??this.preCreationTransport) as unknown as GoogleSheetsTransferableSingleWriterV2Transport
+    void diaryId
+    return (this.remotesByEpoch.get(epochId)??this.preCreationTransport) as unknown as GoogleSheetsTransferableSingleWriterV2Transport
   }
   async remoteIdentityBinding():Promise<string>{return this.account}
   async codecForEpoch(diaryId:string,epochId:string,rootKey:Uint8Array,transport:RemoteTransport):Promise<GoogleSheetsTransferableSingleWriterV2ProfileCodec>{
@@ -157,8 +161,9 @@ class V2Session implements TransferableSingleWriterV2ProviderSession {
     void args.transport;void args.recoveryStaging
     const existing=this.creation.get(args.creationLocator)
     if(existing)return structuredClone(existing)
-    const remoteId='successor-v2'
+    const remoteId=this.creates===0?'successor-v2':`successor-v2-${this.creates+1}`
     this.remote=new MemoryTransport(SINGLE_WRITER_V2_PROFILE,remoteId,{manifest:[...manifestCellsArrayV6(args.manifest)],rows:[]})
+    this.remotesByEpoch.set(args.epochId,this.remote)
     this.creates+=1
     const clean:CreationState={
       locator:args.creationLocator,manifestFingerprint:await manifestFingerprintV6(args.manifest),status:'bound',remoteId,
@@ -171,9 +176,20 @@ class V2Session implements TransferableSingleWriterV2ProviderSession {
     this.creation.set(args.creationLocator,persisted)
     return structuredClone(persisted)
   }
-  async publishRecoveryArtifact(_urs:Uint8Array,persisted:VerifiedPersistedRecoveryArtifactV6):Promise<string>{this.recovery=structuredClone(persisted.artifact);return'recovery-v6'}
-  async findRecoveryArtifact():Promise<RecoveryArtifactV6|null>{return this.recovery?structuredClone(this.recovery):null}
-  async loadRecoveryArtifact():Promise<RecoveryArtifactV6>{if(!this.recovery)throw new Error('missing recovery');return structuredClone(this.recovery)}
+  async publishRecoveryArtifact(_urs:Uint8Array,persisted:VerifiedPersistedRecoveryArtifactV6):Promise<string>{
+    this.recovery=structuredClone(persisted.artifact)
+    this.recoveryByEpoch.set(persisted.epochId,structuredClone(persisted.artifact))
+    return'recovery-v6'
+  }
+  async findRecoveryArtifact(_urs?:Uint8Array,_diaryId?:string,epochId?:string):Promise<RecoveryArtifactV6|null>{
+    const artifact=epochId?this.recoveryByEpoch.get(epochId):this.recovery
+    return artifact?structuredClone(artifact):null
+  }
+  async loadRecoveryArtifact(_urs?:Uint8Array,_diaryId?:string,epochId?:string):Promise<RecoveryArtifactV6>{
+    const artifact=epochId?this.recoveryByEpoch.get(epochId):this.recovery
+    if(!artifact)throw new Error('missing recovery')
+    return structuredClone(artifact)
+  }
   async disconnect():Promise<void>{}
 }
 
