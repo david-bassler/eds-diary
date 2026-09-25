@@ -970,10 +970,12 @@ export class IndexedDbV2LocalSecurityStore {
     if(args.operation.rotation_kind==='profile_upgrade')throw new Error('Profile upgrade cannot use the native v2 StateV6 switch.')
     const source=await this.loadState(args.sourceRootKey,args.sourceEpochSalt,args.operation.source_epoch_id)
     const successor=await this.loadState(args.successorRootKey,args.successorEpochSalt,args.operation.successor_epoch_id)
-    if(source.diary_id!==successor.diary_id||source.epoch_status!=='active'||successor.epoch_status!=='remote_bound')throw new Error('Native v2 rotation local source/successor lifecycle mismatch.')
+    if(source.diary_id!==successor.diary_id)throw new Error('Native v2 rotation local source/successor diary mismatch.')
     const hash=await rotationOperationStateHashV2(args.operation)
     if(source.rotation_state_ref?.operation_id!==args.operation.operation_id||source.rotation_state_ref.state!==args.operation.stage||source.rotation_state_ref.state_record_hash!==hash
       ||successor.rotation_state_ref?.operation_id!==args.operation.operation_id||successor.rotation_state_ref.state!==args.operation.stage||successor.rotation_state_ref.state_record_hash!==hash)throw new Error('Native v2 rotation StateV6 operation bindings are not switch-ready.')
+    if(source.epoch_status==='retired'&&successor.epoch_status==='active')return
+    if(source.epoch_status!=='active'||successor.epoch_status!=='remote_bound')throw new Error('Native v2 rotation local source/successor lifecycle mismatch.')
     if(!successor.remote_anchor||successor.verified_writer_generation===null||successor.verified_writer_grant_id===null||successor.verified_writer_device_id===null||successor.verified_writer_key_id===null)throw new Error('Native v2 rotation Successor lacks final canonical authority.')
     const localWriter=successor.writer_device_id===successor.verified_writer_device_id&&successor.writer_signing_key_id===successor.verified_writer_key_id
     const sourceNext:EpochLocalSecurityStateV6={...source,epoch_status:'retired',writer_status:'read_only',writer_generation:null,writer_grant_id:null,operation_generation:source.operation_generation+1}
