@@ -148,6 +148,8 @@ class V2Session implements TransferableSingleWriterV2ProviderSession {
   private readonly v1RemotesByEpoch=new Map<string,MemoryTransport>()
   recovery:RecoveryArtifactV6|null=null
   private readonly recoveryByEpoch=new Map<string,RecoveryArtifactV6>()
+  private readonly recoveryByEpochAndUrs=new Map<string,RecoveryArtifactV6>()
+  private recoveryKey(epochId:string,urs:Uint8Array):string{return `${epochId}:${base64Url(urs)}`}
   creates=0
   private readonly creation=new Map<string,CreationState>()
   async transportForEpoch(diaryId:string,epochId:string):Promise<GoogleSheetsTransferableSingleWriterV2Transport>{
@@ -191,20 +193,24 @@ class V2Session implements TransferableSingleWriterV2ProviderSession {
     this.creation.set(args.creationLocator,persisted)
     return structuredClone(persisted)
   }
-  async publishRecoveryArtifact(_urs:Uint8Array,persisted:VerifiedPersistedRecoveryArtifactV6):Promise<string>{
+  async publishRecoveryArtifact(urs:Uint8Array,persisted:VerifiedPersistedRecoveryArtifactV6):Promise<string>{
     this.recovery=structuredClone(persisted.artifact)
     this.recoveryByEpoch.set(persisted.epochId,structuredClone(persisted.artifact))
+    this.recoveryByEpochAndUrs.set(this.recoveryKey(persisted.epochId,urs),structuredClone(persisted.artifact))
     return'recovery-v6'
   }
-  async discoverRecoveryFamilyArtifacts():Promise<readonly {remoteResourceId:string;artifact:RecoveryArtifactV6}[]>{
-    return [...this.recoveryByEpoch.entries()].map(([epochId,artifact])=>({remoteResourceId:`recovery-${epochId}`,artifact:structuredClone(artifact)}))
+  async discoverRecoveryFamilyArtifacts(urs:Uint8Array):Promise<readonly {remoteResourceId:string;artifact:RecoveryArtifactV6}[]>{
+    const suffix=`:${base64Url(urs)}`
+    return [...this.recoveryByEpochAndUrs.entries()]
+      .filter(([key])=>key.endsWith(suffix))
+      .map(([key,artifact])=>({remoteResourceId:`recovery-${key.slice(0,key.length-suffix.length)}`,artifact:structuredClone(artifact)}))
   }
-  async findRecoveryArtifact(_urs?:Uint8Array,_diaryId?:string,epochId?:string):Promise<RecoveryArtifactV6|null>{
-    const artifact=epochId?this.recoveryByEpoch.get(epochId):this.recovery
+  async findRecoveryArtifact(urs?:Uint8Array,_diaryId?:string,epochId?:string):Promise<RecoveryArtifactV6|null>{
+    const artifact=epochId&&urs?this.recoveryByEpochAndUrs.get(this.recoveryKey(epochId,urs)):epochId?this.recoveryByEpoch.get(epochId):this.recovery
     return artifact?structuredClone(artifact):null
   }
-  async loadRecoveryArtifact(_urs?:Uint8Array,_diaryId?:string,epochId?:string):Promise<RecoveryArtifactV6>{
-    const artifact=epochId?this.recoveryByEpoch.get(epochId):this.recovery
+  async loadRecoveryArtifact(urs?:Uint8Array,_diaryId?:string,epochId?:string):Promise<RecoveryArtifactV6>{
+    const artifact=epochId&&urs?this.recoveryByEpochAndUrs.get(this.recoveryKey(epochId,urs)):epochId?this.recoveryByEpoch.get(epochId):this.recovery
     if(!artifact)throw new Error('missing recovery')
     return structuredClone(artifact)
   }
