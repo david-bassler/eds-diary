@@ -679,7 +679,7 @@ export class ProductiveNativeRotationV2Service implements ProfileUpgradeOrchestr
       |{kind:'durable'}
       |{kind:'stale'}
       |{kind:'ready';source:Awaited<ReturnType<ProductiveNativeRotationV2Service['exactFrozenSource']>>}
-    >=>{
+    > => {
       try{
         const source=await this.exactFrozenSource(true),successor=await this.successorAtStagingOrConfirmation()
         if(source.announcementCount>0){await this.reconcileSource(source);return{kind:'durable'}}
@@ -722,7 +722,7 @@ export class ProductiveNativeRotationV2Service implements ProfileUpgradeOrchestr
       |{kind:'durable';activationAnchor:CanonicalFullResultV2['remote_anchor']}
       |{kind:'ready';transport:GoogleSheetsTransferableSingleWriterV2Transport;remoteId:string}
       |{kind:'cutover_race'}
-    >=>{
+    > => {
       const source=await this.exactFrozenSource(true)
       if(source.announcementCount===0)throw new Error('Native v2 Confirmation is forbidden before durable Source Announcement.')
       try{
