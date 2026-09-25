@@ -1,7 +1,7 @@
 import { base64Url, equalBytes, fixedBase64Url, fromBase64Url, randomBytes } from '../crypto/bytes'
 import { canonicalBytes } from '../crypto/canonical'
 import { hmacSha256, sha256 } from '../crypto/core'
-import { deriveLocalStateMacKeyV2, verifyEd25519V2, writerGrantSigningBytesV2 } from './crypto'
+import { deriveLocalStateMacKeyV2, recoveryTakeoverKeyIdV2, verifyEd25519V2, writerGrantSigningBytesV2 } from './crypto'
 import { openRevisionEnvelopeV2 } from './envelopes'
 import type { PreparedEnvelope } from '../envelopes'
 import { localJournalInitialV2, localJournalNextV2, localStateTagV6, validateEpochLocalSecurityStateV6, validateStoredWriterDeviceKeyV2, verifyLocalStateTagV6, withDiaryLockV2, type EpochLocalSecurityStateV6, type StoredWriterDeviceKeyV2 } from './localState'
@@ -21,12 +21,6 @@ const STORES={states:'epochSecurityStateV6',writerKeys:'writerDeviceKeysV2',rese
 const TERMINAL_ROTATION_OPERATION_STATES_V2=new Set(['switched','stale','cutover_race','post_activation_superseded'])
 const TERMINAL_WRITER_GRANT_OPERATION_STATES_V2=new Set(['durable','stale'])
 const TERMINAL_RECOVERY_OPERATION_STATES_V2=new Set(['completed','stale','superseded'])
-function blockingSecurityOperationRef(state:EpochLocalSecurityStateV6):boolean{
-  return (state.rotation_state_ref!==null&&!TERMINAL_ROTATION_OPERATION_STATES_V2.has(state.rotation_state_ref.state))
-    ||state.migration_state_ref!==null
-    ||(state.writer_operation_state_ref!==null&&!TERMINAL_WRITER_GRANT_OPERATION_STATES_V2.has(state.writer_operation_state_ref.state))
-    ||(state.recovery_operation_state_ref!==null&&!TERMINAL_RECOVERY_OPERATION_STATES_V2.has(state.recovery_operation_state_ref.state))
-}
 
 export interface EnvelopeReservationV6 {
   id:string
@@ -446,6 +440,7 @@ export class IndexedDbV2LocalSecurityStore {
     reservation:EnvelopeReservationV6
     envelope:PreparedEnvelope
     operation:WriterGrantOperationStateV2
+    recoveryTakeoverPublicKey?:string
   }):Promise<EpochLocalSecurityStateV6>{
     validateWriterGrantOperationStateV2(args.operation)
     if(args.operation.stage!=='prepared')throw new Error('WriterGrantOperationStateV2 bundle must start at prepared.')
@@ -456,17 +451,32 @@ export class IndexedDbV2LocalSecurityStore {
     return withDiaryLockV2((await this.loadState(args.rootKey,args.epochSalt,args.operation.epoch_id)).diary_id,async()=>{
       const current=await this.loadState(args.rootKey,args.epochSalt,args.operation.epoch_id)
       if(current.operation_generation!==args.expectedOperationGeneration)throw new Error('Stale StateV6 generation during WriterGrant preparation.')
-      if(current.epoch_status!=='active'||current.writer_status!=='writer_active'||current.writer_generation===null||current.writer_grant_id===null)throw new Error('WriterGrant preparation requires writer_active StateV6.')
-      if(args.operation.operation_kind!=='handoff')throw new Error('This WriterGrant preparation path accepts cooperative handoff only.')
-      if(blockingSecurityOperationRef(current))throw new Error('WriterGrant preparation is blocked by another non-terminal security operation.')
+      const isHandoff=args.operation.operation_kind==='handoff'
+      const isForced=args.operation.operation_kind==='forced_takeover'
+      if(!isHandoff&&!isForced)throw new Error('Unsupported WriterGrant operation kind.')
+      if(current.epoch_status!=='active')throw new Error('WriterGrant preparation requires active StateV6.')
+      if(isHandoff&&(current.writer_status!=='writer_active'||current.writer_generation===null||current.writer_grant_id===null))throw new Error('Cooperative Handoff preparation requires writer_active StateV6.')
+      if(isForced&&current.writer_status!=='read_only')throw new Error('Forced Takeover preparation requires read_only StateV6.')
+      const recoveryOperationBlocks=current.recovery_operation_state_ref!==null
+        &&!TERMINAL_RECOVERY_OPERATION_STATES_V2.has(current.recovery_operation_state_ref.state)
+        &&!(isForced&&current.recovery_rekey_rotation_required)
+      const operationBlocked=(current.rotation_state_ref!==null&&!TERMINAL_ROTATION_OPERATION_STATES_V2.has(current.rotation_state_ref.state))
+        ||current.migration_state_ref!==null
+        ||(current.writer_operation_state_ref!==null&&!TERMINAL_WRITER_GRANT_OPERATION_STATES_V2.has(current.writer_operation_state_ref.state))
+        ||recoveryOperationBlocks
+      if(operationBlocked)throw new Error('WriterGrant preparation is blocked by another non-terminal security operation.')
       await assertAuthorityMatchesEnvelope(args.rootKey,args.epochSalt,current.diary_id,current.epoch_id,args.envelope,null)
       const revision=await openRevisionEnvelopeV2(args.rootKey,args.epochSalt,{diaryId:current.diary_id,epochId:current.epoch_id},args.envelope)
       const grant=revision.record_data as WriterGrantV2
       const anchor=current.remote_anchor
-      if(revision.record_schema!=='writer-grant-sw-v2'||!grant||grant.reason!=='handoff'
-        ||grant.authorization.kind!=='writer_handoff'||grant.authorization.signer_key_id!==current.writer_signing_key_id
-        ||grant.previous_writer_generation!==current.writer_generation||grant.previous_grant_id!==current.writer_grant_id
-        ||grant.writer_generation!==current.writer_generation+1||grant.writer_generation!==args.operation.expected_writer_generation
+      const predecessorGeneration=isHandoff?current.writer_generation:current.verified_writer_generation
+      const predecessorGrantId=isHandoff?current.writer_grant_id:current.verified_writer_grant_id
+      if(revision.record_schema!=='writer-grant-sw-v2'||!grant
+        ||grant.reason!==(isHandoff?'handoff':'forced_takeover')
+        ||grant.authorization.kind!==(isHandoff?'writer_handoff':'recovery_takeover')
+        ||grant.previous_writer_generation!==predecessorGeneration||grant.previous_grant_id!==predecessorGrantId
+        ||predecessorGeneration===null||predecessorGrantId===null
+        ||grant.writer_generation!==predecessorGeneration+1||grant.writer_generation!==args.operation.expected_writer_generation
         ||grant.grant_id!==args.operation.expected_writer_grant_id
         ||grant.recovery_generation!==current.recovery_generation
         ||anchor===null
@@ -475,10 +485,27 @@ export class IndexedDbV2LocalSecurityStore {
         ||anchor.anchor_profile!==args.operation.authority_anchor.anchor_profile
         ||grant.authority_anchor.covered_row_count!==anchor.covered_row_count
         ||grant.authority_anchor.prefix_hash!==anchor.prefix_hash
-        ||grant.authority_anchor.anchor_profile!==anchor.anchor_profile)throw new Error('Prepared Handoff Grant does not bind the authenticated current Writer/Recovery/Anchor state.')
-      const sourceKey=await this.loadWriterKey(current.writer_signing_key_id,current.diary_id,current.epoch_id)
-      if(!sourceKey||sourceKey.writer_device_id!==current.writer_device_id||!grant.authorization.signature
-        ||!await verifyEd25519V2(fixedBase64Url(sourceKey.writer_public_key,32,'writer_public_key'),grant.authorization.signature,writerGrantSigningBytesV2(current.diary_id,current.epoch_id,grant)))throw new Error('Prepared Handoff Grant authorization does not verify against the authenticated local WriterDeviceKeyV2.')
+        ||grant.authority_anchor.anchor_profile!==anchor.anchor_profile)throw new Error('Prepared WriterGrant does not bind the authenticated current Writer/Recovery/Anchor state.')
+
+      if(isHandoff){
+        if(grant.authorization.signer_key_id!==current.writer_signing_key_id)throw new Error('Prepared Handoff Grant signer does not match the authenticated local Writer.')
+        const sourceKey=await this.loadWriterKey(current.writer_signing_key_id,current.diary_id,current.epoch_id)
+        if(!sourceKey||sourceKey.writer_device_id!==current.writer_device_id||!grant.authorization.signature
+          ||!await verifyEd25519V2(fixedBase64Url(sourceKey.writer_public_key,32,'writer_public_key'),grant.authorization.signature,writerGrantSigningBytesV2(current.diary_id,current.epoch_id,grant)))throw new Error('Prepared Handoff Grant authorization does not verify against the authenticated local WriterDeviceKeyV2.')
+      }else{
+        if(!args.recoveryTakeoverPublicKey||current.recovery_takeover_key_id===null
+          ||grant.authorization.signer_key_id!==current.recovery_takeover_key_id
+          ||!grant.authorization.signature)throw new Error('Prepared Forced Takeover Grant is missing authenticated Recovery authorization.')
+        const recoveryPublic=fixedBase64Url(args.recoveryTakeoverPublicKey,32,'recovery_takeover_public_key')
+        if(await recoveryTakeoverKeyIdV2(recoveryPublic)!==current.recovery_takeover_key_id
+          ||!await verifyEd25519V2(recoveryPublic,grant.authorization.signature,writerGrantSigningBytesV2(current.diary_id,current.epoch_id,grant)))throw new Error('Prepared Forced Takeover Grant authorization does not verify against the authenticated current Recovery authority.')
+        const targetKey=await this.loadWriterKey(current.writer_signing_key_id,current.diary_id,current.epoch_id)
+        if(!targetKey||targetKey.writer_device_id!==current.writer_device_id
+          ||grant.writer_device_id!==current.writer_device_id
+          ||grant.writer_key_id!==current.writer_signing_key_id
+          ||grant.writer_public_key!==targetKey.writer_public_key)throw new Error('Prepared Forced Takeover Grant does not target the authenticated local WriterDeviceKeyV2.')
+      }
+
       const db=await openDatabase(),checkTx=db.transaction(STORES.reservations,'readonly')
       const storedReservation=await requestResult<EnvelopeReservationV6|undefined>(checkTx.objectStore(STORES.reservations).get(args.reservation.id))
       await transactionDone(checkTx)

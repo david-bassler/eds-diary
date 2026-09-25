@@ -209,6 +209,57 @@ Current implementation boundary remains:
 - normal App/Settings/domain-materialization/UI wiring remains open;
 - Live-Google Parallel-Append and external production gates remain open.
 
+
+### 2026-09-25 V2-08 Forced Takeover implementation/review pass
+
+Implemented the productive Forced Takeover ceremony from Exact Protocol §16 and
+Architecture §23 item 12 on top of the fully re-audited V2-07 stack.
+
+The implementation deliberately reuses the existing WriterGrantOperationStateV2
+and ceremony-owned outbox path rather than introducing a second grant transport:
+- a fresh canonical_full verify establishes the exact decision prefix and current
+  Writer/Recovery authority;
+- the current RecoveryArtifactV6 is reopened with the user-supplied URS and bound
+  to the active diary/epoch/root/manifest/account plus all persisted freshness
+  floors available on the device;
+- any current RecoveryAuthorityTransitionProofV2 is rebound to the exact
+  canonically accepted transition envelope before the takeover signing key is
+  used;
+- the g+1 reason="forced_takeover" Grant targets the authenticated local
+  WriterDeviceKeyV2 and is signed only with the transient non-extractable
+  Recovery takeover key;
+- persistence independently reopens the prepared Grant and verifies predecessor,
+  Recovery generation/key ID/signature, decision anchor and local target key;
+- crash/Unknown-Outcome resume reuses the exact prepared bytes and re-verifies
+  their historical Recovery authorization from the fresh canonical prefix;
+- accepted readback promotes the local key only through StateV6 reconciliation;
+  stale/raced claims enter the existing authenticated stale_writer_pending
+  quarantine.
+
+Two cross-slice deferred-layer completions became concrete during V2-08:
+1. the V2-07 persistence boundary intentionally accepted only cooperative Handoff
+   Grants; V2-08 extends that boundary with a separately checked Forced-Takeover
+   branch rather than weakening the Handoff checks;
+2. V2-06 intentionally failed closed on Pending-Rekey Join. Exact Protocol §16
+   requires device-loss continuation after a durable RecoveryAuthorityTransition,
+   so Join now admits that state only when the current RecoveryArtifact carries
+   the exact canonically accepted RecoveryAuthorityTransitionProofV2. An
+   unproved/stale transition remains rejected.
+
+Productive regressions cover normal takeover after read-only Join, exact
+prepared-byte crash resume without a second Recovery capability, stale-prefix
+quarantine, wrong Recovery Key rejection, and full device-loss recovery during
+Pending-Rekey. The latter proves that takeover may become Writer-active while
+the normal domain WriteAuthority remains read_only/maintenance-only until the
+mandatory recovery_rekey rotation is completed.
+
+No wire format, frozen signature input or D-001…D-010 architecture decision was
+changed. The implemented internal boundary now reaches Architecture §23 item 12
+(Forced Takeover + stale-pending quarantine). Native v2→v2 Rotation/two-phase
+Recovery-Rekey orchestration, App/UI/domain wiring, Live-Google parallel-append
+validation and external production gates remain open.
+
+
 ## Findings and disposition
 
 | ID | Area | Finding | Disposition |
@@ -280,6 +331,7 @@ Current implementation boundary remains:
 | IA-064 | V2-07 / anti-churn assurance status coupling | After IA-062 correctly relabeled the V2 decision ledger's implementation table as a historical V2-03 snapshot, `architecture.test.ts` still required the old literal heading `Implementation status at this review`. The new documentation was semantically correct, but the assurance test encoded the stale wording rather than the intended anti-churn property and therefore made the full validation fail. | **Fixed after being recorded OPEN.** The assurance test now requires the historical V2-03 snapshot label, explicitly requires pointers to the current implementation audit and production release gates, and retains the D-001…D-010 anti-churn checks. Full Security Validation is green on head `844034967388f34ea59c412d41854d98ca190a1f`. |
 | IA-065 | V2-07 / historical decision-ledger status labeling | IA-062/IA-064 correctly marked the V2 decision-ledger implementation section as a historical V2-03 snapshot and redirected current status to the implementation audit/release gates, but the table immediately below still used the heading `Current implementation status` and contained then-correct statements such as `v2 adapter pending` / `V2-04 must wire ...`. That heading contradicted the historical-snapshot warning and could still be read as the current V2-07 boundary. | **Fixed after being recorded OPEN.** The table is now explicitly labeled `Historical implementation status at V2-03 review`; its old row contents remain unchanged as historical evidence. Architecture assurance now requires that historical label, forbids the ambiguous `Current implementation status` header, and retains pointers to the current implementation audit/release gates. |
 | IA-066 | V2-01…V2-07 / stacked-branch ancestry drift | The current V2-01 PR head contained four later hardening commits (canonical protocol timestamps and canonical `migration_origin` bounds) that were byte-for-byte present in the downstream V2-02…V2-07 trees, but those downstream branches still descended from the older V2-01 commit `bea77cc64dc9b6689a875450216f853065dea950` rather than the current PR #49 head `c7e2621cf05da539a0b58e9d0d9f93387bd78e19`. The security semantics were present, but the stacked Git ancestry no longer proved that the reviewed lower slice was actually an ancestor of every upper slice. | **Fixed after being recorded OPEN.** The stack was repaired bottom-up with tree-preserving merge commits. Every current adjacent pair V2-01→V2-07 now has `behind_by=0`, every PR reports the current lower head as its base SHA, and all recomposed slice heads completed full Security Validation successfully. The V2-01 hardening files were byte-identical before the ancestry repair, so no security semantics changed during the merge repair. |
+| IA-067 | V2-08 / implementation-audit status tail drift | After the V2-08 implementation section was added, the later V2-07 final-disposition paragraph still called its old boundary `current` and listed Forced Takeover as open. Because that paragraph appears later in the file than the V2-08 section, a reviewer reading bottom-up could incorrectly treat the historical V2-07 boundary as current. | **Fixed after being recorded OPEN.** The trailing V2-07 paragraph is now explicitly labeled as the boundary at the conclusion of the 2026-09-24 V2-07 review, its historical evidence is preserved, and a separate current V2-08 boundary states that Architecture §23 item 12 is implemented while native v2→v2 Rotation/Recovery-Rekey, App/UI, Live-Google and external gates remain open. |
 
 
 ## Reviewed points that are not findings
@@ -410,12 +462,17 @@ this pass; IA-062 and IA-064 are status/assurance corrections. No additional
 wire-format, cryptographic-authority, verifier, migration, Join or Cooperative
 Handoff defect remained open after the final pass.
 
-The current implementation boundary remains intentionally unchanged:
-§24 steps 1–10 are implemented and internally validated. Forced Takeover,
-native v2→v2 Rotation plus two-phase Recovery-Rekey orchestration, normal
-App/Settings/domain-materialization/UI wiring, the Live-Google
-Parallel-Append-Gate and the external production gates remain open and must not
-be described as implemented by this review.
+The implementation boundary at the conclusion of this 2026-09-24 V2-07 review
+was intentionally unchanged: the implemented stack ended at Cooperative Handoff;
+Forced Takeover, native v2→v2 Rotation plus two-phase Recovery-Rekey orchestration,
+normal App/Settings/domain-materialization/UI wiring, the Live-Google
+Parallel-Append-Gate and the external production gates were still open.
+
+The current boundary after the 2026-09-25 V2-08 pass above reaches Architecture
+§23 item 12: productive Forced Takeover plus stale-pending quarantine is now
+implemented and internally validated. Native v2→v2 Rotation/two-phase
+Recovery-Rekey orchestration, App/UI/domain wiring, Live-Google parallel-append
+validation and the external production gates remain open.
 
 ## Anti-churn rule for later reviews
 
