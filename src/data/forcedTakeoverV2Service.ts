@@ -161,7 +161,7 @@ export class ProductiveForcedTakeoverV2Service {
       ||!fresh.verified.acceptedEnvelopeIds.has(proof.transition_envelope.envelope_id))throw new Error('RecoveryAuthorityTransitionProofV2 transition is not canonically durable.')
     const revision=await openRevisionEnvelopeV2(
       context.rootKey,context.epochSalt,{diaryId:context.state.diary_id,epochId:context.state.epoch_id},
-      {envelopeId:row[0]!,iv:row[1]!,ciphertext:row[2]!,bytesHash:''},
+      {envelopeId:row[0]!,iv:row[1]!,ciphertext:row[2]!},
     )
     if(revision.record_schema!=='recovery-authority-transition-sw-v2'||revision.record_type!=='recovery_authority_transition'||revision.record_status!=='control')throw new Error('RecoveryAuthorityTransitionProofV2 envelope type mismatch.')
     const transition=revision.record_data as RecoveryAuthorityTransitionV2
