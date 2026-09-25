@@ -15,11 +15,8 @@ import { sealRevisionEnvelopeV2 } from '../security/v2/envelopes'
 import { openManifestV6, parseManifestCellsV6 } from '../security/v2/manifest'
 import {
   IndexedDbV2LocalSecurityStore,
-  type EnvelopeReservationV6,
-  type PreparedEnvelopeAuthorityV2,
 } from '../security/v2/localPersistence'
 import {
-  recoveryCredentialHistoryHashV2,
   type EpochLocalSecurityStateV6,
   type StoredWriterDeviceKeyV2,
 } from '../security/v2/localState'
@@ -89,8 +86,6 @@ function canonical(verified:VerifiedRemoteState):CanonicalFullResultV2{
   return result
 }
 function asRow(envelope:Pick<PreparedEnvelope,'envelopeId'|'iv'|'ciphertext'>):Row{return[envelope.envelopeId,envelope.iv,envelope.ciphertext]}
-function prepared(row:RecoveryRekeyOperationStateV2['transition_envelope']):PreparedEnvelope{return{envelopeId:row.envelope_id,iv:row.iv,ciphertext:row.ciphertext,bytesHash:''}}
-function writerAuthority(result:CanonicalFullResultV2):PreparedEnvelopeAuthorityV2{return{writer_generation:result.current_writer.writer_generation,writer_grant_id:result.current_writer.writer_grant_id,writer_device_id:result.current_writer.writer_device_id,writer_key_id:result.current_writer.writer_key_id}}
 function writerContext(result:CanonicalFullResultV2){return{writer_generation:result.current_writer.writer_generation,writer_grant_id:result.current_writer.writer_grant_id,writer_device_id:result.current_writer.writer_device_id,writer_key_id:result.current_writer.writer_key_id}}
 async function deterministicBytes(operationId:string,label:string,length:number):Promise<Uint8Array>{
   const {sha256}=await import('../security/crypto/core')
@@ -260,7 +255,7 @@ export class ProductiveRecoveryRekeyV2Service {
     return{context:ctx.context,verified,result,present,stale:false}
   }
 
-  private async markTransitionDurable(operation:RecoveryRekeyOperationStateV2,newUrs:Uint8Array,inspection:Awaited<ReturnType<ProductiveRecoveryRekeyV2Service['inspectTransition']>>):Promise<RecoveryRekeyOperationStateV2>{
+  private async markTransitionDurable(operation:RecoveryRekeyOperationStateV2,inspection:Awaited<ReturnType<ProductiveRecoveryRekeyV2Service['inspectTransition']>>):Promise<RecoveryRekeyOperationStateV2>{
     if(!inspection.present||!inspection.verified.acceptedEnvelopeIds.has(operation.transition_envelope.envelope_id)
       ||inspection.result.current_recovery.recovery_generation!==operation.to_recovery_generation||inspection.result.current_recovery.recovery_urs_id!==operation.to_recovery_urs_id
       ||inspection.result.current_recovery.recovery_takeover_key_id!==operation.to_recovery_takeover_key_id||!inspection.result.current_recovery.recovery_rekey_rotation_required
@@ -281,13 +276,13 @@ export class ProductiveRecoveryRekeyV2Service {
       await this.store.advanceRecoveryRekeyOperationBinding(inspect.context.rootKey,inspect.context.epochSalt,operation.epoch_id,state.operation_generation,operation.stage,next)
       return this.store.loadRecoveryRekeyOperation(operation.operation_id)
     }
-    if(inspect.present)return this.markTransitionDurable(operation,newUrs,inspect)
+    if(inspect.present)return this.markTransitionDurable(operation,inspect)
     if(operation.stage==='transition_unknown')return operation
     const row:[string,string,string]=[operation.transition_envelope.envelope_id,operation.transition_envelope.iv,operation.transition_envelope.ciphertext];let unknown=false
     try{await inspect.context.transport.append(inspect.context.remoteId,row)}catch(error){if(!(error instanceof TransportError)||error.code!=='unknown_outcome')throw error;unknown=true}
     await this.fault?.('after-transition-append')
     inspect=await this.inspectTransition(operation,newUrs)
-    if(inspect.present)return this.markTransitionDurable(operation,newUrs,inspect)
+    if(inspect.present)return this.markTransitionDurable(operation,inspect)
     if(inspect.stale){
       const state=await this.store.loadState(inspect.context.rootKey,inspect.context.epochSalt,operation.epoch_id),next={...operation,stage:'stale'} as RecoveryRekeyOperationStateV2
       await this.store.advanceRecoveryRekeyOperationBinding(inspect.context.rootKey,inspect.context.epochSalt,operation.epoch_id,state.operation_generation,operation.stage,next)
@@ -297,7 +292,7 @@ export class ProductiveRecoveryRekeyV2Service {
     const transitioned=await this.transitionOperation(operation,unknownState,newUrs)
     if(!unknown)return transitioned
     inspect=await this.inspectTransition(transitioned,newUrs)
-    if(inspect.present)return this.markTransitionDurable(transitioned,newUrs,inspect)
+    if(inspect.present)return this.markTransitionDurable(transitioned,inspect)
     return transitioned
   }
 
@@ -314,8 +309,10 @@ export class ProductiveRecoveryRekeyV2Service {
       const entries=await this.store.outbox(ctx.context.rootKey,ctx.context.epochSalt,ctx.state.epoch_id),envelopes=await this.store.envelopes(ctx.state.epoch_id),byId=new Map(envelopes.map(envelope=>[envelope.envelopeId,asRow(envelope)]))
       const pending:Row[]=[],stale:Row[]=[]
       for(const entry of entries){const row=byId.get(entry.envelope_id);if(!row)throw new Error('Recovery-Rekey Source Backup outbox references missing envelope.');if(entry.status==='stale_writer_pending')stale.push(row);else if(entry.status!=='durable')pending.push(row)}
+      if(snapshot.manifest.length!==4)throw new Error('Recovery-Rekey Source manifest shape mismatch.')
+      const epochManifestPublic=snapshot.manifest as readonly [string,string,string,string]
       const backup=await createBackupV6({rootKey:ctx.context.rootKey,epochSalt:ctx.context.epochSalt,urs:newUrs,diaryId:ctx.state.diary_id,epochId:ctx.state.epoch_id,keyId:ctx.state.key_id,
-        epochManifestPublic:snapshot.manifest,canonical:result,recoveryArtifact:ctx.artifact,recordRows:snapshot.rows.map(row=>[row[0]!,row[1]!,row[2]!] as Row),pendingOutboxRows:pending,staleWriterPendingRows:stale,activationState:'activated',createdAt:this.now()})
+        epochManifestPublic,canonical:result,recoveryArtifact:ctx.artifact,recordRows:snapshot.rows.map(row=>[row[0]!,row[1]!,row[2]!] as Row),pendingOutboxRows:pending,staleWriterPendingRows:stale,activationState:'activated',createdAt:this.now()})
       const restored=await testRestoreBackupV6({rootKey:ctx.context.rootKey,epochSalt:ctx.context.epochSalt,urs:newUrs,diaryId:ctx.state.diary_id,epochId:ctx.state.epoch_id,keyId:ctx.state.key_id},backup,new TransferableSingleWriterV2Verifier())
       if(restored.access!=='read_only'||!same(restored.canonical.remote_anchor,result.remote_anchor))throw new Error('Recovery-Rekey Source Backup test restore failed.')
       await this.store.putImmutableOperationArtifact(key,{backup,anchor:result.remote_anchor} satisfies SourceBackupArtifactV2)
@@ -356,7 +353,8 @@ export class ProductiveRecoveryRekeyV2Service {
     return{operationId:operation.operation_id,transitionId:operation.transition_id,stage:operation.stage,toRecoveryGeneration:operation.to_recovery_generation,toRecoveryUrsId:operation.to_recovery_urs_id,successorEpochId:operation.completed_successor_epoch_id}
   }
 
-  private async adoptPendingInternal(newUrs:Uint8Array,fresh=await this.fresh()):Promise<RecoveryRekeyOperationStateV2>{
+  private async adoptPendingInternal(newUrs:Uint8Array,fresh?:Awaited<ReturnType<ProductiveRecoveryRekeyV2Service['fresh']>>):Promise<RecoveryRekeyOperationStateV2>{
+    fresh=fresh??await this.fresh()
     if(!fresh.result.current_recovery.recovery_rekey_rotation_required||!fresh.result.current_recovery.recovery_rekey_transition_id)throw new Error('Remote Pending-Rekey adoption requires current pending Recovery state.')
     const artifact=await this.session.loadRecoveryArtifact(newUrs,fresh.state.diary_id,fresh.state.epoch_id),opened=await openRecoveryArtifactV6(artifact,newUrs),proof=opened.payload.recovery_authority_transition_proof
     if(base64Url(opened.rootKey)!==base64Url(fresh.context.rootKey)||!proof||proof.source_epoch_id!==fresh.state.epoch_id||proof.source_manifest_fingerprint!==fresh.state.manifest_fingerprint
