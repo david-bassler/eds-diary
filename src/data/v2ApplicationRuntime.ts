@@ -5,13 +5,15 @@ import { TransferableSingleWriterV2SyncService } from './transferableSingleWrite
 let service:TransferableSingleWriterV2SyncService|null=null
 let session:TransferableSingleWriterV2ProviderSession|null=null
 
-export async function installAuthenticatedV2RemoteSession(value:TransferableSingleWriterV2ProviderSession):Promise<void>{
+export async function installAuthenticatedV2RemoteSession(value:TransferableSingleWriterV2ProviderSession):Promise<TransferableSingleWriterV2SyncService>{
   if(!await activeProtocolSelectionV2())throw new Error('Cannot install a v2 provider session without an active v2 selection.')
+  if(session===value&&service)return service
   const next=await TransferableSingleWriterV2SyncService.createAuthenticated(value)
   const prior=service
   service=next
   session=value
-  if(prior&&prior!==next)await prior.close()
+  if(prior)await prior.close()
+  return next
 }
 
 export async function disconnectAuthenticatedV2RemoteSession():Promise<void>{
