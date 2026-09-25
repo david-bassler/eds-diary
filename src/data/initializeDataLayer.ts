@@ -14,6 +14,11 @@ type NativeRotationV2Result=Awaited<ReturnType<ProductiveNativeRotationV2Service
 import { IndexedDbV2LocalSecurityStore } from '../security/v2/localPersistence'
 import { deriveEpochSaltV2 } from '../security/v2/crypto'
 import { fixedBase64Url } from '../security/crypto/bytes'
+import { ProductiveProfileUpgradeV2Service } from './profileUpgradeV2Service'
+import { ProductiveReadOnlyJoinV2Service } from './readOnlyJoinV2Service'
+import { ProductiveForcedTakeoverV2Service } from './forcedTakeoverV2Service'
+import { ProductiveWriterHandoffV2Service } from './writerHandoffV2Service'
+import type { TransferDescriptorV2 } from '../security/v2/types'
 
 type AuthenticatedProviderSession=SingleWriterProviderSession|TransferableSingleWriterV2ProviderSession
 interface SecureSynchronizer {synchronize():Promise<void>}
@@ -153,6 +158,78 @@ export async function rotateAuthenticatedRemoteSession(
   await ensureLegacyCompatibility()
   const active=await activeEpochSyncContext(),transport=await session.transportForEpoch(active.diaryId,active.epochId)
   const result=await new ProductiveRotationService(session,transport,urs).rotate()
+  await installAuthenticatedRemoteSession(session)
+  return result
+}
+
+
+export async function upgradeAuthenticatedRemoteSessionToV2(
+  sourceSession:SingleWriterProviderSession,
+  successorSession:TransferableSingleWriterV2ProviderSession,
+  urs:Uint8Array,
+){
+  if(await activeProtocolSelectionV2())throw new Error('This diary is already using transferable-single-writer v2.')
+  if(!isV1Session(sourceSession)||!isV2Session(successorSession))throw new Error('Profile upgrade requires authenticated v1 Source and v2 Successor sessions.')
+  const active=await activeEpochSyncContext()
+  if(!active.state.remote_binding||active.state.epoch_status!=='active')throw new Error('Profile upgrade requires an active remotely bound v1 Source.')
+  const sourceTransport=await sourceSession.transportForEpoch(active.diaryId,active.epochId)
+  const result=await new ProductiveProfileUpgradeV2Service(sourceSession,sourceTransport,successorSession,urs).upgrade()
+  if(result.stage==='switched')await installAuthenticatedRemoteSession(successorSession)
+  return result
+}
+
+export async function joinExistingV2Diary(
+  session:TransferableSingleWriterV2ProviderSession,
+  urs:Uint8Array,
+){
+  if(!isV2Session(session))throw new Error('Read-only Join requires an authenticated v2 provider session.')
+  const result=await new ProductiveReadOnlyJoinV2Service(session).join(urs)
+  await installAuthenticatedRemoteSession(session)
+  return result
+}
+
+export async function forceTakeoverV2(
+  session:TransferableSingleWriterV2ProviderSession,
+  urs:Uint8Array,
+){
+  if(!isV2Session(session))throw new Error('Forced Takeover requires an authenticated v2 provider session.')
+  const result=await new ProductiveForcedTakeoverV2Service(session).takeover(urs)
+  await installAuthenticatedRemoteSession(session)
+  return result
+}
+
+export async function continuePendingRecoveryRekeyV2(
+  session:TransferableSingleWriterV2ProviderSession,
+  currentUrs:Uint8Array,
+):Promise<RecoveryRekeyV2Result>{
+  if(!isV2Session(session))throw new Error('Pending Recovery-Rekey continuation requires an authenticated v2 provider session.')
+  const result=await new ProductiveRecoveryRekeyV2Service(session).adoptPending(currentUrs)
+  await installAuthenticatedRemoteSession(session)
+  return result
+}
+
+export async function createWriterTransferDescriptorV2(
+  session:TransferableSingleWriterV2ProviderSession,
+):Promise<TransferDescriptorV2>{
+  if(!isV2Session(session))throw new Error('Writer transfer descriptor requires an authenticated v2 provider session.')
+  return new ProductiveWriterHandoffV2Service(session).createTransferDescriptor()
+}
+
+export async function handoffWriterV2(
+  session:TransferableSingleWriterV2ProviderSession,
+  descriptor:unknown,
+){
+  if(!isV2Session(session))throw new Error('Writer handoff requires an authenticated v2 provider session.')
+  const result=await new ProductiveWriterHandoffV2Service(session).handoff(descriptor)
+  await installAuthenticatedRemoteSession(session)
+  return result
+}
+
+export async function adoptGrantedWriterV2(
+  session:TransferableSingleWriterV2ProviderSession,
+){
+  if(!isV2Session(session))throw new Error('Writer adoption requires an authenticated v2 provider session.')
+  const result=await new ProductiveWriterHandoffV2Service(session).adoptGrantedWriter()
   await installAuthenticatedRemoteSession(session)
   return result
 }
