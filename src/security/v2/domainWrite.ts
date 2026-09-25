@@ -103,7 +103,7 @@ export class V2DomainWritePreparer {
       const schema=V2_SCHEMA_REGISTRY[recordSchema]
       if(!schema)throw new Error('Domain schema is not registered in v2.')
       const currentHeads=[...(remote.accepted_revision_graph.heads_by_record.get(input.recordId)??[])]
-      let parentRevisionIds:[...string[]]
+      let parentRevisionIds:string[]
       if(input.parentRevisionIds===undefined){
         if(currentHeads.length>1)throw new Error(`Record ${input.recordId} has ${currentHeads.length} unresolved v2 heads.`)
         parentRevisionIds=currentHeads
