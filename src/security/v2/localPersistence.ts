@@ -16,8 +16,8 @@ import type { CreationPersistence, CreationState } from '../../sync/core/creatio
 import type { RecoveryAuthorityTransitionV2, WriterGrantV2 } from './types'
 
 const DATABASE_NAME='eds-diary-v2-security'
-const DATABASE_VERSION=10
-const STORES={states:'epochSecurityStateV6',writerKeys:'writerDeviceKeysV2',reservations:'envelopeReservationsV6',envelopes:'envelopesV6',outbox:'outboxV6',recoveryStaging:'recoveryTakeoverStagingV2',recoveryArtifacts:'recoveryArtifactsV6',rotationOperations:'rotationOperationsV2',writerGrantOperations:'writerGrantOperationsV2',lineageCaches:'activationLineageCachesV2',rootWraps:'rootWrapsV6',rootWrappingKeys:'rootWrappingKeysV6',creationOperations:'creationOperationsV2',operationArtifacts:'operationArtifactsV2'} as const
+const DATABASE_VERSION=11
+const STORES={states:'epochSecurityStateV6',writerKeys:'writerDeviceKeysV2',reservations:'envelopeReservationsV6',envelopes:'envelopesV6',outbox:'outboxV6',recoveryStaging:'recoveryTakeoverStagingV2',recoveryArtifacts:'recoveryArtifactsV6',rotationOperations:'rotationOperationsV2',writerGrantOperations:'writerGrantOperationsV2',lineageCaches:'activationLineageCachesV2',rootWraps:'rootWrapsV6',rootWrappingKeys:'rootWrappingKeysV6',creationOperations:'creationOperationsV2',operationArtifacts:'operationArtifactsV2',readModels:'verifiedReadModelsV2'} as const
 
 const TERMINAL_ROTATION_OPERATION_STATES_V2=new Set(['switched','stale','cutover_race','post_activation_superseded'])
 const TERMINAL_WRITER_GRANT_OPERATION_STATES_V2=new Set(['durable','stale'])
@@ -47,6 +47,22 @@ export interface VerifiedDispositionContextV2 {
   source_epoch_sealed:boolean
   recovery_rekey_rotation_required:boolean
   preserve_ceremony_owned?:boolean
+}
+export interface VerifiedReadModelCoreV2 {
+  format:'verified-read-model-v2'
+  version:2
+  epoch_id:string
+  manifest_fingerprint:string
+  remote_anchor:NonNullable<EpochLocalSecurityStateV6['remote_anchor']>
+  accepted_envelope_ids:string[]
+}
+export interface VerifiedReadModelV2 extends VerifiedReadModelCoreV2 {tag:string}
+async function readModelTag(rootKey:Uint8Array,epochSalt:Uint8Array,model:VerifiedReadModelCoreV2):Promise<string>{
+  return base64Url(await hmacSha256(await deriveLocalStateMacKeyV2(rootKey,epochSalt),canonicalBytes(model as never)))
+}
+async function verifyReadModelTag(rootKey:Uint8Array,epochSalt:Uint8Array,model:VerifiedReadModelV2):Promise<void>{
+  const {tag,...core}=model,expected=fromBase64Url(await readModelTag(rootKey,epochSalt,core))
+  if(!equalBytes(fixedBase64Url(tag,32,'read_model_tag'),expected))throw new Error('V2 verified read-model MAC failed.')
 }
 export type V2OutboxStatus='prepared'|'pending'|'durable'|'stale_writer_pending'
 export type V2OutboxCeremonyOwner='rotation'|'recovery_rekey'
@@ -143,6 +159,7 @@ async function openDatabase():Promise<IDBDatabase>{
       if(!db.objectStoreNames.contains(STORES.rootWrappingKeys))db.createObjectStore(STORES.rootWrappingKeys,{keyPath:'id'})
       if(!db.objectStoreNames.contains(STORES.creationOperations))db.createObjectStore(STORES.creationOperations,{keyPath:'id'})
       if(!db.objectStoreNames.contains(STORES.operationArtifacts))db.createObjectStore(STORES.operationArtifacts,{keyPath:'id'})
+      if(!db.objectStoreNames.contains(STORES.readModels))db.createObjectStore(STORES.readModels,{keyPath:'epoch_id'})
     })
     request.addEventListener('success',()=>{
       const db=request.result
