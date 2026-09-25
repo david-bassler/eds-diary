@@ -44,6 +44,7 @@ import {
   openBestEffortRootWrapV6,
   openPassphraseRootWrapV6,
   openPrfRootWrapV6,
+  validateRootWrapV6,
   type RootWrapIdentityV6,
   type RootWrapV6,
 } from '../security/v2/rootWrap'
@@ -172,6 +173,60 @@ export async function prepareSuccessorRootWrapV6ForActiveMode(rootKey:Uint8Array
   if(base64Url(await openBestEffortRootWrapV6(wrap,key))!==base64Url(rootKey))throw new Error('RootWrapV6 best-effort readback failed.')
   return{wrap,bestEffortWrappingKey:key}
 }
+export async function prepareNativeV2SuccessorRootWrapV6ForActiveMode(
+  sourceRootKey:Uint8Array,
+  source:PreparedSuccessorRootWrapV6,
+  rootKey:Uint8Array,
+  identity:RootWrapIdentityV6,
+  wrapId:Uint8Array,
+):Promise<PreparedSuccessorRootWrapV6>{
+  validateRootWrapV6(source.wrap)
+  if(sourceRootKey.byteLength!==32||wrapId.byteLength!==16)throw new Error('Native v2 RootWrap inheritance input is invalid.')
+  const selected=await activeProtocolSelectionV2()
+  if(!selected
+    ||selected.diary_id!==source.wrap.diary_id
+    ||selected.epoch_id!==source.wrap.epoch_id
+    ||selected.manifest_fingerprint!==source.wrap.manifest_fingerprint)throw new Error('Native v2 RootWrap Source is not the active v2 protocol selection.')
+  if(identity.diary_id!==source.wrap.diary_id||identity.epoch_id===source.wrap.epoch_id)throw new Error('Native v2 Successor RootWrap identity does not extend the active v2 diary.')
+
+  if(source.wrap.mode==='best-effort'){
+    if(!source.bestEffortWrappingKey)throw new Error('Native v2 Source best-effort wrapping key is missing.')
+    if(!sameBytes(await openBestEffortRootWrapV6(source.wrap,source.bestEffortWrappingKey),sourceRootKey))throw new Error('Native v2 Source RootWrap does not open to the authenticated Source root.')
+    const key=await generateBestEffortWrappingKeyV6(),wrap=await createBestEffortRootWrapV6(rootKey,key,identity,wrapId)
+    if(!sameBytes(await openBestEffortRootWrapV6(wrap,key),rootKey))throw new Error('Native v2 Successor best-effort RootWrap readback failed.')
+    return{wrap,bestEffortWrappingKey:key}
+  }
+
+  if(source.bestEffortWrappingKey)throw new Error('Native v2 strong Source RootWrap unexpectedly carries a best-effort key.')
+  const preferred=unlockFactors.get(source.wrap.diary_id)
+  const candidates=preferred?[preferred,...unlockFactors.values()]:[...unlockFactors.values()]
+  if(source.wrap.mode==='passphrase'){
+    for(const factor of candidates){
+      if(factor.mode!=='passphrase')continue
+      try{
+        if(!sameBytes(await openPassphraseRootWrapV6(source.wrap,factor.passphrase),sourceRootKey))continue
+        unlockFactors.set(source.wrap.diary_id,factor)
+        const wrap=await createPassphraseRootWrapV6(rootKey,factor.passphrase,identity,wrapId)
+        if(!sameBytes(await openPassphraseRootWrapV6(wrap,factor.passphrase),rootKey))throw new Error('Native v2 Successor passphrase RootWrap readback failed.')
+        return{wrap,bestEffortWrappingKey:null}
+      }catch{/* try another already-unlocked local factor */}
+    }
+    throw new LocalUnlockRequiredError('passphrase')
+  }
+
+  for(const factor of candidates){
+    if(factor.mode!=='prf')continue
+    try{
+      if(!sameBytes(await openPrfRootWrapV6(source.wrap,factor.credentialId,factor.prfOutput),sourceRootKey))continue
+      unlockFactors.set(source.wrap.diary_id,factor)
+      const wrap=await createPrfRootWrapV6(rootKey,{credentialId:factor.credentialId,prfEvalInput:factor.prfEvalInput,prfOutput:factor.prfOutput,rpId:factor.rpId},identity,wrapId)
+      if(!sameBytes(await openPrfRootWrapV6(wrap,factor.credentialId,factor.prfOutput),rootKey))throw new Error('Native v2 Successor PRF RootWrap readback failed.')
+      return{wrap,bestEffortWrappingKey:null}
+    }catch{/* try another already-unlocked local factor */}
+  }
+  throw new LocalUnlockRequiredError('prf')
+}
+
 export async function prepareReadOnlyJoinRootWrapV6ForActiveMode(rootKey:Uint8Array,identity:RootWrapIdentityV6,wrapId:Uint8Array):Promise<PreparedSuccessorRootWrapV6>{
   const db=await openDatabase(),active=await loadEpoch(db),records=await readEpochRecords(db,active.context)
   if(wrapId.byteLength!==16)throw new Error('RootWrapV6 wrap_id must contain 16 bytes.')
