@@ -76,15 +76,17 @@ export function GoogleSyncSettings() {
   const [replacementSaved, setReplacementSaved] = useState(false)
 
   useEffect(() => {
+    let cancelled = false
     const refreshDurability = () => {
       void remoteSessionStatus().then(async value=>{
         if(cancelled)return
+        setProtocolProfile(value.profile)
+        setRequiresEnablement(value.profile==='v1'?value.mode==='local_offline':false)
         if(value.profile==='v2'){setRemoteDurability(null);return}
         setRemoteDurability(await activeRemoteDurabilityStatus())
       }).catch(() => undefined)
     }
     const removeSyncListener = onSyncState((snapshot) => { setSyncSnapshot(snapshot); refreshDurability() })
-    let cancelled = false
     refreshDurability()
 
     void readStorageSetupState().then(
