@@ -8,7 +8,6 @@ import { normalizeLegacyActivityEntriesForSecureMigration } from './legacyCompat
 import { ProductiveRotationService, type CompletedRotation } from './productiveRotationService'
 import { ensurePersistentStorage } from './storageDurability'
 import { installAuthenticatedV2RemoteSession, disconnectAuthenticatedV2RemoteSession } from './v2ApplicationRuntime'
-import { TransferableSingleWriterV2SyncService } from './transferableSingleWriterV2SyncService'
 import { ProductiveRecoveryRekeyV2Service, type RecoveryRekeyResultV2 } from './recoveryRekeyV2Service'
 import { ProductiveNativeRotationV2Service, type NativeRotationResultV2 } from './nativeRotationV2Service'
 import { IndexedDbV2LocalSecurityStore } from '../security/v2/localPersistence'
@@ -68,9 +67,8 @@ export async function installAuthenticatedRemoteSession(session:AuthenticatedPro
   const v2=await activeProtocolSelectionV2()
   if(v2){
     if(!isV2Session(session))throw new Error('An active v2 diary requires a transferable-single-writer v2 provider session.')
-    await disconnectCurrentSession()
-    const service=await TransferableSingleWriterV2SyncService.createAuthenticated(session)
-    await installAuthenticatedV2RemoteSession(session)
+    if(activeProviderSession&&activeProviderSession!==session)await disconnectCurrentSession()
+    const service=await installAuthenticatedV2RemoteSession(session)
     activeProviderSession=session
     secureSync=service
     installSecureSynchronizer(()=>service.synchronize())
@@ -79,7 +77,7 @@ export async function installAuthenticatedRemoteSession(session:AuthenticatedPro
   }
   if(!isV1Session(session))throw new Error('The active v1 diary requires a single-writer-v1 provider session.')
   await ensureLegacyCompatibility()
-  await disconnectCurrentSession()
+  if(activeProviderSession&&activeProviderSession!==session)await disconnectCurrentSession()
   const service=await SingleWriterSyncService.createAuthenticated(session)
   activeProviderSession=session
   secureSync=service
