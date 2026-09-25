@@ -153,6 +153,11 @@ export function TransferableWriterV2Settings(){
       </div>:null}
 
       {remote.profile==='v2'?<>
+        {remote.staleWriterPendingCount?<div className="google-sync-settings__problem" role="alert">
+          <strong>Lokale alte Writer-Änderungen benötigen Aufmerksamkeit.</strong>
+          <p>{remote.staleWriterPendingCount} verschlüsselte Änderung{remote.staleWriterPendingCount===1?' ist':'en sind'} nach einem Writer-Wechsel lokal quarantänisiert und werden nicht automatisch unter neuer Authority veröffentlicht.</p>
+        </div>:null}
+        {remote.pendingEnvelopeCount?<p className="google-sync-settings__state" role="status">{remote.pendingEnvelopeCount} lokale v2-Änderung{remote.pendingEnvelopeCount===1?' wartet':'en warten'} auf kanonische Remote-Bestätigung.</p>:null}
         <div className="google-sync-settings__actions">
           <button type="button" disabled={busy} onClick={()=>void withBusy(connect)}>Google verifizieren &amp; synchronisieren</button>
           {remote.recoveryRekeyRequired
