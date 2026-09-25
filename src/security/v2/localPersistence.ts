@@ -48,12 +48,14 @@ export interface VerifiedDispositionContextV2 {
   recovery_rekey_rotation_required:boolean
 }
 export type V2OutboxStatus='prepared'|'pending'|'durable'|'stale_writer_pending'
+export type V2OutboxCeremonyOwner='rotation'|'recovery_rekey'
 export interface V2OutboxEntryCore {
   id:string
   epoch_id:string
   envelope_id:string
   status:V2OutboxStatus
   authority:PreparedEnvelopeAuthorityV2|null
+  ceremony_owner?:V2OutboxCeremonyOwner
 }
 export interface V2OutboxEntry extends V2OutboxEntryCore {tag:string}
 async function outboxTag(rootKey:Uint8Array,epochSalt:Uint8Array,entry:V2OutboxEntryCore):Promise<string>{
@@ -1049,6 +1051,7 @@ export class IndexedDbV2LocalSecurityStore {
     reservation:EnvelopeReservationV6,
     envelope:PreparedEnvelope,
     authority:PreparedEnvelopeAuthorityV2|null,
+    ceremonyOwner?:V2OutboxCeremonyOwner,
   ):Promise<EpochLocalSecurityStateV6>{
     if(reservation.state!=='reserved'||reservation.envelope_id!==envelope.envelopeId||reservation.iv!==envelope.iv)throw new Error('Prepared envelope does not match its one-shot reservation.')
     const db=await openDatabase(),current=await this.loadState(rootKey,epochSalt,reservation.epoch_id)
@@ -1069,7 +1072,7 @@ export class IndexedDbV2LocalSecurityStore {
     }
     validateEpochLocalSecurityStateV6(nextState)
     const tag=await localStateTagV6(rootKey,epochSalt,nextState)
-    const outboxCore:V2OutboxEntryCore={id:reservationId,epoch_id:reservation.epoch_id,envelope_id:envelope.envelopeId,status:'prepared',authority:structuredClone(authority)}
+    const outboxCore:V2OutboxEntryCore={id:reservationId,epoch_id:reservation.epoch_id,envelope_id:envelope.envelopeId,status:'prepared',authority:structuredClone(authority),...(ceremonyOwner?{ceremony_owner:ceremonyOwner}:{})}
     const outboxEntry:V2OutboxEntry={...outboxCore,tag:await outboxTag(rootKey,epochSalt,outboxCore)}
     const tx=db.transaction([STORES.reservations,STORES.envelopes,STORES.outbox,STORES.states],'readwrite')
     tx.objectStore(STORES.reservations).put({...storedReservation,state:'sealed'} satisfies EnvelopeReservationV6)
@@ -1121,7 +1124,7 @@ export class IndexedDbV2LocalSecurityStore {
       const tag=await localStateTagV6(rootKey,epochSalt,finalState),db=await openDatabase()
       const authenticatedUpdated:V2OutboxEntry[]=[]
       for(const entry of updated){
-        const core:V2OutboxEntryCore={id:entry.id,epoch_id:entry.epoch_id,envelope_id:entry.envelope_id,status:entry.status,authority:structuredClone(entry.authority)}
+        const core:V2OutboxEntryCore={id:entry.id,epoch_id:entry.epoch_id,envelope_id:entry.envelope_id,status:entry.status,authority:structuredClone(entry.authority),...(entry.ceremony_owner?{ceremony_owner:entry.ceremony_owner}:{})}
         authenticatedUpdated.push({...core,tag:await outboxTag(rootKey,epochSalt,core)})
       }
       const tx=db.transaction([STORES.outbox,STORES.states],'readwrite')
@@ -1156,7 +1159,7 @@ export class IndexedDbV2LocalSecurityStore {
       const staleCount=nextEntries.filter(item=>item.status==='stale_writer_pending').length
       const nextState={...fresh,operation_generation:fresh.operation_generation+1,stale_writer_pending_count:staleCount}
       const tag=await localStateTagV6(rootKey,epochSalt,nextState)
-      const nextCore:V2OutboxEntryCore={id:entry.id,epoch_id:entry.epoch_id,envelope_id:entry.envelope_id,status,authority:structuredClone(entry.authority)}
+      const nextCore:V2OutboxEntryCore={id:entry.id,epoch_id:entry.epoch_id,envelope_id:entry.envelope_id,status,authority:structuredClone(entry.authority),...(entry.ceremony_owner?{ceremony_owner:entry.ceremony_owner}:{})}
       const nextEntry:V2OutboxEntry={...nextCore,tag:await outboxTag(rootKey,epochSalt,nextCore)}
       const tx=db.transaction([STORES.outbox,STORES.states],'readwrite')
       tx.objectStore(STORES.outbox).put(nextEntry)
