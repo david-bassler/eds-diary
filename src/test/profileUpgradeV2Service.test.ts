@@ -1525,4 +1525,87 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     expect(stale.artifact_publish_attempted).toBe(false)
   },120_000)
 
+
+  it('retries exact Recovery-Rekey transition bytes on a later resume after unresolved no-commit unknown outcomes',async()=>{
+    const createdAt='2026-09-25T08:30:00.000Z',urs=randomBytes(32),newUrs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    const sourceTransport=await v2.transportForEpoch(source.diaryId,upgraded.successor_epoch_id) as unknown as MemoryTransport
+    sourceTransport.unknownWithoutAppend=2
+
+    const first=await new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt).rekey(newUrs)
+    expect(first.stage).toBe('transition_unknown')
+    const firstOperation=await store.loadRecoveryRekeyOperation(first.operationId)
+    expect(firstOperation.stage).toBe('transition_unknown')
+    expect(sourceTransport.snapshot.rows.some(row=>row[0]===firstOperation.transition_envelope.envelope_id)).toBe(false)
+
+    const resumed=await new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt).rekey(newUrs)
+    expect(resumed.stage).toBe('completed')
+    expect(resumed.operationId).toBe(first.operationId)
+    expect(sourceTransport.snapshot.rows.filter(row=>row[0]===firstOperation.transition_envelope.envelope_id)).toHaveLength(1)
+  },120_000)
+
+  it('resumes a persisted native Announcement unknown state with one fresh exact-byte append',async()=>{
+    const createdAt='2026-09-25T08:35:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    const sourceTransport=await v2.transportForEpoch(source.diaryId,upgraded.successor_epoch_id) as unknown as MemoryTransport
+    const service=new ProductiveNativeRotationV2Service(v2,urs,store,()=>createdAt,point=>{
+      if(point==='after-staged_backup_verified')sourceTransport.unknownWithoutAppend=2
+    })
+    const unresolved=await service.rotate('normal')
+    expect(unresolved.stage).toBe('announcement_unknown')
+    if(!unresolved.announcement_envelope)throw new Error('unknown Announcement operation lost its prepared envelope')
+    expect(sourceTransport.snapshot.rows.some(row=>row[0]===unresolved.announcement_envelope!.envelope_id)).toBe(false)
+
+    const resumed=await new ProductiveNativeRotationV2Service(v2,urs,store,()=>createdAt).rotate('normal')
+    expect(resumed.stage).toBe('switched')
+    expect(resumed.operation_id).toBe(unresolved.operation_id)
+    expect(sourceTransport.snapshot.rows.filter(row=>row[0]===unresolved.announcement_envelope!.envelope_id)).toHaveLength(1)
+  },120_000)
+
+  it('resumes a persisted native Confirmation unknown state with one fresh exact-byte append',async()=>{
+    const createdAt='2026-09-25T08:40:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    let armed=false
+    const service=new ProductiveNativeRotationV2Service(v2,urs,store,()=>createdAt,point=>{
+      if(point==='after-announcement_durable'&&!armed){
+        armed=true
+        if(!v2.remote)throw new Error('native Successor transport missing at Confirmation fault point')
+        v2.remote.unknownWithoutAppend=2
+      }
+    })
+    const unresolved=await service.rotate('normal')
+    expect(unresolved.stage).toBe('confirmation_unknown')
+    if(!unresolved.confirmation_envelope||!v2.remote)throw new Error('unknown Confirmation operation lost its prepared envelope/Successor')
+    expect(v2.remote.snapshot.rows.some(row=>row[0]===unresolved.confirmation_envelope!.envelope_id)).toBe(false)
+
+    const resumed=await new ProductiveNativeRotationV2Service(v2,urs,store,()=>createdAt).rotate('normal')
+    expect(resumed.stage).toBe('switched')
+    expect(resumed.operation_id).toBe(unresolved.operation_id)
+    expect(v2.remote.snapshot.rows.filter(row=>row[0]===unresolved.confirmation_envelope!.envelope_id)).toHaveLength(1)
+  },120_000)
+
+  it('rechecks the Successor before Announcement retry and refuses Source seal after an intervening Successor row',async()=>{
+    const createdAt='2026-09-25T08:45:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    const sourceTransport=await v2.transportForEpoch(source.diaryId,upgraded.successor_epoch_id) as unknown as MemoryTransport
+    let armed=false
+    const result=await new ProductiveNativeRotationV2Service(v2,urs,store,()=>createdAt,point=>{
+      if(point==='after-staged_backup_verified'&&!armed){
+        armed=true
+        if(!v2.remote)throw new Error('native Successor transport missing at Announcement fault point')
+        const successor=v2.remote
+        const duplicate=successor.snapshot.rows.at(-1)
+        if(!duplicate||duplicate.length!==3)throw new Error('native Successor has no staging row for race injection')
+        sourceTransport.unknownWithoutAppend=1
+        sourceTransport.onUnknownWithoutAppend=()=>{successor.snapshot.rows.push([duplicate[0]!,duplicate[1]!,duplicate[2]!])}
+      }
+    }).rotate('normal')
+    expect(result.stage).toBe('stale')
+    if(!result.announcement_envelope)throw new Error('stale native rotation lost its Announcement envelope')
+    expect(sourceTransport.snapshot.rows.some(row=>row[0]===result.announcement_envelope!.envelope_id)).toBe(false)
+    const verified=await (await v2.codecForEpoch(source.diaryId,upgraded.successor_epoch_id,(await openRecoveryArtifactV6(await v2.loadRecoveryArtifact(urs,source.diaryId,upgraded.successor_epoch_id),urs)).rootKey,sourceTransport)).verifyRemote(await sourceTransport.read(sourceTransport.remoteId))
+    const canonical=verified.profileState as CanonicalFullResultV2
+    expect(canonical.source_epoch_sealed).toBe(false)
+  },120_000)
+
 })
