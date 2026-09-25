@@ -178,7 +178,10 @@ async function validateBackupActivationBoundary(
     return
   }
   if(!leaf)throw new Error('Non-native BackupV6 requires ActivationLineageV2.')
-  if(!canonicalEqual(artifact.remote_anchor,leaf.staging))throw new Error('RecoveryArtifactV6 anchor must equal the Successor staging anchor.')
+  const artifactExpectedAnchor=artifact.recovery_authority_transition_proof?.authority_anchor_before_transition??leaf.staging
+  if(!canonicalEqual(artifact.remote_anchor,artifactExpectedAnchor))throw new Error(artifact.recovery_authority_transition_proof===null
+    ?'RecoveryArtifactV6 anchor must equal the Successor staging anchor.'
+    :'RecoveryArtifactV6 anchor must equal the Recovery transition authority anchor.')
   if(activationState==='staged'){
     if(!canonicalEqual(canonical.remote_anchor,leaf.staging)||canonical.accepted_activation_confirmation!==null||canonical.activation_state!=='staged_confirmation_missing')throw new Error('Staged BackupV6 does not end exactly at the Successor staging anchor.')
     return
