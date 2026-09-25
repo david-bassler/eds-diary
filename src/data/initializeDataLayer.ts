@@ -42,6 +42,8 @@ export interface RemoteSessionStatus {
   remoteResourceId:string|null
   writerStatus?:'writer_active'|'read_only'
   recoveryRekeyRequired?:boolean
+  pendingEnvelopeCount?:number
+  staleWriterPendingCount?:number
 }
 
 async function activeV2Status():Promise<RemoteSessionStatus|null>{
@@ -52,6 +54,7 @@ async function activeV2Status():Promise<RemoteSessionStatus|null>{
   const salt=await deriveEpochSaltV2(fixedBase64Url(selection.diary_id,16),fixedBase64Url(selection.epoch_id,16))
   const state=await store.loadState(rootKey,salt,selection.epoch_id)
   if(state.diary_id!==selection.diary_id||state.manifest_fingerprint!==selection.manifest_fingerprint)throw new Error('Active v2 protocol selection does not match StateV6.')
+  const outbox=await store.outbox(rootKey,salt,state.epoch_id)
   return{
     mode:state.remote_binding?'remote_bound':'local_offline',
     profile:'v2',
@@ -59,6 +62,8 @@ async function activeV2Status():Promise<RemoteSessionStatus|null>{
     remoteResourceId:state.remote_binding?.remote_resource_id??null,
     writerStatus:state.writer_status,
     recoveryRekeyRequired:state.recovery_rekey_rotation_required,
+    pendingEnvelopeCount:outbox.filter(entry=>entry.status==='prepared'||entry.status==='pending').length,
+    staleWriterPendingCount:state.stale_writer_pending_count,
   }
 }
 
