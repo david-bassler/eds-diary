@@ -693,7 +693,7 @@ export class ProductiveNativeRotationV2Service implements ProfileUpgradeOrchestr
     await this.reconcileSource(source);return{kind:'durable'}
   }
 
-  private async verifyActivatedCandidate(value:Awaited<ReturnType<ProductiveNativeRotationV2Service['successorAtStagingOrConfirmation']>):Promise<ActiveCandidateV2>{
+  private async verifyActivatedCandidate(value:Awaited<ReturnType<ProductiveNativeRotationV2Service['successorAtStagingOrConfirmation']>>):Promise<ActiveCandidateV2>{
     const ctx=await this.successorContext(),activation=await this.artifact<NativeActivationArtifactV2>('activation')
     if(!activation)throw new Error('Native v2 activation artifact is missing.')
     const manifest=await openManifestV6(ctx.rootKey,ctx.epochSalt,{diaryId:ctx.plan.diary_id,epochId:ctx.plan.successor_epoch_id},parseManifestCellsV6(value.verified.snapshot.manifest))
