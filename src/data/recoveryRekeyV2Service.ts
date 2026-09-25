@@ -127,7 +127,7 @@ export class ProductiveRecoveryRekeyV2Service {
   }
 
   private async fresh():Promise<{context:SourceContextV2;verified:VerifiedRemoteState;result:CanonicalFullResultV2;state:EpochLocalSecurityStateV6;writer:StoredWriterDeviceKeyV2;lineage:ActivationLineageV2}>{
-    let context=await this.activeContext(),verified=await context.codec.verifyRemote(await context.transport.read(context.remoteId)),result=canonical(verified)
+    let context=await this.activeContext();const verified=await context.codec.verifyRemote(await context.transport.read(context.remoteId)),result=canonical(verified)
     if(result.diary_id!==context.state.diary_id||result.epoch_id!==context.state.epoch_id||result.manifest_fingerprint!==context.state.manifest_fingerprint||result.source_epoch_sealed||result.activation_state==='staged_confirmation_missing')throw new Error('Recovery-Rekey Source is not the active fully activated canonical epoch.')
     const state=await this.reconcile(context,verified,result)
     context={...context,state}
