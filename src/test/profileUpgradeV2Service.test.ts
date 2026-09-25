@@ -1428,4 +1428,64 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     expect((await activeProtocolSelectionV2())?.epoch_id).toBe(adopted.successorEpochId)
   },120_000)
 
+
+  it('atomically supersedes an older durable Recovery-Rekey when a newer transition becomes canonical',async()=>{
+    const createdAt='2026-09-25T08:15:00.000Z',urs=randomBytes(32),firstUrs=randomBytes(32),secondUrs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    let crashed=false
+    await expect(new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt,async point=>{
+      if(point==='after-transition-durable'&&!crashed){crashed=true;throw new Error('rekey-crash:first-durable')}
+    }).rekey(firstUrs)).rejects.toThrow('rekey-crash:first-durable')
+
+    const selection=await activeProtocolSelectionV2()
+    if(!selection)throw new Error('active v2 source missing after first durable rekey')
+    const firstArtifact=await v2.loadRecoveryArtifact(firstUrs,source.diaryId,selection.epoch_id),firstOpened=await openRecoveryArtifactV6(firstArtifact,firstUrs)
+    const salt=await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(selection.epoch_id))
+    const firstOperation=await store.loadBoundRecoveryRekeyOperation(firstOpened.rootKey,salt,selection.epoch_id)
+    if(!firstOperation)throw new Error('first durable Recovery-Rekey operation missing')
+    expect(firstOperation.stage).toBe('transition_durable')
+
+    const second=await new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt).rekey(secondUrs)
+    expect(second.stage).toBe('completed')
+    const superseded=await store.loadRecoveryRekeyOperation(firstOperation.operation_id)
+    expect(superseded.stage).toBe('superseded')
+    expect(superseded.superseded_by_transition_id).toBe(second.transitionId)
+    const secondOperation=await store.loadRecoveryRekeyOperation(second.operationId)
+    expect(secondOperation.supersedes_transition_id).toBe(firstOperation.transition_id)
+    expect(secondOperation.stage).toBe('completed')
+    expect((await activeProtocolSelectionV2())?.epoch_id).toBe(second.successorEpochId)
+  },120_000)
+
+  it('rebinds the older durable Recovery-Rekey when a newer superseding transition loses its immediate-prefix race',async()=>{
+    const createdAt='2026-09-25T08:20:00.000Z',urs=randomBytes(32),firstUrs=randomBytes(32),secondUrs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    let crashed=false
+    await expect(new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt,async point=>{
+      if(point==='after-transition-durable'&&!crashed){crashed=true;throw new Error('rekey-crash:first-durable-race')}
+    }).rekey(firstUrs)).rejects.toThrow('rekey-crash:first-durable-race')
+
+    const firstArtifact=await v2.loadRecoveryArtifact(firstUrs,source.diaryId,upgraded.successor_epoch_id),firstOpened=await openRecoveryArtifactV6(firstArtifact,firstUrs)
+    const salt=await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(upgraded.successor_epoch_id))
+    const firstOperation=await store.loadBoundRecoveryRekeyOperation(firstOpened.rootKey,salt,upgraded.successor_epoch_id)
+    if(!firstOperation)throw new Error('first durable Recovery-Rekey operation missing before race')
+    expect(firstOperation.stage).toBe('transition_durable')
+
+    const transport=await v2.transportForEpoch(source.diaryId,upgraded.successor_epoch_id) as unknown as MemoryTransport
+    const duplicate=transport.snapshot.rows.at(-1)
+    if(!duplicate||duplicate.length!==3)throw new Error('source has no durable row for supersession race injection')
+    transport.injectBeforeNextAppend=[duplicate[0]!,duplicate[1]!,duplicate[2]!]
+    const second=await new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt).rekey(secondUrs)
+    expect(second.stage).toBe('stale')
+    const secondOperation=await store.loadRecoveryRekeyOperation(second.operationId)
+    expect(secondOperation.supersedes_transition_id).toBe(firstOperation.transition_id)
+    expect(secondOperation.stage).toBe('stale')
+    const rebound=await store.loadBoundRecoveryRekeyOperation(firstOpened.rootKey,salt,upgraded.successor_epoch_id)
+    expect(rebound?.operation_id).toBe(firstOperation.operation_id)
+    expect(rebound?.stage).toBe('transition_durable')
+
+    const resumedFirst=await new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt).rekey(firstUrs)
+    expect(resumedFirst.stage).toBe('completed')
+    expect(resumedFirst.operationId).toBe(firstOperation.operation_id)
+  },120_000)
+
 })
