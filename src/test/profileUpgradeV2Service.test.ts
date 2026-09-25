@@ -138,6 +138,7 @@ class V2Session implements TransferableSingleWriterV2ProviderSession {
   remote:MemoryTransport|null=null
   private readonly preCreationTransport=new MemoryTransport(SINGLE_WRITER_V2_PROFILE,'successor-v2',{manifest:[],rows:[]})
   private readonly remotesByEpoch=new Map<string,MemoryTransport>()
+  private readonly v1RemotesByEpoch=new Map<string,MemoryTransport>()
   recovery:RecoveryArtifactV6|null=null
   private readonly recoveryByEpoch=new Map<string,RecoveryArtifactV6>()
   creates=0
@@ -145,6 +146,12 @@ class V2Session implements TransferableSingleWriterV2ProviderSession {
   async transportForEpoch(diaryId:string,epochId:string):Promise<GoogleSheetsTransferableSingleWriterV2Transport>{
     void diaryId
     return (this.remotesByEpoch.get(epochId)??this.preCreationTransport) as unknown as GoogleSheetsTransferableSingleWriterV2Transport
+  }
+  registerV1Epoch(epochId:string,transport:MemoryTransport):void{this.v1RemotesByEpoch.set(epochId,transport)}
+  async v1TransportForEpoch(_diaryId:string,epochId:string):Promise<GoogleSheetsSingleWriterTransport>{
+    const transport=this.v1RemotesByEpoch.get(epochId)
+    if(!transport)throw new Error('Authenticated v1 lineage transport is unavailable.')
+    return transport as unknown as GoogleSheetsSingleWriterTransport
   }
   async remoteIdentityBinding():Promise<string>{return this.account}
   async codecForEpoch(diaryId:string,epochId:string,rootKey:Uint8Array,transport:RemoteTransport):Promise<GoogleSheetsTransferableSingleWriterV2ProfileCodec>{
@@ -1109,7 +1116,7 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
   },90_000)
 
   it('performs a productive native v2 to v2 normal rotation and carries Writer/Recovery authority',async()=>{
-    const createdAt='2026-09-25T07:20:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    const createdAt='2026-09-25T07:20:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session();v2.registerV1Epoch(source.sourceEpochId,source.transport)
     const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
     const sourceEpochId=upgraded.successor_epoch_id
     const result=await new ProductiveNativeRotationV2Service(v2,urs,new IndexedDbV2LocalSecurityStore(),()=>createdAt).rotate('normal')
@@ -1139,7 +1146,7 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
   },120_000)
 
   it('resumes native v2 rotation after crashing immediately after the durable Source freeze',async()=>{
-    const createdAt='2026-09-25T07:25:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore()
+    const createdAt='2026-09-25T07:25:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session();v2.registerV1Epoch(source.sourceEpochId,source.transport),store=new IndexedDbV2LocalSecurityStore()
     await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
     let crashed=false
     await expect(new ProductiveNativeRotationV2Service(v2,urs,store,()=>createdAt,async point=>{
@@ -1158,7 +1165,7 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
   },120_000)
 
   it('completes two-phase Recovery-Rekey through mandatory recovery_rekey successor rotation',async()=>{
-    const createdAt='2026-09-25T07:30:00.000Z',urs=randomBytes(32),newUrs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore()
+    const createdAt='2026-09-25T07:30:00.000Z',urs=randomBytes(32),newUrs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session();v2.registerV1Epoch(source.sourceEpochId,source.transport),store=new IndexedDbV2LocalSecurityStore()
     const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
     const sourceEpochId=upgraded.successor_epoch_id
     const result=await new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt).rekey(newUrs)
@@ -1188,7 +1195,7 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
   },120_000)
 
   it('resumes Recovery-Rekey from the exact prepared bundle after crash',async()=>{
-    const createdAt='2026-09-25T07:35:00.000Z',urs=randomBytes(32),newUrs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore()
+    const createdAt='2026-09-25T07:35:00.000Z',urs=randomBytes(32),newUrs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session();v2.registerV1Epoch(source.sourceEpochId,source.transport),store=new IndexedDbV2LocalSecurityStore()
     const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
     let crashed=false
     await expect(new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt,async point=>{
@@ -1212,7 +1219,7 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
 
 
   it('keeps Recovery-Rekey ceremony disposition exclusively owned when generic Coordinator pulls the accepted transition',async()=>{
-    const createdAt='2026-09-25T07:40:00.000Z',urs=randomBytes(32),newUrs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore()
+    const createdAt='2026-09-25T07:40:00.000Z',urs=randomBytes(32),newUrs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session();v2.registerV1Epoch(source.sourceEpochId,source.transport),store=new IndexedDbV2LocalSecurityStore()
     const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
     let crashed=false
     await expect(new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt,async point=>{
@@ -1243,7 +1250,7 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
   },120_000)
 
   it('rejects direct recovery_rekey Source-rotation persistence without exact successor_rotation_required Phase-A state',async()=>{
-    const createdAt='2026-09-25T07:45:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore()
+    const createdAt='2026-09-25T07:45:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session();v2.registerV1Epoch(source.sourceEpochId,source.transport),store=new IndexedDbV2LocalSecurityStore()
     const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
     const artifact=await v2.loadRecoveryArtifact(urs,source.diaryId,upgraded.successor_epoch_id),opened=await openRecoveryArtifactV6(artifact,urs)
     const salt=await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(upgraded.successor_epoch_id))
