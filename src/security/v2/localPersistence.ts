@@ -712,7 +712,8 @@ export class IndexedDbV2LocalSecurityStore {
       if(existingRef){
         const existing=await this.loadRecoveryRekeyOperation(existingRef.operation_id)
         if(existing.stage!==existingRef.state||await recoveryRekeyOperationStateHashV2(existing)!==existingRef.state_record_hash)throw new Error('Existing Recovery-Rekey binding failed.')
-        if(args.operation.supersedes_transition_id!==existing.transition_id||TERMINAL_RECOVERY_OPERATION_STATES_V2.has(existing.stage))throw new Error('Recovery-Rekey preparation does not explicitly supersede the active pending operation.')
+        if(args.operation.supersedes_transition_id!==existing.transition_id||TERMINAL_RECOVERY_OPERATION_STATES_V2.has(existing.stage)
+          ||!['transition_durable','source_backup_verified','successor_rotation_required'].includes(existing.stage))throw new Error('Recovery-Rekey preparation may supersede only the exact current post-durable pending operation.')
       }else if(args.operation.supersedes_transition_id!==null)throw new Error('Recovery-Rekey supersession references no local active operation.')
 
       const revision=await openRevisionEnvelopeV2(args.rootKey,args.epochSalt,{diaryId:current.diary_id,epochId:current.epoch_id},args.envelope)
@@ -857,7 +858,7 @@ export class IndexedDbV2LocalSecurityStore {
         const existing=await this.loadRecoveryRekeyOperation(existingRef.operation_id)
         if(existing.stage!==existingRef.state||await recoveryRekeyOperationStateHashV2(existing)!==existingRef.state_record_hash)throw new Error('Existing Recovery-Rekey StateV6 binding failed.')
         if(operation.operation_origin!=='local_rekey'||operation.supersedes_transition_id!==existing.transition_id
-          ||TERMINAL_RECOVERY_OPERATION_STATES_V2.has(existing.stage))throw new Error('Another Recovery-Rekey operation is already bound locally.')
+          ||TERMINAL_RECOVERY_OPERATION_STATES_V2.has(existing.stage)||!['transition_durable','source_backup_verified','successor_rotation_required'].includes(existing.stage))throw new Error('Recovery-Rekey supersession requires the exact current post-durable pending operation.')
       }
       const hash=await recoveryRekeyOperationStateHashV2(operation),bytes=new TextDecoder().decode(canonicalBytes(operation as never)),id=this.recoveryRekeyRecordId(operation.operation_id)
       const db=await openDatabase(),readTx=db.transaction(STORES.operationArtifacts,'readonly')
