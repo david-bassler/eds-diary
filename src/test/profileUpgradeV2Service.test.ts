@@ -67,6 +67,9 @@ import { ProductiveRecoveryRekeyV2Service } from '../data/recoveryRekeyV2Service
 import { ProductiveForcedTakeoverV2Service } from '../data/forcedTakeoverV2Service'
 import type { RotationOperationStateV2 } from '../security/v2/profileUpgrade'
 import { TransferableSingleWriterV2WriteAuthority } from '../security/v2/writeAuthority'
+import { installAuthenticatedRemoteSession } from '../data/initializeDataLayer'
+import { __v2ApplicationRuntimeTesting } from '../data/v2ApplicationRuntime'
+import { createPainEntry, listPainEntries } from '../features/pain/painRepository'
 
 type Row=readonly[string,string,string]
 
@@ -393,6 +396,7 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     await __v2LocalPersistenceTesting.reset()
     await deleteDatabase('eds-diary')
     await deleteDatabase('eds-diary-v2-security')
+    __v2ApplicationRuntimeTesting.reset()
     globalThis.localStorage?.clear?.()
   })
 
@@ -1606,6 +1610,80 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     const verified=await (await v2.codecForEpoch(source.diaryId,upgraded.successor_epoch_id,(await openRecoveryArtifactV6(await v2.loadRecoveryArtifact(urs,source.diaryId,upgraded.successor_epoch_id),urs)).rootKey,sourceTransport)).verifyRemote(await sourceTransport.read(sourceTransport.remoteId))
     const canonical=verified.profileState as CanonicalFullResultV2
     expect(canonical.source_epoch_sealed).toBe(false)
+  },120_000)
+
+
+  it('routes the existing pain repository through v2 Writer authority and materializes the durable result offline',async()=>{
+    const createdAt='2026-09-25T09:00:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    expect(upgraded.stage).toBe('switched')
+    await installAuthenticatedRemoteSession(v2)
+    if(!v2.remote)throw new Error('v2 active remote missing after profile upgrade')
+    const beforeRows=v2.remote.snapshot.rows.length
+
+    const created=await createPainEntry({
+      startedAt:'2026-09-25T09:01:00.000Z',
+      intensity:7,
+      locations:[],
+      qualities:['stechend'],
+      cause:'integration',
+      occursWhen:'test',
+      note:'v2 app routing',
+    })
+    expect(v2.remote.snapshot.rows.length).toBeGreaterThan(beforeRows)
+
+    const codec=new GoogleSheetsTransferableSingleWriterV2ProfileCodec(source.diaryId,upgraded.successor_epoch_id,(await openRecoveryArtifactV6(await v2.loadRecoveryArtifact(urs,source.diaryId,upgraded.successor_epoch_id),urs)).rootKey,source.accountBinding)
+    const canonical=(await codec.verifyRemote(v2.remote.snapshot)).profileState as CanonicalFullResultV2
+    const matching=[...canonical.accepted_revision_graph.revisions.values()].filter(revision=>revision.record_type==='pain_entry'&&revision.record_data&&typeof revision.record_data==='object'&&(revision.record_data as {note?:unknown}).note==='v2 app routing')
+    expect(matching).toHaveLength(1)
+    expect(matching[0]?.writer_context?.writer_generation).toBe(canonical.current_writer.writer_generation)
+
+    __v2ApplicationRuntimeTesting.reset()
+    const offline=await listPainEntries({includeDeleted:true})
+    expect(offline.some(entry=>entry.id===created.id&&entry.note==='v2 app routing'&&entry.intensity===7)).toBe(true)
+  },120_000)
+
+  it('blocks the existing pain repository on a read-only joined device before persisting any new v2 envelope',async()=>{
+    const createdAt='2026-09-25T09:05:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    expect(upgraded.stage).toBe('switched')
+
+    await __localDatabaseTesting.resetForTesting()
+    await __v2LocalPersistenceTesting.reset()
+    await deleteDatabase('eds-diary')
+    await deleteDatabase('eds-diary-v2-security')
+    __v2ApplicationRuntimeTesting.reset()
+    globalThis.localStorage?.clear?.()
+
+    const joined=await new ProductiveReadOnlyJoinV2Service(v2).join(urs)
+    expect(joined.epochId).toBe(upgraded.successor_epoch_id)
+    await installAuthenticatedRemoteSession(v2)
+    const localStore=new IndexedDbV2LocalSecurityStore()
+    const before=(await localStore.envelopes(joined.epochId)).length
+    await expect(createPainEntry({intensity:5,note:'must-not-persist'})).rejects.toThrow(/read-only|Writer authority|writer/i)
+    const after=(await localStore.envelopes(joined.epochId)).length
+    expect(after).toBe(before)
+    expect((await listPainEntries({includeDeleted:true})).some(entry=>entry.note==='must-not-persist')).toBe(false)
+  },120_000)
+
+  it('fails closed when the authenticated v2 offline read-model index is tampered',async()=>{
+    const createdAt='2026-09-25T09:10:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    expect(upgraded.stage).toBe('switched')
+    await installAuthenticatedRemoteSession(v2)
+    await createPainEntry({intensity:3,note:'read-model-tamper'})
+    __v2ApplicationRuntimeTesting.reset()
+
+    const db=await __v2LocalPersistenceTesting.openDatabase(),tx=db.transaction(__v2LocalPersistenceTesting.STORES.readModels,'readwrite')
+    const store=tx.objectStore(__v2LocalPersistenceTesting.STORES.readModels)
+    const request=store.get(upgraded.successor_epoch_id)
+    const model=await new Promise<Record<string,unknown>>((resolve,reject)=>{request.onsuccess=()=>resolve(request.result as Record<string,unknown>);request.onerror=()=>reject(request.error)})
+    store.put({...model,tag:base64Url(new Uint8Array(32).fill(201))})
+    await transactionComplete(tx)
+    await expect(listPainEntries({includeDeleted:true})).rejects.toThrow(/read-model MAC failed/)
   },120_000)
 
 })
