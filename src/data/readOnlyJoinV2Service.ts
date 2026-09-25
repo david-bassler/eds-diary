@@ -116,7 +116,7 @@ async function verifyCurrentRecoveryTransitionForJoin(candidate:ActiveCandidateV
   const epochSalt=await deriveEpochSaltV2(fixedBase64Url(candidate.payload.diary_id,16),fixedBase64Url(candidate.payload.epoch_id,16))
   const revision=await openRevisionEnvelopeV2(
     candidate.rootKey,epochSalt,{diaryId:candidate.payload.diary_id,epochId:candidate.payload.epoch_id},
-    {envelopeId:row[0]!,iv:row[1]!,ciphertext:row[2]!,bytesHash:''},
+    {envelopeId:row[0]!,iv:row[1]!,ciphertext:row[2]!},
   )
   if(revision.record_schema!=='recovery-authority-transition-sw-v2'||revision.record_type!=='recovery_authority_transition'||revision.record_status!=='control')throw new Error('RecoveryAuthorityTransitionProofV2 envelope type mismatch during Join.')
   const transition=revision.record_data as RecoveryAuthorityTransitionV2
