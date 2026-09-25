@@ -1447,7 +1447,7 @@ export class IndexedDbV2LocalSecurityStore {
       let sequence=current.local_journal_count,journalHash=current.local_journal_hash
       const imported:Array<{envelope:PersistedEnvelopeV6;reservation:EnvelopeReservationV6;outbox:V2OutboxEntry}>=[]
       const importable=[...remoteById.entries()]
-        .filter(([id])=>(acceptedEnvelopeIds.has(id)||staleWriterEnvelopeIds.has(id))&&!localById.has(id))
+        .filter(([id])=>acceptedEnvelopeIds.has(id)&&!localById.has(id))
         .sort((left,right)=>left[1].index-right[1].index)
       for(const [envelopeId,{row}] of importable){
         const envelope:PreparedEnvelope={
@@ -1471,7 +1471,7 @@ export class IndexedDbV2LocalSecurityStore {
         sequence+=1
         journalHash=await localJournalNextV2(journalHash,sequence,envelope)
         const id=`${nextState.epoch_id}:${envelopeId}`
-        const status:V2OutboxStatus=acceptedEnvelopeIds.has(envelopeId)?'durable':'stale_writer_pending'
+        const status:V2OutboxStatus='durable'
         const core:V2OutboxEntryCore={id,epoch_id:nextState.epoch_id,envelope_id:envelopeId,status,authority}
         imported.push({
           envelope:{...envelope,id,epoch_id:nextState.epoch_id,local_sequence:sequence},
