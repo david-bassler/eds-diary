@@ -10,6 +10,7 @@ import { PainPage } from './features/pain/PainPage'
 import { PainStatusPrompt } from './features/pain/PainStatusPrompt'
 import { QrShareButton } from './features/share/QrShareButton'
 import { GoogleSyncSettings } from './features/settings/GoogleSyncSettings'
+import { TransferableWriterV2Settings } from './features/settings/TransferableWriterV2Settings'
 import { InstallAppSettings } from './features/settings/InstallAppSettings'
 import { LOCAL_SECURITY_CHANGED_EVENT, LocalSecuritySettings } from './features/settings/LocalSecuritySettings'
 import { RecoverySettings } from './features/settings/RecoverySettings'
@@ -147,6 +148,7 @@ export function App() {
                 <InstallAppSettings />
                 <LocalSecuritySettings />
                 <GoogleSyncSettings />
+            <TransferableWriterV2Settings />
                 <ConflictResolutionSettings />
               </>
             ) : null}
