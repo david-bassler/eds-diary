@@ -89,6 +89,7 @@ export class IndexedDbV2CoordinatorStore implements CoordinatorStore {
         },
         source_epoch_sealed:remote.source_epoch_sealed,
         recovery_rekey_rotation_required:remote.current_recovery.recovery_rekey_rotation_required,
+        preserve_ceremony_owned:true,
       },
     )
     return persisted.operation_generation
