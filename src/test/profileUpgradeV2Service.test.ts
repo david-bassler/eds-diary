@@ -1106,4 +1106,108 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     expect([...source.transport.appendCounts.values()].every(count=>count===1)).toBe(true)
     expect([...v2.remote!.appendCounts.values()].every(count=>count===1)).toBe(true)
   },90_000)
+
+  it('performs a productive native v2 to v2 normal rotation and carries Writer/Recovery authority',async()=>{
+    const createdAt='2026-09-25T07:20:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    const sourceEpochId=upgraded.successor_epoch_id
+    const result=await new ProductiveNativeRotationV2Service(v2,urs,new IndexedDbV2LocalSecurityStore(),()=>createdAt).rotate('normal')
+    expect(result.stage).toBe('switched')
+    expect(result.rotation_kind).toBe('normal')
+    expect(result.source_epoch_id).toBe(sourceEpochId)
+    expect(result.successor_epoch_id).not.toBe(sourceEpochId)
+    expect(v2.creates).toBe(2)
+    expect((await activeProtocolSelectionV2())?.epoch_id).toBe(result.successor_epoch_id)
+
+    const successorArtifact=await v2.loadRecoveryArtifact(urs,source.diaryId,result.successor_epoch_id)
+    const successorRecovered=await openRecoveryArtifactV6(successorArtifact,urs)
+    expect(successorRecovered.payload.activation_lineage).toHaveLength(2)
+    expect(successorRecovered.payload.activation_lineage.at(-1)?.kind).toBe('v2_rotation')
+    const successorSalt=await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(result.successor_epoch_id))
+    const successorState=await new IndexedDbV2LocalSecurityStore().loadState(successorRecovered.rootKey,successorSalt,result.successor_epoch_id)
+    expect(successorState.epoch_status).toBe('active')
+    expect(successorState.writer_status).toBe('writer_active')
+    expect(successorState.recovery_rekey_rotation_required).toBe(false)
+
+    const sourceArtifact=await v2.loadRecoveryArtifact(urs,source.diaryId,sourceEpochId)
+    const sourceRecovered=await openRecoveryArtifactV6(sourceArtifact,urs)
+    const sourceSalt=await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(sourceEpochId))
+    const sourceState=await new IndexedDbV2LocalSecurityStore().loadState(sourceRecovered.rootKey,sourceSalt,sourceEpochId)
+    expect(sourceState.epoch_status).toBe('retired')
+    expect(sourceState.writer_status).toBe('read_only')
+  },120_000)
+
+  it('resumes native v2 rotation after crashing immediately after the durable Source freeze',async()=>{
+    const createdAt='2026-09-25T07:25:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore()
+    await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    let crashed=false
+    await expect(new ProductiveNativeRotationV2Service(v2,urs,store,()=>createdAt,async point=>{
+      if(point==='after-source-freeze'&&!crashed){crashed=true;throw new Error('native-rotation-crash:source-freeze')}
+    }).rotate('normal')).rejects.toThrow('native-rotation-crash:source-freeze')
+    const selectedBefore=await activeProtocolSelectionV2()
+    if(!selectedBefore)throw new Error('active v2 source selection missing after injected crash')
+    const sourceArtifact=await v2.loadRecoveryArtifact(urs,source.diaryId,selectedBefore.epoch_id)
+    const sourceRecovered=await openRecoveryArtifactV6(sourceArtifact,urs),sourceSalt=await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(selectedBefore.epoch_id))
+    const frozen=await store.loadState(sourceRecovered.rootKey,sourceSalt,selectedBefore.epoch_id)
+    expect(frozen.rotation_state_ref?.state).toBe('source_frozen_verified')
+
+    const resumed=await new ProductiveNativeRotationV2Service(v2,urs,store,()=>createdAt).rotate('normal')
+    expect(resumed.stage).toBe('switched')
+    expect((await activeProtocolSelectionV2())?.epoch_id).toBe(resumed.successor_epoch_id)
+  },120_000)
+
+  it('completes two-phase Recovery-Rekey through mandatory recovery_rekey successor rotation',async()=>{
+    const createdAt='2026-09-25T07:30:00.000Z',urs=randomBytes(32),newUrs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore()
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    const sourceEpochId=upgraded.successor_epoch_id
+    const result=await new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt).rekey(newUrs)
+    expect(result.stage).toBe('completed')
+    expect(result.toRecoveryGeneration).toBe(1)
+    expect(result.successorEpochId).not.toBeNull()
+    expect(result.successorEpochId).not.toBe(sourceEpochId)
+    expect((await activeProtocolSelectionV2())?.epoch_id).toBe(result.successorEpochId)
+
+    const successorArtifact=await v2.loadRecoveryArtifact(newUrs,source.diaryId,result.successorEpochId!)
+    const successorRecovered=await openRecoveryArtifactV6(successorArtifact,newUrs)
+    expect(successorRecovered.payload.recovery_generation).toBe(1)
+    expect(successorRecovered.payload.recovery_rekey_rotation_required).toBeUndefined()
+    await expect(openRecoveryArtifactV6(successorArtifact,urs)).rejects.toBeTruthy()
+    const successorSalt=await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(result.successorEpochId!))
+    const successorState=await store.loadState(successorRecovered.rootKey,successorSalt,result.successorEpochId!)
+    expect(successorState.epoch_status).toBe('active')
+    expect(successorState.recovery_generation).toBe(1)
+    expect(successorState.recovery_rekey_rotation_required).toBe(false)
+
+    const sourceArtifact=await v2.loadRecoveryArtifact(newUrs,source.diaryId,sourceEpochId)
+    const sourceRecovered=await openRecoveryArtifactV6(sourceArtifact,newUrs),sourceSalt=await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(sourceEpochId))
+    const operation=await store.loadRecoveryRekeyOperation(result.operationId)
+    expect(operation.stage).toBe('completed')
+    expect(operation.completed_successor_epoch_id).toBe(result.successorEpochId)
+    const sourceState=await store.loadState(sourceRecovered.rootKey,sourceSalt,sourceEpochId)
+    expect(sourceState.epoch_status).toBe('retired')
+  },120_000)
+
+  it('resumes Recovery-Rekey from the exact prepared bundle after crash',async()=>{
+    const createdAt='2026-09-25T07:35:00.000Z',urs=randomBytes(32),newUrs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore()
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    let crashed=false
+    await expect(new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt,async point=>{
+      if(point==='after-prepared-bundle'&&!crashed){crashed=true;throw new Error('rekey-crash:prepared')}
+    }).rekey(newUrs)).rejects.toThrow('rekey-crash:prepared')
+
+    const sourceArtifact=await v2.loadRecoveryArtifact(urs,source.diaryId,upgraded.successor_epoch_id)
+    const recovered=await openRecoveryArtifactV6(sourceArtifact,urs),salt=await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(upgraded.successor_epoch_id))
+    const prepared=await store.loadBoundRecoveryRekeyOperation(recovered.rootKey,salt,upgraded.successor_epoch_id)
+    if(!prepared)throw new Error('prepared Recovery-Rekey operation missing')
+    expect(prepared.stage).toBe('new_material_staged')
+    expect(prepared.artifact_publish_attempted).toBe(false)
+    const exactTransition={...prepared.transition_envelope}
+
+    const resumed=await new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt).rekey(newUrs)
+    expect(resumed.stage).toBe('completed')
+    const finalOperation=await store.loadRecoveryRekeyOperation(prepared.operation_id)
+    expect(finalOperation.transition_envelope).toEqual(exactTransition)
+    expect(finalOperation.stage).toBe('completed')
+  },120_000)
+
 })
