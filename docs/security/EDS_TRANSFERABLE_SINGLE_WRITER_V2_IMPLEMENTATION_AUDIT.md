@@ -209,6 +209,57 @@ Current implementation boundary remains:
 - normal App/Settings/domain-materialization/UI wiring remains open;
 - Live-Google Parallel-Append and external production gates remain open.
 
+
+### 2026-09-25 V2-08 Forced Takeover implementation/review pass
+
+Implemented the productive Forced Takeover ceremony from Exact Protocol §16 and
+Architecture §23 item 12 on top of the fully re-audited V2-07 stack.
+
+The implementation deliberately reuses the existing WriterGrantOperationStateV2
+and ceremony-owned outbox path rather than introducing a second grant transport:
+- a fresh canonical_full verify establishes the exact decision prefix and current
+  Writer/Recovery authority;
+- the current RecoveryArtifactV6 is reopened with the user-supplied URS and bound
+  to the active diary/epoch/root/manifest/account plus all persisted freshness
+  floors available on the device;
+- any current RecoveryAuthorityTransitionProofV2 is rebound to the exact
+  canonically accepted transition envelope before the takeover signing key is
+  used;
+- the g+1 reason="forced_takeover" Grant targets the authenticated local
+  WriterDeviceKeyV2 and is signed only with the transient non-extractable
+  Recovery takeover key;
+- persistence independently reopens the prepared Grant and verifies predecessor,
+  Recovery generation/key ID/signature, decision anchor and local target key;
+- crash/Unknown-Outcome resume reuses the exact prepared bytes and re-verifies
+  their historical Recovery authorization from the fresh canonical prefix;
+- accepted readback promotes the local key only through StateV6 reconciliation;
+  stale/raced claims enter the existing authenticated stale_writer_pending
+  quarantine.
+
+Two cross-slice deferred-layer completions became concrete during V2-08:
+1. the V2-07 persistence boundary intentionally accepted only cooperative Handoff
+   Grants; V2-08 extends that boundary with a separately checked Forced-Takeover
+   branch rather than weakening the Handoff checks;
+2. V2-06 intentionally failed closed on Pending-Rekey Join. Exact Protocol §16
+   requires device-loss continuation after a durable RecoveryAuthorityTransition,
+   so Join now admits that state only when the current RecoveryArtifact carries
+   the exact canonically accepted RecoveryAuthorityTransitionProofV2. An
+   unproved/stale transition remains rejected.
+
+Productive regressions cover normal takeover after read-only Join, exact
+prepared-byte crash resume without a second Recovery capability, stale-prefix
+quarantine, wrong Recovery Key rejection, and full device-loss recovery during
+Pending-Rekey. The latter proves that takeover may become Writer-active while
+the normal domain WriteAuthority remains read_only/maintenance-only until the
+mandatory recovery_rekey rotation is completed.
+
+No wire format, frozen signature input or D-001…D-010 architecture decision was
+changed. The implemented internal boundary now reaches Architecture §23 item 12
+(Forced Takeover + stale-pending quarantine). Native v2→v2 Rotation/two-phase
+Recovery-Rekey orchestration, App/UI/domain wiring, Live-Google parallel-append
+validation and external production gates remain open.
+
+
 ## Findings and disposition
 
 | ID | Area | Finding | Disposition |
