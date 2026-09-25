@@ -79,7 +79,12 @@ class MemoryTransport implements RemoteTransport {
     readonly profileId:string,
     readonly remoteId:string,
     readonly snapshot:RemoteSnapshot&{manifest:string[];rows:string[][]},
+    readonly authenticatedBinding:string|null=null,
   ){}
+  async authenticatedAccountBinding():Promise<string>{
+    if(this.authenticatedBinding===null)throw new Error('Fixture authenticated account binding is unavailable.')
+    return this.authenticatedBinding
+  }
   appendCounts=new Map<string,number>()
   appendAttempts=0
   unknownAfterAppend=false
@@ -171,7 +176,7 @@ class V2Session implements TransferableSingleWriterV2ProviderSession {
     const existing=this.creation.get(args.creationLocator)
     if(existing)return structuredClone(existing)
     const remoteId=this.creates===0?'successor-v2':`successor-v2-${this.creates+1}`
-    this.remote=new MemoryTransport(SINGLE_WRITER_V2_PROFILE,remoteId,{manifest:[...manifestCellsArrayV6(args.manifest)],rows:[]})
+    this.remote=new MemoryTransport(SINGLE_WRITER_V2_PROFILE,remoteId,{manifest:[...manifestCellsArrayV6(args.manifest)],rows:[]},this.account)
     this.remotesByEpoch.set(args.epochId,this.remote)
     this.creates+=1
     const clean:CreationState={
@@ -215,7 +220,7 @@ async function seedV1Source(urs:Uint8Array,createdAt:string):Promise<{transport:
     record_schema_allowlist:[...SCHEMA_ALLOWLIST],record_schema_registry_hash:await schemaRegistryHash(DOMAIN_SCHEMA_REGISTRY),
     protocol_limits:{max_payload_bytes:16380,padding_buckets:[1024,2048,4096,8192,16384],max_unique_envelopes:100000,max_unique_canonical_bytes:134217728,max_remote_physical_rows:100000,max_remote_physical_canonical_bytes:134217728,max_canonical_row_bytes:21936},
   })
-  const fingerprint=await manifestFingerprint(manifest),remote=new MemoryTransport(SINGLE_WRITER_V1_PROFILE,'source-v1',{manifest:[manifest.format,manifest.version,manifest.manifestIv,manifest.manifestCiphertext],rows:rows.map(row=>[...row])})
+  const fingerprint=await manifestFingerprint(manifest),remote=new MemoryTransport(SINGLE_WRITER_V1_PROFILE,'source-v1',{manifest:[manifest.format,manifest.version,manifest.manifestIv,manifest.manifestCiphertext],rows:rows.map(row=>[...row])},account)
   const db=await __localDatabaseTesting.openDatabase(),keyTx=db.transaction(__localDatabaseTesting.STORES.wrappingKeys,'readonly')
   const key=await new Promise<CryptoKey>((resolve,reject)=>{const request=keyTx.objectStore(__localDatabaseTesting.STORES.wrappingKeys).get(source.context.wrapId);request.onsuccess=()=>resolve((request.result as {key:CryptoKey}).key);request.onerror=()=>reject(request.error)})
   await transactionComplete(keyTx)
