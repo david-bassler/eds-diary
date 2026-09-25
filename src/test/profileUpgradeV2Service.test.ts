@@ -65,6 +65,7 @@ import { localJournalInitialV2, type EpochLocalSecurityStateV6, type StoredWrite
 import { ProductiveNativeRotationV2Service } from '../data/nativeRotationV2Service'
 import { ProductiveRecoveryRekeyV2Service } from '../data/recoveryRekeyV2Service'
 import type { RotationOperationStateV2 } from '../security/v2/profileUpgrade'
+import { TransferableSingleWriterV2WriteAuthority } from '../security/v2/writeAuthority'
 
 type Row=readonly[string,string,string]
 
@@ -1270,6 +1271,23 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     })).rejects.toThrow(/authenticated current transition|Recovery-rekey/)
     const after=await store.loadState(opened.rootKey,salt,upgraded.successor_epoch_id)
     expect(after.rotation_state_ref).not.toMatchObject({operation_id:operation.operation_id})
+  },120_000)
+
+
+  it('does not keep normal writes fenced solely by a terminal stale Recovery-Rekey operation ref',async()=>{
+    const createdAt='2026-09-25T07:50:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    const artifact=await v2.loadRecoveryArtifact(urs,source.diaryId,upgraded.successor_epoch_id),opened=await openRecoveryArtifactV6(artifact,urs)
+    const salt=await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(upgraded.successor_epoch_id))
+    const state=await store.loadState(opened.rootKey,salt,upgraded.successor_epoch_id)
+    const remote=await v2.transportForEpoch(source.diaryId,upgraded.successor_epoch_id),codec=await v2.codecForEpoch(source.diaryId,upgraded.successor_epoch_id,opened.rootKey,remote)
+    const verified=await codec.verifyRemote(await remote.read((remote as unknown as MemoryTransport).remoteId))
+    const terminal:EpochLocalSecurityStateV6={...state,recovery_operation_state_ref:{operation_id:base64Url(randomBytes(32)),state:'stale',state_record_hash:base64Url(randomBytes(32))}}
+    const terminalAuthority=new TransferableSingleWriterV2WriteAuthority(()=>terminal,()=>null)
+    expect(await terminalAuthority.canPrepareDomainWrite(verified)).toBe('writer')
+    const nonTerminal:EpochLocalSecurityStateV6={...state,recovery_operation_state_ref:{operation_id:base64Url(randomBytes(32)),state:'transition_durable',state_record_hash:base64Url(randomBytes(32))}}
+    const blockedAuthority=new TransferableSingleWriterV2WriteAuthority(()=>nonTerminal,()=>null)
+    expect(await blockedAuthority.canPrepareDomainWrite(verified)).toBe('read_only')
   },120_000)
 
 })
