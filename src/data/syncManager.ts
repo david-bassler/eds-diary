@@ -10,7 +10,7 @@ const dirtyVersions = new Map<string, number>()
 const listeners = new Set<(snapshot: SyncSnapshot) => void>()
 
 let version = 0
-let timer: number | null = null
+let timer: ReturnType<typeof globalThis.setTimeout> | null = null
 let running: Promise<void> | null = null
 let requestedFull = false
 let initialized = false
