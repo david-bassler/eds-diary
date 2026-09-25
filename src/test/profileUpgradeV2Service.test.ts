@@ -1250,6 +1250,23 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     await coordinator.commitVerifiedPull(verified,canonical.remote_anchor,state.operation_generation)
     const afterGenericPull=(await store.outbox(opened.rootKey,salt,upgraded.successor_epoch_id)).find(entry=>entry.envelope_id===operation.transition_envelope.envelope_id)
     expect(afterGenericPull?.status).toBe('prepared')
+    const reconciledState=await store.loadState(opened.rootKey,salt,upgraded.successor_epoch_id)
+    const stillPending=await store.loadRecoveryRekeyOperation(operation.operation_id)
+    expect(['transition_pending','transition_unknown']).toContain(stillPending.stage)
+    await expect(store.advanceRecoveryRekeyOperationBinding(
+      opened.rootKey,salt,upgraded.successor_epoch_id,reconciledState.operation_generation,stillPending.stage,{...stillPending,stage:'stale'},
+    )).rejects.toThrow(/current Recovery transition cannot be terminalized as stale/)
+    expect((await store.loadRecoveryRekeyOperation(operation.operation_id)).stage).toBe(stillPending.stage)
+
+    const syntheticSuperseding={...stillPending,
+      operation_id:base64Url(randomBytes(32)),operation_origin:'local_rekey' as const,stage:'new_material_staged' as const,
+      supersedes_transition_id:stillPending.transition_id,superseded_by_transition_id:null,transition_id:base64Url(randomBytes(32)),
+      artifact_publish_attempted:false,completed_successor_epoch_id:null,completed_successor_manifest_fingerprint:null,
+    }
+    await expect(store.initializeRecoveryRekeyOperationBinding(
+      opened.rootKey,salt,reconciledState.operation_generation,syntheticSuperseding,
+    )).rejects.toThrow(/post-durable pending operation/)
+    expect((await store.loadState(opened.rootKey,salt,upgraded.successor_epoch_id)).recovery_operation_state_ref?.operation_id).toBe(operation.operation_id)
 
     const resumed=await new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt).rekey(newUrs)
     expect(resumed.stage).toBe('completed')
