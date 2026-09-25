@@ -8,6 +8,7 @@ import { base64Url, fixedBase64Url, randomBytes } from '../security/crypto/bytes
 import { canonicalBytes } from '../security/crypto/canonical'
 import { deriveEpochSalt, sha256 } from '../security/crypto/core'
 import { openEnvelope, type PreparedEnvelope } from '../security/envelopes'
+import { openRevisionEnvelopeV2 } from '../security/v2/envelopes'
 import { manifestFingerprint, openManifest, parseManifestCells } from '../security/manifest'
 import { validateRevisionGraphV1, type RevisionV1 } from '../security/revisions'
 import { deriveEpochSaltV2, generateWriterDeviceKeyV2 } from '../security/v2/crypto'
@@ -28,6 +29,7 @@ import {
 import { sourceAnnouncementEnvelopeHashV2, verifyProfileUpgradeMigrationIntegrityV2 } from '../security/v2/profileUpgrade'
 import { stateAfterCanonicalVerifyV6 } from '../security/v2/stateReconciliation'
 import type { CanonicalFullResultV2 } from '../security/v2/verifier'
+import type { RecoveryAuthorityTransitionV2 } from '../security/v2/types'
 import {
   DOMAIN_SCHEMA_REGISTRY,
   activeProtocolSelectionV2,
@@ -97,6 +99,38 @@ function exactRecoveryBinding(payload:RecoveryPayloadV6,result:CanonicalFullResu
     ||payload.recovery_takeover_public_key!==recovery.recovery_takeover_public_key
     ||!same(payload.recovery_credential_history,result.recovery_credential_history))throw new Error('RecoveryArtifactV6 is not current for the canonical v2 Recovery authority.')
   if(recovery.recovery_rekey_rotation_required||recovery.recovery_rekey_transition_id!==null)throw new Error('Read-only Join is blocked while v2 Recovery-Rekey is pending.')
+}
+
+async function verifyCurrentRecoveryTransitionForJoin(candidate:ActiveCandidateV2):Promise<void>{
+  const recovery=candidate.result.current_recovery,proof=candidate.payload.recovery_authority_transition_proof
+  if(!recovery.recovery_rekey_rotation_required){
+    if(recovery.recovery_rekey_transition_id!==null)throw new Error('Canonical Recovery state has an inconsistent Pending-Rekey transition reference.')
+    if(proof!==null)throw new Error('RecoveryArtifactV6 carries a same-epoch transition proof although canonical Recovery-Rekey is not pending.')
+    return
+  }
+  if(recovery.recovery_rekey_transition_id===null||proof===null)throw new Error('Pending Recovery-Rekey Join requires the current RecoveryAuthorityTransitionProofV2.')
+  if(proof.source_epoch_id!==candidate.payload.epoch_id||proof.source_manifest_fingerprint!==candidate.payload.manifest_fingerprint)throw new Error('RecoveryAuthorityTransitionProofV2 source binding mismatch during Join.')
+  const row=candidate.snapshot.rows.find(item=>item[0]===proof.transition_envelope.envelope_id)
+  if(!row||row[1]!==proof.transition_envelope.iv||row[2]!==proof.transition_envelope.ciphertext
+    ||!candidate.verified.acceptedEnvelopeIds.has(proof.transition_envelope.envelope_id))throw new Error('RecoveryAuthorityTransitionProofV2 transition is not canonically durable during Join.')
+  const epochSalt=await deriveEpochSaltV2(fixedBase64Url(candidate.payload.diary_id,16),fixedBase64Url(candidate.payload.epoch_id,16))
+  const revision=await openRevisionEnvelopeV2(
+    candidate.rootKey,epochSalt,{diaryId:candidate.payload.diary_id,epochId:candidate.payload.epoch_id},
+    {envelopeId:row[0]!,iv:row[1]!,ciphertext:row[2]!,bytesHash:''},
+  )
+  if(revision.record_schema!=='recovery-authority-transition-sw-v2'||revision.record_type!=='recovery_authority_transition'||revision.record_status!=='control')throw new Error('RecoveryAuthorityTransitionProofV2 envelope type mismatch during Join.')
+  const transition=revision.record_data as RecoveryAuthorityTransitionV2
+  if(!transition
+    ||transition.transition_id!==recovery.recovery_rekey_transition_id
+    ||transition.from_recovery_generation!==proof.from_recovery_generation
+    ||transition.from_recovery_urs_id!==proof.from_recovery_urs_id
+    ||transition.from_recovery_takeover_key_id!==proof.from_recovery_takeover_key_id
+    ||transition.to_recovery_generation!==proof.to_recovery_generation
+    ||transition.to_recovery_urs_commitment!==proof.to_recovery_urs_commitment
+    ||transition.to_recovery_urs_id!==proof.to_recovery_urs_id
+    ||transition.to_recovery_takeover_key_id!==proof.to_recovery_takeover_key_id
+    ||transition.to_recovery_takeover_public_key!==proof.to_recovery_takeover_public_key
+    ||!same(transition.authority_anchor,proof.authority_anchor_before_transition))throw new Error('RecoveryAuthorityTransitionProofV2 semantic binding mismatch during Join.')
 }
 
 async function sourceRevisionsAtAnchor(args:{
@@ -244,7 +278,7 @@ async function discoverActiveCandidate(session:TransferableSingleWriterV2Provide
       payload,manifest,snapshot,verified,result,remoteId,accountBinding,
     }
     if(result.source_epoch_sealed||result.activation_state==='staged_confirmation_missing')continue
-    if(payload.recovery_authority_transition_proof!==null)throw new Error('V2-06 Join does not yet accept same-epoch Recovery-Rekey transition proofs.')
+    await verifyCurrentRecoveryTransitionForJoin(candidate)
     await verifyActivationForJoin(session,candidate)
     active.push(candidate)
   }
