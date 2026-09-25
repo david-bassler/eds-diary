@@ -8,8 +8,9 @@ import { normalizeLegacyActivityEntriesForSecureMigration } from './legacyCompat
 import { ProductiveRotationService, type CompletedRotation } from './productiveRotationService'
 import { ensurePersistentStorage } from './storageDurability'
 import { installAuthenticatedV2RemoteSession, disconnectAuthenticatedV2RemoteSession } from './v2ApplicationRuntime'
-import { ProductiveRecoveryRekeyV2Service, type RecoveryRekeyResultV2 } from './recoveryRekeyV2Service'
-import { ProductiveNativeRotationV2Service, type NativeRotationResultV2 } from './nativeRotationV2Service'
+import { ProductiveRecoveryRekeyV2Service, type RecoveryRekeyV2Result } from './recoveryRekeyV2Service'
+import { ProductiveNativeRotationV2Service } from './nativeRotationV2Service'
+type NativeRotationV2Result=Awaited<ReturnType<ProductiveNativeRotationV2Service['rotate']>>
 import { IndexedDbV2LocalSecurityStore } from '../security/v2/localPersistence'
 import { deriveEpochSaltV2 } from '../security/v2/crypto'
 import { fixedBase64Url } from '../security/crypto/bytes'
@@ -120,7 +121,7 @@ export async function enableAuthenticatedRemoteSession(session:SingleWriterProvi
 export async function replaceRecoverySecret(
   session:AuthenticatedProviderSession,
   newUrs:Uint8Array,
-):Promise<CompletedRotation|RecoveryRekeyResultV2>{
+):Promise<CompletedRotation|RecoveryRekeyV2Result>{
   if(newUrs.byteLength!==32)throw new Error('Recovery secret must contain 32 bytes.')
   if(await activeProtocolSelectionV2()){
     if(!isV2Session(session))throw new Error('v2 Recovery-Rekey requires a v2 provider session.')
