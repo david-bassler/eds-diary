@@ -16,6 +16,11 @@ export type DomainRecordTypeV2='pain_entry'|'activity_entry'|'medication_entry'|
 export interface PrepareDomainRevisionV2Input<T=unknown>{
   recordType:DomainRecordTypeV2
   recordId:string
+  /**
+   * Normal app writes omit this field and derive the single current parent from
+   * the same fresh canonical_full used for authorization. Explicit parents are
+   * reserved for conflict-merge flows.
+   */
   parentRevisionIds?:readonly string[]
   status:'active'|'deleted'
   data:T|null
@@ -97,7 +102,16 @@ export class V2DomainWritePreparer {
       const recordSchema=V2_RECORD_SCHEMA_BY_TYPE[input.recordType]
       const schema=V2_SCHEMA_REGISTRY[recordSchema]
       if(!schema)throw new Error('Domain schema is not registered in v2.')
-      const parentRevisionIds=[...(input.parentRevisionIds??[])]
+      const currentHeads=[...(remote.accepted_revision_graph.heads_by_record.get(input.recordId)??[])]
+      let parentRevisionIds:[...string[]]
+      if(input.parentRevisionIds===undefined){
+        if(currentHeads.length>1)throw new Error(`Record ${input.recordId} has ${currentHeads.length} unresolved v2 heads.`)
+        parentRevisionIds=currentHeads
+      }else{
+        parentRevisionIds=[...input.parentRevisionIds]
+        if(parentRevisionIds.length>8)throw new Error('Explicit v2 merge parents exceed the protocol parent bound.')
+        if(parentRevisionIds.length&&parentRevisionIds.some(parent=>!currentHeads.includes(parent)))throw new Error('Explicit v2 merge parents must be current canonical heads.')
+      }
       for(const parentId of parentRevisionIds){
         const parent=remote.accepted_revision_graph.revisions.get(parentId)
         if(!parent)throw new Error('Domain revision parent is not in the freshly verified accepted graph.')
