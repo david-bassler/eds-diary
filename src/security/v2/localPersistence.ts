@@ -892,6 +892,9 @@ export class IndexedDbV2LocalSecurityStore {
       if(operation.stage!==expectedStage)throw new Error('RecoveryRekeyOperationStateV2 stage changed before transition.')
       advanceRecoveryRekeyOperationStateV2(operation,next)
       if(next.stage==='stale'){
+        if(current.recovery_rekey_rotation_required&&current.recovery_rekey_transition_id===operation.transition_id
+          &&current.recovery_generation===operation.to_recovery_generation&&current.recovery_urs_id===operation.to_recovery_urs_id
+          &&current.recovery_takeover_key_id===operation.to_recovery_takeover_key_id)throw new Error('A canonically durable/current Recovery transition cannot be terminalized as stale.')
         if(operation.artifact_publish_attempted){
           const anchor=current.remote_anchor
           if(anchor===null||anchor.anchor_profile!==operation.authority_anchor_before_transition.anchor_profile
