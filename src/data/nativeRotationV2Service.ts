@@ -554,7 +554,7 @@ export class ProductiveNativeRotationV2Service implements ProfileUpgradeOrchestr
     planned.push(migration);await this.putArtifact('staging-row-plan',planned)
     let retryBudget=1
     for(;;){
-      let snapshot=await ctx.transport.read(ctx.remoteId),present=requirePlannedPrefix(snapshot.rows,planned)
+      let snapshot=await ctx.transport.read(ctx.remoteId);const present=requirePlannedPrefix(snapshot.rows,planned)
       if(present===planned.length){
         const verified=await ctx.codec.verifyRemote(snapshot),result=canonical(verified)
         await verifyNativeV2MigrationIntegrity({source:source.result,successor:result,rotationKind:ctx.plan.rotation_kind,recoveryTransitionId:ctx.plan.recovery_transition_id})
@@ -747,7 +747,7 @@ export class ProductiveNativeRotationV2Service implements ProfileUpgradeOrchestr
     let state=await this.store.loadState(ctx.rootKey,ctx.epochSalt,ctx.plan.successor_epoch_id)
     if(state.activation_lineage_cache_ref===null){
       const cache=await createActivationLineageCacheV2({rootKey:ctx.rootKey,epochSalt:ctx.epochSalt,diaryId:ctx.plan.diary_id,epochId:ctx.plan.successor_epoch_id,manifestFingerprint:ctx.plan.manifest_fingerprint,activationLineage:activation.lineage})
-      state=await this.store.persistActivationLineageCache(ctx.rootKey,ctx.epochSalt,cache,state.operation_generation)
+      await this.store.persistActivationLineageCache(ctx.rootKey,ctx.epochSalt,cache,state.operation_generation)
     }else await this.store.loadActivationLineageCache(ctx.rootKey,ctx.epochSalt,ctx.plan.successor_epoch_id)
     const successor=await this.successorAtStagingOrConfirmation()
     if(successor.confirmationCount===0||await this.recoveryAdvanced(successor.result))return'superseded'
