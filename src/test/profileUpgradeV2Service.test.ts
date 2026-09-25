@@ -1494,4 +1494,28 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     expect(resumedFirst.operationId).toBe(firstOperation.operation_id)
   },120_000)
 
+
+  it('allows only the exact pre-publish Recovery-Rekey abort to terminal stale without setting the publish fence',async()=>{
+    const createdAt='2026-09-25T08:25:00.000Z',urs=randomBytes(32),newUrs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    let crashed=false
+    await expect(new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt,async point=>{
+      if(point==='after-prepared-bundle'&&!crashed){crashed=true;throw new Error('rekey-crash:abort-before-publish')}
+    }).rekey(newUrs)).rejects.toThrow('rekey-crash:abort-before-publish')
+
+    const artifact=await v2.loadRecoveryArtifact(urs,source.diaryId,upgraded.successor_epoch_id),opened=await openRecoveryArtifactV6(artifact,urs)
+    const salt=await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(upgraded.successor_epoch_id))
+    const state=await store.loadState(opened.rootKey,salt,upgraded.successor_epoch_id)
+    const prepared=await store.loadBoundRecoveryRekeyOperation(opened.rootKey,salt,upgraded.successor_epoch_id)
+    if(!prepared)throw new Error('prepared Recovery-Rekey operation missing for pre-publish abort')
+    expect(prepared.stage).toBe('new_material_staged')
+    expect(prepared.artifact_publish_attempted).toBe(false)
+    await store.advanceRecoveryRekeyOperationBinding(
+      opened.rootKey,salt,upgraded.successor_epoch_id,state.operation_generation,'new_material_staged',{...prepared,stage:'stale'},
+    )
+    const stale=await store.loadRecoveryRekeyOperation(prepared.operation_id)
+    expect(stale.stage).toBe('stale')
+    expect(stale.artifact_publish_attempted).toBe(false)
+  },120_000)
+
 })
