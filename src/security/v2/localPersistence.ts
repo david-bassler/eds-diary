@@ -46,6 +46,7 @@ export interface VerifiedDispositionContextV2 {
   current_writer:PreparedEnvelopeAuthorityV2
   source_epoch_sealed:boolean
   recovery_rekey_rotation_required:boolean
+  preserve_ceremony_owned?:boolean
 }
 export type V2OutboxStatus='prepared'|'pending'|'durable'|'stale_writer_pending'
 export type V2OutboxCeremonyOwner='rotation'|'recovery_rekey'
@@ -1382,6 +1383,7 @@ export class IndexedDbV2LocalSecurityStore {
       }
       const updated=entries.map(entry=>{
         let status:V2OutboxStatus=entry.status
+        if(context.preserve_ceremony_owned&&entry.ceremony_owner!==undefined)return entry
         if(acceptedEnvelopeIds.has(entry.envelope_id))status='durable'
         else if(staleWriterEnvelopeIds.has(entry.envelope_id))status='stale_writer_pending'
         else if(entry.status!=='durable'&&entry.authority!==null&&(context.source_epoch_sealed
