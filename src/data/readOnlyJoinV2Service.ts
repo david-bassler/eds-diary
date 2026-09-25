@@ -429,8 +429,26 @@ export class ProductiveReadOnlyJoinV2Service {
     if(state.activation_lineage_cache_ref!==null)await this.store.loadActivationLineageCache(candidate.rootKey,epochSalt,state.epoch_id)
     else if(candidate.payload.activation_lineage.length!==0)throw new Error('Persisted read-only Join is missing ActivationLineageCacheV2.')
     const next=await stateAfterCanonicalVerifyV6(state,candidate.result,candidate.snapshot.rows,false)
-    await this.store.replaceState(candidate.rootKey,epochSalt,state.operation_generation,next)
-    state=await this.store.loadState(candidate.rootKey,epochSalt,candidate.payload.epoch_id)
+    state=await this.store.commitVerifiedDispositions(
+      candidate.rootKey,
+      epochSalt,
+      state.operation_generation,
+      next,
+      candidate.verified.acceptedEnvelopeIds,
+      candidate.verified.staleWriterEnvelopeIds,
+      {
+        remote_manifest:candidate.snapshot.manifest,
+        remote_rows:candidate.snapshot.rows,
+        current_writer:{
+          writer_generation:candidate.result.current_writer.writer_generation,
+          writer_grant_id:candidate.result.current_writer.writer_grant_id,
+          writer_device_id:candidate.result.current_writer.writer_device_id,
+          writer_key_id:candidate.result.current_writer.writer_key_id,
+        },
+        source_epoch_sealed:candidate.result.source_epoch_sealed,
+        recovery_rekey_rotation_required:candidate.result.current_recovery.recovery_rekey_rotation_required,
+      },
+    )
     if(state.writer_status!=='read_only'||state.writer_generation!==null||state.writer_grant_id!==null||state.epoch_status!=='active')throw new Error('Persisted read-only Join state lost its fail-closed status.')
     return state
   }
