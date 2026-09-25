@@ -1,7 +1,6 @@
 import { clearSecureSynchronizer, initializeSyncManager, installSecureSynchronizer } from './syncManager'
 import { SingleWriterSyncService } from './singleWriterSyncService'
 import type { SingleWriterProviderSession } from '../sync/core/provider'
-import type { TransferableSingleWriterV2ProviderSession } from '../sync/google/GoogleTransferableSingleWriterV2Provider'
 import { SINGLE_WRITER_V1_PROFILE, SINGLE_WRITER_V2_PROFILE } from '../sync/core/contracts'
 import { activeEpochSyncContext, activeProtocolSelectionV2, openSuccessorRootWrapV6WithActiveMode } from './localDatabase'
 import { normalizeLegacyActivityEntriesForSecureMigration } from './legacyCompatibility'
@@ -20,7 +19,8 @@ import { ProductiveForcedTakeoverV2Service } from './forcedTakeoverV2Service'
 import { ProductiveWriterHandoffV2Service } from './writerHandoffV2Service'
 import type { TransferDescriptorV2 } from '../security/v2/types'
 
-type AuthenticatedProviderSession=SingleWriterProviderSession|TransferableSingleWriterV2ProviderSession
+type TransferableV2Session=ConstructorParameters<typeof ProductiveReadOnlyJoinV2Service>[0]
+type AuthenticatedProviderSession=SingleWriterProviderSession|TransferableV2Session
 interface SecureSynchronizer {synchronize():Promise<void>}
 
 let initialized = false
@@ -33,7 +33,7 @@ function ensureLegacyCompatibility():Promise<void>{
   return legacyCompatibilityPromise
 }
 function isV1Session(value:AuthenticatedProviderSession):value is SingleWriterProviderSession{return value.profileId===SINGLE_WRITER_V1_PROFILE}
-function isV2Session(value:AuthenticatedProviderSession):value is TransferableSingleWriterV2ProviderSession{return value.profileId===SINGLE_WRITER_V2_PROFILE}
+function isV2Session(value:AuthenticatedProviderSession):value is TransferableV2Session{return value.profileId===SINGLE_WRITER_V2_PROFILE}
 
 export interface RemoteSessionStatus {
   mode:'local_offline'|'remote_bound'
@@ -165,7 +165,7 @@ export async function rotateAuthenticatedRemoteSession(
 
 export async function upgradeAuthenticatedRemoteSessionToV2(
   sourceSession:SingleWriterProviderSession,
-  successorSession:TransferableSingleWriterV2ProviderSession,
+  successorSession:TransferableV2Session,
   urs:Uint8Array,
 ){
   if(await activeProtocolSelectionV2())throw new Error('This diary is already using transferable-single-writer v2.')
@@ -179,7 +179,7 @@ export async function upgradeAuthenticatedRemoteSessionToV2(
 }
 
 export async function joinExistingV2Diary(
-  session:TransferableSingleWriterV2ProviderSession,
+  session:TransferableV2Session,
   urs:Uint8Array,
 ){
   if(!isV2Session(session))throw new Error('Read-only Join requires an authenticated v2 provider session.')
@@ -189,7 +189,7 @@ export async function joinExistingV2Diary(
 }
 
 export async function forceTakeoverV2(
-  session:TransferableSingleWriterV2ProviderSession,
+  session:TransferableV2Session,
   urs:Uint8Array,
 ){
   if(!isV2Session(session))throw new Error('Forced Takeover requires an authenticated v2 provider session.')
@@ -199,7 +199,7 @@ export async function forceTakeoverV2(
 }
 
 export async function continuePendingRecoveryRekeyV2(
-  session:TransferableSingleWriterV2ProviderSession,
+  session:TransferableV2Session,
   currentUrs:Uint8Array,
 ):Promise<RecoveryRekeyV2Result>{
   if(!isV2Session(session))throw new Error('Pending Recovery-Rekey continuation requires an authenticated v2 provider session.')
@@ -209,14 +209,14 @@ export async function continuePendingRecoveryRekeyV2(
 }
 
 export async function createWriterTransferDescriptorV2(
-  session:TransferableSingleWriterV2ProviderSession,
+  session:TransferableV2Session,
 ):Promise<TransferDescriptorV2>{
   if(!isV2Session(session))throw new Error('Writer transfer descriptor requires an authenticated v2 provider session.')
   return new ProductiveWriterHandoffV2Service(session).createTransferDescriptor()
 }
 
 export async function handoffWriterV2(
-  session:TransferableSingleWriterV2ProviderSession,
+  session:TransferableV2Session,
   descriptor:unknown,
 ){
   if(!isV2Session(session))throw new Error('Writer handoff requires an authenticated v2 provider session.')
@@ -226,7 +226,7 @@ export async function handoffWriterV2(
 }
 
 export async function adoptGrantedWriterV2(
-  session:TransferableSingleWriterV2ProviderSession,
+  session:TransferableV2Session,
 ){
   if(!isV2Session(session))throw new Error('Writer adoption requires an authenticated v2 provider session.')
   const result=await new ProductiveWriterHandoffV2Service(session).adoptGrantedWriter()
