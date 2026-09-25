@@ -90,6 +90,7 @@ class MemoryTransport implements RemoteTransport {
   appendAttempts=0
   unknownAfterAppend=false
   unknownWithoutAppend=0
+  onUnknownWithoutAppend:(()=>void|Promise<void>)|null=null
   injectBeforeNextAppend:Row|null=null
   afterNextRead:(()=>void|Promise<void>)|null=null
   async discover(locator:string):Promise<readonly RemoteCandidate[]>{return[{remoteId:this.remoteId,locator}]}
@@ -104,7 +105,13 @@ class MemoryTransport implements RemoteTransport {
   async append(id:string,row:readonly[string,string,string]):Promise<void>{
     if(id!==this.remoteId)throw new Error('wrong remote')
     this.appendAttempts+=1
-    if(this.unknownWithoutAppend>0){this.unknownWithoutAppend-=1;throw new TransportError('unknown_outcome','simulated unresolved append')}
+    if(this.unknownWithoutAppend>0){
+      this.unknownWithoutAppend-=1
+      const hook=this.onUnknownWithoutAppend
+      this.onUnknownWithoutAppend=null
+      await hook?.()
+      throw new TransportError('unknown_outcome','simulated unresolved append')
+    }
     if(this.injectBeforeNextAppend){this.snapshot.rows.push([...this.injectBeforeNextAppend]);this.injectBeforeNextAppend=null}
     this.snapshot.rows.push([...row])
     this.appendCounts.set(row[0],(this.appendCounts.get(row[0])??0)+1)
