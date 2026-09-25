@@ -39,7 +39,7 @@ export class IndexedDbV2CoordinatorStore implements CoordinatorStore {
       // authority=null. The generic domain coordinator must never push or
       // quarantine them; WriterHandoff/ForcedTakeover reconcile those exact
       // one-shot bytes under WriterGrantOperationStateV2.
-      if(entry.authority===null)continue
+      if(entry.authority===null||entry.ceremony_owner!==undefined)continue
       if(entry.status==='stale_writer_pending'||verified.staleWriterEnvelopeIds.has(entry.envelope_id))continue
       if(entry.status==='durable'&&verified.acceptedEnvelopeIds.has(entry.envelope_id))continue
       if(verified.acceptedEnvelopeIds.has(entry.envelope_id))continue
