@@ -270,30 +270,36 @@ export class ProductiveRecoveryRekeyV2Service {
 
   private async appendOrReconcileTransition(operation:RecoveryRekeyOperationStateV2,newUrs:Uint8Array):Promise<RecoveryRekeyOperationStateV2>{
     if(operation.stage!=='transition_pending'&&operation.stage!=='transition_unknown')return operation
-    let inspect=await this.inspectTransition(operation,newUrs)
-    if(inspect.stale){
-      const state=await this.store.loadState(inspect.context.rootKey,inspect.context.epochSalt,operation.epoch_id),next={...operation,stage:'stale'} as RecoveryRekeyOperationStateV2
-      await this.store.advanceRecoveryRekeyOperationBinding(inspect.context.rootKey,inspect.context.epochSalt,operation.epoch_id,state.operation_generation,operation.stage,next)
-      return this.store.loadRecoveryRekeyOperation(operation.operation_id)
+    const stale=async(current:RecoveryRekeyOperationStateV2,inspection:Awaited<ReturnType<ProductiveRecoveryRekeyV2Service['inspectTransition']>>):Promise<RecoveryRekeyOperationStateV2>=>{
+      const state=await this.store.loadState(inspection.context.rootKey,inspection.context.epochSalt,current.epoch_id),next={...current,stage:'stale'} as RecoveryRekeyOperationStateV2
+      await this.store.advanceRecoveryRekeyOperationBinding(inspection.context.rootKey,inspection.context.epochSalt,current.epoch_id,state.operation_generation,current.stage,next)
+      return this.store.loadRecoveryRekeyOperation(current.operation_id)
     }
-    if(inspect.present)return this.markTransitionDurable(operation,inspect)
-    if(operation.stage==='transition_unknown')return operation
-    const row:[string,string,string]=[operation.transition_envelope.envelope_id,operation.transition_envelope.iv,operation.transition_envelope.ciphertext];let unknown=false
-    try{await inspect.context.transport.append(inspect.context.remoteId,row)}catch(error){if(!(error instanceof TransportError)||error.code!=='unknown_outcome')throw error;unknown=true}
-    await this.fault?.('after-transition-append')
-    inspect=await this.inspectTransition(operation,newUrs)
-    if(inspect.present)return this.markTransitionDurable(operation,inspect)
-    if(inspect.stale){
-      const state=await this.store.loadState(inspect.context.rootKey,inspect.context.epochSalt,operation.epoch_id),next={...operation,stage:'stale'} as RecoveryRekeyOperationStateV2
-      await this.store.advanceRecoveryRekeyOperationBinding(inspect.context.rootKey,inspect.context.epochSalt,operation.epoch_id,state.operation_generation,operation.stage,next)
-      return this.store.loadRecoveryRekeyOperation(operation.operation_id)
+    let current=operation,inspection=await this.inspectTransition(current,newUrs)
+    if(inspection.stale)return stale(current,inspection)
+    if(inspection.present)return this.markTransitionDurable(current,inspection)
+
+    const row:[string,string,string]=[current.transition_envelope.envelope_id,current.transition_envelope.iv,current.transition_envelope.ciphertext]
+    const maxAttempts=current.stage==='transition_unknown'?1:2
+    for(let attempt=0;attempt<maxAttempts;attempt+=1){
+      if(attempt>0){
+        inspection=await this.inspectTransition(current,newUrs)
+        if(inspection.stale)return stale(current,inspection)
+        if(inspection.present)return this.markTransitionDurable(current,inspection)
+      }
+      let unknown=false
+      try{await inspection.context.transport.append(inspection.context.remoteId,row)}catch(error){if(!(error instanceof TransportError)||error.code!=='unknown_outcome')throw error;unknown=true}
+      await this.fault?.('after-transition-append')
+      inspection=await this.inspectTransition(current,newUrs)
+      if(inspection.present)return this.markTransitionDurable(current,inspection)
+      if(inspection.stale)return stale(current,inspection)
+
+      if(current.stage==='transition_pending'){
+        current=await this.transitionOperation(current,{...current,stage:'transition_unknown'} as RecoveryRekeyOperationStateV2,newUrs)
+      }
+      if(!unknown)return current
     }
-    const unknownState={...operation,stage:'transition_unknown'} as RecoveryRekeyOperationStateV2
-    const transitioned=await this.transitionOperation(operation,unknownState,newUrs)
-    if(!unknown)return transitioned
-    inspect=await this.inspectTransition(transitioned,newUrs)
-    if(inspect.present)return this.markTransitionDurable(transitioned,inspect)
-    return transitioned
+    return current
   }
 
   private async sourceBackup(operation:RecoveryRekeyOperationStateV2,newUrs:Uint8Array):Promise<RecoveryRekeyOperationStateV2>{
