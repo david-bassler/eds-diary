@@ -180,11 +180,64 @@ Der detaillierte, verbindliche Arbeitsplan fuer die noch fehlende erfolgreiche
 Browser-/Mehrgeraete-End-to-End-Evidenz steht in
 `docs/security/V2_E2E_ASSURANCE_PLAN.md`. Die vorhandene konfigurierte
 Playwright-Matrix ist notwendige Regressionsevidenz, schliesst fuer sich allein
-aber keines der dort definierten GATE-E2E-01...10. Insbesondere ist der
-erfolgreiche Auth-Origin Popup/Bridge/MessagePort-Handoff noch als eigener
-produktiver Browserpfad zu reproduzieren und zu schliessen. Mock-/Simulator-
-Evidenz darf keine Live-Google-, Separate-Origin-, Real-WebAuthn- oder
-External-Audit-Gates schliessen.
+aber keines der dort definierten GATE-E2E-01...09. `GATE-E2E-10` ist auf L3
+fuer den kontrollierten Auth-Provider geschlossen: der produktive
+Browser-Einstieg durchlaeuft Popup, Bridge-Iframe, beide MessageChannels,
+Identitaetsbestaetigung und den ersten allowlisted RPC. Die Regressionen pruefen
+ausserdem endliche Fehlergrenzen, Origin-/Action-Bindung,
+Credential-Isolation und Disconnect-Revocation. Dieser Nachweis ersetzt weder
+den echten Google-Contract noch das Separate-Origin-Deployment-Gate; Mock-/
+Simulator-Evidenz darf keine Live-Google-, Separate-Origin-, Real-WebAuthn-
+oder External-Audit-Gates schliessen.
+
+`GATE-E2E-01` ist auf L3 fuer den kontrollierten Provider geschlossen. Der
+Browserpfad belegt ManifestV6/Genesis, RecoveryArtifactV6,
+RootWrapV6/StateV6, die validierte native-v2-Auswahlgrenze, frische kanonische
+Writer-Autorisierung, durable Domain-Writes ueber Reload hinweg und den
+verifizierten read-only Join. Diese Evidenz schliesst weder Live-Google noch
+die nachfolgenden Handoff-/Crash-/Tamper-/Scanner-Gates.
+
+`GATE-E2E-02` ist auf L3 fuer den kontrollierten Provider geschlossen. Zwei
+isolierte Browserprofile durchlaufen TransferDescriptor-PoP, den exakt
+persistierten und kanonisch akzeptierten g+1-WriterGrant, Source-Demotion und
+frische Target-Adoption. Reload erhaelt die Rollen; A kann nicht mehr schreiben,
+B schreibt generation-2-autorisiert weiter. Die breitere Stale-Writer-Matrix
+und das Live-Google-Gate bleiben separat offen.
+
+`GATE-E2E-03` ist fuer den kontrollierten Provider geschlossen. Der produktive
+Browserpfad belegt Recovery-Key-autorisierten Forced Takeover auf einem
+isolierten Ersatzgeraet, kanonische g+1-Annahme, Fence des verlorenen Writers
+und den nachfolgenden Write des neuen Writers. Die produktive
+Pending-Rekey-/maintenance-only-/Phase-B-Kette ist durch die crash- und
+verlustorientierte Service-Integrationsmatrix belegt; Live-Google und echter
+Prozess-/Hardwareverlust bleiben offen.
+
+`GATE-E2E-04` ist auf der produktiven Servicegrenze geschlossen. Die
+Recovery-Rekey-Matrix belegt R1→R2, persistente Fault Points, exakten
+Artifact-Readback, Pending-Rekey, Source-Backup, Phase-B-Rotation,
+Supersession und Ersatzgeraete-Fortsetzung. Dieser Nachweis ersetzt weder das
+Live-Google-Gate noch eine reale Browser-/OS-Absturzmatrix.
+
+`GATE-E2E-07` ist auf der produktiven Service-/Simulatorgrenze geschlossen.
+Request-not-received, Commit-mit-verlorener-Response, intervenierender Append,
+wiederholter Timeout und Retry nach neu aufgebautem Service werden durch
+frischen Readback mit exakt persistierten Bytes reconciled; kein Pfad erzeugt
+blind eine neue semantische Control-Operation. Reale Google-Unsicherheit bleibt
+Teil von `GATE-LIVE-01/02`.
+
+`GATE-E2E-08` ist fuer kontrollierte Remote-Bytes geschlossen. Browserseitige
+produktive Refreshes verwerfen Loeschung/Truncation, Umordnung, fremde Rows,
+Ciphertext-Aenderung und alte Prefix-Replays vor Materialisierung oder
+Authority-Nutzung. Byte-identische physische Retries bleiben spezifikationsgemaess
+zulaessig, werden aber semantisch nur einmal angewandt. Struktur-, Kontext-,
+Signatur- und Bindungsmanipulationen deckt die fokussierte Protokollmatrix ab;
+Hostile-Grid-Verhalten bei Google bleibt Live-Gate.
+
+`GATE-E2E-09` ist fuer den kontrollierten Browserpfad geschlossen. Eindeutige
+Fach- und Credential-Sentinels werden nach Authentifizierung, durablem Write,
+Reload und erneutem Write in DOM, allen IndexedDB-Objektwerten, Web Storage
+und Cache Storage gesucht und nicht gefunden. Opaque Browser-/OS-Speicher,
+Produktionslogs und Source Maps bleiben Bestandteil der externen Gates.
 
 ## BLOCKED_EXTERNAL / PRODUCTION RELEASE GATES
 
