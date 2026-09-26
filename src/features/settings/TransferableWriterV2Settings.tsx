@@ -134,7 +134,7 @@ export function TransferableWriterV2Settings(){
 
   if(!remote)return <section><h2>Mehrgeräte-Schreibzugriff (v2)</h2><p>{status||'Status wird geprüft …'}</p></section>
 
-  return <section className="google-sync-settings" aria-labelledby="transferable-writer-v2-heading">
+  return <section className="transferable-writer-v2-settings" aria-labelledby="transferable-writer-v2-heading">
     <header className="google-sync-settings__header">
       <div>
         <h2 id="transferable-writer-v2-heading">Mehrgeräte-Schreibzugriff (v2)</h2>
