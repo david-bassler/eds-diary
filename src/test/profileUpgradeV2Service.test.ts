@@ -13,6 +13,12 @@ import {
   loadProfileUpgradeSourceOperationV2,
   persistProfileUpgradeSourceOperationV2,
   putRecord,
+  enrollActivePassphraseRootWrap,
+  enrollActivePrfRootWrap,
+  localRootWrapStatus,
+  lockActiveRoot,
+  unlockActiveRootWithPassphrase,
+  unlockActiveRootWithPrf,
 } from '../data/localDatabase'
 import { IndexedDbV2LocalSecurityStore, __v2LocalPersistenceTesting, type VerifiedPersistedRecoveryArtifactV6 } from '../security/v2/localPersistence'
 import { IndexedDbV2CoordinatorStore } from '../security/v2/coordinatorStore'
@@ -1717,6 +1723,59 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     expect(state.stale_writer_pending_count).toBe(0)
     expect((await store.envelopes(joined.epochId)).some(envelope=>envelope.envelopeId===staleRow[0])).toBe(false)
     expect((await store.outbox(opened.rootKey,salt,joined.epochId)).some(entry=>entry.envelope_id===staleRow[0])).toBe(false)
+  },120_000)
+
+
+  it('routes passphrase protection to the active v2 RootWrapV6 and the retained same-diary v1 source',async()=>{
+    const createdAt='2026-09-26T07:10:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    expect(upgraded.stage).toBe('switched')
+    expect(await localRootWrapStatus()).toMatchObject({mode:'best-effort',locked:false})
+
+    await enrollActivePassphraseRootWrap('v2-local-passphrase')
+    expect(await localRootWrapStatus()).toMatchObject({mode:'passphrase',locked:false})
+
+    const v2Wrap=await new IndexedDbV2LocalSecurityStore().loadRootWrapV6(upgraded.successor_epoch_id)
+    expect(v2Wrap.wrap.mode).toBe('passphrase')
+    expect(v2Wrap.bestEffortWrappingKey).toBeNull()
+
+    const db=await __localDatabaseTesting.openDatabase(),contextTx=db.transaction(__localDatabaseTesting.STORES.context,'readonly')
+    const contextRequest=contextTx.objectStore(__localDatabaseTesting.STORES.context).get('active')
+    const context=await new Promise<{epochId:string}>((resolve,reject)=>{contextRequest.onsuccess=()=>resolve(contextRequest.result as {epochId:string});contextRequest.onerror=()=>reject(contextRequest.error)})
+    await transactionComplete(contextTx)
+    const wrapTx=db.transaction(__localDatabaseTesting.STORES.wraps,'readonly'),wrapRequest=wrapTx.objectStore(__localDatabaseTesting.STORES.wraps).get(context.epochId)
+    const retained=await new Promise<{wrap:{mode:string}}>((resolve,reject)=>{wrapRequest.onsuccess=()=>resolve(wrapRequest.result as {wrap:{mode:string}});wrapRequest.onerror=()=>reject(wrapRequest.error)})
+    await transactionComplete(wrapTx)
+    expect(retained.wrap.mode).toBe('passphrase')
+
+    await lockActiveRoot()
+    expect(await localRootWrapStatus()).toMatchObject({mode:'passphrase',locked:true})
+    await expect(unlockActiveRootWithPassphrase('wrong-passphrase')).rejects.toThrow()
+    await unlockActiveRootWithPassphrase('v2-local-passphrase')
+    expect(await localRootWrapStatus()).toMatchObject({mode:'passphrase',locked:false})
+  },120_000)
+
+  it('routes WebAuthn-PRF protection and unlock to the active v2 RootWrapV6',async()=>{
+    const createdAt='2026-09-26T07:15:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    expect(upgraded.stage).toBe('switched')
+    const material={credentialId:randomBytes(24),prfEvalInput:randomBytes(32),prfOutput:randomBytes(32),rpId:'example.test'}
+    await enrollActivePrfRootWrap(material)
+    const status=await localRootWrapStatus()
+    expect(status).toMatchObject({mode:'prf',locked:false,rpId:'example.test'})
+    expect(status.credentialId).toBe(base64Url(material.credentialId))
+
+    const v2Wrap=await new IndexedDbV2LocalSecurityStore().loadRootWrapV6(upgraded.successor_epoch_id)
+    expect(v2Wrap.wrap.mode).toBe('prf')
+    expect(v2Wrap.bestEffortWrappingKey).toBeNull()
+
+    await lockActiveRoot()
+    expect(await localRootWrapStatus()).toMatchObject({mode:'prf',locked:true})
+    await expect(unlockActiveRootWithPrf(randomBytes(24),material.prfOutput)).rejects.toThrow(/credential/i)
+    await unlockActiveRootWithPrf(material.credentialId,material.prfOutput)
+    expect(await localRootWrapStatus()).toMatchObject({mode:'prf',locked:false})
   },120_000)
 
 })
