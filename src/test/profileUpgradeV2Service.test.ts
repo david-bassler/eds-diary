@@ -72,7 +72,7 @@ import { ProductiveNativeRotationV2Service } from '../data/nativeRotationV2Servi
 import { ProductiveRecoveryRekeyV2Service } from '../data/recoveryRekeyV2Service'
 import type { RotationOperationStateV2 } from '../security/v2/profileUpgrade'
 import { TransferableSingleWriterV2WriteAuthority } from '../security/v2/writeAuthority'
-import { clearAuthenticatedRemoteSession, continuePendingRecoveryRekeyV2, forceTakeoverV2, installAuthenticatedRemoteSession, joinExistingV2Diary, remoteSessionStatus } from '../data/initializeDataLayer'
+import { clearAuthenticatedRemoteSession, continuePendingRecoveryRekeyV2, createWriterTransferDescriptorV2, forceTakeoverV2, installAuthenticatedRemoteSession, joinExistingV2Diary, remoteSessionStatus } from '../data/initializeDataLayer'
 import { __v2ApplicationRuntimeTesting } from '../data/v2ApplicationRuntime'
 import { createPainEntry, listPainEntries } from '../features/pain/painRepository'
 import { createPassphraseRootWrapV6 } from '../security/v2/rootWrap'
@@ -1807,6 +1807,32 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     const after=await new Promise<{wrap:{mode:string}}>((resolve,reject)=>{afterRequest.onsuccess=()=>resolve(afterRequest.result as {wrap:{mode:string}});afterRequest.onerror=()=>reject(afterRequest.error)})
     await transactionComplete(afterTx)
     expect(after.wrap.mode).toBe('passphrase')
+  },120_000)
+
+
+  it('keeps post-Join v2 ceremonies usable after strong local protection and lock/unlock',async()=>{
+    const createdAt='2026-09-26T07:30:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    expect(upgraded.stage).toBe('switched')
+
+    await clearAuthenticatedRemoteSession().catch(()=>undefined)
+    await __localDatabaseTesting.resetForTesting()
+    await __v2LocalPersistenceTesting.reset()
+    await deleteDatabase('eds-diary')
+    await deleteDatabase('eds-diary-v2-security')
+    __v2ApplicationRuntimeTesting.reset()
+    globalThis.localStorage?.clear?.()
+
+    const joined=await joinExistingV2Diary(v2,urs)
+    expect(joined.epochId).toBe(upgraded.successor_epoch_id)
+    await enrollActivePassphraseRootWrap('joined-v2-strong')
+    expect(await localRootWrapStatus()).toMatchObject({mode:'passphrase',locked:false})
+    await lockActiveRoot()
+    expect(await localRootWrapStatus()).toMatchObject({mode:'passphrase',locked:true})
+    await unlockActiveRootWithPassphrase('joined-v2-strong')
+    const descriptor=await createWriterTransferDescriptorV2(v2)
+    expect(descriptor).toMatchObject({diary_id:source.diaryId,epoch_id:joined.epochId})
   },120_000)
 
 })
