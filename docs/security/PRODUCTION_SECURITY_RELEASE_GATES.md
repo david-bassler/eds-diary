@@ -187,6 +187,6 @@ EDS Diary ist **nicht** als „production secure“ freigegeben.
 
 `SECURITY/DECISION: single-writer-v1 production hardening rationale frozen in EDS_SINGLE_WRITER_V1_HARDENING_DECISIONS.md`
 
-`TODO_INTERNAL: transferable-single-writer-v2 remaining internal pre-release slice — Live-Google Parallel-Append-Gate`
+`TODO_INTERNAL: transferable-single-writer-v2 remaining internal pre-release slice — execute Live-Google Parallel-Append-Gate with a disposable dedicated Google test spreadsheet via npm run test:live-google-parallel-append; the executable harness is implemented, but ordinary CI/mock coverage does not satisfy this real-provider gate.`
 
 `SECURITY/SPEC DECISION: exact transferable-single-writer-v2 wire, signature and recovery-takeover protocol frozen in EDS_TRANSFERABLE_SINGLE_WRITER_V2_EXACT_PROTOCOL.md`
