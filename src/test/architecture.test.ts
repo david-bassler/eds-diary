@@ -84,6 +84,16 @@ describe('v1 production hardening boundaries',()=>{
   })
 })
 
+describe('v2 active local-protection ordering',()=>{it('strengthens retained same-diary v1 material before advertising a new active v2 strong wrap',async()=>{
+  const source=await readFile('src/data/localDatabase.ts','utf8')
+  const passSource=source.indexOf('await rewrapRetainedV1PassphraseFirst')
+  const passV2=source.indexOf('await v2.store.replaceRootWrapV6',passSource)
+  const prfSource=source.indexOf('await rewrapRetainedV1PrfFirst')
+  const prfV2=source.indexOf('await v2.store.replaceRootWrapV6',prfSource)
+  expect(passSource).toBeGreaterThan(-1);expect(passV2).toBeGreaterThan(passSource)
+  expect(prfSource).toBeGreaterThan(-1);expect(prfV2).toBeGreaterThan(prfSource)
+})})
+
 describe('v2 pre-implementation hardening boundaries',()=>{
   it('keeps security rationale in an explicit anti-churn decision ledger',async()=>{
     const ledger=await readFile('docs/security/EDS_TRANSFERABLE_SINGLE_WRITER_V2_DECISIONS.md','utf8')
