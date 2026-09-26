@@ -84,14 +84,16 @@ describe('v1 production hardening boundaries',()=>{
   })
 })
 
-describe('v2 active local-protection ordering',()=>{it('strengthens retained same-diary v1 material before advertising a new active v2 strong wrap',async()=>{
+describe('v2 active local-protection ordering',()=>{it('keeps strong-v2 status fail-closed until any retained same-diary best-effort source catches up',async()=>{
   const source=await readFile('src/data/localDatabase.ts','utf8')
-  const passSource=source.indexOf('await rewrapRetainedV1PassphraseFirst')
-  const passV2=source.indexOf('await v2.store.replaceRootWrapV6',passSource)
-  const prfSource=source.indexOf('await rewrapRetainedV1PrfFirst')
-  const prfV2=source.indexOf('await v2.store.replaceRootWrapV6',prfSource)
-  expect(passSource).toBeGreaterThan(-1);expect(passV2).toBeGreaterThan(passSource)
-  expect(prfSource).toBeGreaterThan(-1);expect(prfV2).toBeGreaterThan(prfSource)
+  const statusFence=source.indexOf('return !await retainedV1NeedsStrongCatchup')
+  const passV2=source.indexOf('await v2.store.replaceRootWrapV6')
+  const passCatchup=source.indexOf('await strengthenRetainedV1WithPassphraseIfNeeded',passV2)
+  const prfV2=source.indexOf('await v2.store.replaceRootWrapV6',passV2+1)
+  const prfCatchup=source.indexOf('await strengthenRetainedV1WithPrfIfNeeded',prfV2)
+  expect(statusFence).toBeGreaterThan(-1)
+  expect(passV2).toBeGreaterThan(-1);expect(passCatchup).toBeGreaterThan(passV2)
+  expect(prfV2).toBeGreaterThan(passV2);expect(prfCatchup).toBeGreaterThan(prfV2)
 })})
 
 describe('v2 pre-implementation hardening boundaries',()=>{
