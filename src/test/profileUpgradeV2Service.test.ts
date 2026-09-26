@@ -1625,7 +1625,7 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     if(!v2.remote)throw new Error('v2 active remote missing after profile upgrade')
     const beforeRows=v2.remote.snapshot.rows.length
 
-    const created=await createPainEntry({
+    await createPainEntry({
       startedAt:'2026-09-25T09:01:00.000Z',
       intensity:7,
       locations:[],
@@ -1644,7 +1644,7 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
 
     await clearAuthenticatedRemoteSession()
     const offline=await listPainEntries({includeDeleted:true})
-    expect(offline.some(entry=>entry.id===created.id&&entry.note==='v2 app routing'&&entry.intensity===7)).toBe(true)
+    expect(offline.some(entry=>entry.id===matching[0]!.record_id&&entry.note==='v2 app routing'&&entry.intensity===7)).toBe(true)
   },120_000)
 
   it('blocks the existing pain repository on a read-only joined device before persisting any new v2 envelope',async()=>{
