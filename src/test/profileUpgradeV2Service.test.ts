@@ -1651,7 +1651,9 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
 
     await clearAuthenticatedRemoteSession()
     const offline=await listPainEntries({includeDeleted:true})
-    expect(offline.some(entry=>entry.id===matching[0]!.record_id&&entry.note==='v2 app routing'&&entry.intensity===7)).toBe(true)
+    if(!offline.some(entry=>entry.id===matching[0]!.record_id&&entry.note==='v2 app routing'&&entry.intensity===7)){
+      throw new Error(`V2 offline materialization mismatch: ${JSON.stringify(offline)} expectedRecordId=${matching[0]!.record_id}`)
+    }
   },120_000)
 
   it('blocks the existing pain repository on a read-only joined device before persisting any new v2 envelope',async()=>{
