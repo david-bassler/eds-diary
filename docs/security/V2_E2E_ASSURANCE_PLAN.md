@@ -575,6 +575,73 @@ verhindert.
 24. abschliessender adversarieller Gesamtreview;
 25. externer Audit.
 
+## 33a. Persistenter Implementierungs-Ledger
+
+Dieser Ledger ist das dauerhafte Fortschrittsgedaechtnis fuer den gesamten in
+Abschnitt 33 definierten Auftrag. Der Nenner ist **immer 25**. Er darf weder aus
+dem aktuellen Prompt noch aus dem aktuellen Codex-Turn verkleinert werden.
+
+Zulaessige Statuswerte: `NOT_STARTED`, `IN_PROGRESS`, `BLOCKED`, `DONE`.
+`BLOCKED` ist nur fuer eine konkret benannte Abhaengigkeit zulaessig. Intern
+loesbare Fehler sind kein externer Blocker und bleiben `IN_PROGRESS`.
+
+| # | Arbeitspaket | Status | Closure-/Blocker-Evidenz |
+|---:|---|---|---|
+| 1 | Aktuelles Auth-Handoff-Finding dokumentieren | NOT_STARTED | - |
+| 2 | Auth-Handoff-Fehler automatisiert reproduzieren | NOT_STARTED | - |
+| 3 | Provider-Simulator/Testgrenze bauen | NOT_STARTED | - |
+| 4 | Erfolgreichen Popup/Bridge-E2E bauen | NOT_STARTED | - |
+| 5 | Auth-Root-Cause fixen und Regression schliessen | NOT_STARTED | - |
+| 6 | Multi-Context-Geraete-Harness | NOT_STARTED | - |
+| 7 | V2 Golden Path | NOT_STARTED | - |
+| 8 | Cooperative Handoff A->B | NOT_STARTED | - |
+| 9 | Stale-A Write Rejection | NOT_STARTED | - |
+| 10 | Forced Takeover / Pending-Rekey | NOT_STARTED | - |
+| 11 | Recovery-Rekey | NOT_STARTED | - |
+| 12 | v1->v2 Browsermigration | NOT_STARTED | - |
+| 13 | Generischen Crash-/Resume-Harness | NOT_STARTED | - |
+| 14 | Unknown-Outcome-Matrix | NOT_STARTED | - |
+| 15 | Remote-Tamper-Matrix | NOT_STARTED | - |
+| 16 | Plaintext-/Credential-Leak-Scanner | NOT_STARTED | - |
+| 17 | Lock/Passphrase | NOT_STARTED | - |
+| 18 | Virtuelles WebAuthn soweit belastbar | NOT_STARTED | - |
+| 19 | Generative Protokolltests | NOT_STARTED | - |
+| 20 | CI-/npm-Gates | NOT_STARTED | - |
+| 21 | Live-Google-Suite | NOT_STARTED | - |
+| 22 | Separates Auth-Origin-Deployment validieren | NOT_STARTED | - |
+| 23 | Reale WebAuthn-Matrix validieren | NOT_STARTED | - |
+| 24 | Abschliessender adversarieller Gesamtreview | NOT_STARTED | - |
+| 25 | Externer Audit | NOT_STARTED | - |
+
+### Ledger-Protokoll
+
+- Vor Beginn eines Pakets: Status auf `IN_PROGRESS` setzen und committen oder im
+  selben Commit mit der ersten substanziellen Arbeit nachvollziehbar aendern.
+- Bei jedem neu entdeckten Unterproblem: Finding/Unteraufgabe dauerhaft
+  dokumentieren, bevor der Fix erfolgt. Es darf nicht nur im Chat/Turn existieren.
+- `DONE` verlangt die Definition of Done aus Abschnitt 34 und konkrete Evidenz in
+  der letzten Spalte (Tests/Commit/Finding-Closure, nicht nur "implemented").
+- Ein Paket mit fehlender erforderlicher Validierung bleibt `IN_PROGRESS`.
+- `BLOCKED` verlangt den konkreten externen Blocker und die noch notwendige
+  Benutzer-/Provider-/Hardwareaktion in der Evidenzspalte.
+- Nach jedem Paket ist die Summenzeile unten zu aktualisieren.
+- Codex muss nach einem `DONE` automatisch das naechste intern ausfuehrbare Paket
+  auf `IN_PROGRESS` setzen und weiterarbeiten, solange der zugewiesene Lauf nicht
+  technisch beendet wird oder eine echte normative/externe Entscheidung benoetigt.
+- Ein neuer Codex-Lauf beginnt mit dem Lesen dieses Ledgers und setzt beim ersten
+  `IN_PROGRESS`, sonst beim ersten intern ausfuehrbaren `NOT_STARTED` fort.
+- Ein spaeterer Review darf ein `DONE` wieder auf `IN_PROGRESS` setzen, wenn die
+  Closure-Evidenz widerlegt oder eine Regression gefunden wird. Dies ist keine
+  Statusverschlechterung, sondern korrektes Assurance-Verhalten.
+
+**Gesamtstatus (muss bei jeder Ledger-Aenderung aktualisiert werden):**
+`DONE 0/25; IN_PROGRESS 0/25; BLOCKED 0/25; NOT_STARTED 25/25; remaining internally actionable: 23`
+
+Die initiale Zahl `remaining internally actionable: 23` behandelt die reale
+WebAuthn-Matrix (#23) und den externen Audit (#25) als von vornherein extern.
+Andere Pakete duerfen erst dann aus dem intern ausfuehrbaren Rest herausfallen,
+wenn ihr konkreter externer Blocker im Ledger dokumentiert ist.
+
 ## 34. Definition of Done fuer jeden Schritt
 
 Ein Schritt ist erst abgeschlossen, wenn:
