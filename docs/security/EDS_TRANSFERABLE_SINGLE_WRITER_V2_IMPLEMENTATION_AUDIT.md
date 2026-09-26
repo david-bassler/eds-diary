@@ -559,6 +559,16 @@ Later changes must retain explicit vectors for at least:
 - cooperative Handoff blocks unresolved current-Writer `prepared/pending` domain rows but does not treat terminal `stale_writer_pending` history as unresolved work;
 
 - WriterGrant operation transitions authenticate the complete local envelope/outbox/reservation journal before deriving stale aggregates or mutating StateV6;
+- existing app domain repositories cannot bypass v2 after `activeProtocolSelectionV2`; a read-only joined device is rejected before a new local EnvelopeV6 is persisted;
+- successful normal app writes require fresh canonical Writer authorization and canonical remote readback before the repository call resolves;
+- canonical pull imports only accepted encrypted remote EnvelopeV6 rows; foreign stale-writer rows never synthesize local journal/outbox or stale-pending obligations;
+- offline v2 reads materialize only the MAC-authenticated accepted read-model bound to exact StateV6 anchor/manifest; read-model MAC or referenced-envelope tamper fails closed;
+- v1/v2 authenticated session routing rejects cross-profile sessions and legacy v1 remote enablement after v2 selection;
+- replacement-device Pending-Rekey application flow remains `Join -> Forced Takeover (maintenance-only) -> remote_pending_rekey_adoption -> Phase B`, while cooperative Handoff and normal domain writes stay fenced;
+- legacy Google settings switch immediately to the v2 surface after in-place profile selection and do not share ambiguous browser selectors with the v2 ceremony UI;
+- active-v2 Passphrase/PRF status, enrollment, lock and unlock operate on RootWrapV6 and authenticate StateV6 before data access;
+- a strong V2 RootWrap with retained same-diary best-effort v1 source remains reported locked until source catch-up; successful V2 unlock resumes crash-interrupted passphrase/PRF catch-up;
+- already-strong retained same-diary v1 source need not be rewritten to the new V2 local factor, but best-effort historical health material may not coexist with an advertised unlocked strong V2 mode;
 
 ### 2026-09-24 full-stack re-audit final disposition
 
