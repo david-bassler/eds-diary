@@ -66,7 +66,7 @@ import { ProductiveNativeRotationV2Service } from '../data/nativeRotationV2Servi
 import { ProductiveRecoveryRekeyV2Service } from '../data/recoveryRekeyV2Service'
 import type { RotationOperationStateV2 } from '../security/v2/profileUpgrade'
 import { TransferableSingleWriterV2WriteAuthority } from '../security/v2/writeAuthority'
-import { continuePendingRecoveryRekeyV2, forceTakeoverV2, installAuthenticatedRemoteSession, joinExistingV2Diary, remoteSessionStatus } from '../data/initializeDataLayer'
+import { clearAuthenticatedRemoteSession, continuePendingRecoveryRekeyV2, forceTakeoverV2, installAuthenticatedRemoteSession, joinExistingV2Diary, remoteSessionStatus } from '../data/initializeDataLayer'
 import { __v2ApplicationRuntimeTesting } from '../data/v2ApplicationRuntime'
 import { createPainEntry, listPainEntries } from '../features/pain/painRepository'
 
@@ -391,6 +391,7 @@ async function prepareSealRow(v2:V2Session,urs:Uint8Array,createdAt:string):Prom
 
 describe('ProductiveProfileUpgradeV2Service',()=>{
   beforeEach(async()=>{
+    await clearAuthenticatedRemoteSession().catch(()=>undefined)
     await __localDatabaseTesting.resetForTesting()
     await __v2LocalPersistenceTesting.reset()
     await deleteDatabase('eds-diary')
@@ -1635,13 +1636,13 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     })
     expect(v2.remote.snapshot.rows.length).toBeGreaterThan(beforeRows)
 
-    const codec=new GoogleSheetsTransferableSingleWriterV2ProfileCodec(source.diaryId,upgraded.successor_epoch_id,(await openRecoveryArtifactV6(await v2.loadRecoveryArtifact(urs,source.diaryId,upgraded.successor_epoch_id),urs)).rootKey,source.account)
+    const codec=new GoogleSheetsTransferableSingleWriterV2ProfileCodec(source.diaryId,upgraded.successor_epoch_id,(await openRecoveryArtifactV6(await v2.loadRecoveryArtifact(urs,source.diaryId,upgraded.successor_epoch_id),urs)).rootKey,v2.account)
     const canonical=(await codec.verifyRemote(v2.remote.snapshot)).profileState as CanonicalFullResultV2
     const matching=[...canonical.accepted_revision_graph.revisions.values()].filter(revision=>revision.record_type==='pain_entry'&&revision.record_data&&typeof revision.record_data==='object'&&(revision.record_data as {note?:unknown}).note==='v2 app routing')
     expect(matching).toHaveLength(1)
     expect(matching[0]?.writer_context?.writer_generation).toBe(canonical.current_writer.writer_generation)
 
-    __v2ApplicationRuntimeTesting.reset()
+    await clearAuthenticatedRemoteSession()
     const offline=await listPainEntries({includeDeleted:true})
     expect(offline.some(entry=>entry.id===created.id&&entry.note==='v2 app routing'&&entry.intensity===7)).toBe(true)
   },120_000)
@@ -1677,7 +1678,7 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     expect(upgraded.stage).toBe('switched')
     await installAuthenticatedRemoteSession(v2)
     await createPainEntry({intensity:3,note:'read-model-tamper'})
-    __v2ApplicationRuntimeTesting.reset()
+    await clearAuthenticatedRemoteSession()
 
     const db=await __v2LocalPersistenceTesting.openDatabase(),tx=db.transaction(__v2LocalPersistenceTesting.STORES.readModels,'readwrite')
     const store=tx.objectStore(__v2LocalPersistenceTesting.STORES.readModels)
@@ -1697,7 +1698,7 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     await appendPostActivationHandoff(v2,urs,'2026-09-25T09:16:00.000Z')
     const staleRow=await appendPostActivationDomainRow(v2,urs,'2026-09-25T09:17:00.000Z')
     if(!v2.remote)throw new Error('v2 remote missing for foreign stale-row regression')
-    const codec=new GoogleSheetsTransferableSingleWriterV2ProfileCodec(source.diaryId,upgraded.successor_epoch_id,(await openRecoveryArtifactV6(await v2.loadRecoveryArtifact(urs,source.diaryId,upgraded.successor_epoch_id),urs)).rootKey,source.account)
+    const codec=new GoogleSheetsTransferableSingleWriterV2ProfileCodec(source.diaryId,upgraded.successor_epoch_id,(await openRecoveryArtifactV6(await v2.loadRecoveryArtifact(urs,source.diaryId,upgraded.successor_epoch_id),urs)).rootKey,v2.account)
     const remoteVerified=await codec.verifyRemote(v2.remote.snapshot)
     expect(remoteVerified.staleWriterEnvelopeIds.has(staleRow[0])).toBe(true)
 
