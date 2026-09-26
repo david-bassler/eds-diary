@@ -75,6 +75,7 @@ import { TransferableSingleWriterV2WriteAuthority } from '../security/v2/writeAu
 import { clearAuthenticatedRemoteSession, continuePendingRecoveryRekeyV2, forceTakeoverV2, installAuthenticatedRemoteSession, joinExistingV2Diary, remoteSessionStatus } from '../data/initializeDataLayer'
 import { __v2ApplicationRuntimeTesting } from '../data/v2ApplicationRuntime'
 import { createPainEntry, listPainEntries } from '../features/pain/painRepository'
+import { createPassphraseRootWrapV6 } from '../security/v2/rootWrap'
 
 type Row=readonly[string,string,string]
 
@@ -1776,6 +1777,36 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     await expect(unlockActiveRootWithPrf(randomBytes(24),material.prfOutput)).rejects.toThrow(/credential/i)
     await unlockActiveRootWithPrf(material.credentialId,material.prfOutput)
     expect(await localRootWrapStatus()).toMatchObject({mode:'prf',locked:false})
+  },120_000)
+
+
+  it('keeps a partially completed v2 strong-protection upgrade locked until retained best-effort source catch-up completes',async()=>{
+    const createdAt='2026-09-26T07:20:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    expect(upgraded.stage).toBe('switched')
+    const store=new IndexedDbV2LocalSecurityStore(),current=await store.loadRootWrapV6(upgraded.successor_epoch_id)
+    const recovered=await openRecoveryArtifactV6(await v2.loadRecoveryArtifact(urs,source.diaryId,upgraded.successor_epoch_id),urs)
+    const identity={diary_id:current.wrap.diary_id,epoch_id:current.wrap.epoch_id,key_id:current.wrap.key_id,manifest_fingerprint:current.wrap.manifest_fingerprint}
+    const staged=await createPassphraseRootWrapV6(recovered.rootKey,'resume-strong-protection',identity,randomBytes(16))
+    await store.replaceRootWrapV6(current.wrap.wrap_id,staged,null)
+
+    const db=await __localDatabaseTesting.openDatabase(),contextTx=db.transaction(__localDatabaseTesting.STORES.context,'readonly')
+    const contextRequest=contextTx.objectStore(__localDatabaseTesting.STORES.context).get('active')
+    const context=await new Promise<{epochId:string}>((resolve,reject)=>{contextRequest.onsuccess=()=>resolve(contextRequest.result as {epochId:string});contextRequest.onerror=()=>reject(contextRequest.error)})
+    await transactionComplete(contextTx)
+    const beforeTx=db.transaction(__localDatabaseTesting.STORES.wraps,'readonly'),beforeRequest=beforeTx.objectStore(__localDatabaseTesting.STORES.wraps).get(context.epochId)
+    const before=await new Promise<{wrap:{mode:string}}>((resolve,reject)=>{beforeRequest.onsuccess=()=>resolve(beforeRequest.result as {wrap:{mode:string}});beforeRequest.onerror=()=>reject(beforeRequest.error)})
+    await transactionComplete(beforeTx)
+    expect(before.wrap.mode).toBe('best-effort')
+    expect(await localRootWrapStatus()).toMatchObject({mode:'passphrase',locked:true})
+
+    await unlockActiveRootWithPassphrase('resume-strong-protection')
+    expect(await localRootWrapStatus()).toMatchObject({mode:'passphrase',locked:false})
+    const afterTx=db.transaction(__localDatabaseTesting.STORES.wraps,'readonly'),afterRequest=afterTx.objectStore(__localDatabaseTesting.STORES.wraps).get(context.epochId)
+    const after=await new Promise<{wrap:{mode:string}}>((resolve,reject)=>{afterRequest.onsuccess=()=>resolve(afterRequest.result as {wrap:{mode:string}});afterRequest.onerror=()=>reject(afterRequest.error)})
+    await transactionComplete(afterTx)
+    expect(after.wrap.mode).toBe('passphrase')
   },120_000)
 
 })
