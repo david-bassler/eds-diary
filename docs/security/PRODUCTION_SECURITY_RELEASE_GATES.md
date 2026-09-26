@@ -180,11 +180,15 @@ Der detaillierte, verbindliche Arbeitsplan fuer die noch fehlende erfolgreiche
 Browser-/Mehrgeraete-End-to-End-Evidenz steht in
 `docs/security/V2_E2E_ASSURANCE_PLAN.md`. Die vorhandene konfigurierte
 Playwright-Matrix ist notwendige Regressionsevidenz, schliesst fuer sich allein
-aber keines der dort definierten GATE-E2E-01...10. Insbesondere ist der
-erfolgreiche Auth-Origin Popup/Bridge/MessagePort-Handoff noch als eigener
-produktiver Browserpfad zu reproduzieren und zu schliessen. Mock-/Simulator-
-Evidenz darf keine Live-Google-, Separate-Origin-, Real-WebAuthn- oder
-External-Audit-Gates schliessen.
+aber keines der dort definierten GATE-E2E-01...09. `GATE-E2E-10` ist auf L3
+fuer den kontrollierten Auth-Provider geschlossen: der produktive
+Browser-Einstieg durchlaeuft Popup, Bridge-Iframe, beide MessageChannels,
+Identitaetsbestaetigung und den ersten allowlisted RPC. Die Regressionen pruefen
+ausserdem endliche Fehlergrenzen, Origin-/Action-Bindung,
+Credential-Isolation und Disconnect-Revocation. Dieser Nachweis ersetzt weder
+den echten Google-Contract noch das Separate-Origin-Deployment-Gate; Mock-/
+Simulator-Evidenz darf keine Live-Google-, Separate-Origin-, Real-WebAuthn-
+oder External-Audit-Gates schliessen.
 
 ## BLOCKED_EXTERNAL / PRODUCTION RELEASE GATES
 
