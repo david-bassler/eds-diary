@@ -420,7 +420,7 @@ export class MultiDeviceHarness {
         import('/src/security/v2/localPersistence.ts'),
         import('/src/data/localDatabase.ts'),
       ])
-      const service = runtime.requireActiveV2SyncService()
+      const service = await runtime.requireActiveV2SyncService()
       const recordId = (await import('/src/security/crypto/bytes.ts')).base64Url(crypto.getRandomValues(new Uint8Array(16)))
       const prepared = await service.prepareAndSynchronizeDomainWrite({
         recordType: 'pain_entry',
