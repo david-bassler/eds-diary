@@ -10,7 +10,6 @@ import {
   activeProtocolSelectionV2,
   atomicSelectRotatedV2,
   openSuccessorRootWrapV6WithActiveMode,
-  openSuccessorRootWrapV6WithActiveMode,
   prepareNativeV2SuccessorRootWrapV6ForActiveMode,
 } from './localDatabase'
 import {
