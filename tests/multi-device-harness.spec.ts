@@ -67,7 +67,7 @@ test('bootstraps and canonically verifies a ManifestV6 epoch with its genesis Wr
   try {
     await deviceA.page.goto('/')
     await harness.authenticate(deviceA, 'v2_bootstrap_action_device_a_00001')
-    const bootstrap = await harness.bootstrapCanonicalV2(deviceA)
+    const bootstrap = await harness.bootstrapViaProductiveUpgradeV2(deviceA)
     expect(bootstrap.coveredRowCount).toBe(1)
     expect(bootstrap.writerGeneration).toBe(1)
     expect(bootstrap.writerKeyId).toHaveLength(43)
