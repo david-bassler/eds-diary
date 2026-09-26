@@ -205,6 +205,77 @@ export class MultiDeviceHarness {
     }, { diary: diaryId, epoch: epochId, creationLocator: locator })
   }
 
+  async bootstrapViaProductiveUpgradeV2(device: VirtualDevice): Promise<V2BootstrapSummary> {
+    return device.page.evaluate(async () => {
+      const state = window as typeof window & {
+        multiDeviceAuth?: { provider: { getApiClient(): unknown } }
+        v2GoldenState?: Record<string, unknown>
+      }
+      const api = state.multiDeviceAuth!.provider.getApiClient()
+      const [{ googleProviderSessionFromAuthenticatedClient }, { googleV2ProviderSessionFromAuthenticatedClient }, dataLayer, bytes, localDb, recovery] = await Promise.all([
+        import('/src/sync/google/GoogleSingleWriterProvider.ts'),
+        import('/src/sync/google/GoogleTransferableSingleWriterV2Provider.ts'),
+        import('/src/data/initializeDataLayer.ts'),
+        import('/src/security/crypto/bytes.ts'),
+        import('/src/data/localDatabase.ts'),
+        import('/src/security/v2/recovery.ts'),
+      ])
+      const urs = crypto.getRandomValues(new Uint8Array(32))
+      const sourceSession = googleProviderSessionFromAuthenticatedClient(api as never)
+      const successorSession = googleV2ProviderSessionFromAuthenticatedClient(api as never)
+      const before = await dataLayer.remoteSessionStatus()
+      if (before.profile !== 'v1' || before.mode !== 'local_offline') throw new Error('Productive Golden Path must start from a fresh local v1 diary.')
+      await dataLayer.enableAuthenticatedRemoteSession(sourceSession, urs)
+      const enabled = await dataLayer.remoteSessionStatus()
+      if (enabled.profile !== 'v1' || enabled.mode !== 'remote_bound') throw new Error('Productive v1 remote enablement did not bind the source.')
+      const operation = await dataLayer.upgradeAuthenticatedRemoteSessionToV2(sourceSession, successorSession, urs)
+      if (operation.stage !== 'switched') throw new Error(`Productive v1→v2 upgrade stopped at ${operation.stage}.`)
+      const selection = await localDb.activeProtocolSelectionV2()
+      if (!selection) throw new Error('Productive v1→v2 upgrade did not select a v2 successor.')
+      const status = await dataLayer.remoteSessionStatus()
+      if (status.profile !== 'v2' || status.mode !== 'remote_bound' || status.writerStatus !== 'writer_active' || !status.remoteResourceId) {
+        throw new Error('Productive v1→v2 upgrade did not install an active v2 writer session.')
+      }
+      const storeModule = await import('/src/security/v2/localPersistence.ts')
+      const store = new storeModule.IndexedDbV2LocalSecurityStore()
+      const wrap = await store.loadRootWrapV6(selection.epoch_id)
+      const rootKey = await localDb.openSuccessorRootWrapV6WithActiveMode(wrap)
+      const salt = await (await import('/src/security/v2/crypto.ts')).deriveEpochSaltV2(bytes.fromBase64Url(selection.diary_id), bytes.fromBase64Url(selection.epoch_id))
+      const local = await store.loadState(rootKey, salt, selection.epoch_id)
+      const writerKeyId = local.writer_signing_key_id
+      if (!writerKeyId || local.writer_generation === null || !local.writer_device_id || !local.remote_anchor) throw new Error('Productive upgraded v2 writer state is incomplete.')
+      const artifact = await successorSession.loadRecoveryArtifact(urs, selection.diary_id, selection.epoch_id)
+      const opened = await recovery.openRecoveryArtifactV6(artifact, urs)
+      state.v2GoldenState = {
+        diaryId: selection.diary_id,
+        epochId: selection.epoch_id,
+        keyId: local.key_id,
+        remoteId: status.remoteResourceId,
+        rootKey,
+        urs,
+        epochSalt: salt,
+        writerDeviceId: local.writer_device_id,
+        grantId: local.writer_grant_id,
+        manifestFingerprint: selection.manifest_fingerprint,
+        accountBinding: local.remote_binding!.remote_identity_binding,
+        v2Session: successorSession,
+      }
+      return {
+        diaryId: selection.diary_id,
+        epochId: selection.epoch_id,
+        creationLocator: opened.payload.creation_locator,
+        remoteId: status.remoteResourceId,
+        manifestFingerprint: selection.manifest_fingerprint,
+        writerDeviceId: local.writer_device_id,
+        writerKeyId,
+        coveredRowCount: local.remote_anchor.covered_row_count,
+        writerGeneration: local.writer_generation,
+        recoveryKey: bytes.base64Url(urs),
+        recoveryArtifact: artifact,
+      }
+    })
+  }
+
   async bootstrapCanonicalV2(device: VirtualDevice): Promise<V2BootstrapSummary> {
     return device.page.evaluate(async ({ permissionId }) => {
       const state = window as typeof window & {
