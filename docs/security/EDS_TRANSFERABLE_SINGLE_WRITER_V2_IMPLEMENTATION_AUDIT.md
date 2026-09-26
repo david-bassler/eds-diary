@@ -311,6 +311,54 @@ open.
 
 
 
+### 2026-09-26 V2-10 App/Settings/domain-materialization implementation/review pass
+
+Implemented Architecture §23 item 13 and the deferred application-layer
+responsibilities on top of the fully validated V2-09 stack. The normal product
+path now selects v1 or v2 before any domain read/write rather than leaving the
+V2 protocol services as ceremony-only code.
+
+The V2-10 boundary includes:
+- a protocol-selecting application data store in front of the existing
+  pain/activity/medication/settings repositories and conflict UI;
+- a provider-neutral authenticated V2 application runtime built from the shared
+  coordinator, `TransferableSingleWriterV2WriteAuthority`,
+  `IndexedDbV2CoordinatorStore` and `V2DomainWritePreparer`;
+- ordinary domain writes that derive their current parent from the same fresh
+  `canonical_full` used for Writer authorization, while explicit current-head
+  parents remain reserved for conflict merges;
+- canonical-pull persistence of accepted immutable encrypted EnvelopeV6 bytes
+  plus an HMAC-authenticated offline read-model index bound to the exact
+  StateV6 anchor/manifest/accepted order, with no health-plaintext cache;
+- strict exclusion of foreign stale-writer rows from the local journal/outbox;
+- V2 Settings flows for v1->v2 upgrade, read-only Join, cooperative Handoff,
+  Writer adoption, Forced Takeover, Recovery-Rekey and replacement-device
+  Pending-Rekey continuation, with read-only/Pending-Rekey/stale-quarantine
+  state visible in the normal application UI;
+- profile-aware Google/session routing that fences legacy v1 enablement and
+  controls after V2 selection while keeping the data-layer provider-neutral;
+- profile-aware local Passphrase/PRF/lock/unlock for the selected RootWrapV6.
+  If same-diary retained v1 history is still best-effort, strong V2 status stays
+  fail-closed locked until that historical source is strengthened; V2 unlock
+  resumes this catch-up after a crash.
+
+Findings IA-081…IA-086 were each recorded OPEN before remediation. They are
+closed by the implementation and regressions above. The security-code evidence
+head `d4bcd4753dfb23ffc03c0cccc7bde67d13bd36d9` completed the full Security
+Validation successfully: production dependency audit, TypeScript, complete unit
+suite including productive V2 app/local-protection regressions, crypto/local
+protection, Google/provider boundary, single-writer reconciliation,
+recovery/backup/bootstrap, legacy migration, productive rotation crash matrix,
+production build, ESLint, Stylelint, Storybook, the full configured Playwright
+matrix and whitespace checks.
+
+No frozen wire format, signature input or D-001…D-010 security decision changed.
+The current internal implementation boundary is now V2-01…V2-10, including
+Architecture §23 item 13 (UI/application integration). The remaining internal
+pre-release slice is the Live-Google Parallel-Append-Gate; external deployment,
+real authenticator/browser validation and independent audit gates remain
+separate release blockers.
+
 ## Findings and disposition
 
 | ID | Area | Finding | Disposition |
@@ -398,6 +446,14 @@ open.
 | IA-078 | V2-09 / Unknown-Outcome resume liveness | Recovery-Rekey moved an absent/unresolved Transition append to `transition_unknown`, but a later resume only re-read and returned the same state without the §14-authorized exact-byte retry. Native Rotation similarly performed at most one in-call retry, then persisted `announcement_unknown`/`confirmation_unknown`; later resumes returned `unknown` without another append even when fresh canonical_full proved the exact bound Source/Successor prefixes unchanged. These paths are fail-safe but can become permanently stuck after an Unknown Outcome that did not commit. | **Fixed after being recorded OPEN.** Persisted `transition_unknown`, `announcement_unknown`, and `confirmation_unknown` states now allow one exact-byte append on each later explicit resume only after fresh canonical verification of their bound prefixes. Initial unknown chains remain bounded; no semantic bytes are regenerated and no blind third append occurs. No-commit Unknown-Outcome regressions prove eventual completion after a later fresh resume. |
 | IA-079 | V2-09 / Announcement retry omitted fresh Successor staging check | `ProductiveNativeRotationV2Service.publishOrReconcileAnnouncement()` initially verified both the frozen Source and Successor staging prefix, but after an `unknown_outcome` with the Announcement still absent it re-read only the Source before issuing its second exact-byte append. Exact Protocol §14 requires every RotationAnnouncement retry to prove both Source=`source_anchor_before_announcement` and Successor=`successor_staging_anchor`. A Successor row arriving between the first unknown request and the retry could otherwise lead to an irreversible Source seal for a no-longer-staged Successor. | **Fixed after being recorded OPEN.** Every native Announcement append/retry now freshly checks both the frozen Source and the exact Successor staging prefix. An injected Successor row between the first no-commit unknown outcome and the retry causes stale/cutover classification and proves the Source Announcement is never appended/sealed. |
 | IA-080 | V2-09 / native v2 rotation inherited local protection from active v1 placeholder | `ProductiveNativeRotationV2Service.planSuccessor()` reused `prepareSuccessorRootWrapV6ForActiveMode()`, whose security-mode inheritance is intentionally anchored to the active v1 diary for profile-upgrade. After a fresh-device v2 Join, the local v1 slot is only a retired unrelated placeholder diary, so mandatory recovery_rekey Phase B failed with `RootWrapV6 successor diary does not match the active v1 diary.` This makes the normative device-loss continuation `Join -> Forced Takeover -> remote_pending_rekey_adoption -> recovery_rekey rotation` impossible on a replacement profile. | **Fixed after being recorded OPEN.** Native v2→v2 planning now derives Successor local protection from the authenticated active v2 Source `RootWrapV6`, verifies that Source wrap against the active v2 selection, uses a fresh best-effort wrapping key when appropriate, and reuses only an already-unlocked passphrase/PRF factor that actually opens the authenticated Source wrap. The v1-based helper remains profile-upgrade-specific. The full replacement-device Pending-Rekey continuation now passes end-to-end. |
+| IA-081 | V2-10 / UI repository protocol bypass after v2 selection | The app-level pain/activity/medication/settings repositories still call the v1 `localDatabase` CRUD functions directly. After `activeProtocolSelectionV2` exists, those calls can continue creating v1 revisions in the retired/local placeholder path instead of entering `V2DomainWritePreparer`, so UI writes bypass StateV6, fresh canonical verification, Writer authority, v2 signatures and stale-writer fencing. `initializeDataLayer`/`GoogleSyncSettings` are likewise v1-only. | **Fixed after being recorded OPEN.** `applicationDataStore` now dispatches all existing domain repositories and conflict UI by active protocol. V2 mutations enter the provider-neutral authenticated V2 runtime and `V2DomainWritePreparer`, deriving current parents from the same fresh `canonical_full` used for authorization; V2 reads materialize only the authenticated accepted graph. `initializeDataLayer` installs a V2 coordinator/runtime when V2 is selected and rejects cross-profile sessions. Productive repository regressions prove Writer writes become canonically durable and the same repository call on a joined read-only device is rejected before any new local EnvelopeV6 is persisted. |
+| IA-082 | V2-10 / verified local v2 read-model persistence | `IndexedDbV2CoordinatorStore.commitVerifiedPull()` reconciles StateV6 and outbox dispositions but does not persist newly verified remote EnvelopeV6 rows or an authenticated accepted-order index. Consequently the app cannot satisfy the architecture rule that reading from already-verified local state remains available offline without either trusting stale/rejected local rows or re-reading Google. | **Fixed after being recorded OPEN.** Canonical pulls now atomically import only accepted immutable encrypted EnvelopeV6 rows into the local V2 journal and persist an HMAC-authenticated `VerifiedReadModelV2` bound to epoch, manifest fingerprint, exact StateV6 remote anchor and accepted envelope IDs in physical first-occurrence order. Offline reads reopen only those encrypted accepted envelopes; no health plaintext cache is introduced. Journal, read-model MAC, anchor, manifest or missing-envelope tamper fails closed. A productive regression writes through the real pain repository, disconnects the V2 runtime and successfully reads the accepted data offline; a read-model-MAC tamper regression is rejected. |
+| IA-083 | V2-10 / foreign stale-row import into local stale-pending outbox | The first V2-10 verified-pull import treated every remote `stale_writer_envelope_id` that was not already local like an accepted remote row: it persisted the encrypted bytes locally and created a synthetic `stale_writer_pending` outbox entry. `stale_writer_pending` is a local quarantine obligation for this installation's own previously prepared Writer envelope; importing stale rows authored by other devices would manufacture local remediation state, inflate the pending count and make a clean read-only Join appear to own foreign stale work. | **Fixed after being recorded OPEN.** Verified pull imports only canonically accepted remote envelopes. A stale remote row that was never local is not added to the encrypted journal and never receives a synthetic outbox entry; only an already-local authenticated outbox entry can be transitioned to `stale_writer_pending`. A fresh read-only-device regression pulls a physical stale row authored by another Writer and proves zero local stale-pending count plus absence from both local envelope journal and outbox. |
+| IA-084 | V2-10 / Pending-Rekey replacement-device UI dead end | The first V2-10 Writer settings rendered Forced Takeover only when `writerStatus==='read_only' && !recoveryRekeyRequired`. That hides the one recovery action required after a fresh-device Join into a remotely pending Recovery-Rekey. Exact Protocol/Architecture require `Join -> Forced Takeover (maintenance-only) -> remote_pending_rekey_adoption -> Phase B`; cooperative Handoff and normal domain writes remain blocked, but Forced Takeover must stay available. | **Fixed after being recorded OPEN.** V2 Settings now keeps Recovery-key-authorized Forced Takeover available on read-only Pending-Rekey devices, labels the resulting authority as maintenance-only, hides cooperative Handoff there and exposes Pending-Rekey completion once takeover is canonical. The existing full device-loss regression now runs through the application data-layer entry points and proves `read_only + pending -> Forced Takeover -> writer_active + pending -> remote_pending_rekey_adoption/Phase B -> writer_active + no pending`. |
+| IA-085 | V2-10 / Settings profile-transition listener initialization | The first profile-aware `GoogleSyncSettings` registered `onSyncState()` before initializing its local `cancelled` guard even though `onSyncState()` synchronously invokes the new listener. That creates a temporal-dead-zone runtime failure on mount. The listener also refreshed durability without updating `protocolProfile`, so an in-place v1→v2 upgrade could leave legacy v1 controls visible until remount. | **Fixed after being recorded OPEN.** The cancellation guard is initialized before listener registration, and every sync-state refresh re-reads the active protocol/session status so an in-place profile switch immediately fences the legacy v1 controls. The dedicated V2 settings root is also DOM-distinct from the legacy Google settings section, preserving strict browser selectors. Production build, Storybook and the full configured Playwright matrix are green on the V2-10 security-code evidence head. |
+| IA-086 | V2-10 / local strong-protection UI remained v1-only after v2 selection | `App` and `LocalSecuritySettings` still read/enrolled/unlocked/locked only the v1 `RootWrap`, while the active v2 RK is protected by a separate `RootWrapV6` in the v2 security store. After Join/upgrade, enabling Passphrase or PRF in the visible UI could therefore strengthen only the retired/placeholder v1 context and leave the active v2 RK under its previous best-effort wrap, while the UI claimed strong local protection. On a v1→v2 profile-upgrade device, the inverse is also relevant: historical v1 health envelopes remain locally present, so strengthening only v2 would leave the retired source decryptable under an older weaker local wrap. | **Fixed after being recorded OPEN.** The existing local-security API now dispatches to the active protocol. Under v2, status/unlock/lock/enrollment operate on the selected `RootWrapV6`, verify the opened RK against authenticated StateV6 and use an atomic identity-preserving RootWrapV6 replacement with readback. If a retained same-diary v1 Source is still best-effort, a newly persisted strong V2 wrap remains deliberately reported locked until that historical Source is strengthened; successful V2 passphrase/PRF unlock resumes and completes the catch-up. This is more crash-resumable than a source-first PRF rewrite because the persisted V2 wrap retains the exact credential/eval-input metadata needed after restart. Already-strong retained v1 material need not be rekeyed to the same factor. Passphrase, PRF, wrong-factor, lock/unlock and simulated crash-window regressions plus an architecture ordering/fence test are green. |
+| IA-087 | V2-10 / post-Join strong RootWrapV6 opened through placeholder-diary helper | The V2-10 local-protection fix correctly stores new passphrase/PRF factors under the active v2 diary ID, but several post-selection V2 ceremony services still call `openReadOnlyJoinRootWrapV6WithActiveMode()`. That helper intentionally resolves strong factors through the still-active v1 placeholder diary during the pre-switch Join ceremony. On a fresh device whose unrelated placeholder diary differs from the joined v2 diary, strengthening the joined V2 RootWrapV6 therefore makes later Handoff, Forced Takeover, Recovery-Rekey and native source rotation unable to find the otherwise valid unlocked v2 factor. | **Fixed after being recorded OPEN.** The Join-specific helper remains confined to the pre-selection Join path. Post-selection Handoff, Forced Takeover, Recovery-Rekey, application-runtime opening and native v2 rotation now use `openSuccessorRootWrapV6WithActiveMode()`, which resolves strong factors by the authenticated `wrap.diary_id` rather than the active v1 placeholder diary. A fresh-device Join -> passphrase protection -> lock/unlock -> Writer transfer-descriptor regression proves the post-Join ceremony path remains usable; Security Validation #971 is green on the implementation head. |
+| IA-088 | V2-11 / Live-Google Parallel-Append gate had no reproducible executable harness | Architecture §14 / Exact Protocol §24 require a real-provider experiment with concurrent `AppendCellsRequest` calls and stable full-read physical row ordering. The repository previously documented the requirement but had no executable live harness, so the remaining internal gate could not be run reproducibly or distinguished from mock coverage. | **Harness implemented; live gate remains OPEN until executed with a dedicated Google test account.** `scripts/live-google-parallel-append-gate.mjs` issues independent concurrent `appendCells` requests for unique sentinel pairs, requires both successful writes to appear exactly once and adjacent, and requires their physical order to remain unchanged across a second full reread. It runs at least 10 rounds (20 by default) via `npm run test:live-google-parallel-append`. A PASS from this real-provider run is required before §23 item 15 can be closed; ordinary CI cannot satisfy it. |
 
 ## Reviewed points that are not findings
 
@@ -505,6 +561,16 @@ Later changes must retain explicit vectors for at least:
 - cooperative Handoff blocks unresolved current-Writer `prepared/pending` domain rows but does not treat terminal `stale_writer_pending` history as unresolved work;
 
 - WriterGrant operation transitions authenticate the complete local envelope/outbox/reservation journal before deriving stale aggregates or mutating StateV6;
+- existing app domain repositories cannot bypass v2 after `activeProtocolSelectionV2`; a read-only joined device is rejected before a new local EnvelopeV6 is persisted;
+- successful normal app writes require fresh canonical Writer authorization and canonical remote readback before the repository call resolves;
+- canonical pull imports only accepted encrypted remote EnvelopeV6 rows; foreign stale-writer rows never synthesize local journal/outbox or stale-pending obligations;
+- offline v2 reads materialize only the MAC-authenticated accepted read-model bound to exact StateV6 anchor/manifest; read-model MAC or referenced-envelope tamper fails closed;
+- v1/v2 authenticated session routing rejects cross-profile sessions and legacy v1 remote enablement after v2 selection;
+- replacement-device Pending-Rekey application flow remains `Join -> Forced Takeover (maintenance-only) -> remote_pending_rekey_adoption -> Phase B`, while cooperative Handoff and normal domain writes stay fenced;
+- legacy Google settings switch immediately to the v2 surface after in-place profile selection and do not share ambiguous browser selectors with the v2 ceremony UI;
+- active-v2 Passphrase/PRF status, enrollment, lock and unlock operate on RootWrapV6 and authenticate StateV6 before data access;
+- a strong V2 RootWrap with retained same-diary best-effort v1 source remains reported locked until source catch-up; successful V2 unlock resumes crash-interrupted passphrase/PRF catch-up;
+- already-strong retained same-diary v1 source need not be rewritten to the new V2 local factor, but best-effort historical health material may not coexist with an advertised unlocked strong V2 mode;
 
 ### 2026-09-24 full-stack re-audit final disposition
 
@@ -539,13 +605,18 @@ quarantine. At that historical point native v2→v2 Rotation/two-phase
 Recovery-Rekey, App/UI/domain wiring, Live-Google parallel-append validation and
 the external production gates were still open.
 
-The current boundary after the 2026-09-25 V2-09 pass now additionally includes
+The historical boundary after the 2026-09-25 V2-09 pass additionally included
 productive native v2→v2 Rotation and complete two-phase Recovery-Rekey,
 including bounded Unknown-Outcome resume, supersession, replacement-device
-Pending-Rekey continuation and v2-Source RootWrap inheritance. App/UI/domain
-wiring, Live-Google parallel-append validation and the external production gates
-remain open. The fully green security-code evidence head is
-`8f508ba096d2af6634ab4127f51c4de71f339d76`.
+Pending-Rekey continuation and v2-Source RootWrap inheritance.
+
+The current boundary after the 2026-09-26 V2-10 pass additionally includes
+normal App/Settings/domain-materialization/UI wiring, authenticated encrypted
+offline read-model persistence, productive application ceremony entry points
+and active-v2 local RootWrapV6 protection. The remaining internal pre-release
+slice is Live-Google parallel-append validation; external production gates remain
+open. The fully green V2-10 security-code evidence head is
+`d4bcd4753dfb23ffc03c0cccc7bde67d13bd36d9`.
 
 ## Anti-churn rule for later reviews
 

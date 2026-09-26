@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { listRecordConflicts, mergeRecord, type StoreRecordConflict } from '../../data/localDatabase'
+import { listRecordConflicts, mergeRecord, type StoreRecordConflict } from '../../data/applicationDataStore'
 import './ConflictResolutionSettings.css'
 
 export function ConflictResolutionSettings() {

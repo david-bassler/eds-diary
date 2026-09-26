@@ -84,6 +84,25 @@ describe('v1 production hardening boundaries',()=>{
   })
 })
 
+describe('v2 post-selection RootWrap opener boundary',()=>{it('keeps the placeholder-diary Join opener out of post-selection ceremonies',async()=>{
+  for(const file of ['src/data/writerHandoffV2Service.ts','src/data/forcedTakeoverV2Service.ts','src/data/recoveryRekeyV2Service.ts','src/data/nativeRotationV2Service.ts']){
+    expect(await readFile(file,'utf8'),file).not.toMatch(/openReadOnlyJoinRootWrapV6WithActiveMode/)
+  }
+  expect(await readFile('src/data/readOnlyJoinV2Service.ts','utf8')).toMatch(/openReadOnlyJoinRootWrapV6WithActiveMode/)
+})})
+
+describe('v2 active local-protection ordering',()=>{it('keeps strong-v2 status fail-closed until any retained same-diary best-effort source catches up',async()=>{
+  const source=await readFile('src/data/localDatabase.ts','utf8')
+  const statusFence=source.indexOf('return !await retainedV1NeedsStrongCatchup')
+  const passV2=source.indexOf('await v2.store.replaceRootWrapV6')
+  const passCatchup=source.indexOf('await strengthenRetainedV1WithPassphraseIfNeeded',passV2)
+  const prfV2=source.indexOf('await v2.store.replaceRootWrapV6',passV2+1)
+  const prfCatchup=source.indexOf('await strengthenRetainedV1WithPrfIfNeeded',prfV2)
+  expect(statusFence).toBeGreaterThan(-1)
+  expect(passV2).toBeGreaterThan(-1);expect(passCatchup).toBeGreaterThan(passV2)
+  expect(prfV2).toBeGreaterThan(passV2);expect(prfCatchup).toBeGreaterThan(prfV2)
+})})
+
 describe('v2 pre-implementation hardening boundaries',()=>{
   it('keeps security rationale in an explicit anti-churn decision ledger',async()=>{
     const ledger=await readFile('docs/security/EDS_TRANSFERABLE_SINGLE_WRITER_V2_DECISIONS.md','utf8')

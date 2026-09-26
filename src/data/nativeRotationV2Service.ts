@@ -9,7 +9,6 @@ import type { PreparedEnvelope } from '../security/envelopes'
 import {
   activeProtocolSelectionV2,
   atomicSelectRotatedV2,
-  openReadOnlyJoinRootWrapV6WithActiveMode,
   openSuccessorRootWrapV6WithActiveMode,
   prepareNativeV2SuccessorRootWrapV6ForActiveMode,
 } from './localDatabase'
@@ -210,7 +209,7 @@ export class ProductiveNativeRotationV2Service implements ProfileUpgradeOrchestr
   private async hit(stage:RotationOperationStageV2|NativeRotationV2FaultPoint):Promise<void>{await this.fault?.(String(stage).startsWith('after-')?stage as NativeRotationV2FaultPoint:`after-${stage}` as NativeRotationV2FaultPoint)}
 
   private async rootForEpoch(epochId:string):Promise<Uint8Array>{
-    return openReadOnlyJoinRootWrapV6WithActiveMode(await this.store.loadRootWrapV6(epochId))
+    return openSuccessorRootWrapV6WithActiveMode(await this.store.loadRootWrapV6(epochId))
   }
   private async stateAndRoot(epochId:string):Promise<{state:EpochLocalSecurityStateV6;rootKey:Uint8Array;epochSalt:Uint8Array}>{
     const rootKey=await this.rootForEpoch(epochId),selection=await activeProtocolSelectionV2()

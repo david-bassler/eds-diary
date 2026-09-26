@@ -10,7 +10,7 @@ const dirtyVersions = new Map<string, number>()
 const listeners = new Set<(snapshot: SyncSnapshot) => void>()
 
 let version = 0
-let timer: number | null = null
+let timer: ReturnType<typeof globalThis.setTimeout> | null = null
 let running: Promise<void> | null = null
 let requestedFull = false
 let initialized = false
@@ -64,10 +64,10 @@ export function markDirty(name: string): void {
   dirtyVersions.set(name, version)
   emit('pending')
 
-  if (timer !== null) window.clearTimeout(timer)
+  if (timer !== null) globalThis.clearTimeout(timer)
 
   if (secureSynchronizer) {
-    timer = window.setTimeout(() => {
+    timer = globalThis.setTimeout(() => {
       void syncPending()
     }, 1400)
   }

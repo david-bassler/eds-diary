@@ -13,6 +13,12 @@ import {
   loadProfileUpgradeSourceOperationV2,
   persistProfileUpgradeSourceOperationV2,
   putRecord,
+  enrollActivePassphraseRootWrap,
+  enrollActivePrfRootWrap,
+  localRootWrapStatus,
+  lockActiveRoot,
+  unlockActiveRootWithPassphrase,
+  unlockActiveRootWithPrf,
 } from '../data/localDatabase'
 import { IndexedDbV2LocalSecurityStore, __v2LocalPersistenceTesting, type VerifiedPersistedRecoveryArtifactV6 } from '../security/v2/localPersistence'
 import { IndexedDbV2CoordinatorStore } from '../security/v2/coordinatorStore'
@@ -64,9 +70,12 @@ import { createTransferDescriptorV2, ProductiveWriterHandoffV2Service } from '..
 import { localJournalInitialV2, type EpochLocalSecurityStateV6, type StoredWriterDeviceKeyV2 } from '../security/v2/localState'
 import { ProductiveNativeRotationV2Service } from '../data/nativeRotationV2Service'
 import { ProductiveRecoveryRekeyV2Service } from '../data/recoveryRekeyV2Service'
-import { ProductiveForcedTakeoverV2Service } from '../data/forcedTakeoverV2Service'
 import type { RotationOperationStateV2 } from '../security/v2/profileUpgrade'
 import { TransferableSingleWriterV2WriteAuthority } from '../security/v2/writeAuthority'
+import { clearAuthenticatedRemoteSession, continuePendingRecoveryRekeyV2, createWriterTransferDescriptorV2, forceTakeoverV2, installAuthenticatedRemoteSession, joinExistingV2Diary, remoteSessionStatus } from '../data/initializeDataLayer'
+import { __v2ApplicationRuntimeTesting } from '../data/v2ApplicationRuntime'
+import { createPainEntry, listPainEntries } from '../features/pain/painRepository'
+import { createPassphraseRootWrapV6 } from '../security/v2/rootWrap'
 
 type Row=readonly[string,string,string]
 
@@ -389,10 +398,12 @@ async function prepareSealRow(v2:V2Session,urs:Uint8Array,createdAt:string):Prom
 
 describe('ProductiveProfileUpgradeV2Service',()=>{
   beforeEach(async()=>{
+    await clearAuthenticatedRemoteSession().catch(()=>undefined)
     await __localDatabaseTesting.resetForTesting()
     await __v2LocalPersistenceTesting.reset()
     await deleteDatabase('eds-diary')
     await deleteDatabase('eds-diary-v2-security')
+    __v2ApplicationRuntimeTesting.reset()
     globalThis.localStorage?.clear?.()
   })
 
@@ -1422,19 +1433,22 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     globalThis.localStorage?.clear?.()
 
     const replacementStore=new IndexedDbV2LocalSecurityStore()
-    const joined=await new ProductiveReadOnlyJoinV2Service(v2,replacementStore).join(newUrs)
+    const joined=await joinExistingV2Diary(v2,newUrs)
     expect(joined.epochId).toBe(upgraded.successor_epoch_id)
     const replacementState=await replacementStore.loadState((await openRecoveryArtifactV6(await v2.loadRecoveryArtifact(newUrs,source.diaryId,upgraded.successor_epoch_id),newUrs)).rootKey,await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(upgraded.successor_epoch_id)),upgraded.successor_epoch_id)
     expect(replacementState.writer_status).toBe('read_only')
     expect(replacementState.recovery_rekey_rotation_required).toBe(true)
+    expect(await remoteSessionStatus()).toMatchObject({profile:'v2',writerStatus:'read_only',recoveryRekeyRequired:true})
 
-    const takeover=await new ProductiveForcedTakeoverV2Service(v2,replacementStore,()=>createdAt).takeover(newUrs)
+    const takeover=await forceTakeoverV2(v2,newUrs)
     expect(takeover.stage).toBe('durable')
     expect(takeover.maintenanceOnly).toBe(true)
+    expect(await remoteSessionStatus()).toMatchObject({profile:'v2',writerStatus:'writer_active',recoveryRekeyRequired:true})
 
-    const adopted=await new ProductiveRecoveryRekeyV2Service(v2,replacementStore,()=>createdAt).adoptPending(newUrs)
+    const adopted=await continuePendingRecoveryRekeyV2(v2,newUrs)
     expect(adopted.stage).toBe('completed')
     expect(adopted.successorEpochId).not.toBeNull()
+    expect(await remoteSessionStatus()).toMatchObject({profile:'v2',writerStatus:'writer_active',recoveryRekeyRequired:false})
     const adoptedOperation=await replacementStore.loadRecoveryRekeyOperation(adopted.operationId)
     expect(adoptedOperation.operation_origin).toBe('remote_pending_rekey_adoption')
     expect(adoptedOperation.stage).toBe('completed')
@@ -1606,6 +1620,221 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     const verified=await (await v2.codecForEpoch(source.diaryId,upgraded.successor_epoch_id,(await openRecoveryArtifactV6(await v2.loadRecoveryArtifact(urs,source.diaryId,upgraded.successor_epoch_id),urs)).rootKey,sourceTransport)).verifyRemote(await sourceTransport.read(sourceTransport.remoteId))
     const canonical=verified.profileState as CanonicalFullResultV2
     expect(canonical.source_epoch_sealed).toBe(false)
+  },120_000)
+
+
+  it('routes the existing pain repository through v2 Writer authority and materializes the durable result offline',async()=>{
+    const createdAt='2026-09-25T09:00:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    expect(upgraded.stage).toBe('switched')
+    await installAuthenticatedRemoteSession(v2)
+    if(!v2.remote)throw new Error('v2 active remote missing after profile upgrade')
+    const beforeRows=v2.remote.snapshot.rows.length
+
+    await createPainEntry({
+      startedAt:'2026-09-25T09:01:00.000Z',
+      intensity:7,
+      locations:[],
+      qualities:['stechend'],
+      cause:'integration',
+      occursWhen:'test',
+      note:'v2 app routing',
+    })
+    expect(v2.remote.snapshot.rows.length).toBeGreaterThan(beforeRows)
+
+    const codec=new GoogleSheetsTransferableSingleWriterV2ProfileCodec(source.diaryId,upgraded.successor_epoch_id,(await openRecoveryArtifactV6(await v2.loadRecoveryArtifact(urs,source.diaryId,upgraded.successor_epoch_id),urs)).rootKey,v2.account)
+    const canonical=(await codec.verifyRemote(v2.remote.snapshot)).profileState as CanonicalFullResultV2
+    const matching=[...canonical.accepted_revision_graph.revisions.values()].filter(revision=>revision.record_type==='pain_entry'&&revision.record_data&&typeof revision.record_data==='object'&&(revision.record_data as {note?:unknown}).note==='v2 app routing')
+    expect(matching).toHaveLength(1)
+    expect(matching[0]?.writer_context?.writer_generation).toBe(canonical.current_writer.writer_generation)
+
+    await clearAuthenticatedRemoteSession()
+    const offline=await listPainEntries({includeDeleted:true})
+    if(!offline.some(entry=>entry.id===matching[0]!.record_id&&entry.note==='v2 app routing'&&entry.intensity===7)){
+      throw new Error(`V2 offline materialization mismatch: ${JSON.stringify(offline)} expectedRecordId=${matching[0]!.record_id}`)
+    }
+  },120_000)
+
+  it('blocks the existing pain repository on a read-only joined device before persisting any new v2 envelope',async()=>{
+    const createdAt='2026-09-25T09:05:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    expect(upgraded.stage).toBe('switched')
+
+    await __localDatabaseTesting.resetForTesting()
+    await __v2LocalPersistenceTesting.reset()
+    await deleteDatabase('eds-diary')
+    await deleteDatabase('eds-diary-v2-security')
+    __v2ApplicationRuntimeTesting.reset()
+    globalThis.localStorage?.clear?.()
+
+    const joined=await new ProductiveReadOnlyJoinV2Service(v2).join(urs)
+    expect(joined.epochId).toBe(upgraded.successor_epoch_id)
+    await installAuthenticatedRemoteSession(v2)
+    const localStore=new IndexedDbV2LocalSecurityStore()
+    const before=(await localStore.envelopes(joined.epochId)).length
+    await expect(createPainEntry({intensity:5,note:'must-not-persist'})).rejects.toThrow(/read-only|authority|writer/i)
+    const after=(await localStore.envelopes(joined.epochId)).length
+    expect(after).toBe(before)
+    expect((await listPainEntries({includeDeleted:true})).some(entry=>entry.note==='must-not-persist')).toBe(false)
+  },120_000)
+
+  it('fails closed when the authenticated v2 offline read-model index is tampered',async()=>{
+    const createdAt='2026-09-25T09:10:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    expect(upgraded.stage).toBe('switched')
+    await installAuthenticatedRemoteSession(v2)
+    await createPainEntry({intensity:3,note:'read-model-tamper'})
+    await clearAuthenticatedRemoteSession()
+
+    const db=await __v2LocalPersistenceTesting.openDatabase(),tx=db.transaction(__v2LocalPersistenceTesting.STORES.readModels,'readwrite')
+    const store=tx.objectStore(__v2LocalPersistenceTesting.STORES.readModels)
+    const request=store.get(upgraded.successor_epoch_id)
+    const model=await new Promise<Record<string,unknown>>((resolve,reject)=>{request.onsuccess=()=>resolve(request.result as Record<string,unknown>);request.onerror=()=>reject(request.error)})
+    store.put({...model,tag:base64Url(new Uint8Array(32).fill(201))})
+    await transactionComplete(tx)
+    await expect(listPainEntries({includeDeleted:true})).rejects.toThrow(/read-model MAC failed/)
+  },120_000)
+
+
+  it('does not import a foreign physical stale-writer row into a fresh read-only device outbox',async()=>{
+    const createdAt='2026-09-25T09:15:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    expect(upgraded.stage).toBe('switched')
+    await appendPostActivationHandoff(v2,urs,'2026-09-25T09:16:00.000Z')
+    const staleRow=await appendPostActivationDomainRow(v2,urs,'2026-09-25T09:17:00.000Z')
+    if(!v2.remote)throw new Error('v2 remote missing for foreign stale-row regression')
+    const codec=new GoogleSheetsTransferableSingleWriterV2ProfileCodec(source.diaryId,upgraded.successor_epoch_id,(await openRecoveryArtifactV6(await v2.loadRecoveryArtifact(urs,source.diaryId,upgraded.successor_epoch_id),urs)).rootKey,v2.account)
+    const remoteVerified=await codec.verifyRemote(v2.remote.snapshot)
+    expect(remoteVerified.staleWriterEnvelopeIds.has(staleRow[0])).toBe(true)
+
+    await __localDatabaseTesting.resetForTesting()
+    await __v2LocalPersistenceTesting.reset()
+    await deleteDatabase('eds-diary')
+    await deleteDatabase('eds-diary-v2-security')
+    __v2ApplicationRuntimeTesting.reset()
+    globalThis.localStorage?.clear?.()
+
+    const joined=await new ProductiveReadOnlyJoinV2Service(v2).join(urs)
+    await installAuthenticatedRemoteSession(v2)
+    const artifact=await v2.loadRecoveryArtifact(urs,source.diaryId,joined.epochId),opened=await openRecoveryArtifactV6(artifact,urs)
+    const salt=await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(joined.epochId)),store=new IndexedDbV2LocalSecurityStore()
+    const state=await store.loadState(opened.rootKey,salt,joined.epochId)
+    expect(state.stale_writer_pending_count).toBe(0)
+    expect((await store.envelopes(joined.epochId)).some(envelope=>envelope.envelopeId===staleRow[0])).toBe(false)
+    expect((await store.outbox(opened.rootKey,salt,joined.epochId)).some(entry=>entry.envelope_id===staleRow[0])).toBe(false)
+  },120_000)
+
+
+  it('routes passphrase protection to the active v2 RootWrapV6 and the retained same-diary v1 source',async()=>{
+    const createdAt='2026-09-26T07:10:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    expect(upgraded.stage).toBe('switched')
+    expect(await localRootWrapStatus()).toMatchObject({mode:'best-effort',locked:false})
+
+    await enrollActivePassphraseRootWrap('v2-local-passphrase')
+    expect(await localRootWrapStatus()).toMatchObject({mode:'passphrase',locked:false})
+
+    const v2Wrap=await new IndexedDbV2LocalSecurityStore().loadRootWrapV6(upgraded.successor_epoch_id)
+    expect(v2Wrap.wrap.mode).toBe('passphrase')
+    expect(v2Wrap.bestEffortWrappingKey).toBeNull()
+
+    const db=await __localDatabaseTesting.openDatabase(),contextTx=db.transaction(__localDatabaseTesting.STORES.context,'readonly')
+    const contextRequest=contextTx.objectStore(__localDatabaseTesting.STORES.context).get('active')
+    const context=await new Promise<{epochId:string}>((resolve,reject)=>{contextRequest.onsuccess=()=>resolve(contextRequest.result as {epochId:string});contextRequest.onerror=()=>reject(contextRequest.error)})
+    await transactionComplete(contextTx)
+    const wrapTx=db.transaction(__localDatabaseTesting.STORES.wraps,'readonly'),wrapRequest=wrapTx.objectStore(__localDatabaseTesting.STORES.wraps).get(context.epochId)
+    const retained=await new Promise<{wrap:{mode:string}}>((resolve,reject)=>{wrapRequest.onsuccess=()=>resolve(wrapRequest.result as {wrap:{mode:string}});wrapRequest.onerror=()=>reject(wrapRequest.error)})
+    await transactionComplete(wrapTx)
+    expect(retained.wrap.mode).toBe('passphrase')
+
+    await lockActiveRoot()
+    expect(await localRootWrapStatus()).toMatchObject({mode:'passphrase',locked:true})
+    await expect(unlockActiveRootWithPassphrase('wrong-passphrase')).rejects.toThrow()
+    await unlockActiveRootWithPassphrase('v2-local-passphrase')
+    expect(await localRootWrapStatus()).toMatchObject({mode:'passphrase',locked:false})
+  },120_000)
+
+  it('routes WebAuthn-PRF protection and unlock to the active v2 RootWrapV6',async()=>{
+    const createdAt='2026-09-26T07:15:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    expect(upgraded.stage).toBe('switched')
+    const material={credentialId:randomBytes(24),prfEvalInput:randomBytes(32),prfOutput:randomBytes(32),rpId:'example.test'}
+    await enrollActivePrfRootWrap(material)
+    const status=await localRootWrapStatus()
+    expect(status).toMatchObject({mode:'prf',locked:false,rpId:'example.test'})
+    expect(status.credentialId).toBe(base64Url(material.credentialId))
+
+    const v2Wrap=await new IndexedDbV2LocalSecurityStore().loadRootWrapV6(upgraded.successor_epoch_id)
+    expect(v2Wrap.wrap.mode).toBe('prf')
+    expect(v2Wrap.bestEffortWrappingKey).toBeNull()
+
+    await lockActiveRoot()
+    expect(await localRootWrapStatus()).toMatchObject({mode:'prf',locked:true})
+    await expect(unlockActiveRootWithPrf(randomBytes(24),material.prfOutput)).rejects.toThrow(/credential/i)
+    await unlockActiveRootWithPrf(material.credentialId,material.prfOutput)
+    expect(await localRootWrapStatus()).toMatchObject({mode:'prf',locked:false})
+  },120_000)
+
+
+  it('keeps a partially completed v2 strong-protection upgrade locked until retained best-effort source catch-up completes',async()=>{
+    const createdAt='2026-09-26T07:20:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    expect(upgraded.stage).toBe('switched')
+    const store=new IndexedDbV2LocalSecurityStore(),current=await store.loadRootWrapV6(upgraded.successor_epoch_id)
+    const recovered=await openRecoveryArtifactV6(await v2.loadRecoveryArtifact(urs,source.diaryId,upgraded.successor_epoch_id),urs)
+    const identity={diary_id:current.wrap.diary_id,epoch_id:current.wrap.epoch_id,key_id:current.wrap.key_id,manifest_fingerprint:current.wrap.manifest_fingerprint}
+    const staged=await createPassphraseRootWrapV6(recovered.rootKey,'resume-strong-protection',identity,randomBytes(16))
+    await store.replaceRootWrapV6(current.wrap.wrap_id,staged,null)
+
+    const db=await __localDatabaseTesting.openDatabase(),contextTx=db.transaction(__localDatabaseTesting.STORES.context,'readonly')
+    const contextRequest=contextTx.objectStore(__localDatabaseTesting.STORES.context).get('active')
+    const context=await new Promise<{epochId:string}>((resolve,reject)=>{contextRequest.onsuccess=()=>resolve(contextRequest.result as {epochId:string});contextRequest.onerror=()=>reject(contextRequest.error)})
+    await transactionComplete(contextTx)
+    const beforeTx=db.transaction(__localDatabaseTesting.STORES.wraps,'readonly'),beforeRequest=beforeTx.objectStore(__localDatabaseTesting.STORES.wraps).get(context.epochId)
+    const before=await new Promise<{wrap:{mode:string}}>((resolve,reject)=>{beforeRequest.onsuccess=()=>resolve(beforeRequest.result as {wrap:{mode:string}});beforeRequest.onerror=()=>reject(beforeRequest.error)})
+    await transactionComplete(beforeTx)
+    expect(before.wrap.mode).toBe('best-effort')
+    expect(await localRootWrapStatus()).toMatchObject({mode:'passphrase',locked:true})
+
+    await unlockActiveRootWithPassphrase('resume-strong-protection')
+    expect(await localRootWrapStatus()).toMatchObject({mode:'passphrase',locked:false})
+    const afterTx=db.transaction(__localDatabaseTesting.STORES.wraps,'readonly'),afterRequest=afterTx.objectStore(__localDatabaseTesting.STORES.wraps).get(context.epochId)
+    const after=await new Promise<{wrap:{mode:string}}>((resolve,reject)=>{afterRequest.onsuccess=()=>resolve(afterRequest.result as {wrap:{mode:string}});afterRequest.onerror=()=>reject(afterRequest.error)})
+    await transactionComplete(afterTx)
+    expect(after.wrap.mode).toBe('passphrase')
+  },120_000)
+
+
+  it('keeps post-Join v2 ceremonies usable after strong local protection and lock/unlock',async()=>{
+    const createdAt='2026-09-26T07:30:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    expect(upgraded.stage).toBe('switched')
+
+    await clearAuthenticatedRemoteSession().catch(()=>undefined)
+    await __localDatabaseTesting.resetForTesting()
+    await __v2LocalPersistenceTesting.reset()
+    await deleteDatabase('eds-diary')
+    await deleteDatabase('eds-diary-v2-security')
+    __v2ApplicationRuntimeTesting.reset()
+    globalThis.localStorage?.clear?.()
+
+    const joined=await joinExistingV2Diary(v2,urs)
+    expect(joined.epochId).toBe(upgraded.successor_epoch_id)
+    await enrollActivePassphraseRootWrap('joined-v2-strong')
+    expect(await localRootWrapStatus()).toMatchObject({mode:'passphrase',locked:false})
+    await lockActiveRoot()
+    expect(await localRootWrapStatus()).toMatchObject({mode:'passphrase',locked:true})
+    await unlockActiveRootWithPassphrase('joined-v2-strong')
+    const descriptor=await createWriterTransferDescriptorV2(v2)
+    expect(descriptor).toMatchObject({diary_id:source.diaryId,epoch_id:joined.epochId})
   },120_000)
 
 })

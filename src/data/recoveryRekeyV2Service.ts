@@ -44,7 +44,7 @@ import { stateAfterCanonicalVerifyV6 } from '../security/v2/stateReconciliation'
 import type { CanonicalFullResultV2 } from '../security/v2/verifier'
 import { TransferableSingleWriterV2Verifier } from '../security/v2/verifier'
 import { createBackupV6, testRestoreBackupV6, type SyncBackupV6 } from '../security/v2/backup'
-import { activeProtocolSelectionV2, openReadOnlyJoinRootWrapV6WithActiveMode } from './localDatabase'
+import { activeProtocolSelectionV2, openSuccessorRootWrapV6WithActiveMode } from './localDatabase'
 import { verifyActivationLineageForCanonicalEpoch } from './readOnlyJoinV2Service'
 import { ProductiveNativeRotationV2Service } from './nativeRotationV2Service'
 
@@ -106,7 +106,7 @@ export class ProductiveRecoveryRekeyV2Service {
   private async activeContext():Promise<SourceContextV2>{
     const selection=await activeProtocolSelectionV2()
     if(!selection)throw new Error('Recovery-Rekey requires an active v2 protocol selection.')
-    const rootKey=await openReadOnlyJoinRootWrapV6WithActiveMode(await this.store.loadRootWrapV6(selection.epoch_id))
+    const rootKey=await openSuccessorRootWrapV6WithActiveMode(await this.store.loadRootWrapV6(selection.epoch_id))
     const epochSalt=await deriveEpochSaltV2(fixedBase64Url(selection.diary_id,16),fixedBase64Url(selection.epoch_id,16))
     const state=await this.store.loadState(rootKey,epochSalt,selection.epoch_id),binding=state.remote_binding
     if(state.diary_id!==selection.diary_id||state.manifest_fingerprint!==selection.manifest_fingerprint||!binding||binding.sync_profile!==SINGLE_WRITER_V2_PROFILE)throw new Error('Recovery-Rekey active selection/StateV6 binding mismatch.')
@@ -199,7 +199,7 @@ export class ProductiveRecoveryRekeyV2Service {
   private async operationContext(operation:RecoveryRekeyOperationStateV2,newUrs:Uint8Array):Promise<{context:SourceContextV2;state:EpochLocalSecurityStateV6;artifact:RecoveryArtifactV6;proof:RecoveryAuthorityTransitionProofV2}>{
     const selection=await activeProtocolSelectionV2()
     if(!selection||selection.diary_id.length===0)throw new Error('Recovery-Rekey active selection is missing.')
-    const rootKey=await openReadOnlyJoinRootWrapV6WithActiveMode(await this.store.loadRootWrapV6(operation.epoch_id)),epochSalt=await deriveEpochSaltV2(fixedBase64Url(selection.diary_id,16),fixedBase64Url(operation.epoch_id,16))
+    const rootKey=await openSuccessorRootWrapV6WithActiveMode(await this.store.loadRootWrapV6(operation.epoch_id)),epochSalt=await deriveEpochSaltV2(fixedBase64Url(selection.diary_id,16),fixedBase64Url(operation.epoch_id,16))
     const state=await this.store.loadState(rootKey,epochSalt,operation.epoch_id),binding=state.remote_binding
     if(!binding)throw new Error('Recovery-Rekey Source remote binding is missing.')
     const transport=await this.session.transportForEpoch(state.diary_id,state.epoch_id),codec=await this.session.codecForEpoch(state.diary_id,state.epoch_id,rootKey,transport)

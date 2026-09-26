@@ -16,8 +16,8 @@ import type { CreationPersistence, CreationState } from '../../sync/core/creatio
 import type { RecoveryAuthorityTransitionV2, WriterGrantV2 } from './types'
 
 const DATABASE_NAME='eds-diary-v2-security'
-const DATABASE_VERSION=10
-const STORES={states:'epochSecurityStateV6',writerKeys:'writerDeviceKeysV2',reservations:'envelopeReservationsV6',envelopes:'envelopesV6',outbox:'outboxV6',recoveryStaging:'recoveryTakeoverStagingV2',recoveryArtifacts:'recoveryArtifactsV6',rotationOperations:'rotationOperationsV2',writerGrantOperations:'writerGrantOperationsV2',lineageCaches:'activationLineageCachesV2',rootWraps:'rootWrapsV6',rootWrappingKeys:'rootWrappingKeysV6',creationOperations:'creationOperationsV2',operationArtifacts:'operationArtifactsV2'} as const
+const DATABASE_VERSION=11
+const STORES={states:'epochSecurityStateV6',writerKeys:'writerDeviceKeysV2',reservations:'envelopeReservationsV6',envelopes:'envelopesV6',outbox:'outboxV6',recoveryStaging:'recoveryTakeoverStagingV2',recoveryArtifacts:'recoveryArtifactsV6',rotationOperations:'rotationOperationsV2',writerGrantOperations:'writerGrantOperationsV2',lineageCaches:'activationLineageCachesV2',rootWraps:'rootWrapsV6',rootWrappingKeys:'rootWrappingKeysV6',creationOperations:'creationOperationsV2',operationArtifacts:'operationArtifactsV2',readModels:'verifiedReadModelsV2'} as const
 
 const TERMINAL_ROTATION_OPERATION_STATES_V2=new Set(['switched','stale','cutover_race','post_activation_superseded'])
 const TERMINAL_WRITER_GRANT_OPERATION_STATES_V2=new Set(['durable','stale'])
@@ -47,6 +47,22 @@ export interface VerifiedDispositionContextV2 {
   source_epoch_sealed:boolean
   recovery_rekey_rotation_required:boolean
   preserve_ceremony_owned?:boolean
+}
+export interface VerifiedReadModelCoreV2 {
+  format:'verified-read-model-v2'
+  version:2
+  epoch_id:string
+  manifest_fingerprint:string
+  remote_anchor:NonNullable<EpochLocalSecurityStateV6['remote_anchor']>
+  accepted_envelope_ids:string[]
+}
+export interface VerifiedReadModelV2 extends VerifiedReadModelCoreV2 {tag:string}
+async function readModelTag(rootKey:Uint8Array,epochSalt:Uint8Array,model:VerifiedReadModelCoreV2):Promise<string>{
+  return base64Url(await hmacSha256(await deriveLocalStateMacKeyV2(rootKey,epochSalt),canonicalBytes(model as never)))
+}
+async function verifyReadModelTag(rootKey:Uint8Array,epochSalt:Uint8Array,model:VerifiedReadModelV2):Promise<void>{
+  const {tag,...core}=model,expected=fromBase64Url(await readModelTag(rootKey,epochSalt,core))
+  if(!equalBytes(fixedBase64Url(tag,32,'read_model_tag'),expected))throw new Error('V2 verified read-model MAC failed.')
 }
 export type V2OutboxStatus='prepared'|'pending'|'durable'|'stale_writer_pending'
 export type V2OutboxCeremonyOwner='rotation'|'recovery_rekey'
@@ -143,6 +159,7 @@ async function openDatabase():Promise<IDBDatabase>{
       if(!db.objectStoreNames.contains(STORES.rootWrappingKeys))db.createObjectStore(STORES.rootWrappingKeys,{keyPath:'id'})
       if(!db.objectStoreNames.contains(STORES.creationOperations))db.createObjectStore(STORES.creationOperations,{keyPath:'id'})
       if(!db.objectStoreNames.contains(STORES.operationArtifacts))db.createObjectStore(STORES.operationArtifacts,{keyPath:'id'})
+      if(!db.objectStoreNames.contains(STORES.readModels))db.createObjectStore(STORES.readModels,{keyPath:'epoch_id'})
     })
     request.addEventListener('success',()=>{
       const db=request.result
@@ -494,6 +511,48 @@ export class IndexedDbV2LocalSecurityStore {
     if(stored.wrap.mode==='best-effort'&&!key)throw new Error('RootWrapV6 best-effort key is missing.')
     if(stored.wrap.mode!=='best-effort'&&key)throw new Error('RootWrapV6 unexpected wrapping key.')
     return{wrap:structuredClone(stored.wrap),bestEffortWrappingKey:key?.key??null}
+  }
+
+  async replaceRootWrapV6(
+    expectedCurrentWrapId:string,
+    wrap:RootWrapV6,
+    bestEffortWrappingKey:CryptoKey|null,
+  ):Promise<void>{
+    validateRootWrapV6(wrap)
+    fixedBase64Url(expectedCurrentWrapId,16,'expected_current_wrap_id')
+    if((wrap.mode==='best-effort')!==(bestEffortWrappingKey!==null))throw new Error('RootWrapV6 replacement best-effort key mismatch.')
+    if(bestEffortWrappingKey){
+      const algorithm=bestEffortWrappingKey.algorithm as AesKeyAlgorithm
+      if(bestEffortWrappingKey.type!=='secret'||bestEffortWrappingKey.extractable||bestEffortWrappingKey.algorithm.name!=='AES-GCM'||algorithm.length!==256)throw new Error('RootWrapV6 replacement key is invalid.')
+      if((await openBestEffortRootWrapV6(wrap,bestEffortWrappingKey)).byteLength!==32)throw new Error('RootWrapV6 replacement key readback failed.')
+    }
+    const encoded=new TextDecoder().decode(canonicalBytes(wrap as never)),db=await openDatabase()
+    const readTx=db.transaction([STORES.rootWraps,STORES.rootWrappingKeys],'readonly')
+    const currentRequest=readTx.objectStore(STORES.rootWraps).get(wrap.epoch_id)
+    const current=await requestResult<{id:string;wrap:RootWrapV6;bytes:string}|undefined>(currentRequest)
+    if(!current){readTx.abort();throw new Error('RootWrapV6 replacement source is missing.')}
+    const currentKeyRequest=readTx.objectStore(STORES.rootWrappingKeys).get(current.wrap.wrap_id)
+    const currentKey=await requestResult<{id:string;key:CryptoKey}|undefined>(currentKeyRequest)
+    await transactionDone(readTx)
+    validateRootWrapV6(current.wrap)
+    if(current.wrap.wrap_id!==expectedCurrentWrapId)throw new Error('RootWrapV6 changed before local protection replacement.')
+    if(current.wrap.diary_id!==wrap.diary_id
+      ||current.wrap.epoch_id!==wrap.epoch_id
+      ||current.wrap.key_id!==wrap.key_id
+      ||current.wrap.manifest_fingerprint!==wrap.manifest_fingerprint)throw new Error('RootWrapV6 replacement changes authenticated epoch identity.')
+    if(current.wrap.mode==='best-effort'&&!currentKey)throw new Error('Current RootWrapV6 best-effort key is missing.')
+    if(current.wrap.mode!=='best-effort'&&currentKey)throw new Error('Current RootWrapV6 carries an unexpected best-effort key.')
+
+    const tx=db.transaction([STORES.rootWraps,STORES.rootWrappingKeys],'readwrite')
+    tx.objectStore(STORES.rootWraps).put({id:wrap.epoch_id,wrap:structuredClone(wrap),bytes:encoded})
+    if(current.wrap.mode==='best-effort')tx.objectStore(STORES.rootWrappingKeys).delete(current.wrap.wrap_id)
+    if(bestEffortWrappingKey)tx.objectStore(STORES.rootWrappingKeys).put({id:wrap.wrap_id,key:bestEffortWrappingKey})
+    await transactionDone(tx)
+
+    const readback=await this.loadRootWrapV6(wrap.epoch_id)
+    if(readback.wrap.wrap_id!==wrap.wrap_id
+      ||new TextDecoder().decode(canonicalBytes(readback.wrap as never))!==encoded
+      ||(wrap.mode==='best-effort')!==(readback.bestEffortWrappingKey!==null))throw new Error('RootWrapV6 replacement readback failed.')
   }
 
   async persistPreparedWriterGrantOperationBundle(args:{
@@ -1392,16 +1451,30 @@ export class IndexedDbV2LocalSecurityStore {
       const current=await this.loadState(rootKey,epochSalt,nextState.epoch_id)
       if(current.operation_generation!==expectedOperationGeneration||nextState.operation_generation!==expectedOperationGeneration+1)throw new Error('Stale StateV6 generation during verified disposition commit.')
       assertStateTransition(current,nextState)
+      if(!nextState.remote_anchor||nextState.remote_anchor.covered_row_count!==context.remote_rows.length)throw new Error('Verified read-model requires StateV6 to bind the complete remote snapshot.')
+
       const [entries,envelopes]=await Promise.all([
         this.outbox(rootKey,epochSalt,nextState.epoch_id),
         this.envelopes(nextState.epoch_id),
       ])
       const localById=new Map(envelopes.map(envelope=>[envelope.envelopeId,envelope]))
-      for(const row of context.remote_rows){
-        const local=localById.get(row[0]??'')
-        if(local&&(row.length!==3||row[1]!==local.iv||row[2]!==local.ciphertext))throw new Error('Remote envelope_id collides with different immutable local bytes.')
+      const remoteById=new Map<string,{row:readonly[string,string,string];index:number}>()
+      for(let index=0;index<context.remote_rows.length;index+=1){
+        const row=context.remote_rows[index]!
+        if(row.length!==3||!row[0]||!row[1]||!row[2])throw new Error('Verified remote row shape is invalid.')
+        const candidate=[row[0],row[1],row[2]] as const,prior=remoteById.get(row[0])
+        if(prior){
+          if(prior.row[1]!==candidate[1]||prior.row[2]!==candidate[2])throw new Error('Verified remote envelope ID has different immutable bytes.')
+          continue
+        }
+        remoteById.set(row[0],{row:candidate,index})
+        const local=localById.get(row[0])
+        if(local&&(row[1]!==local.iv||row[2]!==local.ciphertext))throw new Error('Remote envelope_id collides with different immutable local bytes.')
       }
-      const updated=entries.map(entry=>{
+      for(const id of acceptedEnvelopeIds)if(!remoteById.has(id))throw new Error('Accepted envelope is absent from the verified remote snapshot.')
+      for(const id of staleWriterEnvelopeIds)if(!remoteById.has(id))throw new Error('Stale-writer envelope is absent from the verified remote snapshot.')
+
+      const updatedExisting=entries.map(entry=>{
         let status:V2OutboxStatus=entry.status
         if(context.preserve_ceremony_owned&&entry.ceremony_owner!==undefined)return entry
         if(acceptedEnvelopeIds.has(entry.envelope_id))status='durable'
@@ -1412,22 +1485,121 @@ export class IndexedDbV2LocalSecurityStore {
         assertOutboxTransition(entry.status,status)
         return{...entry,status}
       })
-      const staleCount=updated.filter(entry=>entry.status==='stale_writer_pending').length
-      const finalState={...nextState,stale_writer_pending_count:staleCount}
+
+      let sequence=current.local_journal_count,journalHash=current.local_journal_hash
+      const imported:Array<{envelope:PersistedEnvelopeV6;reservation:EnvelopeReservationV6;outbox:V2OutboxEntry}>=[]
+      const importable=[...remoteById.entries()]
+        .filter(([id])=>acceptedEnvelopeIds.has(id)&&!localById.has(id))
+        .sort((left,right)=>left[1].index-right[1].index)
+      for(const [envelopeId,{row}] of importable){
+        const envelope:PreparedEnvelope={
+          envelopeId,
+          iv:row[1],
+          ciphertext:row[2],
+          bytesHash:base64Url(await sha256(canonicalBytes([row[0],row[1],row[2]] as never))),
+        }
+        const revision=await openRevisionEnvelopeV2(rootKey,epochSalt,{diaryId:nextState.diary_id,epochId:nextState.epoch_id},envelope)
+        const authority:PreparedEnvelopeAuthorityV2|null=revision.record_schema==='writer-grant-sw-v2'
+          ?null
+          :revision.writer_context
+            ?{
+              writer_generation:revision.writer_context.writer_generation,
+              writer_grant_id:revision.writer_context.writer_grant_id,
+              writer_device_id:revision.writer_context.writer_device_id,
+              writer_key_id:revision.writer_context.writer_key_id,
+            }
+            :null
+        if(revision.record_schema!=='writer-grant-sw-v2'&&authority===null)throw new Error('Verified imported v2 envelope lacks Writer provenance.')
+        sequence+=1
+        journalHash=await localJournalNextV2(journalHash,sequence,envelope)
+        const id=`${nextState.epoch_id}:${envelopeId}`
+        const status:V2OutboxStatus='durable'
+        const core:V2OutboxEntryCore={id,epoch_id:nextState.epoch_id,envelope_id:envelopeId,status,authority}
+        imported.push({
+          envelope:{...envelope,id,epoch_id:nextState.epoch_id,local_sequence:sequence},
+          reservation:{id,epoch_id:nextState.epoch_id,envelope_id:envelopeId,iv:row[1],state:'sealed'},
+          outbox:{...core,tag:await outboxTag(rootKey,epochSalt,core)},
+        })
+      }
+
+      const allEntries=[...updatedExisting,...imported.map(item=>item.outbox)]
+      const staleCount=allEntries.filter(entry=>entry.status==='stale_writer_pending').length
+      const finalState:EpochLocalSecurityStateV6={
+        ...nextState,
+        local_journal_count:sequence,
+        local_journal_hash:journalHash,
+        stale_writer_pending_count:staleCount,
+      }
       validateEpochLocalSecurityStateV6(finalState)
       assertStateTransition(current,finalState)
-      const tag=await localStateTagV6(rootKey,epochSalt,finalState),db=await openDatabase()
+      const stateTag=await localStateTagV6(rootKey,epochSalt,finalState)
       const authenticatedUpdated:V2OutboxEntry[]=[]
-      for(const entry of updated){
+      for(const entry of updatedExisting){
         const core:V2OutboxEntryCore={id:entry.id,epoch_id:entry.epoch_id,envelope_id:entry.envelope_id,status:entry.status,authority:structuredClone(entry.authority),...(entry.ceremony_owner?{ceremony_owner:entry.ceremony_owner}:{})}
         authenticatedUpdated.push({...core,tag:await outboxTag(rootKey,epochSalt,core)})
       }
-      const tx=db.transaction([STORES.outbox,STORES.states],'readwrite')
+
+      const acceptedOrdered=[...remoteById.keys()].filter(id=>acceptedEnvelopeIds.has(id))
+      const readModelCore:VerifiedReadModelCoreV2={
+        format:'verified-read-model-v2',
+        version:2,
+        epoch_id:finalState.epoch_id,
+        manifest_fingerprint:finalState.manifest_fingerprint,
+        remote_anchor:structuredClone(finalState.remote_anchor!),
+        accepted_envelope_ids:acceptedOrdered,
+      }
+      const readModel:VerifiedReadModelV2={...readModelCore,tag:await readModelTag(rootKey,epochSalt,readModelCore)}
+
+      const db=await openDatabase()
+      const tx=db.transaction([STORES.reservations,STORES.envelopes,STORES.outbox,STORES.states,STORES.readModels],'readwrite')
+      for(const item of imported){
+        tx.objectStore(STORES.reservations).add(item.reservation)
+        tx.objectStore(STORES.envelopes).add(item.envelope)
+        tx.objectStore(STORES.outbox).add(item.outbox)
+      }
       for(const entry of authenticatedUpdated)tx.objectStore(STORES.outbox).put(entry)
-      tx.objectStore(STORES.states).put({id:finalState.epoch_id,state:structuredClone(finalState),tag})
+      tx.objectStore(STORES.states).put({id:finalState.epoch_id,state:structuredClone(finalState),tag:stateTag})
+      tx.objectStore(STORES.readModels).put(readModel)
       await transactionDone(tx)
+      await this.verifyLocalJournal(rootKey,epochSalt,finalState.epoch_id)
       return this.loadState(rootKey,epochSalt,finalState.epoch_id)
     })
+  }
+
+  async loadVerifiedReadModel(
+    rootKey:Uint8Array,
+    epochSalt:Uint8Array,
+    epochId:string,
+  ):Promise<{model:VerifiedReadModelV2;envelopes:PreparedEnvelope[]}>{
+    await this.verifyLocalJournal(rootKey,epochSalt,epochId)
+    const state=await this.loadState(rootKey,epochSalt,epochId)
+    const db=await openDatabase(),tx=db.transaction([STORES.readModels,STORES.envelopes],'readonly')
+    const modelRequest=tx.objectStore(STORES.readModels).get(epochId)
+    const envelopeRequest=tx.objectStore(STORES.envelopes).index('byEpoch').getAll(epochId)
+    const [model,stored]=await Promise.all([
+      requestResult<VerifiedReadModelV2|undefined>(modelRequest),
+      requestResult<PersistedEnvelopeV6[]>(envelopeRequest),
+    ])
+    await transactionDone(tx)
+    if(!model)throw new Error('No verified v2 read model is available locally.')
+    await verifyReadModelTag(rootKey,epochSalt,model)
+    if(model.format!=='verified-read-model-v2'||model.version!==2||model.epoch_id!==epochId
+      ||model.manifest_fingerprint!==state.manifest_fingerprint
+      ||state.remote_anchor===null
+      ||model.remote_anchor.anchor_profile!==state.remote_anchor.anchor_profile
+      ||model.remote_anchor.covered_row_count!==state.remote_anchor.covered_row_count
+      ||model.remote_anchor.prefix_hash!==state.remote_anchor.prefix_hash)throw new Error('Verified v2 read-model binding does not match StateV6.')
+    const byId=new Map(stored.map(item=>[item.envelopeId,item]))
+    const seen=new Set<string>(),envelopes:PreparedEnvelope[]=[]
+    for(const id of model.accepted_envelope_ids){
+      fixedBase64Url(id,32,'read_model.accepted_envelope_id')
+      if(seen.has(id))throw new Error('Verified v2 read model contains a duplicate accepted envelope ID.')
+      seen.add(id)
+      const envelope=byId.get(id)
+      if(!envelope)throw new Error('Verified v2 read model references a missing encrypted envelope.')
+      envelopes.push({envelopeId:envelope.envelopeId,iv:envelope.iv,ciphertext:envelope.ciphertext,bytesHash:envelope.bytesHash})
+    }
+    return{model:structuredClone(model),envelopes}
   }
 
   async updateOutboxStatus(

@@ -48,6 +48,8 @@ import {
   type RootWrapIdentityV6,
   type RootWrapV6,
 } from '../security/v2/rootWrap'
+import { deriveEpochSaltV2 } from '../security/v2/crypto'
+import { IndexedDbV2LocalSecurityStore } from '../security/v2/localPersistence'
 
 const DATABASE_NAME = 'eds-diary'
 const SECURE_DATABASE_VERSION_FLOOR = 9
@@ -284,13 +286,165 @@ export async function openSuccessorRootWrapV6WithActiveMode(prepared:PreparedSuc
 }
 
 export interface LocalRootWrapStatus{initialized:boolean;mode:'best-effort'|'passphrase'|'prf';locked:boolean;credentialId?:string;prfEvalInput?:string;rpId?:string}
-export async function localRootWrapStatus():Promise<LocalRootWrapStatus>{const db=await openDatabase(),tx=db.transaction(STORES.context,'readonly'),done=complete(tx),context=await result<EpochContext|undefined>(tx.objectStore(STORES.context).get(ACTIVE_CONTEXT));await done;if(!context)return{initialized:false,mode:'best-effort',locked:false};const {wrap}=await readEpochRecords(db,context);if(wrap.mode==='prf')return{initialized:true,mode:'prf',locked:!unlockedRoots.has(context.epochId),credentialId:wrap.mode_metadata.credential_id,prfEvalInput:wrap.mode_metadata.prf_eval_input,rpId:wrap.mode_metadata.rp_id};return{initialized:true,mode:wrap.mode,locked:wrap.mode!=='best-effort'&&!unlockedRoots.has(context.epochId)}}
-export async function unlockActiveRootWithPassphrase(passphrase:string):Promise<void>{const db=await openDatabase(),tx=db.transaction(STORES.context,'readonly'),context=await result<EpochContext|undefined>(tx.objectStore(STORES.context).get(ACTIVE_CONTEXT));await complete(tx);if(!context)throw new Error('No active epoch exists.');const{wrap,stored}=await readEpochRecords(db,context);if(wrap.mode!=='passphrase')throw new Error('Active root wrap is not passphrase mode.');const rootKey=await openPassphraseRootWrap(wrap,passphrase),salt=await deriveEpochSalt(fromBase64Url(context.diaryId),fromBase64Url(context.epochId));await verifyStateTag(rootKey,salt,stored.state,stored.tag);unlockFactors.set(context.diaryId,{mode:'passphrase',passphrase});unlockedRoots.set(context.epochId,new Uint8Array(rootKey));readyPromise=null}
-export async function unlockActiveRootWithPrf(assertedCredentialId:Uint8Array,prfOutput:Uint8Array):Promise<void>{const db=await openDatabase(),tx=db.transaction(STORES.context,'readonly'),context=await result<EpochContext|undefined>(tx.objectStore(STORES.context).get(ACTIVE_CONTEXT));await complete(tx);if(!context)throw new Error('No active epoch exists.');const{wrap,stored}=await readEpochRecords(db,context);if(wrap.mode!=='prf')throw new Error('Active root wrap is not PRF mode.');const evalInput=fromBase64Url(wrap.mode_metadata.prf_eval_input),rootKey=await openPrfRootWrap(wrap,assertedCredentialId,prfOutput),salt=await deriveEpochSalt(fromBase64Url(context.diaryId),fromBase64Url(context.epochId));await verifyStateTag(rootKey,salt,stored.state,stored.tag);unlockFactors.set(context.diaryId,{mode:'prf',credentialId:new Uint8Array(assertedCredentialId),prfEvalInput:evalInput,prfOutput:new Uint8Array(prfOutput),rpId:wrap.mode_metadata.rp_id});unlockedRoots.set(context.epochId,new Uint8Array(rootKey));readyPromise=null}
-export async function lockActiveRoot():Promise<void>{const db=await openDatabase(),tx=db.transaction(STORES.context,'readonly'),context=await result<EpochContext|undefined>(tx.objectStore(STORES.context).get(ACTIVE_CONTEXT));await complete(tx);if(!context)return;unlockedRoots.delete(context.epochId);unlockFactors.delete(context.diaryId);readyPromise=null}
-async function replaceActiveRootWrap(create:(loaded:Awaited<ReturnType<typeof loadEpoch>>)=>Promise<RootWrap>,factor:LocalUnlockFactor):Promise<void>{const db=await openDatabase(),initial=await loadEpoch(db);await withDiaryLock(initial.context.diaryId,async()=>{const current=await loadEpoch(db),oldContext=current.context,wrap=await create(current),context={...oldContext,wrapId:wrap.wrap_id},state={...current.state,operation_generation:current.state.operation_generation+1},tag=await stateTag(current.rootKey,current.epochSalt,state),tx=db.transaction([STORES.context,STORES.wraps,STORES.wrappingKeys,STORES.state],'readwrite');tx.objectStore(STORES.context).put(context);tx.objectStore(STORES.wraps).put({id:context.epochId,wrap});tx.objectStore(STORES.wrappingKeys).delete(oldContext.wrapId);tx.objectStore(STORES.state).put({id:context.epochId,state,tag} satisfies StoredState);await complete(tx);unlockFactors.set(context.diaryId,factor);unlockedRoots.set(context.epochId,new Uint8Array(current.rootKey))})}
-export async function enrollActivePassphraseRootWrap(passphrase:string):Promise<void>{const factor:LocalUnlockFactor={mode:'passphrase',passphrase};await replaceActiveRootWrap(async loaded=>createPassphraseRootWrap(loaded.rootKey,passphrase,{diary_id:loaded.context.diaryId,epoch_id:loaded.context.epochId,key_id:loaded.context.keyId,manifest_fingerprint:loaded.context.manifestFingerprint}),factor)}
-export async function enrollActivePrfRootWrap(material:PrfWrapEnrollmentMaterial):Promise<void>{const factor:LocalUnlockFactor={mode:'prf',credentialId:new Uint8Array(material.credentialId),prfEvalInput:new Uint8Array(material.prfEvalInput),prfOutput:new Uint8Array(material.prfOutput),rpId:material.rpId};await replaceActiveRootWrap(async loaded=>createPrfRootWrap(loaded.rootKey,material,{diary_id:loaded.context.diaryId,epoch_id:loaded.context.epochId,key_id:loaded.context.keyId,manifest_fingerprint:loaded.context.manifestFingerprint}),factor)}
+
+async function selectedV2LocalProtection():Promise<{
+  selection:ActiveProtocolSelectionV2
+  store:IndexedDbV2LocalSecurityStore
+  prepared:PreparedSuccessorRootWrapV6
+}|null>{
+  const selection=await activeProtocolSelectionV2()
+  if(!selection)return null
+  const store=new IndexedDbV2LocalSecurityStore(),prepared=await store.loadRootWrapV6(selection.epoch_id),wrap=prepared.wrap
+  if(wrap.diary_id!==selection.diary_id||wrap.epoch_id!==selection.epoch_id||wrap.manifest_fingerprint!==selection.manifest_fingerprint)throw new Error('Active v2 protocol selection does not match RootWrapV6.')
+  return{selection,store,prepared}
+}
+async function verifySelectedV2Root(
+  value:NonNullable<Awaited<ReturnType<typeof selectedV2LocalProtection>>>,
+  rootKey:Uint8Array,
+):Promise<void>{
+  const salt=await deriveEpochSaltV2(fixedBase64Url(value.selection.diary_id,16),fixedBase64Url(value.selection.epoch_id,16))
+  const state=await value.store.loadState(rootKey,salt,value.selection.epoch_id)
+  if(state.diary_id!==value.selection.diary_id||state.epoch_id!==value.selection.epoch_id
+    ||state.manifest_fingerprint!==value.selection.manifest_fingerprint||state.key_id!==value.prepared.wrap.key_id)throw new Error('RootWrapV6 does not authenticate the active StateV6 identity.')
+}
+async function v2WrapUnlocked(
+  value:NonNullable<Awaited<ReturnType<typeof selectedV2LocalProtection>>>,
+):Promise<boolean>{
+  const wrap=value.prepared.wrap
+  if(wrap.mode==='best-effort'){
+    if(!value.prepared.bestEffortWrappingKey)throw new Error('Active v2 best-effort wrapping key is missing.')
+    await verifySelectedV2Root(value,await openBestEffortRootWrapV6(wrap,value.prepared.bestEffortWrappingKey))
+    return true
+  }
+  const factor=unlockFactors.get(value.selection.diary_id)
+  let rootKey:Uint8Array
+  try{
+    if(wrap.mode==='passphrase'){
+      if(!factor||factor.mode!=='passphrase')return false
+      rootKey=await openPassphraseRootWrapV6(wrap,factor.passphrase)
+    }else{
+      if(!factor||factor.mode!=='prf')return false
+      const expectedInput=fromBase64Url(wrap.mode_metadata.prf_eval_input)
+      if(!sameBytes(expectedInput,factor.prfEvalInput)||wrap.mode_metadata.rp_id!==factor.rpId)return false
+      rootKey=await openPrfRootWrapV6(wrap,factor.credentialId,factor.prfOutput)
+    }
+  }catch{return false}
+  await verifySelectedV2Root(value,rootKey)
+  return !await retainedV1NeedsStrongCatchup(value.selection.diary_id)
+}
+async function retainedV1ContextForDiary(diaryId:string):Promise<EpochContext|null>{
+  const db=await openDatabase(),tx=db.transaction(STORES.context,'readonly')
+  const context=await result<EpochContext|undefined>(tx.objectStore(STORES.context).get(ACTIVE_CONTEXT))
+  await complete(tx)
+  return context?.diaryId===diaryId?context:null
+}
+async function retainedV1NeedsStrongCatchup(diaryId:string):Promise<boolean>{
+  const context=await retainedV1ContextForDiary(diaryId)
+  if(!context)return false
+  const {wrap}=await readEpochRecords(await openDatabase(),context)
+  return wrap.mode==='best-effort'
+}
+async function strengthenRetainedV1WithPassphraseIfNeeded(diaryId:string,passphrase:string):Promise<void>{
+  if(!await retainedV1NeedsStrongCatchup(diaryId))return
+  const factor:LocalUnlockFactor={mode:'passphrase',passphrase}
+  await replaceActiveRootWrap(
+    loaded=>createPassphraseRootWrap(loaded.rootKey,passphrase,{diary_id:loaded.context.diaryId,epoch_id:loaded.context.epochId,key_id:loaded.context.keyId,manifest_fingerprint:loaded.context.manifestFingerprint}),
+    factor,
+  )
+}
+async function strengthenRetainedV1WithPrfIfNeeded(diaryId:string,material:PrfWrapEnrollmentMaterial):Promise<void>{
+  if(!await retainedV1NeedsStrongCatchup(diaryId))return
+  const factor:LocalUnlockFactor={mode:'prf',credentialId:new Uint8Array(material.credentialId),prfEvalInput:new Uint8Array(material.prfEvalInput),prfOutput:new Uint8Array(material.prfOutput),rpId:material.rpId}
+  await replaceActiveRootWrap(
+    loaded=>createPrfRootWrap(loaded.rootKey,material,{diary_id:loaded.context.diaryId,epoch_id:loaded.context.epochId,key_id:loaded.context.keyId,manifest_fingerprint:loaded.context.manifestFingerprint}),
+    factor,
+  )
+}
+
+export async function localRootWrapStatus():Promise<LocalRootWrapStatus>{
+  const v2=await selectedV2LocalProtection()
+  if(v2){
+    const wrap=v2.prepared.wrap,locked=!await v2WrapUnlocked(v2)
+    if(wrap.mode==='prf')return{initialized:true,mode:'prf',locked,credentialId:wrap.mode_metadata.credential_id,prfEvalInput:wrap.mode_metadata.prf_eval_input,rpId:wrap.mode_metadata.rp_id}
+    return{initialized:true,mode:wrap.mode,locked}
+  }
+  const db=await openDatabase(),tx=db.transaction(STORES.context,'readonly'),done=complete(tx),context=await result<EpochContext|undefined>(tx.objectStore(STORES.context).get(ACTIVE_CONTEXT));await done
+  if(!context)return{initialized:false,mode:'best-effort',locked:false}
+  const {wrap}=await readEpochRecords(db,context)
+  if(wrap.mode==='prf')return{initialized:true,mode:'prf',locked:!unlockedRoots.has(context.epochId),credentialId:wrap.mode_metadata.credential_id,prfEvalInput:wrap.mode_metadata.prf_eval_input,rpId:wrap.mode_metadata.rp_id}
+  return{initialized:true,mode:wrap.mode,locked:wrap.mode!=='best-effort'&&!unlockedRoots.has(context.epochId)}
+}
+export async function unlockActiveRootWithPassphrase(passphrase:string):Promise<void>{
+  const v2=await selectedV2LocalProtection()
+  if(v2){
+    if(v2.prepared.wrap.mode!=='passphrase')throw new Error('Active RootWrapV6 is not passphrase mode.')
+    const rootKey=await openPassphraseRootWrapV6(v2.prepared.wrap,passphrase)
+    await verifySelectedV2Root(v2,rootKey)
+    unlockFactors.set(v2.selection.diary_id,{mode:'passphrase',passphrase})
+    await strengthenRetainedV1WithPassphraseIfNeeded(v2.selection.diary_id,passphrase)
+    return
+  }
+  const db=await openDatabase(),tx=db.transaction(STORES.context,'readonly'),context=await result<EpochContext|undefined>(tx.objectStore(STORES.context).get(ACTIVE_CONTEXT));await complete(tx);if(!context)throw new Error('No active epoch exists.');const{wrap,stored}=await readEpochRecords(db,context);if(wrap.mode!=='passphrase')throw new Error('Active root wrap is not passphrase mode.');const rootKey=await openPassphraseRootWrap(wrap,passphrase),salt=await deriveEpochSalt(fromBase64Url(context.diaryId),fromBase64Url(context.epochId));await verifyStateTag(rootKey,salt,stored.state,stored.tag);unlockFactors.set(context.diaryId,{mode:'passphrase',passphrase});unlockedRoots.set(context.epochId,new Uint8Array(rootKey));readyPromise=null
+}
+export async function unlockActiveRootWithPrf(assertedCredentialId:Uint8Array,prfOutput:Uint8Array):Promise<void>{
+  const v2=await selectedV2LocalProtection()
+  if(v2){
+    const wrap=v2.prepared.wrap
+    if(wrap.mode!=='prf')throw new Error('Active RootWrapV6 is not PRF mode.')
+    const expectedCredential=fromBase64Url(wrap.mode_metadata.credential_id),expectedInput=fromBase64Url(wrap.mode_metadata.prf_eval_input)
+    if(!sameBytes(expectedCredential,assertedCredentialId))throw new Error('PRF credential ID does not match active RootWrapV6.')
+    const rootKey=await openPrfRootWrapV6(wrap,assertedCredentialId,prfOutput)
+    await verifySelectedV2Root(v2,rootKey)
+    const material:PrfWrapEnrollmentMaterial={credentialId:new Uint8Array(assertedCredentialId),prfEvalInput:expectedInput,prfOutput:new Uint8Array(prfOutput),rpId:wrap.mode_metadata.rp_id}
+    unlockFactors.set(v2.selection.diary_id,{mode:'prf',...material})
+    await strengthenRetainedV1WithPrfIfNeeded(v2.selection.diary_id,material)
+    return
+  }
+  const db=await openDatabase(),tx=db.transaction(STORES.context,'readonly'),context=await result<EpochContext|undefined>(tx.objectStore(STORES.context).get(ACTIVE_CONTEXT));await complete(tx);if(!context)throw new Error('No active epoch exists.');const{wrap,stored}=await readEpochRecords(db,context);if(wrap.mode!=='prf')throw new Error('Active root wrap is not PRF mode.');const evalInput=fromBase64Url(wrap.mode_metadata.prf_eval_input),rootKey=await openPrfRootWrap(wrap,assertedCredentialId,prfOutput),salt=await deriveEpochSalt(fromBase64Url(context.diaryId),fromBase64Url(context.epochId));await verifyStateTag(rootKey,salt,stored.state,stored.tag);unlockFactors.set(context.diaryId,{mode:'prf',credentialId:new Uint8Array(assertedCredentialId),prfEvalInput:evalInput,prfOutput:new Uint8Array(prfOutput),rpId:wrap.mode_metadata.rp_id});unlockedRoots.set(context.epochId,new Uint8Array(rootKey));readyPromise=null
+}
+export async function lockActiveRoot():Promise<void>{
+  const v2=await selectedV2LocalProtection()
+  if(v2){
+    unlockFactors.clear()
+    unlockedRoots.clear()
+    readyPromise=null
+    return
+  }
+  const db=await openDatabase(),tx=db.transaction(STORES.context,'readonly'),context=await result<EpochContext|undefined>(tx.objectStore(STORES.context).get(ACTIVE_CONTEXT));await complete(tx);if(!context)return;unlockedRoots.delete(context.epochId);unlockFactors.delete(context.diaryId);readyPromise=null
+}
+async function replaceActiveRootWrap(create:(loaded:Awaited<ReturnType<typeof loadEpoch>>)=>Promise<RootWrap>,factor:LocalUnlockFactor):Promise<void>{const db=await openDatabase(),initial=await loadEpoch(db);await withDiaryLock(initial.context.diaryId,async()=>{const current=await loadEpoch(db),oldContext=current.context,wrap=await create(current),context={...oldContext,wrapId:wrap.wrap_id},state={...current.state,operation_generation:current.state.operation_generation+1},tag=await stateTag(current.rootKey,current.epochSalt,state),tx=db.transaction([STORES.context,STORES.wraps,STORES.wrappingKeys,STORES.state],'readwrite');tx.objectStore(STORES.context).put(context);tx.objectStore(STORES.wraps).put({id:context.epochId,wrap});tx.objectStore(STORES.wrappingKeys).delete(oldContext.wrapId);tx.objectStore(STORES.state).put({id:current.context.epochId,state,tag} satisfies StoredState);await complete(tx);unlockFactors.set(context.diaryId,factor);unlockedRoots.set(context.epochId,new Uint8Array(current.rootKey))})}
+export async function enrollActivePassphraseRootWrap(passphrase:string):Promise<void>{
+  const v2=await selectedV2LocalProtection()
+  if(v2){
+    const rootKey=await openSuccessorRootWrapV6WithActiveMode(v2.prepared)
+    await verifySelectedV2Root(v2,rootKey)
+    const wrapId=randomBytes(16),identity={diary_id:v2.prepared.wrap.diary_id,epoch_id:v2.prepared.wrap.epoch_id,key_id:v2.prepared.wrap.key_id,manifest_fingerprint:v2.prepared.wrap.manifest_fingerprint}
+    const wrap=await createPassphraseRootWrapV6(rootKey,passphrase,identity,wrapId)
+    if(!sameBytes(await openPassphraseRootWrapV6(wrap,passphrase),rootKey))throw new Error('Active v2 passphrase RootWrapV6 readback failed.')
+    await v2.store.replaceRootWrapV6(v2.prepared.wrap.wrap_id,wrap,null)
+    unlockFactors.set(v2.selection.diary_id,{mode:'passphrase',passphrase})
+    await strengthenRetainedV1WithPassphraseIfNeeded(v2.selection.diary_id,passphrase)
+    return
+  }
+  const factor:LocalUnlockFactor={mode:'passphrase',passphrase}
+  await replaceActiveRootWrap(async loaded=>createPassphraseRootWrap(loaded.rootKey,passphrase,{diary_id:loaded.context.diaryId,epoch_id:loaded.context.epochId,key_id:loaded.context.keyId,manifest_fingerprint:loaded.context.manifestFingerprint}),factor)
+}
+export async function enrollActivePrfRootWrap(material:PrfWrapEnrollmentMaterial):Promise<void>{
+  const v2=await selectedV2LocalProtection()
+  if(v2){
+    const rootKey=await openSuccessorRootWrapV6WithActiveMode(v2.prepared)
+    await verifySelectedV2Root(v2,rootKey)
+    const wrapId=randomBytes(16),identity={diary_id:v2.prepared.wrap.diary_id,epoch_id:v2.prepared.wrap.epoch_id,key_id:v2.prepared.wrap.key_id,manifest_fingerprint:v2.prepared.wrap.manifest_fingerprint}
+    const wrap=await createPrfRootWrapV6(rootKey,material,identity,wrapId)
+    if(!sameBytes(await openPrfRootWrapV6(wrap,material.credentialId,material.prfOutput),rootKey))throw new Error('Active v2 PRF RootWrapV6 readback failed.')
+    await v2.store.replaceRootWrapV6(v2.prepared.wrap.wrap_id,wrap,null)
+    unlockFactors.set(v2.selection.diary_id,{mode:'prf',credentialId:new Uint8Array(material.credentialId),prfEvalInput:new Uint8Array(material.prfEvalInput),prfOutput:new Uint8Array(material.prfOutput),rpId:material.rpId})
+    await strengthenRetainedV1WithPrfIfNeeded(v2.selection.diary_id,material)
+    return
+  }
+  const factor:LocalUnlockFactor={mode:'prf',credentialId:new Uint8Array(material.credentialId),prfEvalInput:new Uint8Array(material.prfEvalInput),prfOutput:new Uint8Array(material.prfOutput),rpId:material.rpId}
+  await replaceActiveRootWrap(async loaded=>createPrfRootWrap(loaded.rootKey,material,{diary_id:loaded.context.diaryId,epoch_id:loaded.context.epochId,key_id:loaded.context.keyId,manifest_fingerprint:loaded.context.manifestFingerprint}),factor)
+}
 
 function revisionData(value:Record<string,unknown>):unknown{const copy={...value};delete copy.id;delete copy.status;return value.status==='deleted'?null:copy}
 function normalizedLegacyValue(store:LocalStoreName,value:Record<string,unknown>):Record<string,unknown>{if(store!==LOCAL_STORES.painEntries)return value;const normalized={...value};for(const field of ['startedAt','endedAt','createdAt','updatedAt']){const raw=normalized[field];if(typeof raw==='string'&&raw!==''){const parsed=new Date(raw);if(Number.isNaN(parsed.getTime()))throw new Error(`Legacy pain timestamp ${field} is not parseable.`);normalized[field]=parsed.toISOString()}else if(raw!==undefined&&typeof raw!=='string')throw new Error(`Legacy pain timestamp ${field} has the wrong type.`)}return normalized}
