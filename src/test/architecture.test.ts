@@ -84,6 +84,13 @@ describe('v1 production hardening boundaries',()=>{
   })
 })
 
+describe('v2 post-selection RootWrap opener boundary',()=>{it('keeps the placeholder-diary Join opener out of post-selection ceremonies',async()=>{
+  for(const file of ['src/data/writerHandoffV2Service.ts','src/data/forcedTakeoverV2Service.ts','src/data/recoveryRekeyV2Service.ts','src/data/nativeRotationV2Service.ts']){
+    expect(await readFile(file,'utf8'),file).not.toMatch(/openReadOnlyJoinRootWrapV6WithActiveMode/)
+  }
+  expect(await readFile('src/data/readOnlyJoinV2Service.ts','utf8')).toMatch(/openReadOnlyJoinRootWrapV6WithActiveMode/)
+})})
+
 describe('v2 active local-protection ordering',()=>{it('keeps strong-v2 status fail-closed until any retained same-diary best-effort source catches up',async()=>{
   const source=await readFile('src/data/localDatabase.ts','utf8')
   const statusFence=source.indexOf('return !await retainedV1NeedsStrongCatchup')
