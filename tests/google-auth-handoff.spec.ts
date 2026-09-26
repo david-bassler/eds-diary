@@ -54,20 +54,80 @@ async function beginProductiveAuthentication(page: Page, timeoutMs = 120_000): P
 
 async function persistentText(page: Page): Promise<string> {
   return page.evaluate(async () => {
-    const values = [document.documentElement.textContent ?? '', localStorage.toString(), sessionStorage.toString()]
+    const values: string[] = [document.documentElement.textContent ?? '']
+    const collect = (value: unknown, seen = new WeakSet<object>()): void => {
+      if (typeof value === 'string') { values.push(value); return }
+      if (!value || typeof value !== 'object') return
+      if (seen.has(value)) return
+      seen.add(value)
+      if (value instanceof ArrayBuffer) { values.push(new TextDecoder().decode(value)); return }
+      if (ArrayBuffer.isView(value)) {
+        values.push(new TextDecoder().decode(new Uint8Array(value.buffer, value.byteOffset, value.byteLength)))
+        return
+      }
+      for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+        values.push(key)
+        collect(nested, seen)
+      }
+    }
     for (const storage of [localStorage, sessionStorage]) {
       for (let index = 0; index < storage.length; index += 1) {
         const key = storage.key(index) ?? ''
         values.push(key, storage.getItem(key) ?? '')
       }
     }
-    const databases = await indexedDB.databases()
-    values.push(JSON.stringify(databases))
+    for (const database of await indexedDB.databases()) {
+      if (!database.name) continue
+      values.push(database.name)
+      const opened = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open(database.name!)
+        request.onsuccess = () => resolve(request.result)
+        request.onerror = () => reject(request.error)
+      })
+      try {
+        for (const storeName of Array.from(opened.objectStoreNames)) {
+          values.push(storeName)
+          const rows = await new Promise<unknown[]>((resolve, reject) => {
+            const transaction = opened.transaction(storeName, 'readonly')
+            const request = transaction.objectStore(storeName).getAll()
+            request.onsuccess = () => resolve(request.result)
+            request.onerror = () => reject(request.error)
+          })
+          collect(rows)
+        }
+      } finally { opened.close() }
+    }
+    if ('caches' in window) {
+      for (const cacheName of await caches.keys()) {
+        values.push(cacheName)
+        const cache = await caches.open(cacheName)
+        for (const request of await cache.keys()) {
+          values.push(request.url)
+          const response = await cache.match(request)
+          if (response) values.push(await response.clone().text().catch(() => ''))
+        }
+      }
+    }
     return values.join('\n')
   })
 }
 
 test.describe('productive Auth-Origin handoff', () => {
+  test('drives the Auth-Origin handoff through the real settings UI', async ({ context, page }) => {
+    await installProviderSimulator(context)
+    await page.goto('/configuration')
+    await expect(page.getByRole('heading', { name: 'Google-Synchronisierung' })).toBeVisible()
+    await page.getByRole('button', { name: 'Recovery-Schlüssel erstellen' }).click()
+    await page.getByLabel('Ich habe den Schlüssel außerhalb dieser App gespeichert.').check()
+    const popupPromise = page.waitForEvent('popup')
+    await page.getByRole('button', { name: 'Mit Google verbinden' }).click()
+    const popup = await popupPromise
+    await popup.getByRole('button', { name: 'Mit Google anmelden' }).click()
+    await expect(popup.getByRole('status')).toHaveText('Google-Verbindung bestätigt. Du kannst jetzt zum Tagebuch zurückkehren.')
+    await expect.poll(() => page.locator('iframe').count()).toBe(1)
+    expect(await persistentText(page)).not.toContain(CREDENTIAL_SENTINEL)
+  })
+
   test('reproduces the post-OAuth hang when bridge identity confirmation never returns', async ({ context, page }) => {
     await installProviderSimulator(context, { stallConfirmation: true })
     await page.goto('/')
