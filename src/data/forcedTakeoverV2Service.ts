@@ -1,4 +1,4 @@
-import { activeProtocolSelectionV2, openReadOnlyJoinRootWrapV6WithActiveMode } from './localDatabase'
+import { activeProtocolSelectionV2, openSuccessorRootWrapV6WithActiveMode } from './localDatabase'
 import { base64Url, fixedBase64Url, fromBase64Url, randomBytes } from '../security/crypto/bytes'
 import { canonicalBytes } from '../security/crypto/canonical'
 import { randomProtocolIdV2, signEd25519V2, verifyEd25519V2, writerGrantSigningBytesV2 } from '../security/v2/crypto'
@@ -90,7 +90,7 @@ export class ProductiveForcedTakeoverV2Service {
     const selection=await activeProtocolSelectionV2()
     if(!selection)throw new Error('No active v2 protocol selection exists.')
     const persistedWrap=await this.store.loadRootWrapV6(selection.epoch_id)
-    const rootKey=await openReadOnlyJoinRootWrapV6WithActiveMode(persistedWrap)
+    const rootKey=await openSuccessorRootWrapV6WithActiveMode(persistedWrap)
     const epochSalt=await deriveEpochSaltV2(fixedBase64Url(selection.diary_id,16),fixedBase64Url(selection.epoch_id,16))
     const state=await this.store.loadState(rootKey,epochSalt,selection.epoch_id)
     if(state.diary_id!==selection.diary_id||state.epoch_id!==selection.epoch_id||state.manifest_fingerprint!==selection.manifest_fingerprint)throw new Error('Active v2 selection does not match authenticated StateV6.')
