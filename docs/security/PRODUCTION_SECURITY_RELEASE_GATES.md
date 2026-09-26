@@ -174,6 +174,18 @@ EDS Diary ist **nicht** als „production secure“ freigegeben.
   erst nach kanonischer Annahme und Target-Promotion erst nach eigenem frischen
   Full Verify.
 
+## V2 END-TO-END ASSURANCE GATES
+
+Der detaillierte, verbindliche Arbeitsplan fuer die noch fehlende erfolgreiche
+Browser-/Mehrgeraete-End-to-End-Evidenz steht in
+`docs/security/V2_E2E_ASSURANCE_PLAN.md`. Die vorhandene konfigurierte
+Playwright-Matrix ist notwendige Regressionsevidenz, schliesst fuer sich allein
+aber keines der dort definierten GATE-E2E-01...10. Insbesondere ist der
+erfolgreiche Auth-Origin Popup/Bridge/MessagePort-Handoff noch als eigener
+produktiver Browserpfad zu reproduzieren und zu schliessen. Mock-/Simulator-
+Evidenz darf keine Live-Google-, Separate-Origin-, Real-WebAuthn- oder
+External-Audit-Gates schliessen.
+
 ## BLOCKED_EXTERNAL / PRODUCTION RELEASE GATES
 
 - Echte Google-Credentials und ein dediziertes Live-Testkonto einschließlich
