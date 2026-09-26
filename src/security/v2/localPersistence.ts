@@ -513,6 +513,48 @@ export class IndexedDbV2LocalSecurityStore {
     return{wrap:structuredClone(stored.wrap),bestEffortWrappingKey:key?.key??null}
   }
 
+  async replaceRootWrapV6(
+    expectedCurrentWrapId:string,
+    wrap:RootWrapV6,
+    bestEffortWrappingKey:CryptoKey|null,
+  ):Promise<void>{
+    validateRootWrapV6(wrap)
+    fixedBase64Url(expectedCurrentWrapId,16,'expected_current_wrap_id')
+    if((wrap.mode==='best-effort')!==(bestEffortWrappingKey!==null))throw new Error('RootWrapV6 replacement best-effort key mismatch.')
+    if(bestEffortWrappingKey){
+      const algorithm=bestEffortWrappingKey.algorithm as AesKeyAlgorithm
+      if(bestEffortWrappingKey.type!=='secret'||bestEffortWrappingKey.extractable||bestEffortWrappingKey.algorithm.name!=='AES-GCM'||algorithm.length!==256)throw new Error('RootWrapV6 replacement key is invalid.')
+      if((await openBestEffortRootWrapV6(wrap,bestEffortWrappingKey)).byteLength!==32)throw new Error('RootWrapV6 replacement key readback failed.')
+    }
+    const encoded=new TextDecoder().decode(canonicalBytes(wrap as never)),db=await openDatabase()
+    const readTx=db.transaction([STORES.rootWraps,STORES.rootWrappingKeys],'readonly')
+    const currentRequest=readTx.objectStore(STORES.rootWraps).get(wrap.epoch_id)
+    const current=await requestResult<{id:string;wrap:RootWrapV6;bytes:string}|undefined>(currentRequest)
+    if(!current){readTx.abort();throw new Error('RootWrapV6 replacement source is missing.')}
+    const currentKeyRequest=readTx.objectStore(STORES.rootWrappingKeys).get(current.wrap.wrap_id)
+    const currentKey=await requestResult<{id:string;key:CryptoKey}|undefined>(currentKeyRequest)
+    await transactionDone(readTx)
+    validateRootWrapV6(current.wrap)
+    if(current.wrap.wrap_id!==expectedCurrentWrapId)throw new Error('RootWrapV6 changed before local protection replacement.')
+    if(current.wrap.diary_id!==wrap.diary_id
+      ||current.wrap.epoch_id!==wrap.epoch_id
+      ||current.wrap.key_id!==wrap.key_id
+      ||current.wrap.manifest_fingerprint!==wrap.manifest_fingerprint)throw new Error('RootWrapV6 replacement changes authenticated epoch identity.')
+    if(current.wrap.mode==='best-effort'&&!currentKey)throw new Error('Current RootWrapV6 best-effort key is missing.')
+    if(current.wrap.mode!=='best-effort'&&currentKey)throw new Error('Current RootWrapV6 carries an unexpected best-effort key.')
+
+    const tx=db.transaction([STORES.rootWraps,STORES.rootWrappingKeys],'readwrite')
+    tx.objectStore(STORES.rootWraps).put({id:wrap.epoch_id,wrap:structuredClone(wrap),bytes:encoded})
+    if(current.wrap.mode==='best-effort')tx.objectStore(STORES.rootWrappingKeys).delete(current.wrap.wrap_id)
+    if(bestEffortWrappingKey)tx.objectStore(STORES.rootWrappingKeys).put({id:wrap.wrap_id,key:bestEffortWrappingKey})
+    await transactionDone(tx)
+
+    const readback=await this.loadRootWrapV6(wrap.epoch_id)
+    if(readback.wrap.wrap_id!==wrap.wrap_id
+      ||new TextDecoder().decode(canonicalBytes(readback.wrap as never))!==encoded
+      ||(wrap.mode==='best-effort')!==(readback.bestEffortWrappingKey!==null))throw new Error('RootWrapV6 replacement readback failed.')
+  }
+
   async persistPreparedWriterGrantOperationBundle(args:{
     rootKey:Uint8Array
     epochSalt:Uint8Array
