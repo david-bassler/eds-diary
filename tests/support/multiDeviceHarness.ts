@@ -414,138 +414,44 @@ export class MultiDeviceHarness {
     return device.page.evaluate(async () => {
       const state = window as typeof window & { v2GoldenState?: Record<string, unknown> }
       const golden = state.v2GoldenState
-      if (!golden) throw new Error('Canonical V2 bootstrap state is unavailable.')
-      const diaryId = golden.diaryId as string
-      const epochId = golden.epochId as string
-      const keyId = golden.keyId as string
-      const remoteId = golden.remoteId as string
-      const rootKey = golden.rootKey as Uint8Array
-      const epochSalt = golden.epochSalt as Uint8Array
-      const writer = golden.writer as { writerKeyId: string; publicKeyRaw: Uint8Array; privateKey: CryptoKey }
-      const recovery = golden.recovery as { recoveryTakeoverKeyId: string; publicKeyRaw: Uint8Array } | undefined
-      const writerDeviceId = golden.writerDeviceId as string
-      const manifestFingerprint = golden.manifestFingerprint as string
-      const transport = golden.transport as { read(id: string): Promise<unknown>; append(id: string, row: readonly [string, string, string]): Promise<void> }
-      const codec = golden.codec as { verifyRemote(snapshot: unknown): Promise<import('/src/sync/core/contracts.ts').VerifiedRemoteState> }
-      const [bytesModule, localStateModule, persistenceModule, reconciliationModule, authorityModule, domainModule, coordinatorModule, envelopeModule, prefixModule, rootWrapModule, localDatabaseModule] = await Promise.all([
-        import('/src/security/crypto/bytes.ts'),
-        import('/src/security/v2/localState.ts'),
+      if (!golden) throw new Error('Productive upgraded V2 state is unavailable.')
+      const [runtime, persistenceModule, localDatabaseModule] = await Promise.all([
+        import('/src/data/v2ApplicationRuntime.ts'),
         import('/src/security/v2/localPersistence.ts'),
-        import('/src/security/v2/stateReconciliation.ts'),
-        import('/src/security/v2/writeAuthority.ts'),
-        import('/src/security/v2/domainWrite.ts'),
-        import('/src/security/v2/coordinatorStore.ts'),
-        import('/src/security/v2/envelopes.ts'),
-        import('/src/security/v2/prefix.ts'),
-        import('/src/security/v2/rootWrap.ts'),
         import('/src/data/localDatabase.ts'),
       ])
-      const verified = await codec.verifyRemote(await transport.read(remoteId))
-      const canonical = verified.profileState as import('/src/security/v2/verifier.ts').CanonicalFullResultV2
-      const store = new persistenceModule.IndexedDbV2LocalSecurityStore()
-      if (!golden.localInitialized) {
-        if (!recovery) throw new Error('Recovery bootstrap material is unavailable.')
-        const history = canonical.recovery_credential_history
-        const initial = {
-        local_state_version: 6 as const,
-        diary_id: diaryId,
-        epoch_id: epochId,
-        key_id: keyId,
-        manifest_fingerprint: manifestFingerprint,
-        recovery_generation: canonical.current_recovery.recovery_generation,
-        recovery_urs_commitment: canonical.current_recovery.recovery_urs_commitment,
-        recovery_urs_id: canonical.current_recovery.recovery_urs_id,
-        recovery_rekey_rotation_required: false,
-        recovery_rekey_transition_id: null,
-        remote_binding: {
-          storage_provider_id: 'google-drive-sheets-v1',
-          sync_profile: 'google-sheets-transferable-single-writer-v2',
-          remote_resource_id: remoteId,
-          remote_identity_binding: golden.accountBinding as string,
+      const service = runtime.requireActiveV2SyncService()
+      const recordId = (await import('/src/security/crypto/bytes.ts')).base64Url(crypto.getRandomValues(new Uint8Array(16)))
+      const prepared = await service.prepareAndSynchronizeDomainWrite({
+        recordType: 'pain_entry',
+        recordId,
+        status: 'active',
+        data: {
+          startedAt: '2026-09-26T12:10:00.000Z', endedAt: '', locations: [], intensity: 4, qualities: [],
+          cause: '', occursWhen: '', note: 'synthetic-v2-golden-path',
+          createdAt: '2026-09-26T12:10:00.000Z', updatedAt: '2026-09-26T12:10:00.000Z',
         },
-        remote_anchor: await prefixModule.createAnchorV2(diaryId, epochId, []),
-        epoch_status: 'active' as const,
-        operation_generation: 0,
-        rotation_state_ref: null,
-        migration_state_ref: null,
-        writer_operation_state_ref: null,
-        recovery_operation_state_ref: null,
-        activation_lineage_cache_ref: null,
-        local_journal_count: 0,
-        local_journal_hash: await localStateModule.localJournalInitialV2(diaryId, epochId),
-        writer_status: 'read_only' as const,
-        writer_device_id: writerDeviceId,
-        writer_signing_key_id: writer.writerKeyId,
-        writer_generation: null,
-        writer_grant_id: null,
-        verified_writer_device_id: canonical.current_writer.writer_device_id,
-        verified_writer_key_id: canonical.current_writer.writer_key_id,
-        verified_writer_generation: canonical.current_writer.writer_generation,
-        verified_writer_grant_id: canonical.current_writer.writer_grant_id,
-        recovery_takeover_key_id: recovery.recoveryTakeoverKeyId,
-        recovery_credential_history_sha256: await localStateModule.recoveryCredentialHistoryHashV2(history),
-        stale_writer_pending_count: 0,
-        }
-        await store.initializeState(rootKey, epochSalt, initial)
-        await store.persistWriterKey({
-          writer_signing_key_id: writer.writerKeyId,
-          writer_device_id: writerDeviceId,
-          writer_public_key: bytesModule.base64Url(writer.publicKeyRaw),
-          private_key: writer.privateKey,
-        }, diaryId, epochId)
-        const wrappingKey = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt'])
-        const rootWrap = await rootWrapModule.createBestEffortRootWrapV6(rootKey, wrappingKey, {
-          diary_id: diaryId, epoch_id: epochId, key_id: keyId, manifest_fingerprint: manifestFingerprint,
-        })
-        await store.persistRootWrapV6(rootWrap, wrappingKey)
-        const reconciled = await reconciliationModule.stateAfterCanonicalVerifyV6(initial, canonical, verified.snapshot.rows, true)
-        await store.replaceState(rootKey, epochSalt, 0, reconciled)
-        await localDatabaseModule.atomicSelectNativeGenesisV2({
-          selectionId: bytesModule.base64Url(crypto.getRandomValues(new Uint8Array(32))),
-          diaryId, epochId, manifestFingerprint, rootKey,
-        })
-        golden.localInitialized = true
-      }
-      const freshSource = { verifyNow: async () => codec.verifyRemote(await transport.read(remoteId)) }
-      const authority = new authorityModule.TransferableSingleWriterV2WriteAuthority(
-        () => store.loadState(rootKey, epochSalt, epochId),
-        (envelope) => store.envelopeAuthority(rootKey, epochSalt, epochId, envelope),
-      )
-      const recordId = bytesModule.base64Url(crypto.getRandomValues(new Uint8Array(16)))
-      const prepared = await new domainModule.V2DomainWritePreparer(store, authority, freshSource).prepareAndPersist(
-        rootKey,
-        epochSalt,
-        {
-          recordType: 'pain_entry',
-          recordId,
-          status: 'active',
-          data: {
-            startedAt: '2026-09-26T12:10:00.000Z', endedAt: '', locations: [], intensity: 4, qualities: [],
-            cause: '', occursWhen: '', note: 'synthetic-v2-golden-path',
-            createdAt: '2026-09-26T12:10:00.000Z', updatedAt: '2026-09-26T12:10:00.000Z',
-          },
-          protocolCreatedAt: '2026-09-26T12:10:00.000Z',
-        },
-      )
-      const beforePush = await freshSource.verifyNow()
-      if (await authority.verifyBeforePush(prepared.envelope, beforePush, 'initial') !== 'push') throw new Error('Fresh V2 authority rejected the golden-path write.')
-      await transport.append(remoteId, envelopeModule.envelopeRowV2(prepared.envelope))
-      const durable = await freshSource.verifyNow()
-      const durableResult = durable.profileState as import('/src/security/v2/verifier.ts').CanonicalFullResultV2
-      const coordinator = new coordinatorModule.IndexedDbV2CoordinatorStore(epochId, rootKey, epochSalt, store)
-      await coordinator.commitVerifiedPull(durable, durableResult.remote_anchor, await coordinator.generation())
-      const outbox = await store.outbox(rootKey, epochSalt, epochId)
-      const persistedState = await store.loadState(rootKey, epochSalt, epochId)
-      const loadedWrap = await store.loadRootWrapV6(epochId)
+        protocolCreatedAt: '2026-09-26T12:10:00.000Z',
+      })
       const selection = await localDatabaseModule.activeProtocolSelectionV2()
+      if (!selection) throw new Error('Productive V2 write lost active protocol selection.')
+      const store = new persistenceModule.IndexedDbV2LocalSecurityStore()
+      const wrap = await store.loadRootWrapV6(selection.epoch_id)
+      const rootKey = await localDatabaseModule.openSuccessorRootWrapV6WithActiveMode(wrap)
+      const salt = await (await import('/src/security/v2/crypto.ts')).deriveEpochSaltV2(
+        (await import('/src/security/crypto/bytes.ts')).fromBase64Url(selection.diary_id),
+        (await import('/src/security/crypto/bytes.ts')).fromBase64Url(selection.epoch_id),
+      )
+      const local = await store.loadState(rootKey, salt, selection.epoch_id)
+      const outbox = await store.outbox(rootKey, salt, selection.epoch_id)
       return {
         recordId,
         revisionId: prepared.revision.revision_id,
-        coveredRowCount: durableResult.remote_anchor.covered_row_count,
-        writerStatus: persistedState.writer_status,
+        coveredRowCount: local.remote_anchor?.covered_row_count ?? 0,
+        writerStatus: local.writer_status,
         outboxStatus: outbox.find((entry) => entry.envelope_id === prepared.envelope.envelopeId)?.status ?? 'missing',
-        rootWrapMode: loadedWrap.wrap.mode,
-        selected: selection?.epoch_id === epochId && selection.diary_id === diaryId,
+        rootWrapMode: wrap.wrap.mode,
+        selected: selection.epoch_id === local.epoch_id && selection.diary_id === local.diary_id,
       }
     })
   }
