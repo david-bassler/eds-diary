@@ -317,18 +317,20 @@ async function v2WrapUnlocked(
     return true
   }
   const factor=unlockFactors.get(value.selection.diary_id)
+  let rootKey:Uint8Array
   try{
     if(wrap.mode==='passphrase'){
       if(!factor||factor.mode!=='passphrase')return false
-      await verifySelectedV2Root(value,await openPassphraseRootWrapV6(wrap,factor.passphrase))
-      return true
+      rootKey=await openPassphraseRootWrapV6(wrap,factor.passphrase)
+    }else{
+      if(!factor||factor.mode!=='prf')return false
+      const expectedInput=fromBase64Url(wrap.mode_metadata.prf_eval_input)
+      if(!sameBytes(expectedInput,factor.prfEvalInput)||wrap.mode_metadata.rp_id!==factor.rpId)return false
+      rootKey=await openPrfRootWrapV6(wrap,factor.credentialId,factor.prfOutput)
     }
-    if(!factor||factor.mode!=='prf')return false
-    const expectedInput=fromBase64Url(wrap.mode_metadata.prf_eval_input)
-    if(!sameBytes(expectedInput,factor.prfEvalInput)||wrap.mode_metadata.rp_id!==factor.rpId)return false
-    await verifySelectedV2Root(value,await openPrfRootWrapV6(wrap,factor.credentialId,factor.prfOutput))
-    return true
   }catch{return false}
+  await verifySelectedV2Root(value,rootKey)
+  return !await retainedV1NeedsStrongCatchup(value.selection.diary_id)
 }
 async function retainedV1ContextForDiary(diaryId:string):Promise<EpochContext|null>{
   const db=await openDatabase(),tx=db.transaction(STORES.context,'readonly')
@@ -336,16 +338,22 @@ async function retainedV1ContextForDiary(diaryId:string):Promise<EpochContext|nu
   await complete(tx)
   return context?.diaryId===diaryId?context:null
 }
-async function rewrapRetainedV1PassphraseFirst(diaryId:string,passphrase:string):Promise<void>{
-  if(!await retainedV1ContextForDiary(diaryId))return
+async function retainedV1NeedsStrongCatchup(diaryId:string):Promise<boolean>{
+  const context=await retainedV1ContextForDiary(diaryId)
+  if(!context)return false
+  const {wrap}=await readEpochRecords(await openDatabase(),context)
+  return wrap.mode==='best-effort'
+}
+async function strengthenRetainedV1WithPassphraseIfNeeded(diaryId:string,passphrase:string):Promise<void>{
+  if(!await retainedV1NeedsStrongCatchup(diaryId))return
   const factor:LocalUnlockFactor={mode:'passphrase',passphrase}
   await replaceActiveRootWrap(
     loaded=>createPassphraseRootWrap(loaded.rootKey,passphrase,{diary_id:loaded.context.diaryId,epoch_id:loaded.context.epochId,key_id:loaded.context.keyId,manifest_fingerprint:loaded.context.manifestFingerprint}),
     factor,
   )
 }
-async function rewrapRetainedV1PrfFirst(diaryId:string,material:PrfWrapEnrollmentMaterial):Promise<void>{
-  if(!await retainedV1ContextForDiary(diaryId))return
+async function strengthenRetainedV1WithPrfIfNeeded(diaryId:string,material:PrfWrapEnrollmentMaterial):Promise<void>{
+  if(!await retainedV1NeedsStrongCatchup(diaryId))return
   const factor:LocalUnlockFactor={mode:'prf',credentialId:new Uint8Array(material.credentialId),prfEvalInput:new Uint8Array(material.prfEvalInput),prfOutput:new Uint8Array(material.prfOutput),rpId:material.rpId}
   await replaceActiveRootWrap(
     loaded=>createPrfRootWrap(loaded.rootKey,material,{diary_id:loaded.context.diaryId,epoch_id:loaded.context.epochId,key_id:loaded.context.keyId,manifest_fingerprint:loaded.context.manifestFingerprint}),
@@ -373,6 +381,7 @@ export async function unlockActiveRootWithPassphrase(passphrase:string):Promise<
     const rootKey=await openPassphraseRootWrapV6(v2.prepared.wrap,passphrase)
     await verifySelectedV2Root(v2,rootKey)
     unlockFactors.set(v2.selection.diary_id,{mode:'passphrase',passphrase})
+    await strengthenRetainedV1WithPassphraseIfNeeded(v2.selection.diary_id,passphrase)
     return
   }
   const db=await openDatabase(),tx=db.transaction(STORES.context,'readonly'),context=await result<EpochContext|undefined>(tx.objectStore(STORES.context).get(ACTIVE_CONTEXT));await complete(tx);if(!context)throw new Error('No active epoch exists.');const{wrap,stored}=await readEpochRecords(db,context);if(wrap.mode!=='passphrase')throw new Error('Active root wrap is not passphrase mode.');const rootKey=await openPassphraseRootWrap(wrap,passphrase),salt=await deriveEpochSalt(fromBase64Url(context.diaryId),fromBase64Url(context.epochId));await verifyStateTag(rootKey,salt,stored.state,stored.tag);unlockFactors.set(context.diaryId,{mode:'passphrase',passphrase});unlockedRoots.set(context.epochId,new Uint8Array(rootKey));readyPromise=null
@@ -386,7 +395,9 @@ export async function unlockActiveRootWithPrf(assertedCredentialId:Uint8Array,pr
     if(!sameBytes(expectedCredential,assertedCredentialId))throw new Error('PRF credential ID does not match active RootWrapV6.')
     const rootKey=await openPrfRootWrapV6(wrap,assertedCredentialId,prfOutput)
     await verifySelectedV2Root(v2,rootKey)
-    unlockFactors.set(v2.selection.diary_id,{mode:'prf',credentialId:new Uint8Array(assertedCredentialId),prfEvalInput:expectedInput,prfOutput:new Uint8Array(prfOutput),rpId:wrap.mode_metadata.rp_id})
+    const material:PrfWrapEnrollmentMaterial={credentialId:new Uint8Array(assertedCredentialId),prfEvalInput:expectedInput,prfOutput:new Uint8Array(prfOutput),rpId:wrap.mode_metadata.rp_id}
+    unlockFactors.set(v2.selection.diary_id,{mode:'prf',...material})
+    await strengthenRetainedV1WithPrfIfNeeded(v2.selection.diary_id,material)
     return
   }
   const db=await openDatabase(),tx=db.transaction(STORES.context,'readonly'),context=await result<EpochContext|undefined>(tx.objectStore(STORES.context).get(ACTIVE_CONTEXT));await complete(tx);if(!context)throw new Error('No active epoch exists.');const{wrap,stored}=await readEpochRecords(db,context);if(wrap.mode!=='prf')throw new Error('Active root wrap is not PRF mode.');const evalInput=fromBase64Url(wrap.mode_metadata.prf_eval_input),rootKey=await openPrfRootWrap(wrap,assertedCredentialId,prfOutput),salt=await deriveEpochSalt(fromBase64Url(context.diaryId),fromBase64Url(context.epochId));await verifyStateTag(rootKey,salt,stored.state,stored.tag);unlockFactors.set(context.diaryId,{mode:'prf',credentialId:new Uint8Array(assertedCredentialId),prfEvalInput:evalInput,prfOutput:new Uint8Array(prfOutput),rpId:wrap.mode_metadata.rp_id});unlockedRoots.set(context.epochId,new Uint8Array(rootKey));readyPromise=null
@@ -407,12 +418,12 @@ export async function enrollActivePassphraseRootWrap(passphrase:string):Promise<
   if(v2){
     const rootKey=await openSuccessorRootWrapV6WithActiveMode(v2.prepared)
     await verifySelectedV2Root(v2,rootKey)
-    await rewrapRetainedV1PassphraseFirst(v2.selection.diary_id,passphrase)
     const wrapId=randomBytes(16),identity={diary_id:v2.prepared.wrap.diary_id,epoch_id:v2.prepared.wrap.epoch_id,key_id:v2.prepared.wrap.key_id,manifest_fingerprint:v2.prepared.wrap.manifest_fingerprint}
     const wrap=await createPassphraseRootWrapV6(rootKey,passphrase,identity,wrapId)
     if(!sameBytes(await openPassphraseRootWrapV6(wrap,passphrase),rootKey))throw new Error('Active v2 passphrase RootWrapV6 readback failed.')
     await v2.store.replaceRootWrapV6(v2.prepared.wrap.wrap_id,wrap,null)
     unlockFactors.set(v2.selection.diary_id,{mode:'passphrase',passphrase})
+    await strengthenRetainedV1WithPassphraseIfNeeded(v2.selection.diary_id,passphrase)
     return
   }
   const factor:LocalUnlockFactor={mode:'passphrase',passphrase}
@@ -423,12 +434,12 @@ export async function enrollActivePrfRootWrap(material:PrfWrapEnrollmentMaterial
   if(v2){
     const rootKey=await openSuccessorRootWrapV6WithActiveMode(v2.prepared)
     await verifySelectedV2Root(v2,rootKey)
-    await rewrapRetainedV1PrfFirst(v2.selection.diary_id,material)
     const wrapId=randomBytes(16),identity={diary_id:v2.prepared.wrap.diary_id,epoch_id:v2.prepared.wrap.epoch_id,key_id:v2.prepared.wrap.key_id,manifest_fingerprint:v2.prepared.wrap.manifest_fingerprint}
     const wrap=await createPrfRootWrapV6(rootKey,material,identity,wrapId)
     if(!sameBytes(await openPrfRootWrapV6(wrap,material.credentialId,material.prfOutput),rootKey))throw new Error('Active v2 PRF RootWrapV6 readback failed.')
     await v2.store.replaceRootWrapV6(v2.prepared.wrap.wrap_id,wrap,null)
     unlockFactors.set(v2.selection.diary_id,{mode:'prf',credentialId:new Uint8Array(material.credentialId),prfEvalInput:new Uint8Array(material.prfEvalInput),prfOutput:new Uint8Array(material.prfOutput),rpId:material.rpId})
+    await strengthenRetainedV1WithPrfIfNeeded(v2.selection.diary_id,material)
     return
   }
   const factor:LocalUnlockFactor={mode:'prf',credentialId:new Uint8Array(material.credentialId),prfEvalInput:new Uint8Array(material.prfEvalInput),prfOutput:new Uint8Array(material.prfOutput),rpId:material.rpId}
