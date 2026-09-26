@@ -21,7 +21,11 @@
     "test": "vitest run",
     "test:unit": "vitest run",
     "test:architecture": "vitest run src/test/architecture.test.ts",
-    "test:live-google-parallel-append": "node scripts/live-google-parallel-append-gate.mjs"
+    "test:live-google-parallel-append": "node scripts/live-google-parallel-append-gate.mjs",
+    "test:security-unit": "vitest run src/test/crypto.test.ts src/test/protocol-vectors.test.ts src/test/v2Primitives.test.ts src/test/v2Verifier.test.ts src/test/v2LocalState.test.ts src/test/v2ReadOnlyJoin.test.ts src/test/profileUpgradeV2StateMachine.test.ts src/test/syncManager.test.ts",
+    "test:security-e2e": "playwright test tests/google-auth-handoff.spec.ts tests/multi-device-harness.spec.ts tests/security-product-flows.spec.ts tests/webauthn-prf.spec.ts --project=chromium",
+    "test:release": "npm run lint && npm run build && npm run test:unit && npm run test:security-e2e && npm run build-storybook",
+    "test:security-generative": "vitest run src/test/stateMachine.test.ts"
   },
   "dependencies": {
     "@noble/hashes": "2.0.1",

@@ -13,6 +13,8 @@ import { createAnchorV2 } from '../security/v2/prefix'
 import type { CanonicalFullResultV2 } from '../security/v2/verifier'
 import { SINGLE_WRITER_V2_PROFILE } from '../sync/core/contracts'
 import type { RevisionV2 } from '../security/v2/types'
+import { createBestEffortRootWrapV6, generateBestEffortWrappingKeyV6 } from '../security/v2/rootWrap'
+import { __localDatabaseTesting, atomicSelectNativeGenesisV2 } from '../data/localDatabase'
 
 const b=(fill:number,length:number)=>base64Url(new Uint8Array(length).fill(fill))
 const rootKey=new Uint8Array(32).fill(21)
@@ -108,9 +110,25 @@ async function fixture(){
   return{diaryId,epochId,epochSalt,writer,writerDeviceId,initial,result}
 }
 
-beforeEach(async()=>{await __v2LocalPersistenceTesting.reset()})
+beforeEach(async()=>{await __v2LocalPersistenceTesting.reset();await __localDatabaseTesting.resetForTesting()})
 
 describe('EpochLocalSecurityStateV6 persistence and writer gate',()=>{
+  it('selects native genesis only for authenticated active Writer state and rejects conflicting selection',async()=>{
+    const f=await fixture(),store=new IndexedDbV2LocalSecurityStore(),wrappingKey=await generateBestEffortWrappingKeyV6()
+    await store.initializeState(rootKey,f.epochSalt,f.initial)
+    const wrap=await createBestEffortRootWrapV6(rootKey,wrappingKey,{diary_id:f.diaryId,epoch_id:f.epochId,key_id:f.initial.key_id,manifest_fingerprint:f.initial.manifest_fingerprint})
+    await store.persistRootWrapV6(wrap,wrappingKey)
+    const args={selectionId:b(80,32),diaryId:f.diaryId,epochId:f.epochId,manifestFingerprint:f.initial.manifest_fingerprint,rootKey}
+    await expect(atomicSelectNativeGenesisV2(args)).rejects.toThrow(/active canonical Writer StateV6/)
+    await store.persistWriterKey({writer_signing_key_id:f.writer.writerKeyId,writer_device_id:f.writerDeviceId,writer_public_key:base64Url(f.writer.publicKeyRaw),private_key:f.writer.privateKey},f.diaryId,f.epochId)
+    const genesisRow=[b(82,32),b(83,12),b(84,32)] as const
+    const canonical={...f.result,remote_anchor:await createAnchorV2(f.diaryId,f.epochId,[genesisRow])}
+    const active=await stateAfterCanonicalVerifyV6(f.initial,canonical,[genesisRow],true)
+    await store.replaceState(rootKey,f.epochSalt,0,active)
+    await expect(atomicSelectNativeGenesisV2(args)).resolves.toBeUndefined()
+    await expect(atomicSelectNativeGenesisV2({...args,selectionId:b(81,32)})).rejects.toThrow(/different v2 epoch|different v2/i)
+  })
+
   it('MAC-authenticates StateV6, persists a non-extractable WriterDeviceKeyV2 and promotes only after canonical reconciliation',async()=>{
     const f=await fixture(),store=new IndexedDbV2LocalSecurityStore()
     await store.initializeState(rootKey,f.epochSalt,f.initial)

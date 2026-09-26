@@ -692,6 +692,74 @@ export async function assertReadOnlyJoinLocalProfileIsFresh():Promise<void>{
   const db=await openDatabase(),source=await loadEpoch(db)
   await assertReadOnlyJoinPlaceholderFresh(db,source)
 }
+/** Selects a first native-v2 epoch only after its authenticated local bundle
+ * proves a canonically reconciled active Writer. This is deliberately separate
+ * from read-only Join and profile-upgrade cutover semantics. */
+export async function atomicSelectNativeGenesisV2(args:{
+  selectionId:string
+  diaryId:string
+  epochId:string
+  manifestFingerprint:string
+  rootKey:Uint8Array
+}):Promise<void>{
+  fixedBase64Url(args.selectionId,32,'selection_id')
+  fixedBase64Url(args.diaryId,16,'diary_id')
+  fixedBase64Url(args.epochId,16,'epoch_id')
+  fixedBase64Url(args.manifestFingerprint,32,'manifest_fingerprint')
+  if(args.rootKey.byteLength!==32)throw new Error('Native v2 genesis selection requires a 32-byte root key.')
+  const v2Store=new IndexedDbV2LocalSecurityStore()
+  const prepared=await v2Store.loadRootWrapV6(args.epochId)
+  const wrap=prepared.wrap
+  if(wrap.diary_id!==args.diaryId||wrap.epoch_id!==args.epochId||wrap.manifest_fingerprint!==args.manifestFingerprint)throw new Error('Native v2 genesis RootWrapV6 identity mismatch.')
+  let opened:Uint8Array
+  if(wrap.mode==='best-effort'){
+    if(!prepared.bestEffortWrappingKey)throw new Error('Native v2 genesis best-effort wrapping key is missing.')
+    opened=await openBestEffortRootWrapV6(wrap,prepared.bestEffortWrappingKey)
+  }else{
+    const cached=unlockedRoots.get(args.diaryId)
+    if(!cached)throw new Error('Native v2 genesis strong RootWrapV6 is locked.')
+    opened=cached
+  }
+  if(base64Url(opened)!==base64Url(args.rootKey))throw new Error('Native v2 genesis RootWrapV6 does not open to the supplied root key.')
+  const epochSalt=await deriveEpochSaltV2(fixedBase64Url(args.diaryId,16),fixedBase64Url(args.epochId,16))
+  const state=await v2Store.loadState(args.rootKey,epochSalt,args.epochId)
+  if(state.diary_id!==args.diaryId||state.epoch_id!==args.epochId||state.manifest_fingerprint!==args.manifestFingerprint
+    ||state.epoch_status!=='active'||state.writer_status!=='writer_active'||state.writer_generation===null||state.writer_grant_id===null
+    ||state.writer_generation!==state.verified_writer_generation||state.writer_grant_id!==state.verified_writer_grant_id
+    ||state.writer_device_id!==state.verified_writer_device_id||state.writer_signing_key_id!==state.verified_writer_key_id
+    ||state.remote_binding===null||state.remote_anchor===null||state.remote_anchor.covered_row_count<1
+    ||state.recovery_rekey_rotation_required||state.rotation_state_ref!==null||state.migration_state_ref!==null
+    ||state.writer_operation_state_ref!==null||state.recovery_operation_state_ref!==null)throw new Error('Native v2 genesis selection requires authenticated active canonical Writer StateV6.')
+  const writer=await v2Store.loadWriterKey(state.writer_signing_key_id,args.diaryId,args.epochId)
+  if(!writer||writer.writer_device_id!==state.writer_device_id)throw new Error('Native v2 genesis selection requires the authenticated local WriterDeviceKeyV2.')
+
+  await ready()
+  const db=await openDatabase(),initial=await loadEpoch(db)
+  await withDiaryLock(initial.context.diaryId,async()=>{
+    const source=await loadEpoch(db)
+    const selectedTx=db.transaction(STORES.context,'readonly')
+    const prior=await result<ActiveProtocolSelectionV2|undefined>(selectedTx.objectStore(STORES.context).get(ACTIVE_PROTOCOL_SELECTION))
+    await complete(selectedTx)
+    const selection:ActiveProtocolSelectionV2={
+      id:ACTIVE_PROTOCOL_SELECTION,sync_profile:'google-sheets-transferable-single-writer-v2',
+      diary_id:args.diaryId,epoch_id:args.epochId,manifest_fingerprint:args.manifestFingerprint,operation_id:args.selectionId,
+    }
+    if(prior){
+      if(new TextDecoder().decode(canonicalBytes(prior as never))!==new TextDecoder().decode(canonicalBytes(selection as never)))throw new Error('A different v2 epoch is already selected locally.')
+      if(source.state.epoch_status!=='retired')throw new Error('Native v2 genesis selection exists without a retired local placeholder epoch.')
+      return
+    }
+    await assertReadOnlyJoinPlaceholderFresh(db,source)
+    const retired={...source.state,epoch_status:'retired' as const,operation_generation:source.state.operation_generation+1}
+    const tag=await stateTag(source.rootKey,source.epochSalt,retired)
+    const tx=db.transaction([STORES.context,STORES.state],'readwrite')
+    tx.objectStore(STORES.context).add(selection)
+    tx.objectStore(STORES.state).put({id:source.context.epochId,state:retired,tag} satisfies StoredState)
+    await complete(tx)
+  })
+  const check=await activeProtocolSelectionV2()
+  if(!check||check.diary_id!==args.diaryId||check.epoch_id!==args.epochId||check.manifest_fingerprint!==args.manifestFingerprint||check.operation_id!==args.selectionId)throw new Error('Native v2 genesis selection readback failed.')
+}
 export async function atomicSelectReadOnlyJoinV2(args:{
   joinId:string
   diaryId:string

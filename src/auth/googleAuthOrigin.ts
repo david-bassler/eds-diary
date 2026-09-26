@@ -7,6 +7,7 @@ interface GoogleAccounts { oauth2: { initTokenClient(options: { client_id: strin
 declare global { interface Window { google?: { accounts: GoogleAccounts } } }
 
 const ACTION = /^[A-Za-z0-9_-]{32,128}$/
+const PROVIDER_REQUEST_TIMEOUT_MS = 30_000
 const params = new URLSearchParams(location.search)
 const actionId = params.get('action_id') ?? ''
 const returnOriginText = params.get('return_origin') ?? ''
@@ -40,7 +41,10 @@ function loadGoogleRuntime(): Promise<void> {
   })
 }
 async function providerIdentity(): Promise<string> {
-  const response = await fetch('https://www.googleapis.com/drive/v3/about?fields=user(permissionId)', { headers: { Authorization: `Bearer ${accessToken}` } })
+  const response = await fetch('https://www.googleapis.com/drive/v3/about?fields=user(permissionId)', {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    signal: AbortSignal.timeout(PROVIDER_REQUEST_TIMEOUT_MS),
+  })
   if (!response.ok) throw new Error('Google-Identität konnte nicht bestätigt werden.')
   const value = await response.json() as { user?: { permissionId?: string } }
   if (!value.user?.permissionId) throw new Error('Google lieferte keine stabile Identität.')
@@ -85,6 +89,7 @@ async function bindPopup(event: MessageEvent<unknown>): Promise<void> {
     tokenPort.close()
     status.textContent = 'Google-Verbindung bestätigt. Du kannst jetzt zum Tagebuch zurückkehren.'
   } catch (cause) {
+    tokenPort.postMessage({ type: 'eds-diary/google-auth-token-failed/v2', action_id: actionId })
     tokenPort.close()
     bound = false
     fail(cause instanceof Error ? cause.message : 'Bindung fehlgeschlagen.')
@@ -101,6 +106,7 @@ async function bindBridge(event: MessageEvent<unknown>): Promise<void> {
   const failBridge = (messageText: string) => {
     accessToken = ''
     tokenPort.close()
+    rpcPort.postMessage({ type: 'eds-diary/google-auth-failed/v2', action_id: actionId })
     rpcPort.close()
     bound = false
     fail(messageText)
@@ -109,6 +115,10 @@ async function bindBridge(event: MessageEvent<unknown>): Promise<void> {
     void (async () => {
       if (!tokenEvent.data || typeof tokenEvent.data !== 'object') { failBridge('Ungültige Token-Übergabe.'); return }
       const transfer = tokenEvent.data as Record<string, unknown>
+      if (transfer.type === 'eds-diary/google-auth-token-failed/v2' && transfer.action_id === actionId) {
+        failBridge('Google-Identität konnte im Anmeldefenster nicht bestätigt werden.')
+        return
+      }
       const token = typeof transfer.access_token === 'string' ? transfer.access_token : ''
       const permissionId = typeof transfer.permission_id === 'string' ? transfer.permission_id : ''
       if (transfer.type !== 'eds-diary/google-auth-token-transfer/v2' || transfer.action_id !== actionId || !token || !permissionId) {
