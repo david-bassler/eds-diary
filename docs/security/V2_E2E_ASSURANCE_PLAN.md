@@ -635,7 +635,7 @@ loesbare Fehler sind kein externer Blocker und bleiben `IN_PROGRESS`.
   Statusverschlechterung, sondern korrektes Assurance-Verhalten.
 
 **Gesamtstatus (muss bei jeder Ledger-Aenderung aktualisiert werden):**
-`DONE 6/25; IN_PROGRESS 1/25; BLOCKED 0/25; NOT_STARTED 18/25; remaining internally actionable: 17`
+`DONE 4/25; IN_PROGRESS 3/25; BLOCKED 0/25; NOT_STARTED 18/25; remaining internally actionable: 19`
 
 Die initiale Zahl `remaining internally actionable: 23` behandelt die reale
 WebAuthn-Matrix (#23) und den externen Audit (#25) als von vornherein extern.
