@@ -57,7 +57,14 @@ export function registerSyncFeature(
 /** Data-layer-only hook. Authentication installs the verified coordinator here;
  * no provider login state on its own grants writer authority. */
 export function installSecureSynchronizer(synchronize:()=>Promise<void>):void{secureSynchronizer=synchronize;refreshSyncState()}
-export function clearSecureSynchronizer():void{secureSynchronizer=null;refreshSyncState()}
+export function clearSecureSynchronizer():void{
+  secureSynchronizer=null
+  if(timer!==null){
+    globalThis.clearTimeout(timer)
+    timer=null
+  }
+  refreshSyncState()
+}
 
 export function markDirty(name: string): void {
   version += 1
@@ -68,7 +75,11 @@ export function markDirty(name: string): void {
 
   if (secureSynchronizer) {
     timer = globalThis.setTimeout(() => {
-      void syncPending()
+      timer = null
+      // Timer-triggered passes have no caller that can observe the returned
+      // promise. `run` already publishes the failure through SyncSnapshot, so
+      // explicitly consume the rejection after that state transition.
+      void syncPending().catch(() => undefined)
     }, 1400)
   }
 }

@@ -7,6 +7,8 @@ on:
       - codex/fix-one-shot-envelope-crash-safety
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * *'
 
 permissions:
   contents: read
@@ -36,6 +38,9 @@ jobs:
 
       - name: Full unit suite
         run: npm test
+
+      - name: Security unit gate
+        run: npm run test:security-unit
 
       - name: Cryptographic vectors and local protection
         run: npx vitest run src/test/crypto.test.ts src/test/protocol-vectors.test.ts src/test/localRootWrap.test.ts src/test/webauthnPrf.test.ts
@@ -72,6 +77,13 @@ jobs:
 
       - name: Playwright full configured browser matrix
         run: npm run test:e2e
+
+      - name: Named security E2E gate
+        run: npm run test:security-e2e
+
+      - name: Seeded generative protocol model
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: npm run test:security-generative
 
       - name: Diff whitespace check
         run: git diff --check

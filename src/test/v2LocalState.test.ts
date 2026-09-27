@@ -13,6 +13,7 @@ import { createAnchorV2 } from '../security/v2/prefix'
 import type { CanonicalFullResultV2 } from '../security/v2/verifier'
 import { SINGLE_WRITER_V2_PROFILE } from '../sync/core/contracts'
 import type { RevisionV2 } from '../security/v2/types'
+import { __localDatabaseTesting } from '../data/localDatabase'
 
 const b=(fill:number,length:number)=>base64Url(new Uint8Array(length).fill(fill))
 const rootKey=new Uint8Array(32).fill(21)
@@ -108,7 +109,7 @@ async function fixture(){
   return{diaryId,epochId,epochSalt,writer,writerDeviceId,initial,result}
 }
 
-beforeEach(async()=>{await __v2LocalPersistenceTesting.reset()})
+beforeEach(async()=>{await __v2LocalPersistenceTesting.reset();await __localDatabaseTesting.resetForTesting()})
 
 describe('EpochLocalSecurityStateV6 persistence and writer gate',()=>{
   it('MAC-authenticates StateV6, persists a non-extractable WriterDeviceKeyV2 and promotes only after canonical reconciliation',async()=>{

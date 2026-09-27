@@ -915,6 +915,12 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
       }
       if(state.stage==='confirmation_unknown')return{kind:'unknown'}
       const row:[string,string,string]=[operation.confirmation_envelope.envelope_id,operation.confirmation_envelope.iv,operation.confirmation_envelope.ciphertext]
+      // `transportForEpoch()` may return a fresh strict Google adapter. Prime
+      // and authorize the exact instance that will append; a full verify on a
+      // sibling instance must not be treated as its structural read fence.
+      const appendVerified=await ctx.codec.verifyRemote(await ctx.transport.read(ctx.remoteId)),appendCanonical=canonical(appendVerified)
+      if(!sameJson(appendCanonical.remote_anchor,operation.successor_staging_anchor)
+        ||appendCanonical.accepted_activation_confirmation!==null)throw new ProfileUpgradeSuccessorCutoverRaceError('Profile-upgrade Successor changed before Confirmation append.')
       let unknown=false
       try{await ctx.transport.append(ctx.remoteId,row)}catch(error){if(!(error instanceof TransportError)||error.code!=='unknown_outcome')throw error;unknown=true}
       await this.fault?.('after-confirmation-append')

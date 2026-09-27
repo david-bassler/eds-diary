@@ -597,7 +597,8 @@ export async function persistProfileUpgradeSourceOperationV2(operation:RotationO
     if(current.context.epochId!==operation.source_epoch_id)throw new Error('Active v1 Source changed during profile-upgrade operation persistence.')
     if(expectedSourceOperationGeneration!==undefined&&current.state.operation_generation!==expectedSourceOperationGeneration)throw new Error('v1 Source changed after final profile-upgrade verification; retry from a new full verify.')
     const ref=current.state.rotation_state_ref
-    if(ref&&ref.operation_id!==operation.operation_id)throw new Error('Another v1 rotation operation is already bound to the Source.')
+    const replaceableTerminalRotation=ref?.state==='switched'
+    if(ref&&ref.operation_id!==operation.operation_id&&!replaceableTerminalRotation)throw new Error('Another non-terminal v1 rotation operation is already bound to the Source.')
     const read=db.transaction(STORES.operations,'readonly')
     const prior=await result<{state:RotationOperationStateV2;hash:string}|undefined>(read.objectStore(STORES.operations).get(`profile-upgrade-v2:${current.context.diaryId}`))
     await complete(read)
@@ -608,7 +609,7 @@ export async function persistProfileUpgradeSourceOperationV2(operation:RotationO
         ||ref.operation_id!==prior.state.operation_id
         ||ref.state_record_hash!==prior.hash)throw new Error('Existing v1 profile-upgrade operation binding is corrupt.')
       advanceRotationOperationStateV2(prior.state,operation)
-    }else if(ref)throw new Error('v1 profile-upgrade state ref exists without its operation record.')
+    }else if(ref&&!replaceableTerminalRotation)throw new Error('v1 profile-upgrade state ref exists without its operation record.')
     else if(operation.stage!=='source_frozen_verified')throw new Error('A new profile-upgrade operation must start at source_frozen_verified.')
     const next={...current.state,rotation_state_ref:{operation_id:operation.operation_id,state:operation.stage,state_record_hash:hash},operation_generation:current.state.operation_generation+1}
     const tag=await stateTag(current.rootKey,current.epochSalt,next),tx=db.transaction([STORES.operations,STORES.state],'readwrite')
@@ -802,8 +803,14 @@ export class IndexedDbRotationRepository {
         if(!sourceMaterial.state.remote_anchor||!frozenAnchor||sourceMaterial.state.remote_anchor.covered_row_count!==frozenAnchor.covered_row_count+1)throw new Error('Source announcement is not the unique row after the frozen prefix.')
       }else if(sourceMaterial.state.remote_binding!==null||sourceMaterial.state.remote_anchor!==null||sourceMaterial.state.epoch_status!=='local_offline')throw new Error('Remote enablement source is no longer local-only.')
       if(!successorMaterial.state.remote_binding||!successorMaterial.state.remote_anchor)throw new Error('Successor binding or verified anchor is missing.')
-      const hash=await rotationStateHash(rotation),ref={operation_id:rotation.rotationId,state:rotation.step,state_record_hash:hash},oldState={...sourceMaterial.state,epoch_status:'retired' as const,operation_generation:sourceMaterial.state.operation_generation+1},newState={...successorMaterial.state,epoch_status:'active' as const,rotation_state_ref:ref,operation_generation:successorMaterial.state.operation_generation+1},oldTag=await stateTag(sourceMaterial.rootKey,sourceMaterial.epochSalt,oldState),newTag=await stateTag(successorMaterial.rootKey,successorMaterial.epochSalt,newState),tx=db.transaction([STORES.context,STORES.state],'readwrite')
-      tx.objectStore(STORES.context).put(successor);tx.objectStore(STORES.state).put({id:source.context.epochId,state:oldState,tag:oldTag} satisfies StoredState);tx.objectStore(STORES.state).put({id:successor.epochId,state:newState,tag:newTag} satisfies StoredState);await complete(tx)
+      const hash=await rotationStateHash(rotation),ref={operation_id:rotation.rotationId,state:rotation.step,state_record_hash:hash},oldState={...sourceMaterial.state,epoch_status:'retired' as const,operation_generation:sourceMaterial.state.operation_generation+1},newState={...successorMaterial.state,epoch_status:'active' as const,rotation_state_ref:ref,operation_generation:successorMaterial.state.operation_generation+1},oldTag=await stateTag(sourceMaterial.rootKey,sourceMaterial.epochSalt,oldState),newTag=await stateTag(successorMaterial.rootKey,successorMaterial.epochSalt,newState),tx=db.transaction([STORES.context,STORES.state,STORES.migration],'readwrite')
+      tx.objectStore(STORES.context).put(successor);tx.objectStore(STORES.state).put({id:source.context.epochId,state:oldState,tag:oldTag} satisfies StoredState);tx.objectStore(STORES.state).put({id:successor.epochId,state:newState,tag:newTag} satisfies StoredState)
+      // `legacy-v1` is the migration control record for the active epoch. A
+      // successor without a migration binding must not inherit the retired
+      // Source's record, otherwise the next reload correctly rejects the
+      // record/ref mismatch before the profile can be unlocked.
+      if(newState.migration_state_ref===null)tx.objectStore(STORES.migration).delete('legacy-v1')
+      await complete(tx)
     })
   }
 }
