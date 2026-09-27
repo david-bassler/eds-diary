@@ -421,7 +421,7 @@ export class MultiDeviceHarness {
         import('/src/sync/google/GoogleTransferableSingleWriterV2Provider.ts'),
         import('/src/data/recoveryRekeyV2Service.ts'),
       ])
-      if (!state.productiveV2Session) state.productiveV2Session = provider.googleV2ProviderSessionFromAuthenticatedClient(state.multiDeviceAuth!.provider.getApiClient() as never)
+      state.productiveV2Session = provider.googleV2ProviderSessionFromAuthenticatedClient(state.multiDeviceAuth!.provider.getApiClient() as never)
       const result = await new serviceModule.ProductiveRecoveryRekeyV2Service(
         state.productiveV2Session as never,
         undefined,
@@ -459,9 +459,35 @@ export class MultiDeviceHarness {
   }
 
   async unlockProductiveRoot(device: VirtualDevice, passphrase: string): Promise<void> {
+    const unlockGate = device.page.getByRole('heading', { name: 'Lokales Tagebuch gesperrt' })
+    const gateVisible = await unlockGate.waitFor({ state: 'visible', timeout: 10_000 }).then(() => true, () => false)
+    if (gateVisible) {
+      await device.page.getByLabel('Passphrase').fill(passphrase)
+      await device.page.getByRole('button', { name: 'Entsperren' }).click()
+      await device.page.getByRole('navigation', { name: 'Hauptnavigation' }).waitFor({ state: 'visible' })
+      return
+    }
     await device.page.evaluate(async ({ value }) => {
       const localDatabase = await import('/src/data/localDatabase.ts')
       await localDatabase.unlockActiveRootWithPassphrase(value)
+    }, { value: passphrase })
+  }
+
+  async restoreProductiveRuntimeAfterCeremony(device: VirtualDevice, passphrase: string): Promise<void> {
+    await device.page.evaluate(async ({ value }) => {
+      const state = window as typeof window & { multiDeviceAuth?: { provider: { getApiClient(): unknown } }; productiveV2Session?: unknown }
+      const [dataLayer, localDatabase, provider] = await Promise.all([
+        import('/src/data/initializeDataLayer.ts'),
+        import('/src/data/localDatabase.ts'),
+        import('/src/sync/google/GoogleTransferableSingleWriterV2Provider.ts'),
+      ])
+      const selection = await localDatabase.activeProtocolSelectionV2()
+      if (!selection) throw new Error('Ceremony resume did not leave an active v2 protocol selection.')
+      const rootStatus = await localDatabase.localRootWrapStatus()
+      if (rootStatus.locked) await localDatabase.unlockActiveRootWithPassphrase(value)
+      const session = provider.googleV2ProviderSessionFromAuthenticatedClient(state.multiDeviceAuth!.provider.getApiClient() as never)
+      state.productiveV2Session = session
+      await dataLayer.installAuthenticatedRemoteSession(session)
     }, { value: passphrase })
   }
 

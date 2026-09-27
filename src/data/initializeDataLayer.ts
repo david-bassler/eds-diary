@@ -46,7 +46,9 @@ export interface RemoteSessionStatus {
   staleWriterPendingCount?:number
 }
 
-async function activeV2Status():Promise<RemoteSessionStatus|null>{
+let activeV2StatusPromise:Promise<RemoteSessionStatus|null>|null=null
+
+async function readActiveV2Status():Promise<RemoteSessionStatus|null>{
   const selection=await activeProtocolSelectionV2()
   if(!selection)return null
   const store=new IndexedDbV2LocalSecurityStore(),wrap=await store.loadRootWrapV6(selection.epoch_id)
@@ -65,6 +67,12 @@ async function activeV2Status():Promise<RemoteSessionStatus|null>{
     pendingEnvelopeCount:outbox.filter(entry=>entry.status==='prepared'||entry.status==='pending').length,
     staleWriterPendingCount:state.stale_writer_pending_count,
   }
+}
+
+async function activeV2Status():Promise<RemoteSessionStatus|null>{
+  if(activeV2StatusPromise)return activeV2StatusPromise
+  activeV2StatusPromise=readActiveV2Status().finally(()=>{activeV2StatusPromise=null})
+  return activeV2StatusPromise
 }
 
 /** Productive sync slot used after an authenticated provider session has been

@@ -22,7 +22,7 @@ export async function runPersistentCrashScenario<Point extends string>(
       await Promise.race([
         work(),
         new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(new Error(`Persistent crash stage timed out: point=${point} stage=${stage}`)), 600_000)
+          timer = setTimeout(() => reject(new Error(`Persistent crash stage timed out: point=${point} stage=${stage}`)), 120_000)
         }),
       ])
     } finally {
