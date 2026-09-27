@@ -16,13 +16,26 @@ export interface PersistentCrashScenario<Point extends string> {
 export async function runPersistentCrashScenario<Point extends string>(
   scenario: PersistentCrashScenario<Point>,
 ): Promise<void> {
+  const runStage = async (point: Point, stage: string, work: () => Promise<void>): Promise<void> => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([
+        work(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`Persistent crash stage timed out: point=${point} stage=${stage}`)), 600_000)
+        }),
+      ])
+    } finally {
+      if (timer !== undefined) clearTimeout(timer)
+    }
+  }
   for (const point of scenario.points) {
-    await scenario.prepare(point)
-    await scenario.crash(point)
-    await scenario.restart(point)
-    await scenario.unlock(point)
-    await scenario.resume(point)
-    await scenario.verify(point)
+    await runStage(point, 'prepare', () => scenario.prepare(point))
+    await runStage(point, 'crash', () => scenario.crash(point))
+    await runStage(point, 'restart', () => scenario.restart(point))
+    await runStage(point, 'unlock', () => scenario.unlock(point))
+    await runStage(point, 'resume', () => scenario.resume(point))
+    await runStage(point, 'verify', () => scenario.verify(point))
   }
   await scenario.finish()
   await scenario.verifyFinished()

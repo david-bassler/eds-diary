@@ -17,7 +17,7 @@ interface DriveFile { id?: string; name?: string; mimeType?: string; trashed?: b
 function statusOf(error: unknown): number { return typeof error === 'object' && error !== null && 'status' in error ? Number(error.status) : 0 }
 function normalize(error: unknown, mutation = false): TransportError {
   if (error instanceof TransportError) return error
-  const status=statusOf(error); const code=status===401?'auth_required':status===403?'permission_denied':status===404?'not_found':status===409||status===412?'conflict_or_unexpected_remote_change':status===429?'rate_limited':status>=500?(mutation?'unknown_outcome':'temporary_failure'):'provider_incompatible'
+  const status=statusOf(error); const code=status===401?'auth_required':status===403?'permission_denied':status===404?'not_found':status===409||status===412?'conflict_or_unexpected_remote_change':status===429?'rate_limited':status===0?(mutation?'unknown_outcome':'temporary_failure'):status>=500?(mutation?'unknown_outcome':'temporary_failure'):'provider_incompatible'
   return new TransportError(code,error instanceof Error?error.message:'Provider request failed.')
 }
 function rawStrings(cells: Cell[], expectedColumns: number): string[] {

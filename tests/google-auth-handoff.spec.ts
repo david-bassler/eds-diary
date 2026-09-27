@@ -115,7 +115,9 @@ async function persistentText(page: Page): Promise<string> {
 test.describe('productive Auth-Origin handoff', () => {
   test('drives the Auth-Origin handoff through the real settings UI', async ({ context, page }) => {
     await installProviderSimulator(context)
-    await page.goto('/configuration')
+    await page.goto('/')
+    await page.getByRole('link', { name: 'Konfiguration' }).click()
+    await expect(page).toHaveURL(/\/konfiguration$/u)
     await expect(page.getByRole('heading', { name: 'Google-Synchronisierung' })).toBeVisible()
     await page.getByRole('button', { name: 'Recovery-Schlüssel erstellen' }).click()
     await page.getByLabel('Ich habe den Schlüssel außerhalb dieser App gespeichert.').check()

@@ -13,7 +13,7 @@ describe('seeded long-horizon single-writer model',()=>{
         random=(Math.imul(random,1664525)+1013904223)>>>0
         const action=actions[random%actions.length]!
         trace.push(action);state=apply(state,action)
-        const evidence=`seed=${seed} step=${step} trace=${trace.join(',')}`
+        const evidence=`seed=${seed} step=${step} event=${action} trace=${trace.join(',')}`
         expect(!state.writer||state.verified===state.prefix,evidence).toBe(true)
         expect(!state.durable||state.verified===state.prefix,evidence).toBe(true)
         expect(!state.announcement||!state.writer,evidence).toBe(true)

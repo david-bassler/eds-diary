@@ -8,7 +8,8 @@ const POINTS = [
   'after-confirmation_durable',
 ] as const
 
-test('restarts, unlocks, resumes and canonically verifies productive Profile Upgrade fault points', async ({ browser }) => {
+for (const crashPoint of POINTS) {
+  test(`restarts, unlocks, resumes and canonically verifies productive Profile Upgrade at ${crashPoint}`, async ({ browser }) => {
   test.setTimeout(360_000)
   const harness = new MultiDeviceHarness(browser)
   let device: VirtualDevice | null = null
@@ -16,7 +17,7 @@ test('restarts, unlocks, resumes and canonically verifies productive Profile Upg
   let index = 0
   try {
     await runPersistentCrashScenario({
-      points: POINTS,
+      points: [crashPoint] as const,
       prepare: async () => {
         device = await harness.device(`profile-upgrade-crash-${index}`)
         index += 1
@@ -45,10 +46,13 @@ test('restarts, unlocks, resumes and canonically verifies productive Profile Upg
   } finally {
     await harness.close()
   }
-})
+  })
+}
 
-test('restarts, unlocks and resumes productive Recovery-Rekey through mandatory Phase B', async ({ browser }) => {
-  test.setTimeout(360_000)
+const RECOVERY_REKEY_POINTS = ['after-transition-durable', 'before-phase-b'] as const
+for (const crashPoint of RECOVERY_REKEY_POINTS) {
+  test(`restarts, unlocks and resumes productive Recovery-Rekey at ${crashPoint}`, async ({ browser }) => {
+  test.setTimeout(900_000)
   const harness = new MultiDeviceHarness(browser)
   let device: VirtualDevice | null = null
   let lifecycle: Awaited<ReturnType<MultiDeviceHarness['establishProductiveV2']>> | null = null
@@ -56,7 +60,7 @@ test('restarts, unlocks and resumes productive Recovery-Rekey through mandatory 
   let index = 0
   try {
     await runPersistentCrashScenario({
-      points: ['after-transition-durable', 'before-phase-b'] as const,
+      points: [crashPoint] as const,
       prepare: async () => {
         device = await harness.device(`recovery-rekey-crash-${index}`)
         index += 1
@@ -68,12 +72,15 @@ test('restarts, unlocks and resumes productive Recovery-Rekey through mandatory 
       crash: async (point) => {
         await expect(harness.runProductiveRecoveryRekey(device!, seed!, point)).rejects.toThrow(`persistent-crash:${point}`)
         await expect(harness.writeProductivePain(device!, 'pending-rekey-write-must-not-persist')).rejects.toThrow(/rekey|maintenance|authority|writer/i)
-        await device!.page.getByRole('navigation', { name: 'Hauptnavigation' }).getByRole('link', { name: 'Konfiguration' }).click()
-        await expect(device!.page.getByText('Recovery-Key-Wechsel ist noch nicht abgeschlossen. Normale Einträge bleiben gesperrt.')).toBeVisible()
       },
       restart: async () => harness.reloadLockedProductiveV2(device!, `recovery_rekey_restart_action_${String(index).padStart(8, '0')}`),
       unlock: async () => harness.unlockProductiveRoot(device!, seed!.passphrase),
-      resume: async () => { expect(await harness.runProductiveRecoveryRekey(device!, seed!)).toBe('completed') },
+      resume: async () => {
+        await device!.page.getByRole('navigation', { name: 'Hauptnavigation' }).getByRole('link', { name: 'Konfiguration' }).click()
+        await expect(device!.page.getByText('Recovery-Key-Wechsel ist noch nicht abgeschlossen. Normale Einträge bleiben gesperrt.')).toBeVisible()
+        expect(await harness.runProductiveRecoveryRekey(device!, seed!)).toBe('completed')
+        await harness.refreshProductiveV2(device!)
+      },
       verify: async () => {
         expect(await harness.verifyProductiveV2Remote(device!)).toMatchObject({ kind: 'canonical_full', writerStatus: 'writer_active' })
         expect(await harness.writeProductivePain(device!, 'post-rekey-write-is-durable')).toMatchObject({ writerStatus: 'writer_active' })
@@ -85,9 +92,12 @@ test('restarts, unlocks and resumes productive Recovery-Rekey through mandatory 
   } finally {
     await harness.close()
   }
-})
+  })
+}
 
-test('restarts, unlocks and resumes productive Writer Handoff fault points', async ({ browser }) => {
+const HANDOFF_POINTS = ['after-prepared', 'after-append-attempt'] as const
+for (const crashPoint of HANDOFF_POINTS) {
+  test(`restarts, unlocks and resumes productive Writer Handoff at ${crashPoint}`, async ({ browser }) => {
   test.setTimeout(480_000)
   const harness = new MultiDeviceHarness(browser)
   let source: VirtualDevice | null = null
@@ -97,7 +107,7 @@ test('restarts, unlocks and resumes productive Writer Handoff fault points', asy
   let index = 0
   try {
     await runPersistentCrashScenario({
-      points: ['after-prepared', 'after-append-attempt'] as const,
+      points: [crashPoint] as const,
       prepare: async () => {
         index += 1
         source = await harness.device(`handoff-crash-source-${index}`)
@@ -122,9 +132,12 @@ test('restarts, unlocks and resumes productive Writer Handoff fault points', asy
       finish: async () => {}, verifyFinished: async () => {},
     })
   } finally { await harness.close() }
-})
+  })
+}
 
-test('restarts, unlocks and resumes productive Forced Takeover fault points', async ({ browser }) => {
+const TAKEOVER_POINTS = ['after-prepared', 'after-append-attempt'] as const
+for (const crashPoint of TAKEOVER_POINTS) {
+  test(`restarts, unlocks and resumes productive Forced Takeover at ${crashPoint}`, async ({ browser }) => {
   test.setTimeout(480_000)
   const harness = new MultiDeviceHarness(browser)
   let lostWriter: VirtualDevice | null = null
@@ -133,7 +146,7 @@ test('restarts, unlocks and resumes productive Forced Takeover fault points', as
   let index = 0
   try {
     await runPersistentCrashScenario({
-      points: ['after-prepared', 'after-append-attempt'] as const,
+      points: [crashPoint] as const,
       prepare: async () => {
         index += 1
         lostWriter = await harness.device(`takeover-crash-lost-${index}`)
@@ -147,7 +160,10 @@ test('restarts, unlocks and resumes productive Forced Takeover fault points', as
       crash: async (point) => { await expect(harness.forceTakeover(replacement!, lifecycle!.recoveryKey, point)).rejects.toThrow(`persistent-crash:${point}`) },
       restart: async () => harness.reloadLockedProductiveV2(replacement!, `takeover_crash_restart_action_${String(index).padStart(8, '0')}`),
       unlock: async () => harness.unlockProductiveRoot(replacement!, lifecycle!.passphrase),
-      resume: async () => { expect(await harness.forceTakeover(replacement!, lifecycle!.recoveryKey)).toMatchObject({ stage: 'durable', writerStatus: 'writer_active' }) },
+      resume: async () => {
+        expect(await harness.forceTakeover(replacement!, lifecycle!.recoveryKey)).toMatchObject({ stage: 'durable', writerStatus: 'writer_active' })
+        await harness.refreshProductiveV2(replacement!)
+      },
       verify: async () => {
         await expect(harness.writeProductivePain(lostWriter!, 'crashed-takeover-old-writer')).rejects.toThrow()
         expect(await harness.writeProductivePain(replacement!, 'crashed-takeover-replacement')).toMatchObject({ writerStatus: 'writer_active' })
@@ -156,7 +172,8 @@ test('restarts, unlocks and resumes productive Forced Takeover fault points', as
       finish: async () => {}, verifyFinished: async () => {},
     })
   } finally { await harness.close() }
-})
+  })
+}
 
 test('restarts, unlocks and resumes a productive read-only Join bundle', async ({ browser }) => {
   test.setTimeout(240_000)
@@ -180,7 +197,11 @@ test('restarts, unlocks and resumes a productive read-only Join bundle', async (
       crash: async (point) => { await expect(harness.runProductiveJoin(joining!, lifecycle!.recoveryKey, point)).rejects.toThrow(`persistent-crash:${point}`) },
       restart: async () => harness.reloadLockedProductiveV2(joining!, 'join_crash_restart_action_0000001'),
       unlock: async () => harness.unlockProductiveRoot(joining!, joinPassphrase),
-      resume: async () => { expect(await harness.runProductiveJoin(joining!, lifecycle!.recoveryKey)).toBe(lifecycle!.epochId) },
+      resume: async () => {
+        expect(await harness.runProductiveJoin(joining!, lifecycle!.recoveryKey)).toBe(lifecycle!.epochId)
+        await harness.unlockProductiveRoot(joining!, joinPassphrase)
+        await harness.refreshProductiveV2(joining!)
+      },
       verify: async () => {
         expect(await harness.verifyProductiveV2Remote(joining!)).toMatchObject({ kind: 'canonical_full', writerStatus: 'read_only' })
         await expect(harness.writeProductivePain(joining!, 'joined-crash-device-write')).rejects.toThrow(/authority|writer|read.only/i)
