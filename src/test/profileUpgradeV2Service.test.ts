@@ -260,6 +260,19 @@ async function seedV1Source(urs:Uint8Array,createdAt:string):Promise<{transport:
   return{transport:remote,session:new V1Session(remote,account),sourceEpochId:source.context.epochId,diaryId:source.context.diaryId,account}
 }
 
+async function bindSyntheticV1RotationRef(state:'switched'|'copying'):Promise<void>{
+  const material=await new IndexedDbRotationRepository().verifiedActiveEpoch()
+  const next={...material.state,rotation_state_ref:{
+    operation_id:base64Url(new Uint8Array(32).fill(state==='switched'?111:112)),
+    state,
+    state_record_hash:base64Url(new Uint8Array(32).fill(state==='switched'?113:114)),
+  },operation_generation:material.state.operation_generation+1}
+  const tag=await stateTag(material.rootKey,material.epochSalt,next),db=await __localDatabaseTesting.openDatabase()
+  const tx=db.transaction(__localDatabaseTesting.STORES.state,'readwrite')
+  tx.objectStore(__localDatabaseTesting.STORES.state).put({id:material.context.epochId,state:next,tag})
+  await transactionComplete(tx)
+}
+
 
 async function successorSecurityContext(v2:V2Session,urs:Uint8Array){
   if(!v2.remote||!v2.recovery)throw new Error('successor fixture is incomplete')
@@ -422,6 +435,21 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
       successor_manifest_fingerprint:base64Url(new Uint8Array(32).fill(102)),
     }
     await expect(persistProfileUpgradeSourceOperationV2(skipped)).rejects.toThrow(/Illegal RotationOperationStateV2 transition/)
+  })
+
+  it('starts Profile Upgrade after a product v1 rotation reached terminal switched',async()=>{
+    const createdAt='2026-09-23T11:20:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    await bindSyntheticV1RotationRef('switched')
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    expect(upgraded.stage).toBe('switched')
+    expect(await activeProtocolSelectionV2()).toMatchObject({epoch_id:upgraded.successor_epoch_id})
+  },120_000)
+
+  it('does not replace a non-terminal v1 rotation binding with Profile Upgrade',async()=>{
+    const createdAt='2026-09-23T11:25:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    await bindSyntheticV1RotationRef('copying')
+    await expect(new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()).rejects.toThrow(/non-terminal v1 rotation/)
+    expect(await activeProtocolSelectionV2()).toBeNull()
   })
 
   it('rejects a local v1 write racing the final source freeze and succeeds only after a new full verify',async()=>{
