@@ -5,7 +5,6 @@ const CREDENTIAL_SENTINEL = 'playwright-oauth-credential-sentinel'
 const PERMISSION_ID = 'playwright-provider-identity'
 
 async function installProviderSimulator(context: BrowserContext, options: { rejectPopupIdentity?: boolean; rejectConfirmation?: boolean; stallConfirmation?: boolean } = {}): Promise<void> {
-  let identityRequests = 0
   await context.route('https://accounts.google.com/gsi/client', async (route) => {
     await route.fulfill({
       contentType: 'application/javascript',
@@ -13,18 +12,19 @@ async function installProviderSimulator(context: BrowserContext, options: { reje
     })
   })
   await context.route('https://www.googleapis.com/**', async (route) => {
-    identityRequests += 1
     const authorization = await route.request().headerValue('authorization')
     if (authorization !== `Bearer ${CREDENTIAL_SENTINEL}`) {
       await route.fulfill({ status: 401, json: { error: { message: 'missing simulator credential' } } })
       return
     }
-    if (options.rejectPopupIdentity && identityRequests === 1) {
+    const caller = new URL(route.request().frame().url())
+    const isBridge = caller.searchParams.get('mode') === 'bridge'
+    if (options.rejectPopupIdentity && !isBridge) {
       await route.fulfill({ status: 503, json: { error: { message: 'simulated popup identity failure' } } })
       return
     }
-    if (options.stallConfirmation && identityRequests === 2) return
-    if (options.rejectConfirmation && identityRequests === 2) {
+    if (options.stallConfirmation && isBridge) return
+    if (options.rejectConfirmation && isBridge) {
       await route.fulfill({ status: 503, json: { error: { message: 'simulated confirmation failure' } } })
       return
     }
@@ -138,7 +138,15 @@ test.describe('productive Auth-Origin handoff', () => {
     await beginProductiveAuthentication(page, 3_000)
     const popup = await popupPromise
     await popup.getByRole('button', { name: 'Mit Google anmelden' }).click()
-    await expect(popup.getByRole('status')).toHaveText('Identität wird gebunden …')
+
+    const pending = await page.evaluate(async () => {
+      const state = window as typeof window & { authResult?: Promise<unknown> }
+      return Promise.race([
+        state.authResult!.then(() => 'settled', () => 'settled'),
+        new Promise<'pending'>((resolve) => window.setTimeout(() => resolve('pending'), 250)),
+      ])
+    })
+    expect(pending).toBe('pending')
 
     const outcome = await page.evaluate(async () => {
       const state = window as typeof window & { authResult?: Promise<unknown> }

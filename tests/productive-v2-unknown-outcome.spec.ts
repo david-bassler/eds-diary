@@ -29,7 +29,7 @@ test('reconciles the complete browser provider unknown-outcome matrix without se
     }
 
     await harness.reloadLockedProductiveV2(device, 'productive_unknown_reload_action_00001')
-    await harness.unlockProductiveRoot(device, lifecycle.passphrase)
+    await harness.unlockProductiveRootThroughUi(device, lifecycle.passphrase)
     expect(await harness.readProductivePain(device)).toBe(expectedPainCount)
     expect(await harness.verifyProductiveV2Remote(device)).toMatchObject({ kind: 'canonical_full', writerStatus: 'writer_active' })
   } finally {

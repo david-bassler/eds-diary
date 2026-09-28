@@ -14,76 +14,107 @@ permissions:
   contents: read
 
 jobs:
-  validate:
+  static-and-unit:
+    name: Static and unit gates
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 30
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
+      - run: npm ci
       - name: Production dependency audit
         run: npm audit --omit=dev --audit-level=high
-
       - name: TypeScript typecheck
         run: npx tsc -b --pretty false
-
       - name: Full unit suite
         run: npm test
-
       - name: Security unit gate
         run: npm run test:security-unit
-
       - name: Cryptographic vectors and local protection
         run: npx vitest run src/test/crypto.test.ts src/test/protocol-vectors.test.ts src/test/localRootWrap.test.ts src/test/webauthnPrf.test.ts
-
       - name: Google provider contract and auth boundary
         run: npx vitest run src/test/googleTransportContract.test.ts src/test/googleAuthBoundary.test.ts src/test/architecture.test.ts
-
       - name: Single-writer state machine and reconciliation
         run: npx vitest run src/test/stateMachine.test.ts src/test/sync.test.ts src/test/localDatabase.test.ts
-
       - name: Recovery, backup and fresh-profile bootstrap
         run: npx vitest run src/test/recovery-rotation.test.ts src/test/creation-backup.test.ts
-
       - name: Legacy migration catch-up
         run: npx vitest run src/test/legacyMigrationCatchup.test.ts
-
       - name: Productive rotation crash matrix
         run: npx vitest run src/test/productiveRotationService.test.ts
-
       - name: Production build
         run: npm run build
-
-      - name: ESLint
-        run: npm run lint:js
-
-      - name: Stylelint
-        run: npm run lint:css
-
+      - name: ESLint and Stylelint
+        run: npm run lint
       - name: Storybook build
         run: npm run build-storybook
-
-      - name: Install Playwright Chromium
-        run: npx playwright install --with-deps chromium
-
-      - name: Playwright full configured browser matrix
-        run: npm run test:e2e
-
-      - name: Named security E2E gate
-        run: npm run test:security-e2e
-
-      - name: Seeded generative protocol model
-        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-        run: npm run test:security-generative
-
       - name: Diff whitespace check
         run: git diff --check
+
+  browser-matrix:
+    name: Browser matrix (${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ['1/2', '2/2']
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Playwright full configured browser matrix
+        run: npx playwright test --shard=${{ matrix.shard }} --reporter=line
+      - name: Upload redacted Playwright failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-browser-${{ strategy.job-index }}
+          path: test-results
+          if-no-files-found: ignore
+          retention-days: 7
+
+  security-e2e:
+    name: Named security E2E gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Named security E2E gate
+        run: npm run test:security-e2e -- --reporter=line
+      - name: Upload redacted security failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-security-e2e
+          path: test-results
+          if-no-files-found: ignore
+          retention-days: 7
+
+  generative:
+    name: Seeded generative protocol gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test:security-generative

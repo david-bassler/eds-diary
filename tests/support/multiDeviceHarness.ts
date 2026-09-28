@@ -432,6 +432,20 @@ export class MultiDeviceHarness {
     }, { input: seed, point: faultPoint })
   }
 
+  async productiveRotationStages(device: VirtualDevice): Promise<readonly string[]> {
+    return device.page.evaluate(async () => {
+      const { __v2LocalPersistenceTesting } = await import('/src/security/v2/localPersistence.ts')
+      const database = await __v2LocalPersistenceTesting.openDatabase()
+      const transaction = database.transaction(__v2LocalPersistenceTesting.STORES.rotationOperations, 'readonly')
+      const request = transaction.objectStore(__v2LocalPersistenceTesting.STORES.rotationOperations).getAll()
+      const operations = await new Promise<Array<{ state?: { stage?: unknown } }>>((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result as Array<{ state?: { stage?: unknown } }>)
+        request.onerror = () => reject(request.error)
+      })
+      return operations.map((operation) => typeof operation.state?.stage === 'string' ? operation.state.stage : 'invalid')
+    })
+  }
+
   async prepareProductiveJoinProtection(device: VirtualDevice, passphrase: string): Promise<void> {
     await device.page.evaluate(async ({ value }) => {
       const localDatabase = await import('/src/data/localDatabase.ts')
@@ -458,15 +472,15 @@ export class MultiDeviceHarness {
     }, { encodedRecoveryKey: recoveryKey, point: faultPoint })
   }
 
-  async unlockProductiveRoot(device: VirtualDevice, passphrase: string): Promise<void> {
+  async unlockProductiveRootThroughUi(device: VirtualDevice, passphrase: string): Promise<void> {
     const unlockGate = device.page.getByRole('heading', { name: 'Lokales Tagebuch gesperrt' })
-    const gateVisible = await unlockGate.waitFor({ state: 'visible', timeout: 10_000 }).then(() => true, () => false)
-    if (gateVisible) {
-      await device.page.getByLabel('Passphrase').fill(passphrase)
-      await device.page.getByRole('button', { name: 'Entsperren' }).click()
-      await device.page.getByRole('navigation', { name: 'Hauptnavigation' }).waitFor({ state: 'visible' })
-      return
-    }
+    await unlockGate.waitFor({ state: 'visible', timeout: 10_000 })
+    await device.page.getByLabel('Passphrase').fill(passphrase)
+    await device.page.getByRole('button', { name: 'Entsperren' }).click()
+    await device.page.getByRole('navigation', { name: 'Hauptnavigation' }).waitFor({ state: 'visible' })
+  }
+
+  async unlockProductiveRootWithService(device: VirtualDevice, passphrase: string): Promise<void> {
     await device.page.evaluate(async ({ value }) => {
       const localDatabase = await import('/src/data/localDatabase.ts')
       await localDatabase.unlockActiveRootWithPassphrase(value)
@@ -489,6 +503,17 @@ export class MultiDeviceHarness {
       state.productiveV2Session = session
       await dataLayer.installAuthenticatedRemoteSession(session)
     }, { value: passphrase })
+  }
+
+  async reloadAuthenticateUnlockAndRestoreProductiveRuntime(
+    device: VirtualDevice,
+    passphrase: string,
+    actionId: string,
+  ): Promise<void> {
+    await device.page.reload()
+    await this.authenticate(device, actionId)
+    await this.unlockProductiveRootThroughUi(device, passphrase)
+    await this.restoreProductiveRuntimeAfterCeremony(device, passphrase)
   }
 
   async lockProductiveRoot(device: VirtualDevice): Promise<void> {

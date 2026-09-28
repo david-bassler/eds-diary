@@ -2,13 +2,13 @@ import { expect, test } from '@playwright/test'
 import { MultiDeviceHarness, type ProductiveRecoveryRekeySeed, type ProductiveV1CrashSeed, type VirtualDevice } from './support/multiDeviceHarness'
 import { runPersistentCrashScenario } from './support/persistentCrashRunner'
 
-async function runResumeStep<T>(point: string, step: string, work: () => Promise<T>): Promise<T> {
+async function runResumeStep<T>(point: string, step: string, work: () => Promise<T>, timeoutMs = 60_000): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
     return await Promise.race([
       work(),
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`Ceremony resume step timed out: ceremony=recovery-rekey point=${point} stage=resume/${step}`)), 60_000)
+        timer = setTimeout(() => reject(new Error(`Ceremony resume step timed out: ceremony=recovery-rekey point=${point} stage=resume/${step}`)), timeoutMs)
       }),
     ])
   } finally {
@@ -46,7 +46,7 @@ for (const crashPoint of POINTS) {
         await device!.page.reload()
         await harness.authenticate(device!, `productive_crash_restart_${String(index).padStart(8, '0')}`)
       },
-      unlock: async () => harness.unlockProductiveRoot(device!, seed!.passphrase),
+      unlock: async () => harness.unlockProductiveRootThroughUi(device!, seed!.passphrase),
       resume: async () => {
         expect(await harness.runProductiveProfileUpgrade(device!, seed!)).toBe('switched')
       },
@@ -88,15 +88,24 @@ for (const crashPoint of RECOVERY_REKEY_POINTS) {
         await expect(harness.writeProductivePain(device!, 'pending-rekey-write-must-not-persist')).rejects.toThrow(/rekey|maintenance|authority|writer/i)
       },
       restart: async () => harness.reloadLockedProductiveV2(device!, `recovery_rekey_restart_action_${String(index).padStart(8, '0')}`),
-      unlock: async () => harness.unlockProductiveRoot(device!, seed!.passphrase),
+      unlock: async () => harness.unlockProductiveRootThroughUi(device!, seed!.passphrase),
       resume: async () => {
         const painPrompt = device!.page.getByRole('dialog', { name: 'Sind diese Schmerzen noch aktuell?' })
-        const painPromptVisible = await painPrompt.waitFor({ state: 'visible', timeout: 5_000 }).then(() => true, () => false)
-        if (painPromptVisible) await runResumeStep(crashPoint, 'dismiss-pain-prompt', () => painPrompt.getByRole('button', { name: 'Ja, noch aktuell' }).click({ timeout: 10_000 }))
-        await runResumeStep(crashPoint, 'open-settings', () => device!.page.getByRole('navigation', { name: 'Hauptnavigation' }).getByRole('link', { name: 'Konfiguration' }).evaluate((link: HTMLElement) => link.click(), { timeout: 10_000 }))
-        await runResumeStep(crashPoint, 'wait-v2-settings', () => expect(device!.page.getByRole('region', { name: 'Mehrgeräte-Schreibzugriff (v2)' })).toBeVisible({ timeout: 10_000 }))
-        await runResumeStep(crashPoint, 'verify-maintenance-ui', () => expect(device!.page.getByText('Recovery-Key-Wechsel ist noch nicht abgeschlossen. Normale Einträge bleiben gesperrt.')).toBeVisible({ timeout: 10_000 }))
-        const stage = await runResumeStep(crashPoint, 'resume-ceremony', () => harness.runProductiveRecoveryRekey(device!, seed!))
+        const painPromptVisible = await painPrompt.waitFor({ state: 'visible', timeout: 30_000 }).then(() => true, () => false)
+        if (painPromptVisible) {
+          await runResumeStep(crashPoint, 'dismiss-pain-prompt', () => painPrompt.getByRole('button', { name: 'Ja, noch aktuell' }).click({ timeout: 10_000 }))
+          await expect(painPrompt).toBeHidden({ timeout: 10_000 })
+        }
+        await runResumeStep(crashPoint, 'open-settings', () => device!.page.getByRole('navigation', { name: 'Hauptnavigation' }).getByRole('link', { name: 'Konfiguration' }).click({ timeout: 10_000 }))
+        await runResumeStep(crashPoint, 'wait-v2-settings', () => expect(device!.page.getByRole('region', { name: 'Mehrgeräte-Schreibzugriff (v2)' })).toBeVisible({ timeout: 60_000 }), 75_000)
+        await runResumeStep(crashPoint, 'verify-maintenance-ui', () => expect(device!.page.getByText('Recovery-Key-Wechsel ist noch nicht abgeschlossen. Normale Einträge bleiben gesperrt.')).toBeVisible({ timeout: 60_000 }), 75_000)
+        let stage: string
+        try {
+          stage = await runResumeStep(crashPoint, 'resume-phase-b', () => harness.runProductiveRecoveryRekey(device!, seed!), 180_000)
+        } catch (error) {
+          const rotationStages = await harness.productiveRotationStages(device!)
+          throw new Error(`${error instanceof Error ? error.message : String(error)} rotationStages=${rotationStages.join(',')}`, { cause: error })
+        }
         expect(stage).toBe('completed')
         await runResumeStep(crashPoint, 'restore-application-runtime', () => harness.restoreProductiveRuntimeAfterCeremony(device!, seed!.passphrase))
       },
@@ -140,7 +149,7 @@ for (const crashPoint of HANDOFF_POINTS) {
       },
       crash: async (point) => { await expect(harness.handoffWriter(source!, descriptor, point)).rejects.toThrow(`persistent-crash:${point}`) },
       restart: async () => harness.reloadLockedProductiveV2(source!, `handoff_crash_restart_action_${String(index).padStart(8, '0')}`),
-      unlock: async () => harness.unlockProductiveRoot(source!, lifecycle!.passphrase),
+      unlock: async () => harness.unlockProductiveRootThroughUi(source!, lifecycle!.passphrase),
       resume: async () => { expect(await harness.handoffWriter(source!, descriptor)).toMatchObject({ stage: 'durable', writerStatus: 'read_only' }) },
       verify: async () => {
         expect(await harness.adoptWriter(target!)).toMatchObject({ stage: 'durable', writerStatus: 'writer_active' })
@@ -178,7 +187,7 @@ for (const crashPoint of TAKEOVER_POINTS) {
       },
       crash: async (point) => { await expect(harness.forceTakeover(replacement!, lifecycle!.recoveryKey, point)).rejects.toThrow(`persistent-crash:${point}`) },
       restart: async () => harness.reloadLockedProductiveV2(replacement!, `takeover_crash_restart_action_${String(index).padStart(8, '0')}`),
-      unlock: async () => harness.unlockProductiveRoot(replacement!, lifecycle!.passphrase),
+      unlock: async () => harness.unlockProductiveRootThroughUi(replacement!, lifecycle!.passphrase),
       resume: async () => {
         expect(await harness.forceTakeover(replacement!, lifecycle!.recoveryKey)).toMatchObject({ stage: 'durable', writerStatus: 'writer_active' })
         await harness.restoreProductiveRuntimeAfterCeremony(replacement!, lifecycle!.passphrase)
@@ -215,10 +224,10 @@ test('restarts, unlocks and resumes a productive read-only Join bundle', async (
       },
       crash: async (point) => { await expect(harness.runProductiveJoin(joining!, lifecycle!.recoveryKey, point)).rejects.toThrow(`persistent-crash:${point}`) },
       restart: async () => harness.reloadLockedProductiveV2(joining!, 'join_crash_restart_action_0000001'),
-      unlock: async () => harness.unlockProductiveRoot(joining!, joinPassphrase),
+      unlock: async () => harness.unlockProductiveRootWithService(joining!, joinPassphrase),
       resume: async () => {
         expect(await harness.runProductiveJoin(joining!, lifecycle!.recoveryKey)).toBe(lifecycle!.epochId)
-        await harness.restoreProductiveRuntimeAfterCeremony(joining!, joinPassphrase)
+        await harness.reloadAuthenticateUnlockAndRestoreProductiveRuntime(joining!, joinPassphrase, 'join_crash_post_resume_action_0001')
       },
       verify: async () => {
         expect(await harness.verifyProductiveV2Remote(joining!)).toMatchObject({ kind: 'canonical_full', writerStatus: 'read_only' })

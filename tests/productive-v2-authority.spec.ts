@@ -93,7 +93,7 @@ test('removes usable V2 keys while locked across read, write, Handoff and Recove
     await expect(harness.forceTakeover(deviceB, lifecycle.recoveryKey)).rejects.toThrow(/unlock|locked|root/i)
     expect(harness.snapshotRemoteProtocolRows(lifecycle.remoteId)).toEqual(remoteRowsBeforeLock)
 
-    await harness.unlockProductiveRoot(deviceA, lifecycle.passphrase)
+    await harness.unlockProductiveRootThroughUi(deviceA, lifecycle.passphrase)
     await harness.refreshProductiveV2(deviceA)
     expect((await harness.verifyProductiveV2Remote(deviceA)).coveredRowCount).toBe(before.coveredRowCount)
     expect(await harness.readProductivePain(deviceA)).toBe(2)

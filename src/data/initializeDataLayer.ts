@@ -18,6 +18,7 @@ import { ProductiveReadOnlyJoinV2Service } from './readOnlyJoinV2Service'
 import { ProductiveForcedTakeoverV2Service } from './forcedTakeoverV2Service'
 import { ProductiveWriterHandoffV2Service } from './writerHandoffV2Service'
 import type { TransferDescriptorV2 } from '../security/v2/types'
+import { createSingleFlight } from './singleFlight'
 
 type TransferableV2Session=ConstructorParameters<typeof ProductiveReadOnlyJoinV2Service>[0]
 type AuthenticatedProviderSession=SingleWriterProviderSession|TransferableV2Session
@@ -46,7 +47,7 @@ export interface RemoteSessionStatus {
   staleWriterPendingCount?:number
 }
 
-let activeV2StatusPromise:Promise<RemoteSessionStatus|null>|null=null
+const activeV2StatusFlight=createSingleFlight<RemoteSessionStatus|null>()
 
 async function readActiveV2Status():Promise<RemoteSessionStatus|null>{
   const selection=await activeProtocolSelectionV2()
@@ -70,9 +71,7 @@ async function readActiveV2Status():Promise<RemoteSessionStatus|null>{
 }
 
 async function activeV2Status():Promise<RemoteSessionStatus|null>{
-  if(activeV2StatusPromise)return activeV2StatusPromise
-  activeV2StatusPromise=readActiveV2Status().finally(()=>{activeV2StatusPromise=null})
-  return activeV2StatusPromise
+  return activeV2StatusFlight.run(readActiveV2Status)
 }
 
 /** Productive sync slot used after an authenticated provider session has been
