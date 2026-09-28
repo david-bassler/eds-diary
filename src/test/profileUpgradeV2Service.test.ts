@@ -168,10 +168,32 @@ class V2Session implements TransferableSingleWriterV2ProviderSession {
   private readonly recoveryByEpochAndUrs=new Map<string,RecoveryArtifactV6>()
   private recoveryKey(epochId:string,urs:Uint8Array):string{return `${epochId}:${base64Url(urs)}`}
   creates=0
+  strictInstanceReads=false
   private readonly creation=new Map<string,CreationState>()
   async transportForEpoch(diaryId:string,epochId:string):Promise<GoogleSheetsTransferableSingleWriterV2Transport>{
     void diaryId
-    return (this.remotesByEpoch.get(epochId)??this.preCreationTransport) as unknown as GoogleSheetsTransferableSingleWriterV2Transport
+    const remote=this.remotesByEpoch.get(epochId)??this.preCreationTransport
+    if(!this.strictInstanceReads)return remote as unknown as GoogleSheetsTransferableSingleWriterV2Transport
+    // Unlike the old shared MemoryTransport fixture, the production session
+    // returns a NEW strict transport for each transportForEpoch() call. Only
+    // this exact instance may append after its own successful strict read.
+    const readIds=new Set<string>()
+    return new Proxy(remote,{
+      get(target,property){
+        if(property==='read')return async (id:string)=>{
+          const snapshot=await target.read(id)
+          readIds.add(id)
+          return snapshot
+        }
+        if(property==='append')return async (id:string,row:readonly [string,string,string])=>{
+          if(!readIds.has(id))throw new TransportError('conflict_or_unexpected_remote_change','A strict read is required before append.')
+          readIds.delete(id)
+          return target.append(id,row)
+        }
+        const value=Reflect.get(target,property,target) as unknown
+        return typeof value==='function'?value.bind(target):value
+      },
+    }) as unknown as GoogleSheetsTransferableSingleWriterV2Transport
   }
   registerV1Epoch(epochId:string,transport:MemoryTransport):void{this.v1RemotesByEpoch.set(epochId,transport)}
   async v1TransportForEpoch(_diaryId:string,epochId:string):Promise<GoogleSheetsSingleWriterTransport>{
@@ -1178,9 +1200,10 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     expect([...v2.remote!.appendCounts.values()].every(count=>count===1)).toBe(true)
   },90_000)
 
-  it('performs a productive native v2 to v2 normal rotation and carries Writer/Recovery authority',async()=>{
+  it('uses the same strict-read transport instance for productive native v2 normal rotation and carries Writer/Recovery authority',async()=>{
     const createdAt='2026-09-25T07:20:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session();v2.registerV1Epoch(source.sourceEpochId,source.transport)
     const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    v2.strictInstanceReads=true
     const sourceEpochId=upgraded.successor_epoch_id
     const result=await new ProductiveNativeRotationV2Service(v2,urs,new IndexedDbV2LocalSecurityStore(),()=>createdAt).rotate('normal')
     expect(result.stage).toBe('switched')
@@ -1227,9 +1250,10 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     expect((await activeProtocolSelectionV2())?.epoch_id).toBe(resumed.successor_epoch_id)
   },120_000)
 
-  it('completes two-phase Recovery-Rekey through mandatory recovery_rekey successor rotation',async()=>{
+  it('uses the same strict-read transport instance during mandatory Recovery-Rekey successor rotation',async()=>{
     const createdAt='2026-09-25T07:30:00.000Z',urs=randomBytes(32),newUrs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
     const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    v2.strictInstanceReads=true
     const sourceEpochId=upgraded.successor_epoch_id
     const result=await new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt).rekey(newUrs)
     expect(result.stage).toBe('completed')
