@@ -416,13 +416,13 @@ export async function unlockActiveRootWithPassphrase(passphrase:string):Promise<
   const db=await openDatabase(),tx=db.transaction(STORES.context,'readonly'),context=await result<EpochContext|undefined>(tx.objectStore(STORES.context).get(ACTIVE_CONTEXT));await complete(tx);if(!context)throw new Error('No active epoch exists.');const{wrap,stored}=await readEpochRecords(db,context);if(wrap.mode!=='passphrase')throw new Error('Active root wrap is not passphrase mode.');const rootKey=await openPassphraseRootWrap(wrap,passphrase),salt=await deriveEpochSalt(fromBase64Url(context.diaryId),fromBase64Url(context.epochId));await verifyStateTag(rootKey,salt,stored.state,stored.tag);unlockFactors.set(context.diaryId,{mode:'passphrase',passphrase});unlockedRoots.set(context.epochId,new Uint8Array(rootKey));readyPromise=null
 }
 export async function unlockActiveRootWithPrf(assertedCredentialId:Uint8Array,prfOutput:Uint8Array):Promise<void>{
-  const v2=await selectedV2LocalProtection()
+  const started=v2UnlockGeneration,v2=await selectedV2LocalProtection()
   if(v2){
     const wrap=v2.prepared.wrap
     if(wrap.mode!=='prf')throw new Error('Active RootWrapV6 is not PRF mode.')
     const expectedCredential=fromBase64Url(wrap.mode_metadata.credential_id),expectedInput=fromBase64Url(wrap.mode_metadata.prf_eval_input)
     if(!sameBytes(expectedCredential,assertedCredentialId))throw new Error('PRF credential ID does not match active RootWrapV6.')
-    const started=v2UnlockGeneration,rootKey=await openPrfRootWrapV6(wrap,assertedCredentialId,prfOutput)
+    const rootKey=await openPrfRootWrapV6(wrap,assertedCredentialId,prfOutput)
     await verifySelectedV2Root(v2,rootKey)
     if(started!==v2UnlockGeneration){rootKey.fill(0);throw new LocalUnlockRequiredError('prf')}
     const material:PrfWrapEnrollmentMaterial={credentialId:new Uint8Array(assertedCredentialId),prfEvalInput:expectedInput,prfOutput:new Uint8Array(prfOutput),rpId:wrap.mode_metadata.rp_id}
