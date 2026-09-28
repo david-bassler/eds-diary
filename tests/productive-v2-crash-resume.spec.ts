@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { MultiDeviceHarness, type ProductiveRecoveryRekeySeed, type ProductiveV1CrashSeed, type VirtualDevice } from './support/multiDeviceHarness'
 import { runPersistentCrashScenario } from './support/persistentCrashRunner'
+import { runWithDurableProgress } from './support/durableProgressWatch'
 
 async function runResumeStep<T>(point: string, step: string, work: () => Promise<T>, timeoutMs = 60_000): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -75,6 +76,7 @@ for (const crashPoint of RECOVERY_REKEY_POINTS) {
   try {
     await runPersistentCrashScenario({
       points: [crashPoint] as const,
+      stageTimeoutMs: { resume: 540_000 },
       prepare: async () => {
         device = await harness.device(`recovery-rekey-crash-${index}`)
         index += 1
@@ -101,7 +103,23 @@ for (const crashPoint of RECOVERY_REKEY_POINTS) {
         await runResumeStep(crashPoint, 'verify-maintenance-ui', () => expect(device!.page.getByText('Recovery-Key-Wechsel ist noch nicht abgeschlossen. Normale Einträge bleiben gesperrt.')).toBeVisible({ timeout: 60_000 }), 75_000)
         let stage: string
         try {
-          stage = await runResumeStep(crashPoint, 'resume-phase-b', () => harness.runProductiveRecoveryRekey(device!, seed!), 180_000)
+          stage = await runResumeStep(crashPoint, 'resume-phase-b', () => runWithDurableProgress(
+            () => harness.runProductiveRecoveryRekey(device!, seed!),
+            {
+              label: `recovery-rekey point=${crashPoint} phase-b`,
+              observeStages: async () => {
+                const stages = await harness.productiveRotationStages(device!)
+                // This fixture starts from one completed profile upgrade. A second
+                // fresh native rotation during the same resume is a regression,
+                // not progress that may extend the deadline.
+                if (stages.length > 2) throw new Error('Recovery-Rekey generated multiple native rotation operations.')
+                return stages
+              },
+              pollIntervalMs: 5_000,
+              idleTimeoutMs: 120_000,
+              totalTimeoutMs: 420_000,
+            },
+          ), 450_000)
         } catch (error) {
           const rotationStages = await harness.productiveRotationStages(device!)
           throw new Error(`${error instanceof Error ? error.message : String(error)} rotationStages=${rotationStages.join(',')}`, { cause: error })
