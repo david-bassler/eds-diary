@@ -1,4 +1,7 @@
+export type PersistentCrashStage = 'prepare' | 'crash' | 'restart' | 'unlock' | 'resume' | 'verify'
+
 export interface PersistentCrashScenario<Point extends string> {
+  readonly stageTimeoutMs?: Partial<Record<PersistentCrashStage, number>>
   readonly points: readonly Point[]
   prepare(point: Point): Promise<void>
   crash(point: Point): Promise<void>
@@ -16,13 +19,15 @@ export interface PersistentCrashScenario<Point extends string> {
 export async function runPersistentCrashScenario<Point extends string>(
   scenario: PersistentCrashScenario<Point>,
 ): Promise<void> {
-  const runStage = async (point: Point, stage: string, work: () => Promise<void>): Promise<void> => {
+  const runStage = async (point: Point, stage: PersistentCrashStage, work: () => Promise<void>): Promise<void> => {
+    const budget = scenario.stageTimeoutMs?.[stage] ?? 240_000
+    if (!Number.isFinite(budget) || budget <= 0) throw new Error(`Invalid persistent crash stage budget: ${stage}.`)
     let timer: ReturnType<typeof setTimeout> | undefined
     try {
       await Promise.race([
         work(),
         new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(new Error(`Persistent crash stage timed out: point=${point} stage=${stage}`)), 240_000)
+          timer = setTimeout(() => reject(new Error(`Persistent crash stage timed out: point=${point} stage=${stage}`)), budget)
         }),
       ])
     } finally {
