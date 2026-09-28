@@ -1,13 +1,13 @@
 # Production Security Release Gates
 
-Stand: 26.09.2026
+Stand: 28.09.2026
 
 EDS Diary ist **nicht** als „production secure“ freigegeben.
 
 | Gate | Status | Freigabekriterium |
 |---|---|---|
 | Interner Single-Writer-v1-Kern | **IMPLEMENTED / INTERN VALIDATED** | Kryptographischer Kern und produktive Integrationspfade sind fail-closed implementiert und automatisiert validiert. Der v1-Cutover verlangt einen vollständig durablen Freeze-Prefix, das Announcement als einzige unmittelbare Folgerow und einen final unveränderten retired Source-Anchor vor lokalem Switch. Widersprüchliche Multi-Client-Evidenz führt zum Fail-Stop. v1 setzt weiterhin die Single-Remote-Writer-Betriebsannahme voraus und bietet kein geräteübergreifendes kryptographisches Fencing; dieses gehört zum separaten v2-Gate. |
-| Transferable Single Writer v2 | **V2-01…V2-10 INTERN IMPLEMENTIERT / GESAMTPFAD NOCH NICHT FREIGEGEBEN** | Implementiert und intern validiert sind v2 Typen/Krypto/Signaturen, kanonischer Verifier/WriterGrant-State-Machine, StateV6 + Writer-Key-Store + fail-closed Write-Gate, ManifestV6/Google-v2/RecoveryArtifactV6/SyncBackupV6, produktiver v1→v2-Profile-Upgrade, kryptographischer read-only Join, produktiver crash-resumabler Cooperative Handoff, Recovery-Key-autorisierter Forced Takeover einschließlich stale-pending quarantine/Pending-Rekey-maintenance-only-Fence, native v2→v2 Rotation und vollständige zweiphasige Recovery-Rekey-Orchestrierung sowie das normale App-/Settings-/Fachmaterialisierungs-Wiring. V2-Domainwrites laufen über fresh `canonical_full` + WriterAuthority, Offline-Lesen nutzt ausschließlich ein HMAC-authentifiziertes accepted encrypted Read-Model, read-only/Pending-Rekey/stale quarantine sind produktiv sichtbar und lokale Passphrase/PRF/Lock-Semantik schützt den ausgewählten RootWrapV6 fail-closed einschließlich retained-v1-source catch-up. Abgedeckt sind bounded Unknown-Outcome resume, Supersession, same-epoch Recovery-Backup und der Ersatzgerätepfad Join → Forced Takeover → Pending-Rekey-Adoption → Phase-B-Rotation. Intern offen bleibt vor allem das Live-Google-Parallel-Append-Gate; externe Deployment-/Authenticator-/Audit-Gates bleiben separat. Ein generischer Browser-`CryptoKey` allein beweist nicht die Einzigartigkeit eines physischen Geräts. |
+| Transferable Single Writer v2 | **V2-01…V2-10 INTERN IMPLEMENTIERT / GESAMTPFAD NOCH NICHT FREIGEGEBEN** | Implementiert und intern validiert sind v2 Typen/Krypto/Signaturen, kanonischer Verifier/WriterGrant-State-Machine, StateV6 + Writer-Key-Store + fail-closed Write-Gate, ManifestV6/Google-v2/RecoveryArtifactV6/SyncBackupV6, produktiver v1→v2-Profile-Upgrade, kryptographischer read-only Join, produktiver crash-resumabler Cooperative Handoff, Recovery-Key-autorisierter Forced Takeover einschließlich stale-pending quarantine/Pending-Rekey-maintenance-only-Fence, native v2→v2 Rotation und vollständige zweiphasige Recovery-Rekey-Orchestrierung sowie das normale App-/Settings-/Fachmaterialisierungs-Wiring. V2-Domainwrites laufen über fresh `canonical_full` + WriterAuthority, Offline-Lesen nutzt ausschließlich ein HMAC-authentifiziertes accepted encrypted Read-Model, read-only/Pending-Rekey/stale quarantine sind produktiv sichtbar und lokale Passphrase/PRF/Lock-Semantik schützt den ausgewählten RootWrapV6 fail-closed einschließlich retained-v1-source catch-up. Abgedeckt sind bounded Unknown-Outcome resume, Supersession, same-epoch Recovery-Backup und der Ersatzgerätepfad Join → Forced Takeover → Pending-Rekey-Adoption → Phase-B-Rotation. Die vollständige Browser-/End-to-End-Assurance ist weiterhin unvollständig: die offenen internen Pakete und ihre Evidenz stehen im verbindlichen 25er-Ledger unter `docs/security/V2_E2E_ASSURANCE_PLAN.md`. Das Live-Google-Parallel-Append-Gate ist eine gesonderte externe Providerprüfung; Deployment-/Authenticator-/Audit-Gates bleiben ebenfalls extern. Ein generischer Browser-`CryptoKey` allein beweist nicht die Einzigartigkeit eines physischen Geräts. |
 | Google Auth-Origin | Implementiert / Deployment **BLOCKED_EXTERNAL** | Separat baubares `/google-auth/`-Artefakt mit erlaubtem Return-Origin, einmaliger Action-Bindung, Popup→Auth-Bridge-Handoff, MessagePort-RPC und exakt begrenzten Drive-/Sheets-Endpunkten. Das Credential wird nicht an Diary-Code übergeben. Die GitHub-Pages-Testbereitstellung bleibt same-origin; Deployment auf einen zweiten Origin und echte Credentials bleiben extern. |
 | Live Google Contract | **BLOCKED_EXTERNAL** | Hostile-Grid-/Permission-/Unknown-Outcome-Suite gegen dediziertes Google-Testkonto. Zusätzlich ist der reale Mehrgerätefall ausdrücklich kein v1-Join-Pfad: ein zweites Gerät darf ein bestehendes Tagebuch erst mit v2 Join/Handoff verwenden; erneutes v1-`remote_enablement` ist dafür kein unterstützter Ersatz. |
 | WebAuthn PRF | **BLOCKED_EXTERNAL** | Der interne Browser-Adapter erzwingt `userVerification:"required"`, exakte Credential-ID und eine 32-Byte-Post-Enrollment-PRF-Assertion; vor Produktionsfreigabe bleibt die reale Authenticator-/Browsermatrix einschließlich Enrollment-, Unlock- und Recovery-Ceremony auf Zielgeräten zu validieren. |
@@ -176,68 +176,108 @@ EDS Diary ist **nicht** als „production secure“ freigegeben.
 
 ## V2 END-TO-END ASSURANCE GATES
 
-Der detaillierte, verbindliche Arbeitsplan fuer die noch fehlende erfolgreiche
-Browser-/Mehrgeraete-End-to-End-Evidenz steht in
-`docs/security/V2_E2E_ASSURANCE_PLAN.md`. Die vorhandene konfigurierte
-Playwright-Matrix ist notwendige Regressionsevidenz, schliesst fuer sich allein
-aber keines der dort definierten GATE-E2E-01...09. `GATE-E2E-10` ist auf L3
-fuer den kontrollierten Auth-Provider geschlossen: der produktive
-Browser-Einstieg durchlaeuft Popup, Bridge-Iframe, beide MessageChannels,
-Identitaetsbestaetigung und den ersten allowlisted RPC. Die Regressionen pruefen
-ausserdem endliche Fehlergrenzen, Origin-/Action-Bindung,
-Credential-Isolation und Disconnect-Revocation. Dieser Nachweis ersetzt weder
-den echten Google-Contract noch das Separate-Origin-Deployment-Gate; Mock-/
-Simulator-Evidenz darf keine Live-Google-, Separate-Origin-, Real-WebAuthn-
-oder External-Audit-Gates schliessen.
+Verbindliche Gate-/Paket-DoDs: `docs/security/V2_E2E_ASSURANCE_PLAN.md`
+(§§10–15, 19–21, 25–27, 31 und 33a). Ein grüner Playwright-Gesamtlauf
+allein schließt kein Gate ohne die jeweils erforderlichen konkreten
+Assertions, Fault Points und Sicherheitsgrenzen.
 
-`GATE-E2E-01` ist auf L3 fuer den kontrollierten Provider geschlossen. Der
-Browserpfad belegt ManifestV6/Genesis, RecoveryArtifactV6,
-RootWrapV6/StateV6, die validierte native-v2-Auswahlgrenze, frische kanonische
-Writer-Autorisierung, durable Domain-Writes ueber Reload hinweg und den
-verifizierten read-only Join. Diese Evidenz schliesst weder Live-Google noch
-die nachfolgenden Handoff-/Crash-/Tamper-/Scanner-Gates.
+**Aktueller integrierter kontrollierter L3-Nachweis:** Der Code-Head
+`d1bb713469688fef410fbe4bfd2e82e575294684` von PR #65 bestand
+[Security Validation #1022](https://github.com/david-bassler/eds-diary/actions/runs/36451675685).
+Alle fünf CI-Jobs waren grün: 284/284 Full-Unit-Tests, 84/84
+Security-Unit-Tests, 30/30 Named Security E2E, konfigurierte Browser-Shards
+(82 bestanden + 4 übersprungen in Chromium, 86 bestanden in Mobile-Chrome),
+2/2 Seeded-Generative-Tests sowie TypeScript, Dependency Audit, Build, Lint,
+Storybook und Whitespace. Der `npm run test:release`-Entrypoint wurde nicht
+als einzelner zusammengefasster Befehl ausgeführt; seine Bestandteile wurden
+auf demselben Code-Head unabhängig erfolgreich ausgeführt. Dokumentations-
+Follow-up-Commits benötigen ihren eigenen CI-Check; diese Evidenz ist nicht
+automatisch Evidenz für einen späteren SHA.
 
-`GATE-E2E-02` ist auf L3 fuer den kontrollierten Provider geschlossen. Zwei
-isolierte Browserprofile durchlaufen TransferDescriptor-PoP, den exakt
-persistierten und kanonisch akzeptierten g+1-WriterGrant, Source-Demotion und
-frische Target-Adoption. Reload erhaelt die Rollen; A kann nicht mehr schreiben,
-B schreibt generation-2-autorisiert weiter. Die breitere Stale-Writer-Matrix
-und das Live-Google-Gate bleiben separat offen.
+`GATE-E2E-01` ist für den kontrollierten Provider auf produktiver
+Anwendungs-/Servicegrenze **L3 geschlossen**. Der Browser startet mit lokalem
+v1, nutzt das normale authentifizierte v1-Remote-Enablement und anschließend
+den produktiven v1→v2-Upgrade-Service statt test-erzeugter nativer
+V2-Genesis-/Manifest-/WriterGrant-/RootWrap-Artefakte. Normale Domain-Writes,
+kanonische Readbacks, Reload/Unlock und der geprüfte read-only Join auf einem
+zweiten Browserprofil bestehen. Die ausdrücklich geforderte
+**UI-gesteuerte** v1→v2-Migration bleibt als separater `GATE-E2E-05` offen.
 
-`GATE-E2E-03` ist fuer den kontrollierten Provider geschlossen. Der produktive
-Browserpfad belegt Recovery-Key-autorisierten Forced Takeover auf einem
-isolierten Ersatzgeraet, kanonische g+1-Annahme, Fence des verlorenen Writers
-und den nachfolgenden Write des neuen Writers. Die produktive
-Pending-Rekey-/maintenance-only-/Phase-B-Kette ist durch die crash- und
-verlustorientierte Service-Integrationsmatrix belegt; Live-Google und echter
-Prozess-/Hardwareverlust bleiben offen.
+`GATE-E2E-02` ist für den kontrollierten Provider auf L3 geschlossen.
+Zwei isolierte Browserprofile durchlaufen TransferDescriptor-PoP,
+kanonisch akzeptierten g+1-WriterGrant, Source-Demotion und Target-Adoption;
+A ist nach Reload read-only, B schreibt Writer-authorisiert weiter.
+Live Google bleibt separat offen.
 
-`GATE-E2E-04` ist auf der produktiven Servicegrenze geschlossen. Die
-Recovery-Rekey-Matrix belegt R1→R2, persistente Fault Points, exakten
-Artifact-Readback, Pending-Rekey, Source-Backup, Phase-B-Rotation,
-Supersession und Ersatzgeraete-Fortsetzung. Dieser Nachweis ersetzt weder das
-Live-Google-Gate noch eine reale Browser-/OS-Absturzmatrix.
+`GATE-E2E-03` ist als **vollständige kombinierte Browserkette OPEN**.
+Produktiver Forced Takeover auf dem Ersatzgerät, Fence des verlorenen Writers
+und dessen neuer Writer-Write sind browserseitig bewiesen. Die separaten
+Recovery-Rekey-Crash-Tests beweisen nun die nach Reload sichtbare durable
+Pending-Rekey-Maintenance und den Normal-Write-Fence vor Phase B. Die
+zusammenhängende Browsersequenz Forced Takeover -> RecoveryAuthorityTransition
+-> Pending-Rekey -> Phase B -> neue normale Writer-Epoche mit kanonischer
+Verifikation nach jedem persistierten Schritt ist noch nachzuweisen.
+Service-/L2-Evidenz allein schließt diesen L3-Gesamtgate nicht.
 
-`GATE-E2E-07` ist auf der produktiven Service-/Simulatorgrenze geschlossen.
-Request-not-received, Commit-mit-verlorener-Response, intervenierender Append,
-wiederholter Timeout und Retry nach neu aufgebautem Service werden durch
-frischen Readback mit exakt persistierten Bytes reconciled; kein Pfad erzeugt
-blind eine neue semantische Control-Operation. Reale Google-Unsicherheit bleibt
-Teil von `GATE-LIVE-01/02`.
+`GATE-E2E-04` ist für die **beiden derzeit implementierten
+Recovery-Rekey-Crash-Zeitpunkte L3-validiert, als vollständige §13-Matrix
+weiter OPEN**. Nach `after-transition-durable` und `before-phase-b`
+bestehen Browser-Reload, Re-Auth, sichtbarer UI-Unlock, Pending-Rekey-
+Schreibsperre und Settings-Maintenance, Wiederaufnahme einschließlich
+Source Backup/Phase B, canonical_full, aktive WriterAuthority und ein
+anschließender produktiver durabler Write (Security Validation #1022 in
+Chromium und Mobile-Chrome). Produktive L2-Regressionen decken darüber
+hinaus R1→R2, Artefakt-/Backup-Verifikation und R1-Negativfälle ab.
+Alle §13-persistierten Fault Points und die vollständigen expliziten
+Browser-R1/R2-/Semantik-Assertions stehen noch aus.
 
-`GATE-E2E-08` ist fuer kontrollierte Remote-Bytes geschlossen. Browserseitige
-produktive Refreshes verwerfen Loeschung/Truncation, Umordnung, fremde Rows,
-Ciphertext-Aenderung und alte Prefix-Replays vor Materialisierung oder
-Authority-Nutzung. Byte-identische physische Retries bleiben spezifikationsgemaess
-zulaessig, werden aber semantisch nur einmal angewandt. Struktur-, Kontext-,
-Signatur- und Bindungsmanipulationen deckt die fokussierte Protokollmatrix ab;
-Hostile-Grid-Verhalten bei Google bleibt Live-Gate.
+`GATE-E2E-05` bleibt **OPEN**: Produktiver v1→v2-Service-Upgrade und
+Reload/Write/Join sind durch kontrolliertes Browser-L3 belegt, aber die
+explizite Migration über die V2-UI samt vollständiger §22-Assertions fehlt.
 
-`GATE-E2E-09` ist fuer den kontrollierten Browserpfad geschlossen. Eindeutige
-Fach- und Credential-Sentinels werden nach Authentifizierung, durablem Write,
-Reload und erneutem Write in DOM, allen IndexedDB-Objektwerten, Web Storage
-und Cache Storage gesucht und nicht gefunden. Opaque Browser-/OS-Speicher,
-Produktionslogs und Source Maps bleiben Bestandteil der externen Gates.
+`GATE-E2E-06` bleibt **OPEN**: Ein wiederverwendbarer
+`runPersistentCrashScenario` führt benannte unabhängige Browser-Fault-
+Lifecycles für Profile Upgrade, Recovery-Rekey, Handoff, Forced Takeover und
+Join erfolgreich aus. Weitere zulässige persistierte Punkte sowie normale
+V2-Rotation und Backup Restore fehlen im vollständigen §14-Sieben-Ceremony-
+Matrixnachweis. IA-104/IA-106 sind als engere Harness-Defekte geschlossen,
+nicht als Erklärung, dass alle Crash-Gates schon vollständig wären.
+
+`GATE-E2E-07` besitzt validierte L2-/L3-**Teilnachweise**, bleibt als
+vollständige §15-Browsermatrix **OPEN**. Der produktive Browser-Providerpfad
+beweist no-commit, committed-response-lost, physische Duplikate, verzögerte
+Antworten und intervenierende Duplikate mit frischem Readback, kanonischem
+Zustand und finalem Reload/Unlock. Spezifische konkurrierende Remote-Writes,
+erneut unaufgelöste Timeouts und Restart direkt an der unbekannten
+Append-Grenze sind noch separat browserseitig nachzuweisen.
+
+`GATE-E2E-08` ist für kontrollierte Remote-Bytes geschlossen. Produktive
+Browser-Refreshes verwerfen Löschung/Truncation, Umordnung, fremde Rows,
+Ciphertext-Änderung und alte Prefix-Replays vor Materialisierung und
+Authority-Nutzung. Byte-identische physische Retries bleiben
+spezifikationsgemäß zulässig, werden aber semantisch nur einmal angewandt.
+Hostile-Grid-Verhalten bei echtem Google ist ein getrenntes Live-Gate.
+
+`GATE-E2E-09` bleibt **OPEN**. Fach- und Credential-Sentinels werden in
+DOM, IndexedDB-Objektwerten, Web Storage und Cache Storage geprüft; bisherige
+kontrollierte Assertions sind grün. Der Golden Path wertet jedoch die
+instrumentierbaren Diary-origin Requests, Logs und Fehlermeldungen noch nicht
+vollständig gegen diese Sentinels aus. Produktionslogs/Source Maps und
+opaque OS-Speicher sind zusätzliche externe Prüfungen, kein Grund, die
+intern instrumentierbaren Kanäle zu überspringen.
+
+`GATE-E2E-10` ist auf L3 für den kontrollierten Auth-Provider
+geschlossen: der produktive Browser-Einstieg durchläuft Popup,
+Bridge-Iframe, beide MessageChannels, Identitätsbestätigung und den ersten
+allowlisted RPC. Regressionen prüfen endliche Fehlergrenzen,
+Origin-/Action-Bindung, Credential-Isolation und Disconnect-Revocation.
+Die historische Ursache des realen Google-Handoffs ist dadurch nicht
+bewiesen; Live Google und getrenntes HTTPS-Auth-Origin-Deployment bleiben
+extern.
+
+**Produktionsfreigabe bleibt ausgeschlossen.** Ein bestandener simulierter
+Browser-/CI-Lauf ersetzt weder Live-Google-Verhalten, Deployment-/CSP-/
+Auth-Origin-Prüfungen, echte WebAuthn-Geräte noch unabhängigen Audit.
 
 ## BLOCKED_EXTERNAL / PRODUCTION RELEASE GATES
 
