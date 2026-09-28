@@ -659,17 +659,17 @@ export class ProductiveNativeRotationV2Service implements ProfileUpgradeOrchestr
     return{backupId:created.backup.backup_id}
   }
 
-  private async successorAtStagingOrConfirmation():Promise<{verified:VerifiedRemoteState;result:CanonicalFullResultV2;confirmationCount:number;activationAnchor:CanonicalFullResultV2['remote_anchor']|null}>{
+  private async successorAtStagingOrConfirmation():Promise<{verified:VerifiedRemoteState;result:CanonicalFullResultV2;confirmationCount:number;activationAnchor:CanonicalFullResultV2['remote_anchor']|null;readTransport:GoogleSheetsTransferableSingleWriterV2Transport;remoteId:string}>{
     const operation=await this.load(),ctx=await this.successorContext()
     if(!operation.successor_staging_anchor||!operation.confirmation_envelope)throw new Error('Native v2 cutover evidence is incomplete.')
     const snapshot=await ctx.transport.read(ctx.remoteId),prefix=snapshot.rows.slice(0,operation.successor_staging_anchor.covered_row_count)
     if(!same(await createAnchorV2(ctx.plan.diary_id,ctx.plan.successor_epoch_id,prefix),operation.successor_staging_anchor))throw new Error('Native v2 Successor staging prefix changed.')
     const suffix=snapshot.rows.slice(operation.successor_staging_anchor.covered_row_count),expected:Row=[operation.confirmation_envelope.envelope_id,operation.confirmation_envelope.iv,operation.confirmation_envelope.ciphertext]
-    if(!suffix.length){const verified=await ctx.codec.verifyRemote(snapshot);return{verified,result:canonical(verified),confirmationCount:0,activationAnchor:null}}
+    if(!suffix.length){const verified=await ctx.codec.verifyRemote(snapshot);return{verified,result:canonical(verified),confirmationCount:0,activationAnchor:null,readTransport:ctx.transport,remoteId:ctx.remoteId}}
     if(!same(suffix[0],expected))throw new NativeRotationCutoverRaceError('successor_cutover_race')
     let count=0;while(count<suffix.length&&same(suffix[count],expected))count+=1
     const verified=await ctx.codec.verifyRemote(snapshot)
-    return{verified,result:canonical(verified),confirmationCount:count,activationAnchor:await createAnchorV2(ctx.plan.diary_id,ctx.plan.successor_epoch_id,snapshot.rows.slice(0,operation.successor_staging_anchor.covered_row_count+count))}
+    return{verified,result:canonical(verified),confirmationCount:count,activationAnchor:await createAnchorV2(ctx.plan.diary_id,ctx.plan.successor_epoch_id,snapshot.rows.slice(0,operation.successor_staging_anchor.covered_row_count+count)),readTransport:ctx.transport,remoteId:ctx.remoteId}
   }
 
   async publishOrReconcileAnnouncement(state:RotationOperationStateV2):Promise<{kind:'durable'}|{kind:'unknown'}|{kind:'stale'}|{kind:'source_race'}>{
@@ -732,8 +732,9 @@ export class ProductiveNativeRotationV2Service implements ProfileUpgradeOrchestr
           return{kind:'durable',activationAnchor:successor.activationAnchor!}
         }
         if(!same(successor.result.remote_anchor,operation.successor_staging_anchor))return{kind:'cutover_race'}
-        const ctx=await this.successorContext()
-        return{kind:'ready',transport:ctx.transport,remoteId:ctx.remoteId}
+        // transportForEpoch() creates a new strict transport per call. Append
+        // must use the exact instance that read and verified this snapshot.
+        return{kind:'ready',transport:successor.readTransport,remoteId:successor.remoteId}
       }catch(error){
         if(error instanceof NativeRotationCutoverRaceError)return{kind:'cutover_race'}
         throw error
