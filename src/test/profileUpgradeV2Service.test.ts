@@ -16,6 +16,7 @@ import {
   enrollActivePassphraseRootWrap,
   enrollActivePrfRootWrap,
   localRootWrapStatus,
+  openSuccessorRootWrapV6WithActiveMode,
   lockActiveRoot,
   unlockActiveRootWithPassphrase,
   unlockActiveRootWithPrf,
@@ -1771,6 +1772,17 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     expect(v2Wrap.wrap.mode).toBe('passphrase')
     expect(v2Wrap.bestEffortWrappingKey).toBeNull()
 
+    const firstOpened=await openSuccessorRootWrapV6WithActiveMode(v2Wrap)
+    const expectedRoot=new Uint8Array(firstOpened)
+    firstOpened.fill(0)
+    // A cache hit must return an independent copy, not a writable alias of the
+    // retained root material.
+    expect(await openSuccessorRootWrapV6WithActiveMode(v2Wrap)).toEqual(expectedRoot)
+    const originalIv=v2Wrap.wrap.wrap_iv
+    const tamperedWrap={...v2Wrap,wrap:{...v2Wrap.wrap,wrap_iv:`${originalIv[0]==='A'?'B':'A'}${originalIv.slice(1)}`}}
+    await expect(openSuccessorRootWrapV6WithActiveMode(tamperedWrap)).rejects.toThrow()
+    expect(await openSuccessorRootWrapV6WithActiveMode(v2Wrap)).toEqual(expectedRoot)
+
     const db=await __localDatabaseTesting.openDatabase(),contextTx=db.transaction(__localDatabaseTesting.STORES.context,'readonly')
     const contextRequest=contextTx.objectStore(__localDatabaseTesting.STORES.context).get('active')
     const context=await new Promise<{epochId:string}>((resolve,reject)=>{contextRequest.onsuccess=()=>resolve(contextRequest.result as {epochId:string});contextRequest.onerror=()=>reject(contextRequest.error)})
@@ -1785,6 +1797,19 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     await expect(unlockActiveRootWithPassphrase('wrong-passphrase')).rejects.toThrow()
     await unlockActiveRootWithPassphrase('v2-local-passphrase')
     expect(await localRootWrapStatus()).toMatchObject({mode:'passphrase',locked:false})
+    expect(await openSuccessorRootWrapV6WithActiveMode(v2Wrap)).toEqual(expectedRoot)
+
+    // Unlock refresh clears the in-memory cache. A lock while opening the
+    // formerly valid wrap must win and cannot recreate the cached capability.
+    await unlockActiveRootWithPassphrase('v2-local-passphrase')
+    const pendingOpen=openSuccessorRootWrapV6WithActiveMode(v2Wrap)
+    const pendingOutcome=pendingOpen.then(()=>'opened',error=>error)
+    await lockActiveRoot()
+    const outcome=await pendingOutcome
+    expect(outcome).toBeInstanceOf(Error)
+    expect((outcome as Error).message).toMatch(/passphrase unlock/)
+    await expect(openSuccessorRootWrapV6WithActiveMode(v2Wrap)).rejects.toThrow(/passphrase unlock/)
+    expect(await localRootWrapStatus()).toMatchObject({mode:'passphrase',locked:true})
   },120_000)
 
   it('routes WebAuthn-PRF protection and unlock to the active v2 RootWrapV6',async()=>{
