@@ -154,6 +154,82 @@ for (const crashPoint of RECOVERY_REKEY_POINTS) {
   })
 }
 
+const NORMAL_ROTATION_POINTS = ['after-source-freeze', 'after-confirmation-append'] as const
+for (const crashPoint of NORMAL_ROTATION_POINTS) {
+  test(`restarts, unlocks and resumes productive normal native V2 Rotation at ${crashPoint}`, async ({ browser }) => {
+    test.setTimeout(900_000)
+    const harness = new MultiDeviceHarness(browser)
+    const device = await harness.device(`normal-native-rotation-${crashPoint}`)
+    let lifecycle: Awaited<ReturnType<MultiDeviceHarness['establishProductiveV2']>> | null = null
+    let persistedOperationId: string | null = null
+    let successorEpochId: string | null = null
+    try {
+      await runPersistentCrashScenario({
+        points: [crashPoint] as const,
+        stageTimeoutMs: { resume: 540_000 },
+        prepare: async () => {
+          await device.page.goto('/')
+          await harness.authenticate(device, `native_rotation_prepare_${crashPoint.replaceAll('-', '_')}_0001`)
+          lifecycle = await harness.establishProductiveV2(device)
+          expect(await harness.productiveNormalRotationIds(device)).toEqual([])
+          expect(await harness.readProductivePain(device)).toBe(lifecycle.painCount)
+        },
+        crash: async (point) => {
+          await expect(harness.runProductiveNormalV2Rotation(device, lifecycle!.recoveryKey, point))
+            .rejects.toThrow(`persistent-crash:${point}`)
+          const operations = await harness.productiveNormalRotationIds(device)
+          expect(operations).toHaveLength(1)
+          persistedOperationId = operations[0]!
+        },
+        restart: async () => harness.reloadLockedProductiveV2(
+          device, `native_rotation_restart_${crashPoint.replaceAll('-', '_')}_0001`,
+        ),
+        unlock: async () => harness.unlockProductiveRootThroughUi(device, lifecycle!.passphrase),
+        resume: async () => {
+          const result = await runWithDurableProgress(
+            () => harness.runProductiveNormalV2Rotation(device, lifecycle!.recoveryKey),
+            {
+              label: `normal-rotation point=${crashPoint}`,
+              observeStages: async () => {
+                const stages = await harness.productiveRotationStages(device)
+                if (stages.length > 2) throw new Error('Normal native Rotation generated duplicate persisted operations.')
+                return stages
+              },
+              pollIntervalMs: 5_000,
+              idleTimeoutMs: 120_000,
+              totalTimeoutMs: 420_000,
+            },
+          )
+          expect(result.stage).toBe('switched')
+          successorEpochId = result.successorEpochId
+          await harness.restoreProductiveRuntimeAfterCeremony(device, lifecycle!.passphrase)
+        },
+        verify: async () => {
+          // The resumed ceremony must keep the exact original operation ID,
+          // preserve existing encrypted domain data and select a fresh epoch.
+          expect(await harness.productiveNormalRotationIds(device)).toEqual([persistedOperationId])
+          const selection = await device.page.evaluate(async () =>
+            (await import('/src/data/localDatabase.ts')).activeProtocolSelectionV2())
+          expect(selection?.epoch_id).toBe(successorEpochId)
+          expect(selection?.epoch_id).not.toBe(lifecycle!.epochId)
+          expect(await harness.verifyProductiveV2Remote(device))
+            .toMatchObject({ kind: 'canonical_full', writerStatus: 'writer_active' })
+          expect(await harness.readProductivePain(device)).toBe(lifecycle!.painCount)
+          const before = await harness.verifyProductiveV2Remote(device)
+          expect(await harness.writeProductivePain(device, 'normal-native-rotation-after-resume'))
+            .toMatchObject({ writerStatus: 'writer_active', painCount: lifecycle!.painCount + 1 })
+          expect((await harness.verifyProductiveV2Remote(device)).coveredRowCount)
+            .toBeGreaterThan(before.coveredRowCount)
+        },
+        finish: async () => {},
+        verifyFinished: async () => {},
+      })
+    } finally {
+      await harness.close()
+    }
+  })
+}
+
 const HANDOFF_POINTS = ['after-prepared', 'after-append-attempt'] as const
 for (const crashPoint of HANDOFF_POINTS) {
   test(`restarts, unlocks and resumes productive Writer Handoff at ${crashPoint}`, async ({ browser }) => {
