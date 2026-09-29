@@ -114,6 +114,13 @@ test('rejects BackupV6 import into an unrelated active diary without persisting 
     const targetRemoteBefore = harness.snapshotRemoteProtocolRows(targetLifecycle.remoteId)
     const sourceRemoteBefore = harness.snapshotRemoteProtocolRows(sourceLifecycle.remoteId)
 
+    // Even a valid backup of the *same active epoch* must not plant a
+    // restore owner: it is a Writer profile, not an offline restore resume.
+    await expect(harness.runProductiveBackupRestore(source, backup, sourceLifecycle.recoveryKey))
+      .rejects.toThrow(/local bundle does not match the verified backup/i)
+    await expect(harness.productiveBackupRestoreCheckpointChain(source, backup, sourceLifecycle.recoveryKey))
+      .rejects.toThrow(/plan is missing/i)
+
     await expect(harness.runProductiveBackupRestore(target, backup, sourceLifecycle.recoveryKey))
       .rejects.toThrow(/fresh browser profile|already-selected restore operation/i)
     await expect(harness.productiveBackupRestoreCheckpointChain(target, backup, sourceLifecycle.recoveryKey))
