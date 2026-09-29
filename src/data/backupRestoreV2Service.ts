@@ -132,6 +132,17 @@ export class ProductiveBackupRestoreV2Service {
       manifest_fingerprint:payload.manifest_fingerprint,
       activation_state:verified.activation_state,
     }
+    // A rejected import into a different active diary must not leave behind
+    // a MAC-bound restore owner or checkpoint. Perform the same fresh-profile
+    // gate used by Join before any restore-operation persistence; an existing
+    // exact offline-restored StateV6 is handled below for idempotent resume.
+    const resumed=await this.store.stateRecordExists(payload.epoch_id)
+    if(!resumed){
+      if(await activeProtocolSelectionV2()){
+        throw new Error('Backup Restore requires a fresh browser profile or the exact already-selected restore operation.')
+      }
+      await assertReadOnlyJoinLocalProfileIsFresh()
+    }
     const planHash=await this.verifyPlan(plan,rootKey,epochSalt)
     let checkpointHash=await this.checkpoint(plan,planHash,'verified',null,rootKey,epochSalt)
     await this.fault?.('after-verified')
@@ -146,11 +157,7 @@ export class ProductiveBackupRestoreV2Service {
       throw new Error('Backup Restore persisted RecoveryArtifactV6 hash mismatch.')
     }
 
-    const resumed=await this.store.stateRecordExists(payload.epoch_id)
     if(!resumed){
-      const selected=await activeProtocolSelectionV2()
-      if(selected)throw new Error('Backup Restore requires a fresh browser profile or the exact already-selected restore operation.')
-      await assertReadOnlyJoinLocalProfileIsFresh()
       const writer=await generateWriterDeviceKeyV2(),writerDeviceId=base64Url(randomBytes(16))
       const storedWriter:StoredWriterDeviceKeyV2={
         writer_signing_key_id:writer.writerKeyId,
