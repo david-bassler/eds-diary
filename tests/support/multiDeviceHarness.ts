@@ -87,11 +87,28 @@ export class MultiDeviceHarness {
     const page = await context.newPage()
     const securityTelemetry: SecurityTelemetryEntry[] = []
     const instrumentPage = (instrumentedPage: Page): void => {
-      instrumentedPage.on('console', (message) => securityTelemetry.push({ location: 'console', value: message.text() }))
-      instrumentedPage.on('pageerror', (error) => securityTelemetry.push({ location: 'page-error', value: error.message }))
+      // Simulated Auth-Origin is hosted at /google-auth/ under localhost.
+      // It is a separate credential trust boundary despite the test host.
+      // Scan only the actual Diary page and Diary-owned request initiators.
+      if (instrumentedPage !== page) return
+      instrumentedPage.on('console', (message) => {
+        const source = message.location().url
+        if (source && new URL(source, instrumentedPage.url()).pathname.startsWith('/google-auth/')) return
+        securityTelemetry.push({ location: 'console', value: message.text() })
+      })
+      instrumentedPage.on('pageerror', (error) => {
+        securityTelemetry.push({ location: 'page-error', value: error.message })
+      })
       instrumentedPage.on('request', (request) => {
-        const url = new URL(request.url())
-        if (url.hostname !== '127.0.0.1' && url.hostname !== 'localhost') return
+        const target = new URL(request.url())
+        const diary = new URL(page.url())
+        if (target.origin !== diary.origin || target.pathname.startsWith('/google-auth/')) return
+        try {
+          if (new URL(request.frame().url()).pathname.startsWith('/google-auth/')) return
+        } catch {
+          // Worker/navigation requests with no accessible frame still have to
+          // pass the exact Diary-origin/path check above.
+        }
         securityTelemetry.push({ location: 'request-url', value: request.url() })
         securityTelemetry.push({ location: 'request-headers', value: JSON.stringify(request.headers()) })
         const body = request.postData()
@@ -125,54 +142,6 @@ export class MultiDeviceHarness {
     const remote = this.remotes.get(remoteId)
     if (!remote?.protocolRows) throw new Error('V2 protocol remote is unavailable.')
     remote.protocolRows = rows.map((row) => [...row])
-  }
-
-  async scanBrowserPersistence(device: VirtualDevice, sentinels: readonly string[]): Promise<readonly string[]> {
-    return device.page.evaluate(async ({ needles }) => {
-      const hits: string[] = []
-      const inspect = (location: string, value: unknown) => {
-        let encoded: string
-        try { encoded = typeof value === 'string' ? value : JSON.stringify(value) }
-        catch { encoded = String(value) }
-        for (const needle of needles) if (encoded.includes(needle)) hits.push(`${location}:${needle}`)
-      }
-      inspect('dom', document.documentElement.textContent ?? '')
-      for (const [name, storage] of [['localStorage', localStorage], ['sessionStorage', sessionStorage]] as const) {
-        for (let index = 0; index < storage.length; index += 1) {
-          const key = storage.key(index)
-          if (key !== null) inspect(`${name}:${key}`, storage.getItem(key))
-        }
-      }
-      const databases = await indexedDB.databases()
-      for (const info of databases) {
-        if (!info.name) continue
-        const database = await new Promise<IDBDatabase>((resolve, reject) => {
-          const request = indexedDB.open(info.name!)
-          request.onsuccess = () => resolve(request.result)
-          request.onerror = () => reject(request.error)
-        })
-        const stores = [...database.objectStoreNames]
-        if (stores.length) {
-          const transaction = database.transaction(stores, 'readonly')
-          await Promise.all(stores.map((storeName) => new Promise<void>((resolve, reject) => {
-            const request = transaction.objectStore(storeName).getAll()
-            request.onsuccess = () => { inspect(`indexedDB:${info.name}:${storeName}`, request.result); resolve() }
-            request.onerror = () => reject(request.error)
-          })))
-        }
-        database.close()
-      }
-      if ('caches' in window) {
-        for (const cacheName of await caches.keys()) {
-          const cache = await caches.open(cacheName)
-          for (const request of await cache.keys()) {
-            inspect(`cache:${cacheName}:request`, request.url)
-            inspect(`cache:${cacheName}:response`, await (await cache.match(request))?.text())
-          }
-        }
-      }
-      return hits
-    }, { needles: [...sentinels] })
   }
 
   async authenticate(device: VirtualDevice, actionId: string): Promise<void> {
@@ -250,7 +219,9 @@ export class MultiDeviceHarness {
         let encoded: string
         try { encoded = typeof value === 'string' ? value : JSON.stringify(value) }
         catch { encoded = String(value) }
-        for (const needle of needles) if (encoded.includes(needle)) hits.push(`${location}:${needle}`)
+        needles.forEach((needle, index) => {
+          if (needle.length && encoded.includes(needle)) hits.push(`${location}:sentinel-${index}`)
+        })
       }
       inspect('dom', document.documentElement.textContent ?? '')
       for (const [name, storage] of [['localStorage', localStorage], ['sessionStorage', sessionStorage]] as const) {
@@ -289,9 +260,8 @@ export class MultiDeviceHarness {
       }
       return hits
     }, { needles: [...sentinels] })
-    const telemetryHits = device.securityTelemetry.flatMap((entry) => sentinels
-      .filter((sentinel) => entry.value.includes(sentinel))
-      .map((sentinel) => `${entry.location}:${sentinel}`))
+    const telemetryHits = device.securityTelemetry.flatMap((entry) => sentinels.flatMap((sentinel, index) =>
+      sentinel.length && entry.value.includes(sentinel) ? [`${entry.location}:sentinel-${index}`] : []))
     return [...persistenceHits, ...telemetryHits]
   }
 
