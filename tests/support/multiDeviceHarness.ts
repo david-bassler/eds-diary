@@ -585,6 +585,32 @@ export class MultiDeviceHarness {
     }, { value: backup, encodedRecoveryKey: recoveryKey })
   }
 
+  async verifyRestoredRecoveryArtifact(
+    device: VirtualDevice,
+    backup: unknown,
+    recoveryKey: string,
+  ): Promise<boolean> {
+    return device.page.evaluate(async ({ value, encodedRecoveryKey }) => {
+      const [bytes, persistence, recovery] = await Promise.all([
+        import('/src/security/crypto/bytes.ts'),
+        import('/src/security/v2/localPersistence.ts'),
+        import('/src/security/v2/recovery.ts'),
+      ])
+      const artifact = (value as { recovery_artifact?: unknown }).recovery_artifact as
+        | { recovery_artifact_id?: unknown }
+        | undefined
+      if (!artifact || typeof artifact.recovery_artifact_id !== 'string') throw new Error('BackupV6 RecoveryArtifactV6 is missing.')
+      const opened = await recovery.openRecoveryArtifactV6(artifact as never, bytes.fromBase64Url(encodedRecoveryKey))
+      const stored = await new persistence.IndexedDbV2LocalSecurityStore().loadPersistedRecoveryArtifactV6(
+        bytes.fromBase64Url(encodedRecoveryKey),
+        opened.payload.diary_id,
+        opened.payload.epoch_id,
+        artifact.recovery_artifact_id,
+      )
+      return stored.artifactSha256 === await recovery.recoveryArtifactHashV6(artifact as never)
+    }, { value: backup, encodedRecoveryKey: recoveryKey })
+  }
+
   async tamperBackupRestoreOwnerArtifact(device: VirtualDevice): Promise<void> {
     await device.page.evaluate(async () => {
       const { __v2LocalPersistenceTesting } = await import('/src/security/v2/localPersistence.ts')
