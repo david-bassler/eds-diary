@@ -76,7 +76,11 @@ import { TransferableSingleWriterV2WriteAuthority } from '../security/v2/writeAu
 import { clearAuthenticatedRemoteSession, continuePendingRecoveryRekeyV2, createWriterTransferDescriptorV2, forceTakeoverV2, installAuthenticatedRemoteSession, joinExistingV2Diary, remoteSessionStatus } from '../data/initializeDataLayer'
 import { __v2ApplicationRuntimeTesting } from '../data/v2ApplicationRuntime'
 import { createPainEntry, listPainEntries } from '../features/pain/painRepository'
-import { createPassphraseRootWrapV6 } from '../security/v2/rootWrap'
+import {
+  createPassphraseRootWrapV6,
+  resetRootWrapCryptographicOpenCountForTesting,
+  rootWrapCryptographicOpenCountForTesting,
+} from '../security/v2/rootWrap'
 
 type Row=readonly[string,string,string]
 
@@ -1205,6 +1209,7 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
     await enrollActivePassphraseRootWrap('native-rotation-cache-regression')
     __localDatabaseTesting.resetV2CryptographicRootOpenCount()
+    resetRootWrapCryptographicOpenCountForTesting()
     v2.strictInstanceReads=true
     const sourceEpochId=upgraded.successor_epoch_id
     const result=await new ProductiveNativeRotationV2Service(v2,urs,new IndexedDbV2LocalSecurityStore(),()=>createdAt).rotate('normal')
@@ -1223,6 +1228,10 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     expect(__localDatabaseTesting.v2CryptographicRootOpenCount()).toBe(2)
     expect(__localDatabaseTesting.v2CryptographicRootOpenCount(sourceEpochId)).toBe(1)
     expect(__localDatabaseTesting.v2CryptographicRootOpenCount(result.successor_epoch_id)).toBe(1)
+    // Direct native Source/Successor readback attempts also reach the primitive.
+    expect(rootWrapCryptographicOpenCountForTesting(sourceEpochId)).toBeGreaterThanOrEqual(2)
+    expect(rootWrapCryptographicOpenCountForTesting(result.successor_epoch_id)).toBeGreaterThanOrEqual(2)
+    const primitiveOpensAfterRotation=rootWrapCryptographicOpenCountForTesting()
     // Explicitly exercise both root contexts again after the normal rotation.
     // Each authenticated epoch should retain its independent cached key.
     const cachedSource=await new IndexedDbV2LocalSecurityStore().loadRootWrapV6(sourceEpochId)
@@ -1232,6 +1241,7 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     openedSource.fill(0)
     openedSuccessor.fill(0)
     expect(__localDatabaseTesting.v2CryptographicRootOpenCount()).toBe(2)
+    expect(rootWrapCryptographicOpenCountForTesting()).toBe(primitiveOpensAfterRotation)
 
     const successorArtifact=await v2.loadRecoveryArtifact(urs,source.diaryId,result.successor_epoch_id)
     const successorRecovered=await openRecoveryArtifactV6(successorArtifact,urs)
@@ -1275,6 +1285,7 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
     await enrollActivePassphraseRootWrap('recovery-rekey-phase-b-cache-regression')
     __localDatabaseTesting.resetV2CryptographicRootOpenCount()
+    resetRootWrapCryptographicOpenCountForTesting()
     v2.strictInstanceReads=true
     const sourceEpochId=upgraded.successor_epoch_id
     const result=await new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt).rekey(newUrs)
@@ -1291,6 +1302,8 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     expect(__localDatabaseTesting.v2CryptographicRootOpenCount(sourceEpochId)).toBe(1)
     expect(__localDatabaseTesting.v2CryptographicRootOpenCount(result.successorEpochId!)).toBe(1)
     expect(__localDatabaseTesting.v2CryptographicRootOpenCount()).toBe(2)
+    expect(rootWrapCryptographicOpenCountForTesting(sourceEpochId)).toBeGreaterThanOrEqual(2)
+    expect(rootWrapCryptographicOpenCountForTesting(result.successorEpochId!)).toBeGreaterThanOrEqual(2)
 
     const successorArtifact=await v2.loadRecoveryArtifact(newUrs,source.diaryId,result.successorEpochId!)
     const successorRecovered=await openRecoveryArtifactV6(successorArtifact,newUrs)
