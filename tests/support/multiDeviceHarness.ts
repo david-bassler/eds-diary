@@ -119,7 +119,7 @@ export class MultiDeviceHarness {
         // The request *initiator*, not its destination, defines the Diary
         // trust boundary. In particular, a Diary fetch to an external host
         // must not escape credential/plaintext sentinel inspection.
-        let initiatedByDiary = false
+        let initiatedByDiary: boolean
         try {
           const initiator = new URL(request.frame().url())
           initiatedByDiary = initiator.origin === diary.origin
