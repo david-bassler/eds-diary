@@ -267,38 +267,70 @@ export class MultiDeviceHarness {
           if (needle.length && encoded.includes(needle)) hits.push(`${location}:sentinel-${index}`)
         })
       }
-      inspect('dom', document.documentElement.textContent ?? '')
+
+      inspect('dom:text', document.documentElement.textContent ?? '')
+      inspect('dom:markup', document.documentElement.outerHTML)
+      // The current .value of a form field is not necessarily reflected in
+      // its HTML attribute or textContent after the user types.
+      for (const [index, field] of [...document.querySelectorAll('input,textarea,select')].entries()) {
+        if (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement || field instanceof HTMLSelectElement) {
+          inspect(`dom:form-${index}`, field.value)
+        }
+      }
+
       for (const [name, storage] of [['localStorage', localStorage], ['sessionStorage', sessionStorage]] as const) {
         for (let index = 0; index < storage.length; index += 1) {
           const key = storage.key(index)
-          if (key !== null) inspect(`${name}:${key}`, storage.getItem(key))
+          if (key !== null) {
+            // Never include attacker-controlled storage identifiers in hits:
+            // the diagnostic location is a stable, non-sensitive ordinal.
+            inspect(`${name}:key-${index}`, key)
+            inspect(`${name}:value-${index}`, storage.getItem(key))
+          }
         }
       }
+
       const databases = await indexedDB.databases()
-      for (const info of databases) {
+      for (const [databaseIndex, info] of databases.entries()) {
         if (!info.name) continue
+        inspect(`indexedDB:database-${databaseIndex}:name`, info.name)
         const database = await new Promise<IDBDatabase>((resolve, reject) => {
           const request = indexedDB.open(info.name!)
           request.onsuccess = () => resolve(request.result)
           request.onerror = () => reject(request.error)
         })
-        const stores = [...database.objectStoreNames]
-        if (stores.length) {
-          const transaction = database.transaction(stores, 'readonly')
-          await Promise.all(stores.map((storeName) => new Promise<void>((resolve, reject) => {
-            const request = transaction.objectStore(storeName).getAll()
-            request.onsuccess = () => { inspect(`indexedDB:${info.name}:${storeName}`, request.result); resolve() }
-            request.onerror = () => reject(request.error)
-          })))
+        try {
+          const stores = [...database.objectStoreNames]
+          if (stores.length) {
+            const transaction = database.transaction(stores, 'readonly')
+            await Promise.all(stores.flatMap((storeName, storeIndex) => {
+              const location = `indexedDB:database-${databaseIndex}:store-${storeIndex}`
+              inspect(`${location}:name`, storeName)
+              const store = transaction.objectStore(storeName)
+              const read = <T>(request: IDBRequest<T>, kind: string) => new Promise<void>((resolve, reject) => {
+                request.onsuccess = () => { inspect(`${location}:${kind}`, request.result); resolve() }
+                request.onerror = () => reject(request.error)
+              })
+              return [read(store.getAll(), 'values'), read(store.getAllKeys(), 'keys')]
+            }))
+          }
+        } finally {
+          database.close()
         }
-        database.close()
       }
+
       if ('caches' in window) {
-        for (const cacheName of await caches.keys()) {
+        for (const [cacheIndex, cacheName] of (await caches.keys()).entries()) {
+          const location = `cache:cache-${cacheIndex}`
+          inspect(`${location}:name`, cacheName)
           const cache = await caches.open(cacheName)
-          for (const request of await cache.keys()) {
-            inspect(`cache:${cacheName}:request`, request.url)
-            inspect(`cache:${cacheName}:response`, await (await cache.match(request))?.text())
+          for (const [requestIndex, request] of (await cache.keys()).entries()) {
+            const item = `${location}:item-${requestIndex}`
+            inspect(`${item}:request`, request.url)
+            inspect(`${item}:request-headers`, [...request.headers])
+            const response = await cache.match(request)
+            inspect(`${item}:response`, await response?.text())
+            if (response) inspect(`${item}:response-headers`, [...response.headers])
           }
         }
       }
