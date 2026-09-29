@@ -948,12 +948,19 @@ remote rows. Previously passing unmodified four-point exact crash/resume
 remains mandatory. This is a rollback/evidence boundary, not a claim that
 IndexedDB protects against deletion of an entire browser profile.
 
-The IA-112 counter remains intentionally scoped to the cache-bearing
-`openSuccessorRootWrapV6WithActiveMode()` path. Native rotation separately
-uses direct Source/Successor cryptographic readbacks, so per-epoch cache-open
-counts do not establish the **total** rotation Argon2id call count. The PR #67
-regression comments explicitly distinguish those properties. The unresolved
-historical PR #66 review must not be treated as proof of full KDF attribution.
+The existing IA-112 **cache** counter remains scoped to the cache-bearing
+`openSuccessorRootWrapV6WithActiveMode()` path. Native rotation also invokes
+direct cryptographic Source/Successor readbacks. PR #67 now adds a separate
+test-mode primitive-level RootWrap opener counter, instrumenting passphrase,
+PRF and best-effort openers so those direct attempts are observable alongside
+cache-miss opens. Normal native rotation and mandatory Recovery-Rekey Phase B
+assert that Source and Successor each perform direct plus cache-path opens;
+repeated cache hits must not increment either counter. RootWrap *creation*
+derivations are separate from cryptographic opening and are not included in
+this primitive-open counter, so neither diagnostic claims an exact total
+Argon2id derivation count for all of native rotation. Production mode records
+no diagnostic counts. The #66 historical review applies to its own unchanged
+HEAD; the complete follow-up requires a green current #67 HEAD before closure.
 
 **Validation boundary:** These additional changes are not closed by historical
 CI #1072 or earlier runs. #13/GATE-E2E-06 remains IN_PROGRESS until the exact
