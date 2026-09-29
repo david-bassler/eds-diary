@@ -22,7 +22,7 @@ import {
   type EpochLocalSecurityStateV6,
   type StoredWriterDeviceKeyV2,
 } from '../security/v2/localState'
-import { openRecoveryArtifactV6 } from '../security/v2/recovery'
+import { openRecoveryArtifactV6, recoveryArtifactHashV6 } from '../security/v2/recovery'
 import { TransferableSingleWriterV2Verifier } from '../security/v2/verifier'
 import {
   activeProtocolSelectionV2,
@@ -143,7 +143,7 @@ export class ProductiveBackupRestoreV2Service {
     const persistedRecovery=await this.store.loadPersistedRecoveryArtifactV6(
       urs,payload.diary_id,payload.epoch_id,backup.recovery_artifact.recovery_artifact_id,
     )
-    if(persistedRecovery.artifactSha256!==await (await import('../security/v2/recovery')).recoveryArtifactHashV6(backup.recovery_artifact)){
+    if(persistedRecovery.artifactSha256!==await recoveryArtifactHashV6(backup.recovery_artifact)){
       throw new Error('Backup Restore persisted RecoveryArtifactV6 hash mismatch.')
     }
 
