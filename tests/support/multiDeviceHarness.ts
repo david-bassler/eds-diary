@@ -16,6 +16,7 @@ interface SecurityTelemetryEntry {
 type AppendFault =
   | { kind: 'no_commit'; note: string }
   | { kind: 'commit_response_lost'; note: string }
+  | { kind: 'commit_response_lost_then_competing_write'; note: string; afterCommit: () => Promise<void> }
   | { kind: 'duplicate'; note: string }
   | { kind: 'delay'; milliseconds: number; note: string }
   | { kind: 'intervening_duplicate'; note: string }
@@ -1103,6 +1104,15 @@ export class MultiDeviceHarness {
         if (fault?.kind === 'intervening_duplicate' && remote.protocolRows?.length) remote.protocolRows.push([...remote.protocolRows.at(-1)!])
         remote.protocolRows = [...(remote.protocolRows ?? []), row]
         if (fault?.kind === 'duplicate') remote.protocolRows.push([...row])
+        if (fault?.kind === 'commit_response_lost_then_competing_write') {
+          // The A envelope has really committed, but its response remains
+          // unresolved while B establishes new canonical Writer authority
+          // and appends its own different, valid semantic revision.
+          // The callback is harness-owned, not a fabricated remote-row edit.
+          await fault.afterCommit()
+          await route.abort('timedout')
+          return
+        }
         if (fault?.kind === 'commit_response_lost') { await route.abort('timedout'); return }
       } else { await route.fulfill({ status: 400 }); return }
       await route.fulfill({ json: {} })
