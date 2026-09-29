@@ -296,7 +296,7 @@ export async function retainVerifiedOfflineRestoreRootWrapV6Unlock(
   if(await activeProtocolSelectionV2())throw new Error('Offline Restore unlock adoption must precede first V2 selection.')
   const source=wrap.mode==='best-effort'?null:await loadEpoch(await openDatabase())
   const factor=source?unlockFactors.get(source.context.diaryId):null
-  if(source&&(!factor||factor.mode!==wrap.mode))throw new LocalUnlockRequiredError(wrap.mode)
+  if(source&&(!factor||factor.mode!==wrap.mode))throw new LocalUnlockRequiredError(wrap.mode==='prf'?'prf':'passphrase')
   const opened=await openReadOnlyJoinRootWrapV6WithActiveMode(prepared)
   const matches=sameBytes(opened,expectedRootKey)
   opened.fill(0)
