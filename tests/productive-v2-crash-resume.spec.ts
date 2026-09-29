@@ -80,6 +80,7 @@ for (const crashPoint of RECOVERY_REKEY_POINTS) {
   let device: VirtualDevice | null = null
   let lifecycle: Awaited<ReturnType<MultiDeviceHarness['establishProductiveV2']>> | null = null
   let seed: ProductiveRecoveryRekeySeed | null = null
+  let persistedRecoveryOperationId: string | null = null
   let index = 0
   try {
     await runPersistentCrashScenario({
@@ -95,7 +96,11 @@ for (const crashPoint of RECOVERY_REKEY_POINTS) {
       },
       crash: async (point) => {
         await expect(harness.runProductiveRecoveryRekey(device!, seed!, point)).rejects.toThrow(`persistent-crash:${point}`)
+        const ids = await harness.productiveRecoveryRekeyOperationIds(device!)
+        expect(ids).toHaveLength(1)
+        persistedRecoveryOperationId = ids[0]!
         await expect(harness.writeProductivePain(device!, 'pending-rekey-write-must-not-persist')).rejects.toThrow(/rekey|maintenance|authority|writer/i)
+        expect(await harness.readProductivePain(device!)).toBe(lifecycle!.painCount)
       },
       restart: async () => harness.reloadLockedProductiveV2(device!, `recovery_rekey_restart_action_${String(index).padStart(8, '0')}`),
       unlock: async () => harness.unlockProductiveRootThroughUi(device!, seed!.passphrase),
@@ -141,8 +146,16 @@ for (const crashPoint of RECOVERY_REKEY_POINTS) {
         await runResumeStep(crashPoint, 'restore-application-runtime', () => harness.restoreProductiveRuntimeAfterCeremony(device!, seed!.passphrase))
       },
       verify: async () => {
-        expect(await harness.verifyProductiveV2Remote(device!)).toMatchObject({ kind: 'canonical_full', writerStatus: 'writer_active' })
-        expect(await harness.writeProductivePain(device!, 'post-rekey-write-is-durable')).toMatchObject({ writerStatus: 'writer_active' })
+        // A resumed ceremony must retain the exact originally prepared
+        // operation and preserve all domain data until the next normal write.
+        expect(await harness.productiveRecoveryRekeyOperationIds(device!)).toEqual([persistedRecoveryOperationId])
+        const verified = await harness.verifyProductiveV2Remote(device!)
+        expect(verified).toMatchObject({ kind: 'canonical_full', writerStatus: 'writer_active' })
+        expect(await harness.readProductivePain(device!)).toBe(lifecycle!.painCount)
+        expect(await harness.writeProductivePain(device!, 'post-rekey-write-is-durable'))
+          .toMatchObject({ writerStatus: 'writer_active', painCount: lifecycle!.painCount + 1 })
+        expect((await harness.verifyProductiveV2Remote(device!)).coveredRowCount)
+          .toBeGreaterThan(verified.coveredRowCount)
         await device!.close()
       },
       finish: async () => {},
