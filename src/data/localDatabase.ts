@@ -282,6 +282,32 @@ export async function openReadOnlyJoinRootWrapV6WithActiveMode(prepared:Prepared
   return openPrfRootWrapV6(wrap,factor.credentialId,factor.prfOutput)
 }
 
+// Only the exact cryptographically verified, persisted read-only restore wrap
+// may inherit the factor already used to unlock the fresh V1 placeholder.
+// This bridges the pre-selection V1/V2 diary IDs; it never reads a factor from
+// another diary, changes a stored protection mode or grants Writer authority.
+export async function retainVerifiedOfflineRestoreRootWrapV6Unlock(
+  prepared:PreparedSuccessorRootWrapV6,
+  expectedRootKey:Uint8Array,
+):Promise<void>{
+  validateRootWrapV6(prepared.wrap)
+  if(expectedRootKey.byteLength!==32)throw new Error('Offline Restore root must contain 32 bytes.')
+  const wrap=prepared.wrap,generation=v2UnlockGeneration
+  if(await activeProtocolSelectionV2())throw new Error('Offline Restore unlock adoption must precede first V2 selection.')
+  const source=wrap.mode==='best-effort'?null:await loadEpoch(await openDatabase())
+  const factor=source?unlockFactors.get(source.context.diaryId):null
+  if(source&&(!factor||factor.mode!==wrap.mode))throw new LocalUnlockRequiredError(wrap.mode)
+  const opened=await openReadOnlyJoinRootWrapV6WithActiveMode(prepared)
+  const matches=sameBytes(opened,expectedRootKey)
+  opened.fill(0)
+  if(!matches)throw new Error('Offline Restore persisted RootWrapV6 does not open to the verified backup root.')
+  if(await activeProtocolSelectionV2())throw new Error('Offline Restore selection changed during unlock adoption.')
+  if(generation!==v2UnlockGeneration||(source&&unlockFactors.get(source.context.diaryId)!==factor)){
+    throw new LocalUnlockRequiredError(wrap.mode==='best-effort'?'passphrase':wrap.mode)
+  }
+  if(factor)unlockFactors.set(wrap.diary_id,factor)
+}
+
 export async function openSuccessorRootWrapV6WithActiveMode(prepared:PreparedSuccessorRootWrapV6):Promise<Uint8Array>{
   const wrap=prepared.wrap
   if(wrap.mode==='best-effort'){

@@ -28,6 +28,7 @@ import {
   assertReadOnlyJoinLocalProfileIsFresh,
   atomicSelectOfflineRestoreV2,
   prepareReadOnlyJoinRootWrapV6ForActiveMode,
+  retainVerifiedOfflineRestoreRootWrapV6Unlock,
 } from './localDatabase'
 
 export type BackupRestoreFaultPointV2=
@@ -273,10 +274,36 @@ export class ProductiveBackupRestoreV2Service {
     checkpointHash=await this.checkpoint(plan,planHash,'local_data_applied',checkpointHash,rootKey,epochSalt)
     await this.fault?.('after-local-data')
 
-    await atomicSelectOfflineRestoreV2({
-      operationId,diaryId:payload.diary_id,epochId:payload.epoch_id,
-      manifestFingerprint:payload.manifest_fingerprint,
-    })
+    const priorSelection=await activeProtocolSelectionV2()
+    if(priorSelection){
+      // Post-selection crash resume is authenticated by BackupV6, StateV6,
+      // exact owner/plan and checkpoint above. Do not demand a second unlock
+      // of the retired, independently locked V1 placeholder (IA-134).
+      if(priorSelection.sync_profile!=='google-sheets-transferable-single-writer-v2'
+        ||priorSelection.operation_id!==operationId
+        ||priorSelection.diary_id!==payload.diary_id
+        ||priorSelection.epoch_id!==payload.epoch_id
+        ||priorSelection.manifest_fingerprint!==payload.manifest_fingerprint){
+        throw new Error('Backup Restore cannot replace a different selected V2 operation.')
+      }
+    }else{
+      // Before the *first* selection, authenticate the persisted V2 wrap and
+      // bridge the already-unlocked V1 factor to its exact restored diary ID.
+      // This is not a Recovery-Key bypass: strong wraps must open with the
+      // existing V1 factor, and a concurrent lock cancels adoption (IA-133).
+      const prepared=await this.store.loadRootWrapV6(payload.epoch_id)
+      if(prepared.wrap.diary_id!==payload.diary_id
+        ||prepared.wrap.epoch_id!==payload.epoch_id
+        ||prepared.wrap.key_id!==payload.key_id
+        ||prepared.wrap.manifest_fingerprint!==payload.manifest_fingerprint){
+        throw new Error('Backup Restore persisted RootWrapV6 identity mismatch.')
+      }
+      await retainVerifiedOfflineRestoreRootWrapV6Unlock(prepared,rootKey)
+      await atomicSelectOfflineRestoreV2({
+        operationId,diaryId:payload.diary_id,epochId:payload.epoch_id,
+        manifestFingerprint:payload.manifest_fingerprint,
+      })
+    }
     checkpointHash=await this.checkpoint(plan,planHash,'selected',checkpointHash,rootKey,epochSalt)
     void checkpointHash
     await this.fault?.('after-selection')
