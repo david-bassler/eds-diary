@@ -516,6 +516,23 @@ export class MultiDeviceHarness {
     })
   }
 
+  async productiveRecoveryRekeyOperationIds(device: VirtualDevice): Promise<readonly string[]> {
+    return device.page.evaluate(async () => {
+      const { __v2LocalPersistenceTesting } = await import('/src/security/v2/localPersistence.ts')
+      const db = await __v2LocalPersistenceTesting.openDatabase()
+      const tx = db.transaction(__v2LocalPersistenceTesting.STORES.operationArtifacts, 'readonly')
+      const request = tx.objectStore(__v2LocalPersistenceTesting.STORES.operationArtifacts).getAll()
+      const records = await new Promise<Array<{ value?: { format?: unknown; operation_id?: unknown } }>>((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result as Array<{ value?: { format?: unknown; operation_id?: unknown } }>)
+        request.onerror = () => reject(request.error)
+      })
+      return records.filter((record) => record.value?.format === 'recovery-rekey-operation-v2').map((record) => {
+        if (typeof record.value?.operation_id !== 'string') throw new Error('Recovery-Rekey operation is missing its immutable ID.')
+        return record.value.operation_id
+      })
+    })
+  }
+
   async productiveRotationStages(device: VirtualDevice): Promise<readonly string[]> {
     return device.page.evaluate(async () => {
       const { __v2LocalPersistenceTesting } = await import('/src/security/v2/localPersistence.ts')
