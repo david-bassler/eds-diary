@@ -592,8 +592,8 @@ as integrated CI evidence. Named security E2E passed 30/30; both browser
 shards, full/security unit, generative, build/lint and Storybook passed.
 Four configured Chromium general-matrix cases were skipped; the named
 security suite has no skip. This evidence is for the controlled L3 provider,
-not Live Google/deployed origins/hardware. IA-112 still needs isolated
-performance attribution. Package #11/#13 are not DONE simply because the
+not Live Google/deployed origins/hardware. IA-112 now has deterministic
+cryptographic-open attribution (cache hits versus actual RootWrap opens) and is closed; this is call-count evidence, not a wall-clock benchmark. Package #11/#13 are not DONE simply because the
 implemented two Recovery-Rekey fault points passed. Documentation-only
 follow-up commits require their own CI-status check; the combined
 `npm run test:release` entrypoint was not separately invoked even though its

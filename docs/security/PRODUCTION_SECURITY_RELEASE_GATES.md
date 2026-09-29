@@ -292,7 +292,7 @@ Auth-Origin-Prüfungen, echte WebAuthn-Geräte noch unabhängigen Audit.
 
 `SECURITY/DECISION: single-writer-v1 production hardening rationale frozen in EDS_SINGLE_WRITER_V1_HARDENING_DECISIONS.md`
 
-`TODO_INTERNAL: transferable-single-writer-v2 end-to-end assurance — complete the ten remaining internally actionable packages in V2_E2E_ASSURANCE_PLAN.md §33a (IN_PROGRESS #2/#5/#10/#11/#12/#13/#14/#16/#19; NOT_STARTED #24) and collect the focused IA-112 performance-attribution evidence before closing that finding. The green configured PR-security CI does not close these distinct DoDs.`
+`TODO_INTERNAL: transferable-single-writer-v2 end-to-end assurance — complete the ten remaining internally actionable packages in V2_E2E_ASSURANCE_PLAN.md §33a (IN_PROGRESS #2/#5/#10/#11/#12/#13/#14/#16/#19; NOT_STARTED #24). IA-112 is closed by deterministic cryptographic-open call-count evidence; the green configured PR-security CI does not close these distinct DoDs.`
 
 `BLOCKED_EXTERNAL: Live-Google Parallel-Append-Gate requires a disposable dedicated Google test spreadsheet/account with credentials supplied outside source control. Its harness is implemented (npm run test:live-google-parallel-append); controlled-provider CI cannot satisfy the real-provider gate. Separate-origin deployment, physical WebAuthn and independent audit remain additional external gates.`
 
