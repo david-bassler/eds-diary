@@ -1203,6 +1203,8 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
   it('uses the same strict-read transport instance for productive native v2 normal rotation and carries Writer/Recovery authority',async()=>{
     const createdAt='2026-09-25T07:20:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session();v2.registerV1Epoch(source.sourceEpochId,source.transport)
     const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    await enrollActivePassphraseRootWrap('native-rotation-cache-regression')
+    __localDatabaseTesting.resetV2CryptographicRootOpenCount()
     v2.strictInstanceReads=true
     const sourceEpochId=upgraded.successor_epoch_id
     const result=await new ProductiveNativeRotationV2Service(v2,urs,new IndexedDbV2LocalSecurityStore(),()=>createdAt).rotate('normal')
@@ -1212,6 +1214,21 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     expect(result.successor_epoch_id).not.toBe(sourceEpochId)
     expect(v2.creates).toBe(2)
     expect((await activeProtocolSelectionV2())?.epoch_id).toBe(result.successor_epoch_id)
+    // Productive rotation repeatedly requests both Source and Successor roots.
+    // Each distinct authenticated passphrase wrap incurs Argon2id exactly once;
+    // subsequent accesses are ordinary in-memory cache hits.
+    expect(__localDatabaseTesting.v2CryptographicRootOpenCount()).toBe(2)
+    expect(__localDatabaseTesting.v2CryptographicRootOpenCount(sourceEpochId)).toBe(1)
+    expect(__localDatabaseTesting.v2CryptographicRootOpenCount(result.successor_epoch_id)).toBe(1)
+    // Explicitly exercise both root contexts again after the normal rotation.
+    // Each authenticated epoch should retain its independent cached key.
+    const cachedSource=await new IndexedDbV2LocalSecurityStore().loadRootWrapV6(sourceEpochId)
+    const cachedSuccessor=await new IndexedDbV2LocalSecurityStore().loadRootWrapV6(result.successor_epoch_id)
+    const openedSource=await openSuccessorRootWrapV6WithActiveMode(cachedSource)
+    const openedSuccessor=await openSuccessorRootWrapV6WithActiveMode(cachedSuccessor)
+    openedSource.fill(0)
+    openedSuccessor.fill(0)
+    expect(__localDatabaseTesting.v2CryptographicRootOpenCount()).toBe(2)
 
     const successorArtifact=await v2.loadRecoveryArtifact(urs,source.diaryId,result.successor_epoch_id)
     const successorRecovered=await openRecoveryArtifactV6(successorArtifact,urs)
@@ -1253,6 +1270,8 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
   it('uses the same strict-read transport instance during mandatory Recovery-Rekey successor rotation',async()=>{
     const createdAt='2026-09-25T07:30:00.000Z',urs=randomBytes(32),newUrs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
     const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    await enrollActivePassphraseRootWrap('recovery-rekey-phase-b-cache-regression')
+    __localDatabaseTesting.resetV2CryptographicRootOpenCount()
     v2.strictInstanceReads=true
     const sourceEpochId=upgraded.successor_epoch_id
     const result=await new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt).rekey(newUrs)
@@ -1261,6 +1280,12 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     expect(result.successorEpochId).not.toBeNull()
     expect(result.successorEpochId).not.toBe(sourceEpochId)
     expect((await activeProtocolSelectionV2())?.epoch_id).toBe(result.successorEpochId)
+
+    // This is the actual mandatory Recovery-Rekey Phase-B native rotation.
+    // Both independent passphrase wraps must be opened exactly once each.
+    expect(__localDatabaseTesting.v2CryptographicRootOpenCount(sourceEpochId)).toBe(1)
+    expect(__localDatabaseTesting.v2CryptographicRootOpenCount(result.successorEpochId!)).toBe(1)
+    expect(__localDatabaseTesting.v2CryptographicRootOpenCount()).toBe(2)
 
     const successorArtifact=await v2.loadRecoveryArtifact(newUrs,source.diaryId,result.successorEpochId!)
     const successorRecovered=await openRecoveryArtifactV6(successorArtifact,newUrs)
@@ -1797,15 +1822,19 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     expect(v2Wrap.bestEffortWrappingKey).toBeNull()
 
     const firstOpened=await openSuccessorRootWrapV6WithActiveMode(v2Wrap)
+    const opensAfterFirst=__localDatabaseTesting.v2CryptographicRootOpenCount()
     const expectedRoot=new Uint8Array(firstOpened)
     firstOpened.fill(0)
     // A cache hit must return an independent copy, not a writable alias of the
     // retained root material.
     expect(await openSuccessorRootWrapV6WithActiveMode(v2Wrap)).toEqual(expectedRoot)
+    expect(__localDatabaseTesting.v2CryptographicRootOpenCount()).toBe(opensAfterFirst)
     const originalIv=v2Wrap.wrap.wrap_iv
     const tamperedWrap={...v2Wrap,wrap:{...v2Wrap.wrap,wrap_iv:`${originalIv[0]==='A'?'B':'A'}${originalIv.slice(1)}`}}
     await expect(openSuccessorRootWrapV6WithActiveMode(tamperedWrap)).rejects.toThrow()
+    expect(__localDatabaseTesting.v2CryptographicRootOpenCount()).toBe(opensAfterFirst+1)
     expect(await openSuccessorRootWrapV6WithActiveMode(v2Wrap)).toEqual(expectedRoot)
+    expect(__localDatabaseTesting.v2CryptographicRootOpenCount()).toBe(opensAfterFirst+2)
 
     const db=await __localDatabaseTesting.openDatabase(),contextTx=db.transaction(__localDatabaseTesting.STORES.context,'readonly')
     const contextRequest=contextTx.objectStore(__localDatabaseTesting.STORES.context).get('active')
@@ -1822,6 +1851,7 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     await unlockActiveRootWithPassphrase('v2-local-passphrase')
     expect(await localRootWrapStatus()).toMatchObject({mode:'passphrase',locked:false})
     expect(await openSuccessorRootWrapV6WithActiveMode(v2Wrap)).toEqual(expectedRoot)
+    expect(__localDatabaseTesting.v2CryptographicRootOpenCount()).toBe(opensAfterFirst+3)
 
     // Unlock refresh clears the in-memory cache. A lock while opening the
     // formerly valid wrap must win and cannot recreate the cached capability.

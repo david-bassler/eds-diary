@@ -409,11 +409,12 @@ Closure scope:
   strict read/verification; fresh-per-call-transport unit regressions and
   productive browser cases pass. The transport's own strict-read guard is
   unchanged.
-- IA-112 remains **IN PROGRESS**: functional cache/tamper/lock-race
-  regressions and integrated browser completion pass, but the audit has
-  no isolated Argon2 unwrap-count/timing measurement sufficient to attribute
-  and quantify the performance improvement specifically to cache reuse.
-  Record that focused evidence before formally closing IA-112.
+- IA-112 was **IN PROGRESS at this #1022 checkpoint**: functional
+  cache/tamper/lock-race regressions and integrated browser completion
+  passed, but no isolated cryptographic-open call-count attribution had
+  yet been collected. Subsequent PR #66 tests added deterministic
+  per-operation evidence; see the IA-112 disposition and later CI runs.
+  Do not interpret the historical #1022 checkpoint as that later closure.
 
 No success above proves real Google, deployed separate Auth origin, physical
 WebAuthn or independent audit. Documentation-only commits after the tested
@@ -553,8 +554,105 @@ implementation head do not inherit a claim that their own GitHub runs passed.
 
 | IA-110 | Auth-Handoff regression conflates Popup credential transfer with Bridge confirmation | The full Chromium run failed the stalled-confirmation case. Its simulator assigned Popup and Bridge identity roles by request order even though both fetch concurrently, and its assertion expected the Popup to remain at “Identität wird gebunden …” until the Diary-side Bridge confirmed the binding. The Popup legitimately reports its local credential transfer complete before the hidden Bridge's provider confirmation; only the Diary `authenticate()` promise must remain pending. This is incorrect/nondeterministic harness evidence at the INV-02/INV-03 capability boundary, not proof of a product defect. | **Fixed after being recorded OPEN.** Intercepted identity requests are classified by the productive Auth-Origin frame URL (`mode=bridge` versus Popup), and the stalled-Bridge regression asserts that the Diary authentication capability remains pending before its finite timeout rather than imposing a false Popup lifecycle. Stalled Bridge, rejected Bridge, rejected Popup, successful UI/RPC handoff and foreign-origin sibling all pass in the six-case Chromium Auth-Handoff suite. This remains controlled L3 evidence, not historical Live-Google causality. |
 | IA-111 | Phase-B Recovery-Rekey browser deadline does not distinguish an active native rotation from a stalled resume | Security Validation #1010 fails both Recovery-Rekey browser fault points at the fixed `resume-phase-b` 180-second deadline. Chromium and mobile traces show continuing authenticated provider requests and persisted native-rotation progress (`recovery_artifact_verified` / `staged_backup_verified`) near that deadline, not evidence of a deadlocked browser. The trace does NOT establish eventual completion; a true stall, repeated operation genesis or lost forward progress must still fail. INV-06/08/09 and GATE-E2E-04/06 remain open. | **Fixed and closed.** The Recovery-Rekey browser resume now observes persisted native-rotation stage changes using a bounded watchdog, with finite idle and absolute deadlines and an explicit duplicate-rotation check. Focused unit tests cover progress, stall, deadline and productive error propagation. Both `after-transition-durable` and `before-phase-b` reach `completed`, canonical readback and a further durable productive write in Security Validation #1022's named security suite and both browser projects. Separate performance attribution remains IA-112. |
-| IA-112 | Repeated Argon2id unwrapping of the same unlocked V2 RootWrap makes productive Phase-B resume prohibitively slow | Trace request-start gaps cluster at roughly 2.7-second multiples, while `openSuccessorRootWrapV6WithActiveMode()` re-runs `openPassphraseRootWrapV6()` on every Source/Successor context read, even when the same diary is already unlocked. `ProductiveNativeRotationV2Service` repeatedly opens Source/Successor roots at each verified stage, multiplying the expensive KDF cost; the persisted stage changes in CI #1010 rule out treating the fixed 180-second expiry alone as proof of deadlock. Fresh decryption was originally defensible to minimize root residency, but the unlocked application already retains the active passphrase in memory, so repeating Argon2 on every access is not a separate same-origin security boundary. | **IN PROGRESS; implementation and integrated functional regression are green, isolated performance attribution remains unverified.** The V2 in-memory root cache is keyed by exact authenticated RootWrap bytes and current unlock-factor identity, returns clones, clears/zeroizes on lock/re-enrollment/reset and fences in-flight unlocks. Wrong-passphrase, wrap tamper, cache cloning and lock-race regressions run within the 284/284 green unit suite; both productive Recovery-Rekey fault points now complete in the green browser suites. Before closing this *performance-root-cause* finding, collect a focused per-operation Argon2 unwrap-count or controlled timing comparison; do not infer a quantified KDF speedup from #1022 alone because the strict-read fix IA-113 was also applied. |
+| IA-112 | Repeated Argon2id unwrapping of the same unlocked V2 RootWrap makes productive Phase-B resume prohibitively slow | Trace request-start gaps cluster at roughly 2.7-second multiples, while `openSuccessorRootWrapV6WithActiveMode()` re-runs `openPassphraseRootWrapV6()` on every Source/Successor context read, even when the same diary is already unlocked. `ProductiveNativeRotationV2Service` repeatedly opens Source/Successor roots at each verified stage, multiplying the expensive KDF cost; the persisted stage changes in CI #1010 rule out treating the fixed 180-second expiry alone as proof of deadlock. Fresh decryption was originally defensible to minimize root residency, but the unlocked application already retains the active passphrase in memory, so repeating Argon2 on every access is not a separate same-origin security boundary. | **Fixed and closed with isolated call-count attribution.** A test-only, non-sensitive counter increments only immediately before a real passphrase/PRF RootWrapV6 cryptographic open; cache lookups do not increment it. The productive normal native-rotation regression measures two opens and now asserts one per authenticated Source/Successor epoch; the mandatory Recovery-Rekey Phase-B regression independently asserts one per Source/Successor epoch. Both also retain the existing cache/tamper/lock-race checks. Focused siblings prove repeated same-wrap access performs no new open, a changed/tampered authenticated wrap forces an attempted open and fails closed, returning to the legitimate wrap requires a fresh open, and lock/unlock invalidation requires another open. Existing regressions retain defensive copies, exact canonical wrap-byte hash, diary/epoch identity, factor identity/PRF metadata checks, zeroization on lock/re-enrollment/reset/RootWrap replacement, and generation fencing against concurrent lock. Focused evidence: `npx vitest run src/test/profileUpgradeV2Service.test.ts -t "uses the same strict-read transport instance for productive native v2 normal rotation" --reporter=dot` (1 passed) and `npx vitest run src/test/profileUpgradeV2Service.test.ts -t "routes passphrase protection" --reporter=dot` (1 passed). The counter deliberately does not measure wall-clock speed, browser scheduling, or Argon2 implementation internals; it attributes elimination of repeated KDF invocations without logging factors, roots, or intermediates. Security Validation #1027 was green for the initial counter implementation at `594b4cd9…`; per-epoch/Phase-B enhancements on the subsequent head require their own green integrated CI. A counted opening is evidence that the call site invokes the actual cryptographic opener, not a wall-clock benchmark or proof that every possible RootWrap call site is instrumented. |
 | IA-113 | Recovery-Rekey Phase-B confirmation appends through an unread transport instance | Security Validation previous run for PR #65 shows both Recovery-Rekey crash points fail at `ProductiveNativeRotationV2Service.publishOrReconcileConfirmation()` with `TransportError: A strict read is required before append.` The real authenticated `transportForEpoch()` creates a fresh strict transport on every call. `successorAtStagingOrConfirmation()` performs the strict read on instance A, but `publishOrReconcileConfirmation.inspect()` obtains instance B via a fresh `successorContext()` and returns B for append. Memory-backed unit sessions returned the same transport object and did not reproduce the instance-freshness invariant. INV-03/07/08, strict-provider mutation fence and GATE-E2E-04/06 apply. | **Fixed and closed.** `successorAtStagingOrConfirmation()` returns the exact transport/remote ID that performed strict remote read and verifier checks, and `publishOrReconcileConfirmation()` appends on that same object instead of calling `transportForEpoch()` again. Both productive normal-rotation and recovery-rekey unit regressions use new per-call transport wrappers that reject an append without a strict read on that exact instance. Security Validation #1022 passes full unit/security-unit and both Recovery-Rekey browser crash points in Chromium/mobile. No per-instance strict-read, canonical prefix, unknown-outcome or authority check was relaxed. |
+| IA-114 | Browser leak scanner contains duplicate method definitions and unproven telemetry assertions | `MultiDeviceHarness` declares `scanBrowserPersistence()` twice in the same class. The later method collects request/console/page-error telemetry and returns it with storage hits; the earlier method scans storage only. Playwright transpilation executes the later member and current L3 tests can pass despite this ambiguous/inactive implementation. The harness records same-localhost Auth-Origin traffic along with Diary requests and console output, so a credential legitimately handled on the Auth side could be mislabeled as a Diary leak. There is also no positive browser regression injecting deliberate synthetic request/log/error leaks to demonstrate that every required channel is actually detected. INV-01/02 and GATE-E2E-09 are affected; this is a test-evidence defect, not proof of a product credential leak. | **IMPLEMENTED, full GitHub closure pending.** Removed the earlier duplicate scanner implementation, leaving one combined persistence/telemetry scanner; excluded popup and same-localhost Auth-Origin routes/console sources from Diary-origin evidence, while retaining the Diary request URL/header/body, console and page-error collectors. The scanner returns only location and sentinel index, not the secret/synthetic value. Golden Path assertions inspect combined storage/telemetry after authentication, durable write, reload and read-only Join. A new independent browser positive-control case injects synthetic Diary request URL/header/body, DOM, Web Storage, IndexedDB, Cache, console and page-error values and asserts each is detected while a synthetic Auth-popup log remains outside the Diary scanner. INV-01/02 are unchanged. **Do not close IA-114 or package #16 until the added browser case and the full latest-head GitHub CI are green; independently classify any test failures.** |
+| IA-115 | Generative model would blindly append an unresolved envelope after authority changed | While expanding package #19, the first Resume abstraction appended every persisted unknown-outcome envelope without checking whether its device still held fresh canonical Writer authority. That model would normalize precisely the stale retry forbidden by INV-03/05 and GATE-E2E-07, concealing rather than detecting a dangerous implementation behavior. This was a generative-evidence defect; inspection did not find the same bypass in productive write reconciliation. | **Fixed in the model with a focused sibling.** Resume now materializes an already-canonical committed envelope, appends an absent exact persisted envelope only while the device still has matching current Writer generation and no Pending-Rekey fence, and otherwise terminally rejects the stale retry. A deterministic crash -> Recovery takeover -> old-device Resume regression proves the unresolved old-Writer envelope is not appended. Both unknown-committed and unknown-not-committed exact-byte resume siblings remain green. `npm run test:security-generative` passes 6/6 locally; final-head CI remains required. |
+| IA-116 | UI migration browser test waited for a nonexistent second Popup event | The first package-#12 UI test left the harness authentication Popup open, and both productive Source and Successor providers intentionally call `window.open` with the same fixed window name. The Settings flow therefore reused/navigated that named window; waiting for a second `Page.popup` event left the real UI flow unattended until its finite authentication timeout. This was a browser-test lifecycle assumption, not a product timeout or reason to enlarge the ceremony deadline. | **Fixed in the test.** It closes the completed setup Popup before starting the UI action, captures the real Source Popup, then waits for that same named window to navigate to a different bound action before confirming Successor authentication. Both productive Auth-Origin handoffs remain exercised; no provider/session shortcut was added. Two failed runs classified the assumption; focused rerun and final-head CI remain required. |
+| IA-117 | UI migration test queried legacy v1 rotation-artifact helpers for v2 upgrade evidence | The first successful UI cutover assertion called `storedRotationArtifact()`, which reads legacy v1 generic rotation suffixes, and incorrectly expected it to expose productive Profile Upgrade v2 Recovery/Backup artifacts. The null result was a wrong-layer test assertion, not missing artifact creation. | **Fixed in the browser regression.** The test now reads the productive V2 persistence boundary and requires a stored RecoveryArtifactV6 plus both immutable `staged-backup` and `activated-backup` operation artifacts, while separately proving v1 Source retirement and active v2 selection. No product persistence format or acceptance rule changed. Focused Chromium rerun passes 1/1 in 2.6 minutes; final-head CI remains required. |
+| IA-118 | UI migration canonical assertion expected a harness-global session owned only by the React component | The productive Settings ceremony correctly installed and retained its V2 session in component/application state, but `verifyProductiveV2Remote()` is an independent harness verifier that intentionally reads `window.productiveV2Session`. The first assertion treated those distinct ownership scopes as identical and failed after successful cutover/artifact checks. This was a test wiring defect, not lost application runtime. | **Fixed without substituting for the UI ceremony.** Only after visible UI success, Source retirement, V2 selection and persisted Recovery/Backup checks, the test reconstructs the ordinary authenticated application runtime through `restoreProductiveRuntimeAfterCeremony()` for independent canonical inspection. Reload still uses visible product unlock, and the migration itself remains exclusively UI-initiated. Focused Chromium rerun passes 1/1 in 2.6 minutes; final-head CI remains required. |
+| IA-119 | Harness cleanup can obscure the primary Playwright timeout | Both failed UI-migration attempts reached the test deadline, after which Playwright had already disposed a BrowserContext. `MultiDeviceHarness.close()` then rejected on the already-closed context, adding a misleading cleanup error beside the actual authentication/test assertion failure. This weakens diagnostic attribution but does not affect product protocol state. | **Fixed.** Cleanup uses `Promise.allSettled()` so every device is attempted, ignores only Playwright's explicit already-closed/missing-context errors, and rethrows the first unexpected cleanup failure. No timeout was increased and primary test failures remain intact. Lint and a focused failing-cleanup regression review remain part of final validation. |
+| IA-120 | Unknown-outcome crash regression used a pull-only refresh to expect an outbox push | The first repeated-timeout/reload regression called `refreshProductiveV2()`, whose deliberate purpose is to install a fresh authenticated session and refresh the verified read model; installation calls `refreshVerifiedReadModel()` and does not push pending mutations. The test therefore observed no post-reload append and initially resembled a product resume defect. Network evidence showed only strict GET verification and no append attempt, classifying this as a wrong harness abstraction rather than blind-loss/product behavior. | **Fixed and locally validated.** The harness now has an explicit `synchronizeProductiveV2()` operation invoking productive `synchronizeDataLayer()` after ordinary runtime restoration. The regression retains exact encrypted-row/semantic-uniqueness assertions and passes 1/1 on Chromium in 1.7 minutes. Coordinator retry semantics and pull-only session installation were not changed; final-head CI remains required. |
+| IA-121 | Final dependency audit reports vulnerable Vitest tooling | `npm audit --audit-level=high` on the PR #66 continuation head reports Vitest 4.0.18 affected by GHSA-5xrq-8626-4rwp (critical arbitrary file read/execution when the UI server listens) and its `@vitest/mocker` by GHSA-82fw-gwwq-j7x9 (path traversal/file read). Vitest is development/test tooling rather than shipped application runtime, but CI/developer workstations and test fixtures are in scope for supply-chain assurance. Package #20 and the release dependency gate are affected. | **Fixed and closed locally.** The exact Vitest development dependency and lockfile now use 4.1.11, the first release `npm audit` identified as fixing both advisory ranges. `npm audit --audit-level=high` reports zero vulnerabilities; full unit passes 288/288, security-unit passes 84/84, generative passes 6/6, and the focused RootWrap suite passes 7/7 under Vitest 4.1.11. The initial normal npm install hit npm Arborist `edgesOut`; rerunning with `--legacy-peer-deps` completed, and a subsequent normal `npm install --package-lock-only` verified the lock graph without legacy mode. No production dependency changed. Final-head CI remains required. |
+
+### 2026-09-29 PR #66 IA-112 review corrections
+
+The prior IA-112 closure claimed one Source and one Successor open based on
+a **total** counter only. That claim was more specific than its assertion.
+The follow-up regression now records counts by epoch, checks both exact
+Source/Successor wrap identities during productive normal rotation, and
+asserts the same property in mandatory Recovery-Rekey Phase B.
+
+The test diagnostic is isolated to `import.meta.env.MODE === 'test'`:
+there is no cryptographic-open counting in production mode, and no
+passphrase, PRF output or root material is logged. The counters cover
+`openSuccessorRootWrapV6WithActiveMode()` and intentionally do not claim
+to count independent legitimate password-entry/unlock or wrap-creation
+KDF operations. The historical #1022 review remains historically
+accurate; #1027 validates the preceding IA-112 counter commit. The
+new per-epoch/Phase-B assertions need a separate successful final-head
+CI run. INV-01/07/10 are unchanged.
+
+### 2026-09-29 PR #66 assurance continuation: IA-114 and combined replacement-device lifecycle
+
+Following the IA-112 counter review, inspection of the productive browser
+harness exposed two class members named `scanBrowserPersistence`. The
+later implementation happened to override the first during browser test
+transpilation; this obscured what was being asserted and was not a valid
+basis for claiming a complete scanner. IA-114 was recorded OPEN before
+changing the harness. The corrective change unifies persistent storage,
+Diary-origin request URL/headers/body and Diary-owned console/error
+inspection, with redacted positive-control findings. The Auth-side
+credential boundary is deliberately excluded in the same-localhost test
+deployment. The new browser case injects synthetic values into each
+instrumentable surface instead of treating a green negative scan as proof
+that the scanner can detect a leak.
+
+A distinct browser test now composes replacement Device B's productive
+Forced Takeover of lost Writer A, a subsequent RecoveryAuthorityTransition
+to a new Recovery key, durable Pending-Rekey normal-write fencing,
+reload/UI unlock, visible maintenance state, mandatory Phase-B completion,
+canonical Writer verification and a further productive write. It is
+additional combined-flow evidence for package #10; its passing status
+must be established on the final implementation HEAD before changing
+the package or release-gate status.
+
+Both additions still require full integrated validation. The
+previously green #1027 run validates only the initial IA-112
+instrumentation head `594b4cd9…`, not these later changes.
+
+### 2026-09-29 sustained PR #66 continuation
+
+Focused Chromium validation now passes the unified leak scanner and its full
+productive Golden Path (2/2), the complete UI migration case (1/1), and the
+extended continuous replacement-device lifecycle including R1/R2 (1/1). The latter was adversarially extended so a fresh device
+using superseded R1 must fail Join while a separately authenticated device using
+R2 completes productive read-only Join and sees the post-rotation domain write.
+This distinguishes recovery authorization from resuming the already-persisted
+operation. Final-head CI is still required before IA-114 or packages #10/#16
+can close.
+
+The Recovery-Rekey browser matrix now names all seven service persistence/fault
+boundaries instead of only the two post-transition cases. Pre-transition cases
+skip the Pending-Rekey UI assertion because the RecoveryAuthorityTransition is
+not canonical yet; they do not skip the local mutation fence, restart, unlock,
+exact operation resume, bounded native-rotation progress, canonical verification
+or post-resume durable write. Post-transition cases retain visible maintenance
+UI evidence. The expanded cases remain IN PROGRESS until focused and integrated
+validation completes. Normal native Rotation and Backup Restore remain separate
+package #13 gaps.
+
+### Auth-Handoff repository boundary reclassification
+
+A fresh review found no remaining repository-controlled experiment that can
+attribute IA-089's historical real-Google failure to the now-covered simulated
+causes. Packages #2/#5 are therefore BLOCKED, not DONE: closure requires a
+disposable live provider account (#21) and production-equivalent separately
+deployed Diary/Auth origins (#22), followed by redacted stage-level before/after
+evidence. All simulated positive, timeout, rejection, origin and Popup/Bridge
+siblings remain internal regression requirements. This reclassification does
+not claim a historical cause and does not close either external gate.
+
+### Unknown-outcome crash-boundary extension
+
+The browser provider matrix now includes repeated unresolved no-commit failures,
+retains the exact locally persisted encrypted envelope across reload/auth/unlock,
+and requires reconciliation to append those bytes once before materializing the
+domain revision. It then verifies canonical Writer state and a fresh durable
+write. The helper exposes encrypted protocol row bytes only; it does not log
+health plaintext or credentials. Focused Chromium execution passes 1/1 in 1.7 minutes; final-head CI remains
+pending. A competing valid Remote-Write/stale-authority browser sibling is still
+required before package #14 can close.
 
 ## Reviewed points that are not findings
 

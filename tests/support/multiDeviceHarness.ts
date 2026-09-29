@@ -48,6 +48,16 @@ export interface V2ResumeSummary { writerStatus: string; painRevisionCount: numb
 export interface V2JoinSummary extends V2ResumeSummary { writerDeviceId: string; joined: boolean; repositoryPainCount: number; writeRejected: boolean }
 export interface V2HandoffSummary { stage: string; writerStatus: string; writerGeneration: number | null; remoteRows: number }
 export interface V2TakeoverSummary extends V2HandoffSummary { maintenanceOnly: boolean }
+export interface ProductiveV2LifecycleSummary {
+  diaryId:string
+  epochId:string
+  remoteId:string
+  recoveryKey:string
+  passphrase:string
+  writerStatus:string
+  painCount:number
+  coveredRowCount:number
+}
 
 const TEST_CREDENTIAL = 'multi-device-oauth-sentinel'
 const TEST_PERMISSION_ID = 'multi-device-provider-account'
@@ -87,11 +97,32 @@ export class MultiDeviceHarness {
     const page = await context.newPage()
     const securityTelemetry: SecurityTelemetryEntry[] = []
     const instrumentPage = (instrumentedPage: Page): void => {
-      instrumentedPage.on('console', (message) => securityTelemetry.push({ location: 'console', value: message.text() }))
-      instrumentedPage.on('pageerror', (error) => securityTelemetry.push({ location: 'page-error', value: error.message }))
+      // Simulated Auth-Origin is hosted at /google-auth/ under localhost.
+      // It is a separate credential trust boundary despite the test host.
+      // Scan only the actual Diary page and Diary-owned request initiators.
+      if (instrumentedPage !== page) return
+      instrumentedPage.on('console', (message) => {
+        const source = message.location().url
+        if (source && /^(?:\/google-auth\/|\/src\/auth\/)/u.test(new URL(source, instrumentedPage.url()).pathname)) return
+        securityTelemetry.push({ location: 'console', value: message.text() })
+      })
+      instrumentedPage.on('pageerror', (error) => {
+        // Playwright reports subframe exceptions on their owning Page. Exclude
+        // errors provably originating in the simulated Auth-Origin iframe;
+        // conservatively scan errors whose origin cannot be established.
+        if (/(?:\/google-auth\/|\/src\/auth\/)/u.test(error.stack ?? '')) return
+        securityTelemetry.push({ location: 'page-error', value: error.message })
+      })
       instrumentedPage.on('request', (request) => {
-        const url = new URL(request.url())
-        if (url.hostname !== '127.0.0.1' && url.hostname !== 'localhost') return
+        const target = new URL(request.url())
+        const diary = new URL(page.url())
+        if (target.origin !== diary.origin || target.pathname.startsWith('/google-auth/')) return
+        try {
+          if (new URL(request.frame().url()).pathname.startsWith('/google-auth/')) return
+        } catch {
+          // Worker/navigation requests with no accessible frame still have to
+          // pass the exact Diary-origin/path check above.
+        }
         securityTelemetry.push({ location: 'request-url', value: request.url() })
         securityTelemetry.push({ location: 'request-headers', value: JSON.stringify(request.headers()) })
         const body = request.postData()
@@ -125,54 +156,6 @@ export class MultiDeviceHarness {
     const remote = this.remotes.get(remoteId)
     if (!remote?.protocolRows) throw new Error('V2 protocol remote is unavailable.')
     remote.protocolRows = rows.map((row) => [...row])
-  }
-
-  async scanBrowserPersistence(device: VirtualDevice, sentinels: readonly string[]): Promise<readonly string[]> {
-    return device.page.evaluate(async ({ needles }) => {
-      const hits: string[] = []
-      const inspect = (location: string, value: unknown) => {
-        let encoded: string
-        try { encoded = typeof value === 'string' ? value : JSON.stringify(value) }
-        catch { encoded = String(value) }
-        for (const needle of needles) if (encoded.includes(needle)) hits.push(`${location}:${needle}`)
-      }
-      inspect('dom', document.documentElement.textContent ?? '')
-      for (const [name, storage] of [['localStorage', localStorage], ['sessionStorage', sessionStorage]] as const) {
-        for (let index = 0; index < storage.length; index += 1) {
-          const key = storage.key(index)
-          if (key !== null) inspect(`${name}:${key}`, storage.getItem(key))
-        }
-      }
-      const databases = await indexedDB.databases()
-      for (const info of databases) {
-        if (!info.name) continue
-        const database = await new Promise<IDBDatabase>((resolve, reject) => {
-          const request = indexedDB.open(info.name!)
-          request.onsuccess = () => resolve(request.result)
-          request.onerror = () => reject(request.error)
-        })
-        const stores = [...database.objectStoreNames]
-        if (stores.length) {
-          const transaction = database.transaction(stores, 'readonly')
-          await Promise.all(stores.map((storeName) => new Promise<void>((resolve, reject) => {
-            const request = transaction.objectStore(storeName).getAll()
-            request.onsuccess = () => { inspect(`indexedDB:${info.name}:${storeName}`, request.result); resolve() }
-            request.onerror = () => reject(request.error)
-          })))
-        }
-        database.close()
-      }
-      if ('caches' in window) {
-        for (const cacheName of await caches.keys()) {
-          const cache = await caches.open(cacheName)
-          for (const request of await cache.keys()) {
-            inspect(`cache:${cacheName}:request`, request.url)
-            inspect(`cache:${cacheName}:response`, await (await cache.match(request))?.text())
-          }
-        }
-      }
-      return hits
-    }, { needles: [...sentinels] })
   }
 
   async authenticate(device: VirtualDevice, actionId: string): Promise<void> {
@@ -242,6 +225,25 @@ export class MultiDeviceHarness {
   }
 
   enqueueProviderAppendFault(fault: AppendFault): void { this.appendFaults.push(fault) }
+  clearProviderAppendFaults():void{this.appendFaults.length=0}
+
+  async pendingProductiveEnvelopeRow(device:VirtualDevice):Promise<{envelopeId:string;row:string[]}>{
+    return device.page.evaluate(async()=>{
+      const [localDatabase,persistence,envelopes]=await Promise.all([
+        import('/src/data/localDatabase.ts'),import('/src/security/v2/localPersistence.ts'),import('/src/security/v2/envelopes.ts'),
+      ])
+      const selection=await localDatabase.activeProtocolSelectionV2()
+      if(!selection)throw new Error('Pending-envelope inspection requires active v2 selection.')
+      const db=await persistence.__v2LocalPersistenceTesting.openDatabase(),stores=persistence.__v2LocalPersistenceTesting.STORES
+      const tx=db.transaction([stores.outbox,stores.envelopes],'readonly'),outboxRequest=tx.objectStore(stores.outbox).index('byEpoch').getAll(selection.epoch_id)
+      const read=<T,>(request:IDBRequest<T>)=>new Promise<T>((resolve,reject)=>{request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error)})
+      const outbox=await read<Array<{envelope_id:string;status:string}>>(outboxRequest),pending=outbox.findLast(entry=>entry.status!=='durable')
+      if(!pending)throw new Error('Expected one unresolved productive envelope.')
+      const stored=await read<{envelopeId:string;iv:string;ciphertext:string;bytesHash:string}|undefined>(tx.objectStore(stores.envelopes).get(`${selection.epoch_id}:${pending.envelope_id}`))
+      if(!stored)throw new Error('Pending productive envelope bytes are missing.')
+      return{envelopeId:pending.envelope_id,row:[...envelopes.envelopeRowV2(stored)]}
+    })
+  }
 
   async scanBrowserPersistence(device: VirtualDevice, sentinels: readonly string[]): Promise<readonly string[]> {
     const persistenceHits = await device.page.evaluate(async ({ needles }) => {
@@ -250,7 +252,9 @@ export class MultiDeviceHarness {
         let encoded: string
         try { encoded = typeof value === 'string' ? value : JSON.stringify(value) }
         catch { encoded = String(value) }
-        for (const needle of needles) if (encoded.includes(needle)) hits.push(`${location}:${needle}`)
+        needles.forEach((needle, index) => {
+          if (needle.length && encoded.includes(needle)) hits.push(`${location}:sentinel-${index}`)
+        })
       }
       inspect('dom', document.documentElement.textContent ?? '')
       for (const [name, storage] of [['localStorage', localStorage], ['sessionStorage', sessionStorage]] as const) {
@@ -289,9 +293,8 @@ export class MultiDeviceHarness {
       }
       return hits
     }, { needles: [...sentinels] })
-    const telemetryHits = device.securityTelemetry.flatMap((entry) => sentinels
-      .filter((sentinel) => entry.value.includes(sentinel))
-      .map((sentinel) => `${entry.location}:${sentinel}`))
+    const telemetryHits = device.securityTelemetry.flatMap((entry) => sentinels.flatMap((sentinel, index) =>
+      sentinel.length && entry.value.includes(sentinel) ? [`${entry.location}:sentinel-${index}`] : []))
     return [...persistenceHits, ...telemetryHits]
   }
 
@@ -576,7 +579,7 @@ export class MultiDeviceHarness {
     }, { expected: lifecycle })
   }
 
-  async joinAndUnlockProductiveV2(device: VirtualDevice, lifecycle: ProductiveV2LifecycleSummary): Promise<{ writerStatus: string; painCount: number; notes: string[] }> {
+  async joinAndUnlockProductiveV2(device: VirtualDevice, lifecycle: Pick<ProductiveV2LifecycleSummary,'recoveryKey'|'passphrase'>): Promise<{ writerStatus: string; painCount: number; notes: string[] }> {
     return device.page.evaluate(async ({ expected }) => {
       const state = window as typeof window & { multiDeviceAuth?: { provider: { getApiClient(): unknown } }; productiveV2Session?: unknown }
       const [bytes, dataLayer, v2Provider, localDatabase, painRepository] = await Promise.all([
@@ -641,6 +644,12 @@ export class MultiDeviceHarness {
       const session = provider.googleV2ProviderSessionFromAuthenticatedClient(state.multiDeviceAuth!.provider.getApiClient() as never)
       state.productiveV2Session = session
       await dataLayer.installAuthenticatedRemoteSession(session)
+    })
+  }
+
+  async synchronizeProductiveV2(device:VirtualDevice):Promise<void>{
+    await device.page.evaluate(async()=>{
+      await (await import('/src/data/initializeDataLayer.ts')).synchronizeDataLayer()
     })
   }
 
@@ -856,8 +865,10 @@ export class MultiDeviceHarness {
   }
 
   async close(): Promise<void> {
-    await Promise.all(this.devices.map(async (device) => device.context.close()))
+    const results=await Promise.allSettled(this.devices.map(async(device)=>device.context.close()))
     this.devices.length = 0
+    const unexpected=results.find(result=>result.status==='rejected'&&!/(?:Target page, context or browser has been closed|Failed to find context with id)/u.test(String(result.reason)))
+    if(unexpected?.status==='rejected')throw unexpected.reason
   }
 
   private async googleRoute(route: Route): Promise<void> {
