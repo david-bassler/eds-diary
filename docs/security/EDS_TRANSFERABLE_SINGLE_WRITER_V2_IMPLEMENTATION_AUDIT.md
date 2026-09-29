@@ -729,7 +729,7 @@ at each remote-persisted transition.
 **#12/GATE-E2E-05 closed at controlled-provider L3:** The Settings
 test initiates v1→v2 migration through the product UI and two real
 Popup/Bridge authentication handoffs. It asserts retirement and
-selection, stored R2 Recovery/Backup artifacts, preserved existing
+selection, persisted RecoveryArtifactV6 plus staged/activated BackupV6 artifacts, preserved existing
 domain data, absent legacy-plaintext sentinel in the instrumented
 stores, reload/auth/UI unlock, fresh canonical Writer/write and B Join.
 The test only reconstructs the harness runtime *after* successful
