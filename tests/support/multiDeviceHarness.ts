@@ -93,10 +93,14 @@ export class MultiDeviceHarness {
       if (instrumentedPage !== page) return
       instrumentedPage.on('console', (message) => {
         const source = message.location().url
-        if (source && new URL(source, instrumentedPage.url()).pathname.startsWith('/google-auth/')) return
+        if (source && /^(?:\/google-auth\/|\/src\/auth\/)/u.test(new URL(source, instrumentedPage.url()).pathname)) return
         securityTelemetry.push({ location: 'console', value: message.text() })
       })
       instrumentedPage.on('pageerror', (error) => {
+        // Playwright reports subframe exceptions on their owning Page. Exclude
+        // errors provably originating in the simulated Auth-Origin iframe;
+        // conservatively scan errors whose origin cannot be established.
+        if (/(?:\/google-auth\/|\/src\/auth\/)/u.test(error.stack ?? '')) return
         securityTelemetry.push({ location: 'page-error', value: error.message })
       })
       instrumentedPage.on('request', (request) => {
