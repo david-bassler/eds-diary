@@ -257,6 +257,50 @@ test('refuses a second valid same-epoch BackupV6 after the first restore owns th
 })
 
 
+test('rejects missing owner after verified checkpoint before StateV6 exists', async ({ browser }) => {
+  test.setTimeout(420_000)
+  const harness = new MultiDeviceHarness(browser)
+  const source = await harness.device('backup-restore-prebundle-owner-source')
+  const target = await harness.device('backup-restore-prebundle-owner-target')
+  try {
+    await Promise.all([source.page.goto('/'), target.page.goto('/')])
+    await harness.authenticate(source, 'backup_restore_prebundle_owner_source_001')
+    const lifecycle = await harness.establishProductiveV2(source)
+    const activated = await harness.productiveActivatedBackup(source)
+    const staged = await harness.productiveStagedBackup(source)
+    const remoteBefore = harness.snapshotRemoteProtocolRows(lifecycle.remoteId)
+
+    await expect(harness.runProductiveBackupRestore(target, activated, lifecycle.recoveryKey, 'after-verified'))
+      .rejects.toThrow('persistent-crash:after-verified')
+    const original = await harness.productiveBackupRestoreCheckpointChain(target, activated, lifecycle.recoveryKey)
+    expect(original.stages).toEqual(['verified'])
+    expect(await harness.backupRestoreOwnerArtifactExists(target)).toBe(true)
+    const stateBefore = await target.page.evaluate(async (epochId) =>
+      new (await import('/src/security/v2/localPersistence.ts')).IndexedDbV2LocalSecurityStore()
+        .stateRecordExists(epochId), lifecycle.epochId)
+    expect(stateBefore).toBe(false)
+
+    await harness.deleteBackupRestoreOwnerArtifact(target)
+    await target.page.reload()
+    await expect(harness.runProductiveBackupRestore(target, activated, lifecycle.recoveryKey))
+      .rejects.toThrow(/owner is missing despite persisted operation evidence/i)
+    await expect(harness.runProductiveBackupRestore(target, staged, lifecycle.recoveryKey))
+      .rejects.toThrow(/owner is missing despite persisted operation evidence/i)
+    expect(await harness.backupRestoreOwnerArtifactExists(target)).toBe(false)
+    expect(await harness.productiveBackupRestoreCheckpointChain(target, activated, lifecycle.recoveryKey))
+      .toEqual(original)
+    await expect(harness.productiveBackupRestoreCheckpointChain(target, staged, lifecycle.recoveryKey))
+      .rejects.toThrow(/plan is missing/i)
+    expect(harness.snapshotRemoteProtocolRows(lifecycle.remoteId)).toEqual(remoteBefore)
+    const stateAfter = await target.page.evaluate(async (epochId) =>
+      new (await import('/src/security/v2/localPersistence.ts')).IndexedDbV2LocalSecurityStore()
+        .stateRecordExists(epochId), lifecycle.epochId)
+    expect(stateAfter).toBe(false)
+  } finally {
+    await harness.close()
+  }
+})
+
 test('rejects owner-deletion rollback after a durable local bundle without recreating ownership', async ({ browser }) => {
   test.setTimeout(420_000)
   const harness = new MultiDeviceHarness(browser)

@@ -294,6 +294,16 @@ export class IndexedDbV2LocalSecurityStore {
     return stored!==undefined
   }
 
+  async hasBackupRestoreOperationEvidence():Promise<boolean>{
+    // A verified-stage crash has no StateV6 yet. Surviving plans/checkpoints
+    // still make a missing epoch owner a rollback, never a fresh import.
+    const db=await openDatabase(),tx=db.transaction(STORES.operationArtifacts,'readonly')
+    const range=IDBKeyRange.bound('backup-restore:','backup-restore:\uffff')
+    const count=await requestResult<number>(tx.objectStore(STORES.operationArtifacts).count(range))
+    await transactionDone(tx)
+    return count>0
+  }
+
   async verifiedReadModelExists(epochId:string):Promise<boolean>{
     fixedBase64Url(epochId,16,'epoch_id')
     const db=await openDatabase(),tx=db.transaction(STORES.readModels,'readonly')

@@ -107,6 +107,12 @@ export class ProductiveBackupRestoreV2Service {
       // Recreating a deleted owner would permit another valid same-epoch backup
       // to take over the interrupted restore (IA-132).
       if(requireExisting)throw new Error('Persisted Backup Restore owner is missing; refusing rollback.')
+      // At after-verified there is no StateV6 to authenticate yet, but
+      // the original operation's immutable plan/checkpoint is durable.
+      // Owner-only deletion must not allow a competing backup to claim it.
+      if(await this.store.hasBackupRestoreOperationEvidence()){
+        throw new Error('Backup Restore owner is missing despite persisted operation evidence; refusing rollback.')
+      }
       await this.store.putMacBoundOperationArtifact(ownerKey,plan,rootKey,epochSalt)
     }
 
