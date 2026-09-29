@@ -79,9 +79,11 @@ function apply(state:Model,event:Event):Model{
       reconcilePending(next,event.device);break
     case 'ForcedTakeover':{
       if(event.recoveryGeneration!==next.recoveryGeneration
-        ||event.device===next.canonicalWriter||next.pendingRekey)break
-      // Recovery-authorized Writer takeover changes Writer generation only.
-      // It does not itself authorize a new Recovery key or require Phase B.
+        ||event.device===next.canonicalWriter)break
+      // The productive verifier permits a current-Recovery-key takeover
+      // even during Pending-Rekey, unlike a normal Writer Handoff.
+      // Writer generation changes, but the original durable R1→R2
+      // transition/maintenance fence remains intact for the new Writer.
       const id=`takeover-${next.epoch}-${next.generation+1}`
       appendOnce(next,id);next.controls.add(id);next.generation+=1
       next.canonicalWriter=event.device
@@ -225,7 +227,7 @@ describe('transferable single-writer generative protocol model',()=>{
     state=apply(state,{kind:'RecoveryRekeyTransition',device:'A',fromRecoveryGeneration:0,transitionId:'verified-transition'})
     expect(state.pendingRekey).toBe(true)
     const pendingRows=[...state.rows]
-    state=apply(state,{kind:'ForcedTakeover',device:'B',recoveryGeneration:1})
+    state=apply(state,{kind:'ForcedTakeover',device:'B',recoveryGeneration:0})
     expect(state.canonicalWriter).toBe('A')
     expect(state.rows).toEqual(pendingRows)
     state=apply(state,{kind:'PhaseBRotation',device:'A',transitionId:'verified-transition'})
@@ -236,6 +238,38 @@ describe('transferable single-writer generative protocol model',()=>{
     expect(state.rows).toEqual(after)
     expect(state.epoch).toBe(2)
     assertInvariants(state,'wrong-generation/phase-b replay sibling')
+  })
+
+  it('permits current-R2 Forced Takeover during Pending-Rekey but requires B to finish the bound Phase B',()=>{
+    let state=apply(initial(),{kind:'RecoveryRekeyTransition',device:'A',fromRecoveryGeneration:0,transitionId:'A-to-R2'})
+    const maintenance=state.maintenance
+    expect(state.pendingRekey).toBe(true)
+    expect(state.recoveryGeneration).toBe(1)
+    state=apply(state,{kind:'Handoff',from:'A',to:'B'})
+    expect(state.canonicalWriter).toBe('A') // Normal handoff is fenced.
+    state=apply(state,{kind:'Crash',device:'A'})
+    state=apply(state,{kind:'ForcedTakeover',device:'B',recoveryGeneration:0})
+    expect(state.canonicalWriter).toBe('A') // Old R1 cannot authorize takeover.
+    state=apply(state,{kind:'ForcedTakeover',device:'B',recoveryGeneration:1})
+    expect(state.canonicalWriter).toBe('B')
+    expect(state.generation).toBe(2)
+    expect(state.maintenance).toEqual(maintenance)
+    expect(state.pendingRekey).toBe(true)
+    state=apply(state,{kind:'Write',device:'B',outcome:'committed'})
+    expect(state.staleRejections).toBe(1)
+    state=apply(state,{kind:'Resume',device:'B'})
+    expect(state.pendingRekey).toBe(true)
+    state=apply(state,{kind:'PhaseBRotation',device:'A',transitionId:'A-to-R2'})
+    expect(state.pendingRekey).toBe(true) // Former Writer cannot finish B's cutover.
+    state=apply(state,{kind:'PhaseBRotation',device:'B',transitionId:'A-to-R2'})
+    expect(state.pendingRekey).toBe(false)
+    expect(state.epoch).toBe(2)
+    state=apply(state,{kind:'Write',device:'B',outcome:'committed'})
+    expect(state.rows).toContain('write-0')
+    state=apply(state,{kind:'Reload',device:'A'})
+    state=apply(state,{kind:'Write',device:'A',outcome:'committed'})
+    expect(state.rows).not.toContain('write-1')
+    assertInvariants(state,'R2-authorized pending takeover must retain immutable Phase-B identity')
   })
 
   it('never appends a Source-epoch unresolved envelope after the exact Phase-B switch',()=>{
