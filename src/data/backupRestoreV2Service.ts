@@ -89,6 +89,7 @@ export class ProductiveBackupRestoreV2Service {
     plan:BackupRestorePlanV2,
     rootKey:Uint8Array,
     epochSalt:Uint8Array,
+    requireExisting:boolean,
   ):Promise<string>{
     validateBackupRestorePlanV2(plan)
     const encoded=new TextDecoder().decode(canonicalBytes(plan as never))
@@ -100,15 +101,36 @@ export class ProductiveBackupRestoreV2Service {
     if(owner){
       validateBackupRestorePlanV2(owner)
       if(new TextDecoder().decode(canonicalBytes(owner as never))!==encoded)throw new Error('A different BackupV6 already owns this local epoch restore.')
-    }else await this.store.putMacBoundOperationArtifact(ownerKey,plan,rootKey,epochSalt)
+    }else{
+      // Once a durable offline StateV6 exists, the owner is required evidence.
+      // Recreating a deleted owner would permit another valid same-epoch backup
+      // to take over the interrupted restore (IA-132).
+      if(requireExisting)throw new Error('Persisted Backup Restore owner is missing; refusing rollback.')
+      await this.store.putMacBoundOperationArtifact(ownerKey,plan,rootKey,epochSalt)
+    }
 
     const id=planId(plan.operation_id)
     const existing=await this.store.macBoundOperationArtifact<BackupRestorePlanV2>(id,rootKey,epochSalt)
     if(existing){
       validateBackupRestorePlanV2(existing)
       if(new TextDecoder().decode(canonicalBytes(existing as never))!==encoded)throw new Error('A different Backup Restore plan already owns this operation ID.')
-    }else await this.store.putMacBoundOperationArtifact(id,plan,rootKey,epochSalt)
-    return backupRestorePlanHashV2(plan)
+    }else{
+      if(requireExisting)throw new Error('Persisted Backup Restore plan is missing; refusing rollback.')
+      await this.store.putMacBoundOperationArtifact(id,plan,rootKey,epochSalt)
+    }
+    const planHash=await backupRestorePlanHashV2(plan)
+    if(requireExisting){
+      const verified=await this.store.macBoundOperationArtifact<BackupRestoreCheckpointV2>(
+        checkpointId(plan.operation_id,'verified'),rootKey,epochSalt,
+      )
+      if(!verified)throw new Error('Persisted Backup Restore verified checkpoint is missing; refusing rollback.')
+      validateBackupRestoreCheckpointV2(verified)
+      if(verified.operation_id!==plan.operation_id||verified.plan_sha256!==planHash
+        ||verified.stage!=='verified'||verified.prior_checkpoint_sha256!==null){
+        throw new Error('Persisted Backup Restore verified checkpoint is not bound to the exact operation.')
+      }
+    }
+    return planHash
   }
 
   async restore(backup:SyncBackupV6,urs:Uint8Array):Promise<ProductiveBackupRestoreV2Result>{
@@ -151,7 +173,7 @@ export class ProductiveBackupRestoreV2Service {
         ||state.epoch_status!=='offline_restored'||state.writer_status!=='read_only'
         ||state.remote_binding!==null)throw new Error('Persisted Backup Restore local bundle does not match the verified backup.')
     }
-    const planHash=await this.verifyPlan(plan,rootKey,epochSalt)
+    const planHash=await this.verifyPlan(plan,rootKey,epochSalt,resumed)
     let checkpointHash=await this.checkpoint(plan,planHash,'verified',null,rootKey,epochSalt)
     await this.fault?.('after-verified')
 
