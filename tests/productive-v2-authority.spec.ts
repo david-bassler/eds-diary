@@ -97,6 +97,14 @@ test('executes the continuous replacement-device takeover and mandatory recovery
       .rejects.toThrow('persistent-crash:after-transition-durable')
     const pending = await harness.verifyProductiveV2Remote(deviceB)
     expect(pending.kind).toBe('canonical_full')
+    expect(pending.coveredRowCount).toBeGreaterThan(takeoverCanonical.coveredRowCount)
+    const pendingStatus = await deviceB.page.evaluate(async () =>
+      (await import('/src/data/initializeDataLayer.ts')).remoteSessionStatus())
+    expect(pendingStatus).toMatchObject({
+      profile: 'v2',
+      writerStatus: 'writer_active',
+      recoveryRekeyRequired: true,
+    })
     const pendingRows = harness.snapshotRemoteProtocolRows(lifecycle.remoteId)
     await expect(harness.writeProductivePain(deviceB, 'maintenance-only-write-must-not-persist'))
       .rejects.toThrow(/rekey|maintenance|authority|writer/i)
@@ -134,6 +142,14 @@ test('executes the continuous replacement-device takeover and mandatory recovery
     const active = await harness.verifyProductiveV2Remote(deviceB)
     expect(active).toMatchObject({ kind: 'canonical_full', writerStatus: 'writer_active' })
     expect(active.coveredRowCount).toBeGreaterThan(0)
+    const activeStatus = await deviceB.page.evaluate(async () =>
+      (await import('/src/data/initializeDataLayer.ts')).remoteSessionStatus())
+    expect(activeStatus).toMatchObject({
+      profile: 'v2',
+      writerStatus: 'writer_active',
+      recoveryRekeyRequired: false,
+    })
+    expect(activeStatus.epochId).not.toBe(lifecycle.epochId)
     const writable = await harness.writeProductivePain(deviceB, 'replacement-after-rekey-is-durable')
     expect(writable).toMatchObject({ writerStatus: 'writer_active' })
     expect((await harness.verifyProductiveV2Remote(deviceB)).coveredRowCount)
