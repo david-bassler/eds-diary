@@ -633,6 +633,43 @@ export class MultiDeviceHarness {
     })
   }
 
+  async deleteBackupRestoreOwnerArtifact(device: VirtualDevice): Promise<void> {
+    await device.page.evaluate(async () => {
+      const { __v2LocalPersistenceTesting } = await import('/src/security/v2/localPersistence.ts')
+      const db = await __v2LocalPersistenceTesting.openDatabase()
+      const tx = db.transaction(__v2LocalPersistenceTesting.STORES.operationArtifacts, 'readwrite')
+      const store = tx.objectStore(__v2LocalPersistenceTesting.STORES.operationArtifacts)
+      const request = store.getAllKeys()
+      const keys = await new Promise<IDBValidKey[]>((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result)
+        request.onerror = () => reject(request.error)
+      })
+      const owners = keys.filter((key) => typeof key === 'string' && key.startsWith('backup-restore-owner:'))
+      if (owners.length !== 1) throw new Error('Expected exactly one Backup Restore owner artifact.')
+      store.delete(owners[0]!)
+      await new Promise<void>((resolve, reject) => {
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+        tx.onabort = () => reject(tx.error)
+      })
+    })
+  }
+
+  async backupRestoreOwnerArtifactExists(device: VirtualDevice): Promise<boolean> {
+    return device.page.evaluate(async () => {
+      const { __v2LocalPersistenceTesting } = await import('/src/security/v2/localPersistence.ts')
+      const db = await __v2LocalPersistenceTesting.openDatabase()
+      const tx = db.transaction(__v2LocalPersistenceTesting.STORES.operationArtifacts, 'readonly')
+      const request = tx.objectStore(__v2LocalPersistenceTesting.STORES.operationArtifacts).getAllKeys()
+      return new Promise<boolean>((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result.some((key) =>
+          typeof key === 'string' && key.startsWith('backup-restore-owner:')))
+        request.onerror = () => reject(request.error)
+        tx.onabort = () => reject(tx.error)
+      })
+    })
+  }
+
   async productiveV2SessionStatus(device: VirtualDevice): Promise<{
     profile: string; mode: string; writerStatus?: string; remoteResourceId: string | null; staleWriterPendingCount?: number
   }> {
