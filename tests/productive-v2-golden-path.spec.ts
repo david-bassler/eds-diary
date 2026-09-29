@@ -75,6 +75,11 @@ test('detects redacted synthetic Diary request, console and error leaks but excl
     'synthetic-diary-console-canary',
     'synthetic-diary-pageerror-canary',
     'synthetic-auth-origin-credential-canary',
+    'synthetic-diary-request-header-canary',
+    'synthetic-diary-dom-canary',
+    'synthetic-diary-webstorage-canary',
+    'synthetic-diary-indexeddb-canary',
+    'synthetic-diary-cache-canary',
   ] as const
   try {
     await device.page.goto('/')
@@ -84,9 +89,13 @@ test('detects redacted synthetic Diary request, console and error leaks but excl
     await urlRequest
 
     const bodyRequest = device.page.waitForEvent('request', (request) => request.postData()?.includes(sentinels[1]) === true)
-    await device.page.evaluate(async (needle) => {
-      await fetch('/__leak_probe', { method: 'POST', body: needle })
-    }, sentinels[1])
+    await device.page.evaluate(async (probe) => {
+      await fetch('/__leak_probe', {
+        method: 'POST',
+        headers: { 'x-synthetic-diary-check': probe.header },
+        body: probe.body,
+      })
+    }, { body: sentinels[1], header: sentinels[5] })
     await bodyRequest
 
     const consoleEvent = device.page.waitForEvent('console', (message) => message.text().includes(sentinels[2]))
@@ -99,6 +108,30 @@ test('detects redacted synthetic Diary request, console and error leaks but excl
     }, sentinels[3])
     await errorEvent
 
+    // Positive controls for each persistent browser surface, not just a
+    // negative scan of normal product writes.
+    await device.page.evaluate(async (probe) => {
+      const element = document.createElement('span')
+      element.textContent = probe.dom
+      document.body.append(element)
+      localStorage.setItem('synthetic-security-scan-check', probe.storage)
+      sessionStorage.setItem('synthetic-security-scan-check', probe.storage)
+      await new Promise<void>((resolve, reject) => {
+        const request = indexedDB.open('synthetic-security-scan-check', 1)
+        request.onupgradeneeded = () => { request.result.createObjectStore('values') }
+        request.onerror = () => reject(request.error)
+        request.onsuccess = () => {
+          const db = request.result
+          const transaction = db.transaction('values', 'readwrite')
+          transaction.objectStore('values').put(probe.indexedDb, 'probe')
+          transaction.oncomplete = () => { db.close(); resolve() }
+          transaction.onerror = () => reject(transaction.error)
+        }
+      })
+      const cache = await caches.open('synthetic-security-scan-check')
+      await cache.put('/__leak_probe_cache', new Response(probe.cache))
+    }, { dom: sentinels[6], storage: sentinels[7], indexedDb: sentinels[8], cache: sentinels[9] })
+
     const authPage = await device.context.newPage()
     await authPage.goto('/google-auth/')
     await authPage.evaluate((needle) => console.warn(needle), sentinels[4])
@@ -110,6 +143,12 @@ test('detects redacted synthetic Diary request, console and error leaks but excl
       'request-body:sentinel-1',
       'console:sentinel-2',
       'page-error:sentinel-3',
+      'request-headers:sentinel-5',
+      'dom:sentinel-6',
+      'localStorage:synthetic-security-scan-check:sentinel-7',
+      'sessionStorage:synthetic-security-scan-check:sentinel-7',
+      'indexedDB:synthetic-security-scan-check:values:sentinel-8',
+      'cache:synthetic-security-scan-check:response:sentinel-9',
     ]) expect(hits).toContain(required)
     expect(hits.some((hit) => hit.endsWith('sentinel-4'))).toBe(false)
     // Failure diagnostics report only location and sentinel index.
