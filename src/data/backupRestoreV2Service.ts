@@ -137,6 +137,16 @@ export class ProductiveBackupRestoreV2Service {
     let checkpointHash=await this.checkpoint(plan,planHash,'verified',null,rootKey,epochSalt)
     await this.fault?.('after-verified')
 
+    await this.store.persistRecoveryArtifactV6(
+      urs,payload.diary_id,payload.epoch_id,backup.recovery_artifact,
+    )
+    const persistedRecovery=await this.store.loadPersistedRecoveryArtifactV6(
+      urs,payload.diary_id,payload.epoch_id,backup.recovery_artifact.recovery_artifact_id,
+    )
+    if(persistedRecovery.artifactSha256!==await (await import('../security/v2/recovery')).recoveryArtifactHashV6(backup.recovery_artifact)){
+      throw new Error('Backup Restore persisted RecoveryArtifactV6 hash mismatch.')
+    }
+
     const resumed=await this.store.stateRecordExists(payload.epoch_id)
     if(!resumed){
       const selected=await activeProtocolSelectionV2()
