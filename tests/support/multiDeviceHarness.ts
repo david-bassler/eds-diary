@@ -500,6 +500,76 @@ export class MultiDeviceHarness {
     },{encodedRecoveryKey:recoveryKey,point:faultPoint})
   }
 
+  async productiveActivatedBackup(device: VirtualDevice): Promise<unknown> {
+    return device.page.evaluate(async () => {
+      const { __v2LocalPersistenceTesting } = await import('/src/security/v2/localPersistence.ts')
+      const db = await __v2LocalPersistenceTesting.openDatabase()
+      const tx = db.transaction(__v2LocalPersistenceTesting.STORES.operationArtifacts, 'readonly')
+      const request = tx.objectStore(__v2LocalPersistenceTesting.STORES.operationArtifacts).getAll()
+      const records = await new Promise<Array<{ id?: unknown; value?: unknown }>>((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result as Array<{ id?: unknown; value?: unknown }>)
+        request.onerror = () => reject(request.error)
+      })
+      const candidates = records.flatMap((record) => {
+        if (typeof record.id !== 'string' || !record.id.endsWith(':activated-backup')) return []
+        const value = record.value as { backup?: unknown } | undefined
+        const backup = value?.backup as { format?: unknown } | undefined
+        return backup?.format === 'sync-backup-v6' ? [backup] : []
+      })
+      if (candidates.length !== 1) throw new Error(`Expected exactly one productive activated BackupV6, found ${candidates.length}.`)
+      return structuredClone(candidates[0])
+    })
+  }
+
+  async runProductiveBackupRestore(
+    device: VirtualDevice,
+    backup: unknown,
+    recoveryKey: string,
+    faultPoint?: string,
+  ): Promise<{ operationId: string; epochId: string; stage: string; access: string; quarantinedRowCount: number }> {
+    return device.page.evaluate(async ({ value, encodedRecoveryKey, point }) => {
+      const [bytes, serviceModule] = await Promise.all([
+        import('/src/security/crypto/bytes.ts'),
+        import('/src/data/backupRestoreV2Service.ts'),
+      ])
+      const service = new serviceModule.ProductiveBackupRestoreV2Service(
+        undefined,
+        point ? async (reached) => { if (reached === point) throw new Error(`persistent-crash:${point}`) } : undefined,
+      )
+      const result = await service.restore(value as never, bytes.fromBase64Url(encodedRecoveryKey))
+      return {
+        operationId: result.operationId,
+        epochId: result.epochId,
+        stage: result.stage,
+        access: result.access,
+        quarantinedRowCount: result.quarantinedRowCount,
+      }
+    }, { value: backup, encodedRecoveryKey: recoveryKey, point: faultPoint })
+  }
+
+  async productiveBackupRestoreCheckpointChain(
+    device: VirtualDevice,
+    backup: unknown,
+    recoveryKey: string,
+  ): Promise<{ operationId: string; stages: readonly string[] }> {
+    return device.page.evaluate(async ({ value, encodedRecoveryKey }) => {
+      const [bytes, serviceModule] = await Promise.all([
+        import('/src/security/crypto/bytes.ts'),
+        import('/src/data/backupRestoreV2Service.ts'),
+      ])
+      return serviceModule.verifyBackupRestoreCheckpointChainForTesting(
+        value as never,
+        bytes.fromBase64Url(encodedRecoveryKey),
+      )
+    }, { value: backup, encodedRecoveryKey: recoveryKey })
+  }
+
+  async productiveV2SessionStatus(device: VirtualDevice): Promise<{
+    profile: string; mode: string; writerStatus?: string; remoteResourceId: string | null; staleWriterPendingCount?: number
+  }> {
+    return device.page.evaluate(async () => (await import('/src/data/initializeDataLayer.ts')).remoteSessionStatus())
+  }
+
   async productiveNormalRotationIds(device:VirtualDevice):Promise<readonly string[]>{
     return device.page.evaluate(async()=>{
       const {__v2LocalPersistenceTesting}=await import('/src/security/v2/localPersistence.ts')
