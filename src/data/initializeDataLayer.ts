@@ -17,6 +17,8 @@ import { ProductiveProfileUpgradeV2Service } from './profileUpgradeV2Service'
 import { ProductiveReadOnlyJoinV2Service } from './readOnlyJoinV2Service'
 import { ProductiveForcedTakeoverV2Service } from './forcedTakeoverV2Service'
 import { ProductiveWriterHandoffV2Service } from './writerHandoffV2Service'
+import { restoreBackupV2Locally } from './backupRestoreV2Service'
+import type { SyncBackupV6 } from '../security/v2/backup'
 import type { TransferDescriptorV2 } from '../security/v2/types'
 import { createSingleFlight } from './singleFlight'
 
@@ -188,6 +190,16 @@ export async function upgradeAuthenticatedRemoteSessionToV2(
   const result=await new ProductiveProfileUpgradeV2Service(sourceSession,sourceTransport,successorSession,urs).upgrade()
   if(result.stage==='switched')await installAuthenticatedRemoteSession(successorSession)
   return result
+}
+
+export async function restoreV2BackupLocally(
+  backup:SyncBackupV6,
+  urs:Uint8Array,
+){
+  if(await activeProtocolSelectionV2())throw new Error('V2 Backup Restore requires a fresh browser profile.')
+  if(urs.byteLength!==32)throw new Error('V2 Backup Restore requires a 32-byte Recovery Key.')
+  await disconnectCurrentSession()
+  return restoreBackupV2Locally(backup,urs)
 }
 
 export async function joinExistingV2Diary(
