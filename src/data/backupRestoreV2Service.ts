@@ -125,7 +125,7 @@ export class ProductiveBackupRestoreV2Service {
     let checkpointHash=await this.checkpoint(plan,planHash,'verified',null,rootKey,epochSalt)
     await this.fault?.('after-verified')
 
-    let resumed=await this.store.stateRecordExists(payload.epoch_id)
+    const resumed=await this.store.stateRecordExists(payload.epoch_id)
     if(!resumed){
       const selected=await activeProtocolSelectionV2()
       if(selected)throw new Error('Backup Restore requires a fresh browser profile or the exact already-selected restore operation.')
