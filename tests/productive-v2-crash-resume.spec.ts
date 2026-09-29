@@ -167,7 +167,14 @@ for (const crashPoint of RECOVERY_REKEY_POINTS) {
   })
 }
 
-const NORMAL_ROTATION_POINTS = ['after-source-freeze', 'after-confirmation-append'] as const
+const NORMAL_ROTATION_POINTS = [
+  'after-source-freeze',
+  'after-successor-plan',
+  'after-source-append',
+  'after-confirmation-append',
+  'after-local-state-switch',
+  'after-active-selection-switch',
+] as const
 for (const crashPoint of NORMAL_ROTATION_POINTS) {
   test(`restarts, unlocks and resumes productive normal native V2 Rotation at ${crashPoint}`, async ({ browser }) => {
     test.setTimeout(900_000)
