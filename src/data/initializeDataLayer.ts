@@ -196,8 +196,10 @@ export async function restoreV2BackupLocally(
   backup:SyncBackupV6,
   urs:Uint8Array,
 ){
-  if(await activeProtocolSelectionV2())throw new Error('V2 Backup Restore requires a fresh browser profile.')
   if(urs.byteLength!==32)throw new Error('V2 Backup Restore requires a 32-byte Recovery Key.')
+  // The productive restore service owns the freshness/idempotence decision:
+  // after an after-selection crash, the exact offline-restored selection already
+  // exists and must remain resumable, while any foreign/active v2 state fails closed.
   await disconnectCurrentSession()
   return restoreBackupV2Locally(backup,urs)
 }
