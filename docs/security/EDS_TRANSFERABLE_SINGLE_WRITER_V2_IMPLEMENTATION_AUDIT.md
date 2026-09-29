@@ -656,10 +656,10 @@ required before package #14 can close.
 
 ### 2026-09-29 independent PR #67 continuation — normal native rotation crash/resume
 
-PR #67 was verified as a sibling of PR #66, not a descendant: both target
-PR #65. Its RootWrap cache implementation, associated unit tests, and
-Golden Path are blob-identical to PR #66. Avoid merging overlapping
-sibling PRs in sequence without reconciling their history.
+At the time of this finding, PR #67 was a sibling of PR #66: both
+targeted PR #65. Its RootWrap cache implementation, associated unit tests,
+and Golden Path were blob-identical to PR #66. **That historical branch
+warning is resolved by the linear rebase recorded below.**
 
 Package #13 already records the missing normal V2 Rotation browser
 crash matrix; this is an existing coverage gap, not a new protocol
@@ -678,6 +678,30 @@ implementation-head CI. The original #1041 run is tied to
 `75e2ded6…` and cannot validate the later changes. Package #13 and
 GATE-E2E-06 remain IN_PROGRESS; other normal-rotation persisted
 fault points and Backup Restore's browser crash matrix are open.
+
+### 2026-09-29 PR #66/#67 linear-stack reconciliation
+
+PR #67 was rebased directly onto PR #66's unchanged head
+`988cb3459abb4f536d5ca3d8e186bda7b3d3e509`, and its GitHub PR base
+was retargeted from PR #65 to the PR #66 branch
+`codex/continue-v2-end-to-end-assurance-program`. Its four pre-rebase
+commits were reparented in the same order and retain their exact original
+tree snapshots. The rebased code/document HEAD is
+`431b1d08113fc5914d4363e05219bfd9ae71eb4c`, whose Git tree
+`a5c50427f729299a1b52f3cf490f1cb8c7e36627` matches the original
+PR #67 HEAD `b3a67370e75b1b995a97b77fc4cb2d5d297c6289` byte for byte.
+Each rebased commit records its original SHA in an `Original-Commit`
+trailer so history can be traced without retaining a merge commit.
+
+The verified dependency chain is now **PR #65 -> PR #66 -> PR #67**.
+PR #67's compare result against PR #66 is `ahead 4 / behind 0` with
+merge base equal to PR #66's head. PR #67's diff therefore contains
+its own additional UI migration, expanded crash/unknown-outcome and
+generative tests, harness extensions, Vitest dependency update and
+new assurance records rather than duplicating PR #66's shared changes.
+No PR was merged or closed. History rewrite and PR base change require
+fresh CI evidence for the current head; success on the original commits
+is not reported as CI success on the new SHA.
 
 ## Reviewed points that are not findings
 
