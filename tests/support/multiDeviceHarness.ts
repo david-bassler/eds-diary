@@ -435,6 +435,44 @@ export class MultiDeviceHarness {
     }, { input: seed, point: faultPoint })
   }
 
+  async runProductiveNormalV2Rotation(device:VirtualDevice,recoveryKey:string,faultPoint?:string):Promise<{stage:string;successorEpochId:string}>{
+    return device.page.evaluate(async({encodedRecoveryKey,point})=>{
+      const state=window as typeof window & {multiDeviceAuth?:{provider:{getApiClient():unknown}};productiveV2Session?:unknown}
+      const [bytes,provider,service]=await Promise.all([
+        import('/src/security/crypto/bytes.ts'),
+        import('/src/sync/google/GoogleTransferableSingleWriterV2Provider.ts'),
+        import('/src/data/nativeRotationV2Service.ts'),
+      ])
+      const session=provider.googleV2ProviderSessionFromAuthenticatedClient(state.multiDeviceAuth!.provider.getApiClient() as never)
+      state.productiveV2Session=session
+      const operation=await new service.ProductiveNativeRotationV2Service(
+        session,
+        bytes.fromBase64Url(encodedRecoveryKey),
+        undefined,
+        undefined,
+        point?reached=>{if(reached===point)throw new Error(`persistent-crash:${point}`)}:undefined,
+      ).rotate('normal')
+      return{stage:operation.stage,successorEpochId:operation.successor_epoch_id}
+    },{encodedRecoveryKey:recoveryKey,point:faultPoint})
+  }
+
+  async productiveNormalRotationIds(device:VirtualDevice):Promise<readonly string[]>{
+    return device.page.evaluate(async()=>{
+      const {__v2LocalPersistenceTesting}=await import('/src/security/v2/localPersistence.ts')
+      const database=await __v2LocalPersistenceTesting.openDatabase()
+      const transaction=database.transaction(__v2LocalPersistenceTesting.STORES.rotationOperations,'readonly')
+      const request=transaction.objectStore(__v2LocalPersistenceTesting.STORES.rotationOperations).getAll()
+      const operations=await new Promise<Array<{state?:{operation_id?:unknown;rotation_kind?:unknown}}>>((resolve,reject)=>{
+        request.onsuccess=()=>resolve(request.result as Array<{state?:{operation_id?:unknown;rotation_kind?:unknown}}>)
+        request.onerror=()=>reject(request.error)
+      })
+      return operations.filter(item=>item.state?.rotation_kind==='normal').map(item=>{
+        if(typeof item.state?.operation_id!=='string')throw new Error('Native rotation is missing its immutable operation ID.')
+        return item.state.operation_id
+      })
+    })
+  }
+
   async productiveRotationStages(device: VirtualDevice): Promise<readonly string[]> {
     return device.page.evaluate(async () => {
       const { __v2LocalPersistenceTesting } = await import('/src/security/v2/localPersistence.ts')
