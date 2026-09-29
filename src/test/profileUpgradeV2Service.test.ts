@@ -1218,6 +1218,17 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     // Each distinct authenticated passphrase wrap incurs Argon2id exactly once;
     // subsequent accesses are ordinary in-memory cache hits.
     expect(__localDatabaseTesting.v2CryptographicRootOpenCount()).toBe(2)
+    expect(__localDatabaseTesting.v2CryptographicRootOpenCount(sourceEpochId)).toBe(1)
+    expect(__localDatabaseTesting.v2CryptographicRootOpenCount(result.successor_epoch_id)).toBe(1)
+    // Explicitly exercise both root contexts again after the normal rotation.
+    // Each authenticated epoch should retain its independent cached key.
+    const cachedSource=await new IndexedDbV2LocalSecurityStore().loadRootWrapV6(sourceEpochId)
+    const cachedSuccessor=await new IndexedDbV2LocalSecurityStore().loadRootWrapV6(result.successor_epoch_id)
+    const openedSource=await openSuccessorRootWrapV6WithActiveMode(cachedSource)
+    const openedSuccessor=await openSuccessorRootWrapV6WithActiveMode(cachedSuccessor)
+    openedSource.fill(0)
+    openedSuccessor.fill(0)
+    expect(__localDatabaseTesting.v2CryptographicRootOpenCount()).toBe(2)
 
     const successorArtifact=await v2.loadRecoveryArtifact(urs,source.diaryId,result.successor_epoch_id)
     const successorRecovered=await openRecoveryArtifactV6(successorArtifact,urs)
@@ -1259,6 +1270,8 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
   it('uses the same strict-read transport instance during mandatory Recovery-Rekey successor rotation',async()=>{
     const createdAt='2026-09-25T07:30:00.000Z',urs=randomBytes(32),newUrs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
     const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    await enrollActivePassphraseRootWrap('recovery-rekey-phase-b-cache-regression')
+    __localDatabaseTesting.resetV2CryptographicRootOpenCount()
     v2.strictInstanceReads=true
     const sourceEpochId=upgraded.successor_epoch_id
     const result=await new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt).rekey(newUrs)
@@ -1267,6 +1280,12 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     expect(result.successorEpochId).not.toBeNull()
     expect(result.successorEpochId).not.toBe(sourceEpochId)
     expect((await activeProtocolSelectionV2())?.epoch_id).toBe(result.successorEpochId)
+
+    // This is the actual mandatory Recovery-Rekey Phase-B native rotation.
+    // Both independent passphrase wraps must be opened exactly once each.
+    expect(__localDatabaseTesting.v2CryptographicRootOpenCount(sourceEpochId)).toBe(1)
+    expect(__localDatabaseTesting.v2CryptographicRootOpenCount(result.successorEpochId!)).toBe(1)
+    expect(__localDatabaseTesting.v2CryptographicRootOpenCount()).toBe(2)
 
     const successorArtifact=await v2.loadRecoveryArtifact(newUrs,source.diaryId,result.successorEpochId!)
     const successorRecovered=await openRecoveryArtifactV6(successorArtifact,newUrs)
