@@ -82,6 +82,13 @@ test('detects redacted synthetic Diary request, console and error leaks but excl
     'synthetic-diary-cache-canary',
     'synthetic-external-request-url-canary',
     'synthetic-external-request-body-canary',
+    'synthetic-dynamic-form-value-canary',
+    'synthetic-dom-attribute-canary',
+    'synthetic-webstorage-key-canary',
+    'synthetic-indexeddb-database-name-canary',
+    'synthetic-indexeddb-store-name-canary',
+    'synthetic-indexeddb-record-key-canary',
+    'synthetic-cache-name-canary',
   ] as const
   try {
     await device.page.goto('/')
@@ -133,8 +140,16 @@ test('detects redacted synthetic Diary request, console and error leaks but excl
       const element = document.createElement('span')
       element.textContent = probe.dom
       document.body.append(element)
+      const field = document.createElement('input')
+      field.value = probe.formValue // Not necessarily reflected in outerHTML.
+      document.body.append(field)
+      const attr = document.createElement('span')
+      attr.setAttribute('data-synthetic-probe', probe.domAttribute)
+      document.body.append(attr)
       localStorage.setItem('synthetic-security-scan-check', probe.storage)
       sessionStorage.setItem('synthetic-security-scan-check', probe.storage)
+      localStorage.setItem(probe.storageKey, 'non-sensitive-value')
+      sessionStorage.setItem(probe.storageKey, 'non-sensitive-value')
       await new Promise<void>((resolve, reject) => {
         const request = indexedDB.open('synthetic-security-scan-check', 1)
         request.onupgradeneeded = () => { request.result.createObjectStore('values') }
@@ -147,9 +162,28 @@ test('detects redacted synthetic Diary request, console and error leaks but excl
           transaction.onerror = () => reject(transaction.error)
         }
       })
+      await new Promise<void>((resolve, reject) => {
+        const request = indexedDB.open(probe.databaseName, 1)
+        request.onupgradeneeded = () => { request.result.createObjectStore(probe.storeName) }
+        request.onerror = () => reject(request.error)
+        request.onsuccess = () => {
+          const db = request.result
+          const transaction = db.transaction(probe.storeName, 'readwrite')
+          transaction.objectStore(probe.storeName).put('non-sensitive-value', probe.recordKey)
+          transaction.oncomplete = () => { db.close(); resolve() }
+          transaction.onerror = () => reject(transaction.error)
+        }
+      })
       const cache = await caches.open('synthetic-security-scan-check')
       await cache.put('/__leak_probe_cache', new Response(probe.cache))
-    }, { dom: sentinels[6], storage: sentinels[7], indexedDb: sentinels[8], cache: sentinels[9] })
+      const sensitiveNameCache = await caches.open(probe.cacheName)
+      await sensitiveNameCache.put('/__leak_probe_named_cache', new Response('non-sensitive-value'))
+    }, {
+      dom: sentinels[6], storage: sentinels[7], indexedDb: sentinels[8], cache: sentinels[9],
+      formValue: sentinels[12], domAttribute: sentinels[13], storageKey: sentinels[14],
+      databaseName: sentinels[15], storeName: sentinels[16],
+      recordKey: sentinels[17], cacheName: sentinels[18],
+    })
 
     const authPage = await device.context.newPage()
     await authPage.goto('/google-auth/')
@@ -163,14 +197,24 @@ test('detects redacted synthetic Diary request, console and error leaks but excl
       'console:sentinel-2',
       'page-error:sentinel-3',
       'request-headers:sentinel-5',
-      'dom:sentinel-6',
-      'localStorage:synthetic-security-scan-check:sentinel-7',
-      'sessionStorage:synthetic-security-scan-check:sentinel-7',
-      'indexedDB:synthetic-security-scan-check:values:sentinel-8',
-      'cache:synthetic-security-scan-check:response:sentinel-9',
+      'dom:text:sentinel-6',
+      'dom:markup:sentinel-13',
       'request-url:sentinel-10',
       'request-body:sentinel-11',
     ]) expect(hits).toContain(required)
+    const hasHit = (prefix: string, suffix: string): boolean =>
+      hits.some((hit) => hit.startsWith(prefix) && hit.endsWith(suffix))
+    expect(hasHit('dom:form-', ':sentinel-12')).toBe(true)
+    expect(hasHit('localStorage:value-', ':sentinel-7')).toBe(true)
+    expect(hasHit('sessionStorage:value-', ':sentinel-7')).toBe(true)
+    expect(hasHit('localStorage:key-', ':sentinel-14')).toBe(true)
+    expect(hasHit('sessionStorage:key-', ':sentinel-14')).toBe(true)
+    expect(hasHit('indexedDB:database-', ':values:sentinel-8')).toBe(true)
+    expect(hasHit('indexedDB:database-', ':name:sentinel-15')).toBe(true)
+    expect(hasHit('indexedDB:database-', ':name:sentinel-16')).toBe(true)
+    expect(hasHit('indexedDB:database-', ':keys:sentinel-17')).toBe(true)
+    expect(hasHit('cache:cache-', ':response:sentinel-9')).toBe(true)
+    expect(hasHit('cache:cache-', ':name:sentinel-18')).toBe(true)
     expect(hits.some((hit) => hit.endsWith('sentinel-4'))).toBe(false)
     // Failure diagnostics report only location and sentinel index.
     for (const sentinel of sentinels) expect(hits.join(' ')).not.toContain(sentinel)
