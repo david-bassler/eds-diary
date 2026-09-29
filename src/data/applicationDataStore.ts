@@ -75,7 +75,9 @@ async function acceptedGraphV2():Promise<AcceptedGraphLocalV2>{
   const epochSalt=await deriveEpochSaltV2(fixedBase64Url(selection.diary_id,16),fixedBase64Url(selection.epoch_id,16))
   const state=await store.loadState(rootKey,epochSalt,selection.epoch_id)
   if(state.diary_id!==selection.diary_id||state.epoch_id!==selection.epoch_id
-    ||state.manifest_fingerprint!==selection.manifest_fingerprint||state.epoch_status!=='active')throw new Error('Active v2 selection does not match authenticated StateV6.')
+    ||state.manifest_fingerprint!==selection.manifest_fingerprint
+    ||(state.epoch_status!=='active'&&state.epoch_status!=='offline_restored'))throw new Error('Active v2 selection does not match authenticated readable StateV6.')
+  if(state.epoch_status==='offline_restored'&&(state.writer_status!=='read_only'||state.remote_binding!==null))throw new Error('Offline-restored v2 state must remain local read-only.')
   const {envelopes}=await store.loadVerifiedReadModel(rootKey,epochSalt,selection.epoch_id)
   const revisions=new Map<string,RevisionV2>(),children=new Set<string>()
   for(const envelope of envelopes){
