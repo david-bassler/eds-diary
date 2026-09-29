@@ -654,6 +654,31 @@ health plaintext or credentials. Focused Chromium execution passes 1/1 in 1.7 mi
 pending. A competing valid Remote-Write/stale-authority browser sibling is still
 required before package #14 can close.
 
+### 2026-09-29 independent PR #67 continuation — normal native rotation crash/resume
+
+PR #67 was verified as a sibling of PR #66, not a descendant: both target
+PR #65. Its RootWrap cache implementation, associated unit tests, and
+Golden Path are blob-identical to PR #66. Avoid merging overlapping
+sibling PRs in sequence without reconciling their history.
+
+Package #13 already records the missing normal V2 Rotation browser
+crash matrix; this is an existing coverage gap, not a new protocol
+defect. The productive harness now exposes
+`runProductiveNormalV2Rotation()` and a test-only persisted operation
+ID observer. Two independent browser tests interrupt the normal
+rotation at `after-source-freeze` or `after-confirmation-append`,
+restart/re-authenticate the browser, unlock through the product UI,
+resume the **same** operation with bounded durable-stage progress,
+reinstall the application runtime and verify canonical new-epoch
+Writer authority, preserved domain data and a fresh durable write.
+No security state or remote authority is fabricated by these helpers.
+
+These additions are committed but not yet validated by a green
+implementation-head CI. The original #1041 run is tied to
+`75e2ded6…` and cannot validate the later changes. Package #13 and
+GATE-E2E-06 remain IN_PROGRESS; other normal-rotation persisted
+fault points and Backup Restore's browser crash matrix are open.
+
 ## Reviewed points that are not findings
 
 The following were explicitly rechecked and should not be repeatedly reported as

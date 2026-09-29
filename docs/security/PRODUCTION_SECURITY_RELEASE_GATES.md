@@ -238,9 +238,11 @@ explizite Migration über die V2-UI samt vollständiger §22-Assertions fehlt.
 `GATE-E2E-06` bleibt **OPEN**: Ein wiederverwendbarer
 `runPersistentCrashScenario` führt benannte unabhängige Browser-Fault-
 Lifecycles für Profile Upgrade, Recovery-Rekey, Handoff, Forced Takeover und
-Join erfolgreich aus. Weitere zulässige persistierte Punkte sowie normale
-V2-Rotation und Backup Restore fehlen im vollständigen §14-Sieben-Ceremony-
-Matrixnachweis. IA-104/IA-106 sind als engere Harness-Defekte geschlossen,
+Join erfolgreich aus. Zwei benannte normale V2-Rotation-Crashfälle (nach Source-Freeze und
+Confirmation-Append) sind implementiert und müssen noch auf dem aktuellen
+Commit erfolgreich validiert werden. Weitere persistierte Rotationspunkte
+und die Backup-Restore-Browsermatrix fehlen im vollständigen
+§14-Sieben-Ceremony-Nachweis. IA-104/IA-106 sind als engere Harness-Defekte geschlossen,
 nicht als Erklärung, dass alle Crash-Gates schon vollständig wären.
 
 `GATE-E2E-07` besitzt validierte L2-/L3-**Teilnachweise**, bleibt als
