@@ -142,6 +142,14 @@ export class ProductiveBackupRestoreV2Service {
         throw new Error('Backup Restore requires a fresh browser profile or the exact already-selected restore operation.')
       }
       await assertReadOnlyJoinLocalProfileIsFresh()
+    }else{
+      // The same epoch may already be in use by its original, remote-active
+      // Writer. That is not a local restore to resume and must not acquire a
+      // new restore owner before the StateV6 identity/role check.
+      const state=await this.store.loadState(rootKey,epochSalt,payload.epoch_id)
+      if(state.diary_id!==payload.diary_id||state.manifest_fingerprint!==payload.manifest_fingerprint
+        ||state.epoch_status!=='offline_restored'||state.writer_status!=='read_only'
+        ||state.remote_binding!==null)throw new Error('Persisted Backup Restore local bundle does not match the verified backup.')
     }
     const planHash=await this.verifyPlan(plan,rootKey,epochSalt)
     let checkpointHash=await this.checkpoint(plan,planHash,'verified',null,rootKey,epochSalt)
@@ -208,11 +216,6 @@ export class ProductiveBackupRestoreV2Service {
         rootKey,epochSalt,rootWrap:wrap.wrap,bestEffortWrappingKey:wrap.bestEffortWrappingKey,
         writerKey:storedWriter,state,
       })
-    }else{
-      const state=await this.store.loadState(rootKey,epochSalt,payload.epoch_id)
-      if(state.diary_id!==payload.diary_id||state.manifest_fingerprint!==payload.manifest_fingerprint
-        ||state.epoch_status!=='offline_restored'||state.writer_status!=='read_only'
-        ||state.remote_binding!==null)throw new Error('Persisted Backup Restore local bundle does not match the verified backup.')
     }
     checkpointHash=await this.checkpoint(plan,planHash,'local_bundle_persisted',checkpointHash,rootKey,epochSalt)
     await this.fault?.('after-local-bundle')
