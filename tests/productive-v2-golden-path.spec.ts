@@ -59,7 +59,61 @@ test('runs the productive v1→v2 lifecycle, unlock, durable writes and read-onl
     expect(await harness.verifyProductiveV2Remote(deviceB)).toMatchObject({
       kind: 'canonical_full', writerStatus: 'read_only', coveredRowCount: secondCanonical.coveredRowCount,
     })
-    expect(await harness.scanBrowserPersistence(deviceB, joined.notes)).toEqual([])
+    expect(await harness.scanBrowserPersistence(deviceB, [...joined.notes, 'multi-device-oauth-sentinel'])).toEqual([])
+  } finally {
+    await harness.close()
+  }
+})
+
+
+test('detects redacted synthetic Diary request, console and error leaks but excludes Auth-origin logs', async ({ browser }) => {
+  const harness = new MultiDeviceHarness(browser)
+  const device = await harness.device('browser-security-sentinel-probe')
+  const sentinels = [
+    'synthetic-diary-request-url-canary',
+    'synthetic-diary-request-body-canary',
+    'synthetic-diary-console-canary',
+    'synthetic-diary-pageerror-canary',
+    'synthetic-auth-origin-credential-canary',
+  ] as const
+  try {
+    await device.page.goto('/')
+    await device.context.route('**/__leak_probe**', (route) => route.fulfill({ status: 204, body: '' }))
+    const urlRequest = device.page.waitForEvent('request', (request) => request.url().includes(sentinels[0]))
+    await device.page.evaluate(async (needle) => { await fetch(`/__leak_probe?probe=${encodeURIComponent(needle)}`) }, sentinels[0])
+    await urlRequest
+
+    const bodyRequest = device.page.waitForEvent('request', (request) => request.postData()?.includes(sentinels[1]) === true)
+    await device.page.evaluate(async (needle) => {
+      await fetch('/__leak_probe', { method: 'POST', body: needle })
+    }, sentinels[1])
+    await bodyRequest
+
+    const consoleEvent = device.page.waitForEvent('console', (message) => message.text().includes(sentinels[2]))
+    await device.page.evaluate((needle) => console.warn(needle), sentinels[2])
+    await consoleEvent
+
+    const errorEvent = device.page.waitForEvent('pageerror', (error) => error.message.includes(sentinels[3]))
+    await device.page.evaluate((needle) => {
+      setTimeout(() => { throw new Error(needle) }, 0)
+    }, sentinels[3])
+    await errorEvent
+
+    const authPage = await device.context.newPage()
+    await authPage.goto('/google-auth/')
+    await authPage.evaluate((needle) => console.warn(needle), sentinels[4])
+    await authPage.close()
+
+    const hits = await harness.scanBrowserPersistence(device, sentinels)
+    for (const required of [
+      'request-url:sentinel-0',
+      'request-body:sentinel-1',
+      'console:sentinel-2',
+      'page-error:sentinel-3',
+    ]) expect(hits).toContain(required)
+    expect(hits.some((hit) => hit.endsWith('sentinel-4'))).toBe(false)
+    // Failure diagnostics report only location and sentinel index.
+    for (const sentinel of sentinels) expect(hits.join(' ')).not.toContain(sentinel)
   } finally {
     await harness.close()
   }
