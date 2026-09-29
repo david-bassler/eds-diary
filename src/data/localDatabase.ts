@@ -108,6 +108,7 @@ interface V2UnlockedRoot {
 const v2UnlockedRoots=new Map<string,V2UnlockedRoot>()
 let v2UnlockGeneration=0
 let v2CryptographicRootOpenCount=0
+const v2CryptographicRootOpensByEpoch=new Map<string,number>()
 function clearV2UnlockedRoots():void{
   for(const entry of v2UnlockedRoots.values())entry.rootKey.fill(0)
   v2UnlockedRoots.clear()
@@ -311,7 +312,10 @@ export async function openSuccessorRootWrapV6WithActiveMode(prepared:PreparedSuc
   // opening, never cache lookups. It is exposed solely in test mode so the
   // Argon2id avoidance contract can be asserted without timing assumptions or
   // exposing any factor/root material.
-  v2CryptographicRootOpenCount+=1
+  if(import.meta.env.MODE==='test'){
+    v2CryptographicRootOpenCount+=1
+    v2CryptographicRootOpensByEpoch.set(wrap.epoch_id,(v2CryptographicRootOpensByEpoch.get(wrap.epoch_id)??0)+1)
+  }
   if(wrap.mode==='passphrase'){
     if(factor.mode!=='passphrase')throw new LocalUnlockRequiredError('passphrase')
     rootKey=await openPassphraseRootWrapV6(wrap,factor.passphrase)
@@ -868,9 +872,9 @@ export async function activeRemoteDurabilityStatus():Promise<ActiveRemoteDurabil
   return{remoteBound:loaded.state.remote_binding!==null,pendingEnvelopeCount:outbox.filter(item=>item.status!=='durable').length,totalEnvelopeCount:envelopes.length}
 }
 export async function storedRotationArtifact<T>(suffix:'recovery'|'backup'):Promise<T|null>{const db=await openDatabase(),loaded=await loadEpoch(db),operationId=loaded.state.rotation_state_ref?.operation_id;if(!operationId)return null;const tx=db.transaction(STORES.operations,'readonly'),item=await result<{value:T}|undefined>(tx.objectStore(STORES.operations).get(`rotation-artifact:${operationId}:${suffix}`));await complete(tx);return item?.value??null}
-async function resetDatabaseForTesting():Promise<void>{if(import.meta.env.MODE!=='test')throw new Error('Database reset is test-only.');if(databasePromise){const db=await databasePromise;db.close()}databasePromise=null;readyPromise=null;legacyMigrationTestingHook=null;v2UnlockGeneration+=1;v2CryptographicRootOpenCount=0;clearV2UnlockedRoots();for(const root of unlockedRoots.values())root.fill(0);unlockedRoots.clear();unlockFactors.clear()}
-function v2CryptographicRootOpenCountForTesting():number{if(import.meta.env.MODE!=='test')throw new Error('Root-open diagnostics are test-only.');return v2CryptographicRootOpenCount}
-function resetV2CryptographicRootOpenCountForTesting():void{if(import.meta.env.MODE!=='test')throw new Error('Root-open diagnostics are test-only.');v2CryptographicRootOpenCount=0}
+async function resetDatabaseForTesting():Promise<void>{if(import.meta.env.MODE!=='test')throw new Error('Database reset is test-only.');if(databasePromise){const db=await databasePromise;db.close()}databasePromise=null;readyPromise=null;legacyMigrationTestingHook=null;v2UnlockGeneration+=1;v2CryptographicRootOpenCount=0;v2CryptographicRootOpensByEpoch.clear();clearV2UnlockedRoots();for(const root of unlockedRoots.values())root.fill(0);unlockedRoots.clear();unlockFactors.clear()}
+function v2CryptographicRootOpenCountForTesting(epochId?:string):number{if(import.meta.env.MODE!=='test')throw new Error('Root-open diagnostics are test-only.');return epochId===undefined?v2CryptographicRootOpenCount:v2CryptographicRootOpensByEpoch.get(epochId)??0}
+function resetV2CryptographicRootOpenCountForTesting():void{if(import.meta.env.MODE!=='test')throw new Error('Root-open diagnostics are test-only.');v2CryptographicRootOpenCount=0;v2CryptographicRootOpensByEpoch.clear()}
 function setLegacyMigrationHookForTesting(hook:((pass:number)=>Promise<void>)|null):void{if(import.meta.env.MODE!=='test')throw new Error('Migration hook is test-only.');legacyMigrationTestingHook=hook}
 async function appendTestBranch(store:LocalStoreName,value:{id:string}&Record<string,unknown>,parentRevisionId:string):Promise<void>{if(import.meta.env.MODE!=='test')throw new Error('Test branch writes are unavailable in production.');await ready();const db=await openDatabase(),loaded=await loadEpoch(db);await withDiaryLock(loaded.context.diaryId,async()=>persistRevision(db,store,value,undefined,'test-branch',[parentRevisionId]))}
 async function revisionsForTesting():Promise<RevisionV1[]>{if(import.meta.env.MODE!=='test')throw new Error('Revision inspection is test-only.');await ready();return verifiedEnvelopeRevisions(await openDatabase())}
