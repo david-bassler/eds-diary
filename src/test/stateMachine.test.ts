@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 type Device='A'|'B'
-type PendingWrite={id:string;bytes:string;committed:boolean}
+type PendingWrite={id:string;bytes:string;committed:boolean;epoch:number;generation:number;writer:Device}
 type PendingMaintenance={transitionId:string;sourceEpoch:number;toRecoveryGeneration:number}
 type Model={
   canonicalWriter:Device
@@ -44,7 +44,10 @@ function reconcilePending(state:Model,device:Device):void{
   // authority still matches; stale authority can observe a prior commit but
   // must never turn an absent row into a new append.
   if(state.rows.includes(pending.id))state.materialized.add(pending.id)
-  else if(authorized(state,device)){appendOnce(state,pending.id);state.materialized.add(pending.id)}
+  else if(authorized(state,device)
+    &&pending.epoch===state.epoch
+    &&pending.generation===state.generation
+    &&pending.writer===device){appendOnce(state,pending.id);state.materialized.add(pending.id)}
   else state.staleRejections+=1
   state.pending[device]=null
 }
@@ -53,7 +56,7 @@ function apply(state:Model,event:Event):Model{
   switch(event.kind){
     case 'Write':{
       if(!authorized(next,event.device)){next.staleRejections+=1;break}
-      const id=`write-${next.nextWrite++}`,pending={id,bytes:`envelope:${id}`,committed:event.outcome!=='unknown-not-committed'}
+      const id=`write-${next.nextWrite++}`,pending:PendingWrite={id,bytes:`envelope:${id}`,committed:event.outcome!=='unknown-not-committed',epoch:next.epoch,generation:next.generation,writer:event.device}
       if(event.outcome==='committed'){appendOnce(next,id);next.materialized.add(id)}
       else{next.pending[event.device]=pending;if(pending.committed)appendOnce(next,id)}
       break
@@ -137,7 +140,11 @@ function assertInvariants(state:Model,message:string):void{
     && new Set(state.rows).size===state.rows.length
     && [...state.materialized].every(id=>state.rows.includes(id))
     && [...state.controls].every(id=>state.rows.filter(row=>row===id).length===1)
-    && devices.every(device=>!state.pending[device]||state.pending[device]!.bytes===`envelope:${state.pending[device]!.id}`)
+    && devices.every(device=>!state.pending[device]||(
+      state.pending[device]!.bytes===`envelope:${state.pending[device]!.id}`
+      &&state.pending[device]!.writer===device
+      &&state.pending[device]!.epoch<=state.epoch
+      &&state.pending[device]!.generation<=state.generation))
   if(!valid)throw new Error(message)
 }
 function generatedEvent(random:number,state:Model):Event{
@@ -229,6 +236,42 @@ describe('transferable single-writer generative protocol model',()=>{
     expect(state.rows).toEqual(after)
     expect(state.epoch).toBe(2)
     assertInvariants(state,'wrong-generation/phase-b replay sibling')
+  })
+
+  it('never appends a Source-epoch unresolved envelope after the exact Phase-B switch',()=>{
+    let state=apply(initial(),{kind:'Write',device:'A',outcome:'unknown-not-committed'})
+    const original=state.pending.A
+    expect(original).toMatchObject({epoch:1,generation:1,writer:'A'})
+    state=apply(state,{kind:'RecoveryRekeyTransition',device:'A',fromRecoveryGeneration:0,transitionId:'source-rekey-1'})
+    state=apply(state,{kind:'Crash',device:'A'})
+    state=apply(state,{kind:'Resume',device:'A'})
+    expect(state.pending.A).toBeNull()
+    expect(state.rows).not.toContain(original!.id)
+    // Retry is rejected while the maintenance fence is active.
+    expect(state.staleRejections).toBe(1)
+    state=apply(state,{kind:'PhaseBRotation',device:'A',transitionId:'source-rekey-1'})
+    expect(state.epoch).toBe(2)
+    expect(state.pendingRekey).toBe(false)
+    state=apply(state,{kind:'Write',device:'A',outcome:'committed'})
+    expect(state.rows).toContain('write-1')
+    expect(state.rows).not.toContain(original!.id)
+    assertInvariants(state,'source pending envelope must never cross native epoch boundary')
+  })
+
+  it('rejects an absent persisted Source envelope when a successful Phase B retains the same Writer',()=>{
+    let state=apply(initial(),{kind:'Write',device:'A',outcome:'unknown-not-committed'})
+    const original=state.pending.A
+    state=apply(state,{kind:'RecoveryRekeyTransition',device:'A',fromRecoveryGeneration:0,transitionId:'bound-rekey'})
+    state=apply(state,{kind:'PhaseBRotation',device:'A',transitionId:'bound-rekey'})
+    // The same physical Writer and generation are still active. The old
+    // encrypted envelope must nevertheless fail the *epoch* provenance gate.
+    expect(state.canonicalWriter).toBe('A')
+    expect(state.generation).toBe(original!.generation)
+    expect(state.epoch).toBe(2)
+    state=apply(state,{kind:'Reload',device:'A'})
+    expect(state.rows).not.toContain(original!.id)
+    expect(state.staleRejections).toBe(1)
+    assertInvariants(state,'same-Writer after rotation cannot replay old-epoch bytes')
   })
 
   it('does not append an unresolved old-Writer envelope after takeover',()=>{
