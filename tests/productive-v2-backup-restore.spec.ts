@@ -212,6 +212,48 @@ test('refuses a second valid same-epoch BackupV6 after the first restore owns th
 })
 
 
+test('rejects owner-deletion rollback after a durable local bundle without recreating ownership', async ({ browser }) => {
+  test.setTimeout(420_000)
+  const harness = new MultiDeviceHarness(browser)
+  const source = await harness.device('backup-restore-owner-rollback-source')
+  const target = await harness.device('backup-restore-owner-rollback-target')
+  try {
+    await Promise.all([source.page.goto('/'), target.page.goto('/')])
+    await harness.authenticate(source, 'backup_restore_owner_rollback_source_001')
+    const lifecycle = await harness.establishProductiveV2(source)
+    const activated = await harness.productiveActivatedBackup(source)
+    const staged = await harness.productiveStagedBackup(source)
+    const remoteBefore = harness.snapshotRemoteProtocolRows(lifecycle.remoteId)
+
+    await expect(harness.runProductiveBackupRestore(target, activated, lifecycle.recoveryKey, 'after-local-bundle'))
+      .rejects.toThrow('persistent-crash:after-local-bundle')
+    const prior = await harness.productiveBackupRestoreCheckpointChain(target, activated, lifecycle.recoveryKey)
+    expect(prior.stages).toEqual(['verified', 'local_bundle_persisted'])
+    expect(await harness.backupRestoreOwnerArtifactExists(target)).toBe(true)
+
+    // Simulate rollback of only the owner: the authenticated offline StateV6
+    // and immutable plan/checkpoints survive, so neither the original nor
+    // a competing valid backup may mint a replacement owner (IA-132).
+    await harness.deleteBackupRestoreOwnerArtifact(target)
+    expect(await harness.backupRestoreOwnerArtifactExists(target)).toBe(false)
+    await target.page.reload()
+    await expect(harness.runProductiveBackupRestore(target, activated, lifecycle.recoveryKey))
+      .rejects.toThrow(/Persisted Backup Restore owner is missing/i)
+    await expect(harness.runProductiveBackupRestore(target, staged, lifecycle.recoveryKey))
+      .rejects.toThrow(/Persisted Backup Restore owner is missing/i)
+    expect(await harness.backupRestoreOwnerArtifactExists(target)).toBe(false)
+    expect(await harness.productiveBackupRestoreCheckpointChain(target, activated, lifecycle.recoveryKey))
+      .toEqual(prior)
+    await expect(harness.productiveBackupRestoreCheckpointChain(target, staged, lifecycle.recoveryKey))
+      .rejects.toThrow(/plan is missing/i)
+    expect(await harness.verifyRestoredRecoveryArtifact(target, activated, lifecycle.recoveryKey)).toBe(true)
+    expect(harness.snapshotRemoteProtocolRows(lifecycle.remoteId)).toEqual(remoteBefore)
+    expect((await harness.verifyProductiveV2Remote(source)).kind).toBe('canonical_full')
+  } finally {
+    await harness.close()
+  }
+})
+
 test('rejects a tampered MAC-bound restore owner before resuming local apply', async ({ browser }) => {
   test.setTimeout(300_000)
   const harness = new MultiDeviceHarness(browser)
