@@ -168,12 +168,27 @@ for (const crashPoint of RECOVERY_REKEY_POINTS) {
 }
 
 const NORMAL_ROTATION_POINTS = [
+  // Six rotation-specific fault boundaries.
   'after-source-freeze',
   'after-successor-plan',
   'after-source-append',
   'after-confirmation-append',
   'after-local-state-switch',
   'after-active-selection-switch',
+  // Every normally reachable additional persisted operation-stage boundary.
+  // Unknown-outcome and terminal-error stages require separate faulted
+  // provider/canonical candidates and are not simulated by a stage label.
+  'after-successor_planned',
+  'after-successor_bound',
+  'after-copying',
+  'after-successor_verified',
+  'after-announcement_prepared',
+  'after-recovery_artifact_verified',
+  'after-staged_backup_verified',
+  'after-announcement_durable',
+  'after-confirmation_durable',
+  'after-activated_backup_verified',
+  'after-switched',
 ] as const
 for (const crashPoint of NORMAL_ROTATION_POINTS) {
   test(`restarts, unlocks and resumes productive normal native V2 Rotation at ${crashPoint}`, async ({ browser }) => {
