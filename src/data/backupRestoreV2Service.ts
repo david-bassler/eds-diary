@@ -1,6 +1,5 @@
 import { base64Url, fixedBase64Url, randomBytes } from '../security/crypto/bytes'
 import { canonicalBytes } from '../security/crypto/canonical'
-import { sha256 } from '../security/crypto/core'
 import { deriveEpochSaltV2, generateWriterDeviceKeyV2 } from '../security/v2/crypto'
 import { testRestoreBackupV6, type SyncBackupV6 } from '../security/v2/backup'
 import {
