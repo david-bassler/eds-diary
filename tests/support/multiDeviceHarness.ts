@@ -585,6 +585,28 @@ export class MultiDeviceHarness {
     }, { value: backup, encodedRecoveryKey: recoveryKey })
   }
 
+  async tamperBackupRestoreOwnerArtifact(device: VirtualDevice): Promise<void> {
+    await device.page.evaluate(async () => {
+      const { __v2LocalPersistenceTesting } = await import('/src/security/v2/localPersistence.ts')
+      const db = await __v2LocalPersistenceTesting.openDatabase()
+      const tx = db.transaction(__v2LocalPersistenceTesting.STORES.operationArtifacts, 'readwrite')
+      const store = tx.objectStore(__v2LocalPersistenceTesting.STORES.operationArtifacts)
+      const request = store.getAll()
+      const records = await new Promise<Array<{ id?: unknown; value?: unknown; bytes?: unknown; hash?: unknown; tag?: unknown }>>((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result as Array<{ id?: unknown; value?: unknown; bytes?: unknown; hash?: unknown; tag?: unknown }>)
+        request.onerror = () => reject(request.error)
+      })
+      const owner = records.find((record) => typeof record.id === 'string' && record.id.startsWith('backup-restore-owner:'))
+      if (!owner || typeof owner.id !== 'string') throw new Error('Backup Restore owner artifact is missing.')
+      store.put({ ...owner, tag: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' })
+      await new Promise<void>((resolve, reject) => {
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+        tx.onabort = () => reject(tx.error)
+      })
+    })
+  }
+
   async productiveV2SessionStatus(device: VirtualDevice): Promise<{
     profile: string; mode: string; writerStatus?: string; remoteResourceId: string | null; staleWriterPendingCount?: number
   }> {
