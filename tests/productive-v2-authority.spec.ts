@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { MultiDeviceHarness } from './support/multiDeviceHarness'
+import { runWithDurableProgress } from './support/durableProgressWatch'
 
 test('hands productive Writer authority to B and fences every stale A variant', async ({ browser }) => {
   test.setTimeout(240_000)
@@ -115,7 +116,20 @@ test('executes the continuous replacement-device takeover and mandatory recovery
     await expect(deviceB.page.getByText('Recovery-Key-Wechsel ist noch nicht abgeschlossen. Normale Einträge bleiben gesperrt.'))
       .toBeVisible({ timeout: 60_000 })
 
-    expect(await harness.runProductiveRecoveryRekey(deviceB, seed)).toBe('completed')
+    expect(await runWithDurableProgress(
+      () => harness.runProductiveRecoveryRekey(deviceB, seed),
+      {
+        label: 'replacement-device-recovery-rekey-phase-b',
+        observeStages: async () => {
+          const stages = await harness.productiveRotationStages(deviceB)
+          if (stages.length > 2) throw new Error('Replacement-device rekey created duplicate native rotations.')
+          return stages
+        },
+        pollIntervalMs: 5_000,
+        idleTimeoutMs: 120_000,
+        totalTimeoutMs: 420_000,
+      },
+    )).toBe('completed')
     await harness.restoreProductiveRuntimeAfterCeremony(deviceB, lifecycle.passphrase)
     const active = await harness.verifyProductiveV2Remote(deviceB)
     expect(active).toMatchObject({ kind: 'canonical_full', writerStatus: 'writer_active' })
