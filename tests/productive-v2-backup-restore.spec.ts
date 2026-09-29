@@ -130,3 +130,39 @@ test('rejects wrong-key, tampered and structurally truncated BackupV6 before loc
     await harness.close()
   }
 })
+
+
+test('refuses a second valid same-epoch BackupV6 after the first restore owns the epoch', async ({ browser }) => {
+  test.setTimeout(360_000)
+  const harness = new MultiDeviceHarness(browser)
+  const source = await harness.device('backup-restore-owner-source')
+  const target = await harness.device('backup-restore-owner-target')
+  try {
+    await Promise.all([source.page.goto('/'), target.page.goto('/')])
+    await harness.authenticate(source, 'backup_restore_owner_source_auth_000001')
+    const lifecycle = await harness.establishProductiveV2(source)
+    const activated = await harness.productiveActivatedBackup(source)
+    const staged = await harness.productiveStagedBackup(source)
+
+    await expect(harness.runProductiveBackupRestore(target, activated, lifecycle.recoveryKey, 'after-local-bundle'))
+      .rejects.toThrow('persistent-crash:after-local-bundle')
+    const owner = await harness.productiveBackupRestoreCheckpointChain(target, activated, lifecycle.recoveryKey)
+    expect(owner.stages).toEqual(['verified', 'local_bundle_persisted'])
+
+    await expect(harness.runProductiveBackupRestore(target, staged, lifecycle.recoveryKey))
+      .rejects.toThrow(/different BackupV6 already owns/i)
+    await expect(harness.productiveBackupRestoreCheckpointChain(target, staged, lifecycle.recoveryKey))
+      .rejects.toThrow(/plan is missing/i)
+    expect((await harness.productiveBackupRestoreCheckpointChain(target, activated, lifecycle.recoveryKey)).stages)
+      .toEqual(['verified', 'local_bundle_persisted'])
+
+    const resumed = await harness.runProductiveBackupRestore(target, activated, lifecycle.recoveryKey)
+    expect(resumed.operationId).toBe(owner.operationId)
+    expect(await harness.readProductivePain(target)).toBe(1)
+    expect(await harness.productiveV2SessionStatus(target)).toMatchObject({
+      mode: 'local_offline', writerStatus: 'read_only', remoteResourceId: null,
+    })
+  } finally {
+    await harness.close()
+  }
+})
