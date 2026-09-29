@@ -6,7 +6,7 @@ import { activeEpochSyncContext, activeProtocolSelectionV2, openSuccessorRootWra
 import { normalizeLegacyActivityEntriesForSecureMigration } from './legacyCompatibility'
 import { ProductiveRotationService, type CompletedRotation } from './productiveRotationService'
 import { ensurePersistentStorage } from './storageDurability'
-import { installAuthenticatedV2RemoteSession, disconnectAuthenticatedV2RemoteSession } from './v2ApplicationRuntime'
+import { installAuthenticatedV2RemoteSession, disconnectAuthenticatedV2RemoteSession, activeV2ProviderSession, activeV2SyncService } from './v2ApplicationRuntime'
 import { ProductiveRecoveryRekeyV2Service, type RecoveryRekeyV2Result } from './recoveryRekeyV2Service'
 import { ProductiveNativeRotationV2Service } from './nativeRotationV2Service'
 type NativeRotationV2Result=Awaited<ReturnType<ProductiveNativeRotationV2Service['rotate']>>
@@ -29,6 +29,11 @@ interface SecureSynchronizer {synchronize():Promise<void>}
 let initialized = false
 let secureSync:SecureSynchronizer|null=null
 let activeProviderSession:AuthenticatedProviderSession|null=null
+let desiredProviderSession:AuthenticatedProviderSession|null=null
+let sessionGeneration=0
+function assertCurrentSession(generation:number):void{
+  if(generation!==sessionGeneration)throw new Error('Authenticated provider session changed during installation.')
+}
 let legacyCompatibilityPromise:Promise<void>|null=null
 
 function ensureLegacyCompatibility():Promise<void>{
@@ -84,33 +89,61 @@ export async function synchronizeDataLayer():Promise<void>{
 }
 
 export async function installAuthenticatedRemoteSession(session:AuthenticatedProviderSession):Promise<void>{
+  const generation=++sessionGeneration
+  desiredProviderSession=session
   const v2=await activeProtocolSelectionV2()
+  assertCurrentSession(generation)
   if(v2){
     if(!isV2Session(session))throw new Error('An active v2 diary requires a transferable-single-writer v2 provider session.')
-    if(activeProviderSession&&activeProviderSession!==session)await disconnectCurrentSession()
+    if(activeProviderSession&&activeProviderSession!==session)await disconnectCurrentSession(false)
+    assertCurrentSession(generation)
     const service=await installAuthenticatedV2RemoteSession(session)
+    if(generation!==sessionGeneration){
+      // Newer installation using the same provider is responsible for it.
+      // A distinct session cannot survive as an authenticated runtime slot.
+      if(desiredProviderSession!==session&&activeV2SyncService()===service){
+        await disconnectAuthenticatedV2RemoteSession()
+      }
+      throw new Error('Authenticated provider session changed during installation.')
+    }
     activeProviderSession=session
     secureSync=service
     installSecureSynchronizer(()=>service.synchronize())
     await service.refreshVerifiedReadModel()
+    assertCurrentSession(generation)
     return
   }
   if(!isV1Session(session))throw new Error('The active v1 diary requires a single-writer-v1 provider session.')
   await ensureLegacyCompatibility()
-  if(activeProviderSession&&activeProviderSession!==session)await disconnectCurrentSession()
+  assertCurrentSession(generation)
+  if(activeProviderSession&&activeProviderSession!==session)await disconnectCurrentSession(false)
+  else await disconnectAuthenticatedV2RemoteSession()
+  assertCurrentSession(generation)
   const service=await SingleWriterSyncService.createAuthenticated(session)
+  if(generation!==sessionGeneration){
+    if(desiredProviderSession!==session)await session.disconnect()
+    throw new Error('Authenticated provider session changed during installation.')
+  }
   activeProviderSession=session
   secureSync=service
   installSecureSynchronizer(()=>service.synchronize())
 }
 
-async function disconnectCurrentSession():Promise<void>{
-  const session=activeProviderSession
+async function disconnectCurrentSession(invalidate=true):Promise<void>{
+  if(invalidate){
+    sessionGeneration+=1
+    desiredProviderSession=null
+  }
+  const previous=activeProviderSession
+  const previousV2=activeV2ProviderSession()
   activeProviderSession=null
   secureSync=null
   clearSecureSynchronizer()
-  if(session?.profileId===SINGLE_WRITER_V2_PROFILE)await disconnectAuthenticatedV2RemoteSession()
-  else await session?.disconnect()
+  // Invalidates an in-flight V2 install even if it has not published to
+  // activeProviderSession yet. Previously a logout before this assignment
+  // left its async create free to install a stale authenticated capability.
+  await disconnectAuthenticatedV2RemoteSession()
+  if(previous&&previous!==previousV2)await previous.disconnect()
 }
 
 export async function clearAuthenticatedRemoteSession():Promise<void>{await disconnectCurrentSession()}
