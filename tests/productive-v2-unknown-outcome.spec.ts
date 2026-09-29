@@ -119,3 +119,66 @@ test('rejects a stale exact-envelope retry after a competing new Writer\'s valid
     await harness.close()
   }
 })
+
+
+test('reconciles a committed-response-loss after an intervening valid Writer write', async ({ browser }) => {
+  test.setTimeout(600_000)
+  const harness = new MultiDeviceHarness(browser)
+  const original = await harness.device('committed-race-original-writer')
+  const replacement = await harness.device('committed-race-successor-writer')
+  try {
+    await Promise.all([original.page.goto('/'), replacement.page.goto('/')])
+    await harness.authenticate(original, 'committed_race_original_auth_00000001')
+    const lifecycle = await harness.establishProductiveV2(original)
+    await harness.authenticate(replacement, 'committed_race_replacement_auth_000001')
+    expect((await harness.joinAndUnlockProductiveV2(replacement, lifecycle)).writerStatus).toBe('read_only')
+
+    const startingRows = harness.snapshotRemoteProtocolRows(lifecycle.remoteId)
+    let afterCompetitor: string[][] | null = null
+    let originalCommitted: string[] | null = null
+    let competitorRan = false
+    harness.enqueueProviderAppendFault({
+      kind: 'commit_response_lost_then_competing_write',
+      note: 'original-A-committed-response-lost',
+      afterCommit: async () => {
+        // The shared provider already holds A's original, genuinely committed
+        // envelope, but A has not received its append response.
+        const afterA = harness.snapshotRemoteProtocolRows(lifecycle.remoteId)
+        expect(afterA).toHaveLength(startingRows.length + 1)
+        originalCommitted = [...afterA.at(-1)!]
+        const takeover = await harness.forceTakeover(replacement, lifecycle.recoveryKey)
+        expect(takeover).toMatchObject({
+          stage: 'durable', writerStatus: 'writer_active', writerGeneration: 2,
+        })
+        expect(await harness.writeProductivePain(replacement, 'valid-B-write-after-A-commit'))
+          .toMatchObject({ writerStatus: 'writer_active', painCount: lifecycle.painCount + 2 })
+        afterCompetitor = harness.snapshotRemoteProtocolRows(lifecycle.remoteId)
+        competitorRan = true
+      },
+    })
+
+    // The initial A call may report an unknown outcome or recognize its
+    // original committed envelope. Neither path may append it a second time
+    // or silently ignore B's now-current generation-2 Writer authority.
+    try {
+      const attempted = await harness.writeProductivePain(original, 'A-original-committed-before-B-takeover')
+      expect(attempted.writerStatus).not.toBe('writer_active')
+    } catch (error) {
+      expect(error).toBeInstanceOf(Error)
+    }
+    expect(competitorRan).toBe(true)
+    expect(originalCommitted).not.toBeNull()
+    expect(afterCompetitor).not.toBeNull()
+    const currentRows = harness.snapshotRemoteProtocolRows(lifecycle.remoteId)
+    expect(currentRows).toEqual(afterCompetitor)
+    expect(currentRows.filter(row => JSON.stringify(row) === JSON.stringify(originalCommitted))).toHaveLength(1)
+    expect(await harness.verifyProductiveV2Remote(replacement))
+      .toMatchObject({ kind: 'canonical_full', writerStatus: 'writer_active' })
+    expect(await harness.readProductivePain(replacement)).toBe(lifecycle.painCount + 2)
+    await expect(harness.writeProductivePain(original, 'A-stale-after-B-competing-valid-write'))
+      .rejects.toThrow()
+    expect(harness.snapshotRemoteProtocolRows(lifecycle.remoteId)).toEqual(currentRows)
+  } finally {
+    await harness.close()
+  }
+})
