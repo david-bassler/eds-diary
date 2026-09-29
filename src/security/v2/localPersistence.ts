@@ -247,6 +247,61 @@ export class IndexedDbV2LocalSecurityStore {
     return structuredClone(stored.value)
   }
 
+  async putMacBoundOperationArtifact(id:string,value:unknown,rootKey:Uint8Array,epochSalt:Uint8Array):Promise<string>{
+    if(!id)throw new Error('MAC-bound v2 operation artifact ID is required.')
+    const bytes=new TextDecoder().decode(canonicalBytes(value as never))
+    const hash=base64Url(await sha256(canonicalBytes(value as never)))
+    const tag=base64Url(await hmacSha256(
+      await deriveLocalStateMacKeyV2(rootKey,epochSalt),
+      canonicalBytes({id,value} as never),
+    ))
+    const db=await openDatabase(),readTx=db.transaction(STORES.operationArtifacts,'readonly')
+    const existing=await requestResult<{id:string;value:unknown;bytes:string;hash:string;tag?:string}|undefined>(readTx.objectStore(STORES.operationArtifacts).get(id))
+    await transactionDone(readTx)
+    if(existing){
+      if(existing.bytes!==bytes||existing.hash!==hash||typeof existing.tag!=='string'
+        ||!equalBytes(fixedBase64Url(existing.tag,32,'operation_artifact_tag'),fixedBase64Url(tag,32,'operation_artifact_tag')))throw new Error('MAC-bound v2 operation artifact collision.')
+      return hash
+    }
+    const tx=db.transaction(STORES.operationArtifacts,'readwrite')
+    tx.objectStore(STORES.operationArtifacts).add({id,value:structuredClone(value),bytes,hash,tag})
+    await transactionDone(tx)
+    await this.macBoundOperationArtifact(id,rootKey,epochSalt)
+    return hash
+  }
+
+  async macBoundOperationArtifact<T>(id:string,rootKey:Uint8Array,epochSalt:Uint8Array):Promise<T|null>{
+    const db=await openDatabase(),tx=db.transaction(STORES.operationArtifacts,'readonly')
+    const stored=await requestResult<{id:string;value:T;bytes:string;hash:string;tag?:string}|undefined>(tx.objectStore(STORES.operationArtifacts).get(id))
+    await transactionDone(tx)
+    if(!stored)return null
+    const bytes=new TextDecoder().decode(canonicalBytes(stored.value as never))
+    const hash=base64Url(await sha256(canonicalBytes(stored.value as never)))
+    const expected=base64Url(await hmacSha256(
+      await deriveLocalStateMacKeyV2(rootKey,epochSalt),
+      canonicalBytes({id,value:stored.value} as never),
+    ))
+    if(stored.bytes!==bytes||stored.hash!==hash||typeof stored.tag!=='string'
+      ||!equalBytes(fixedBase64Url(stored.tag,32,'operation_artifact_tag'),fixedBase64Url(expected,32,'operation_artifact_tag')))throw new Error('MAC-bound v2 operation artifact integrity failed.')
+    return structuredClone(stored.value)
+  }
+
+  async stateRecordExists(epochId:string):Promise<boolean>{
+    fixedBase64Url(epochId,16,'epoch_id')
+    const db=await openDatabase(),tx=db.transaction(STORES.states,'readonly')
+    const stored=await requestResult<unknown>(tx.objectStore(STORES.states).get(epochId))
+    await transactionDone(tx)
+    return stored!==undefined
+  }
+
+  async verifiedReadModelExists(epochId:string):Promise<boolean>{
+    fixedBase64Url(epochId,16,'epoch_id')
+    const db=await openDatabase(),tx=db.transaction(STORES.readModels,'readonly')
+    const stored=await requestResult<unknown>(tx.objectStore(STORES.readModels).get(epochId))
+    await transactionDone(tx)
+    return stored!==undefined
+  }
+
   async persistProfileUpgradeSuccessorPlanBundle(args:{
     artifactId:string
     artifactValue:unknown
@@ -382,6 +437,59 @@ export class IndexedDbV2LocalSecurityStore {
       this.loadRootWrapV6(args.state.epoch_id),
     ])
     if(plan===null||state.epoch_status!=='local_offline'||!writer||!isVerifiedRecoveryTakeoverStagingV2(staging.verified)||wrap.wrap.wrap_id!==args.rootWrap.wrap_id)throw new Error('Native v2 rotation Successor planning bundle readback failed.')
+  }
+
+  async persistOfflineRestoreBundle(args:{
+    rootKey:Uint8Array
+    epochSalt:Uint8Array
+    rootWrap:RootWrapV6
+    bestEffortWrappingKey:CryptoKey|null
+    writerKey:StoredWriterDeviceKeyV2
+    state:EpochLocalSecurityStateV6
+  }):Promise<void>{
+    validateRootWrapV6(args.rootWrap)
+    validateEpochLocalSecurityStateV6(args.state)
+    if(args.state.epoch_status!=='offline_restored'||args.state.writer_status!=='read_only'
+      ||args.state.writer_generation!==null||args.state.writer_grant_id!==null
+      ||args.state.remote_binding!==null||args.state.remote_anchor===null
+      ||args.state.verified_writer_device_id===null||args.state.verified_writer_key_id===null
+      ||args.state.verified_writer_generation===null||args.state.verified_writer_grant_id===null)throw new Error('Backup Restore StateV6 must be offline_restored/read_only with verified backup authority only.')
+    if(args.state.local_journal_count!==0||args.state.stale_writer_pending_count!==0)throw new Error('Backup Restore bundle must start before local row materialization.')
+    if(args.rootWrap.epoch_id!==args.state.epoch_id
+      ||args.rootWrap.diary_id!==args.state.diary_id
+      ||args.rootWrap.key_id!==args.state.key_id
+      ||args.rootWrap.manifest_fingerprint!==args.state.manifest_fingerprint)throw new Error('Backup Restore RootWrapV6/StateV6 binding mismatch.')
+    if((args.rootWrap.mode==='best-effort')!==(args.bestEffortWrappingKey!==null))throw new Error('Backup Restore best-effort wrapping-key binding mismatch.')
+    if(args.bestEffortWrappingKey){
+      const opened=await openBestEffortRootWrapV6(args.rootWrap,args.bestEffortWrappingKey)
+      if(base64Url(opened)!==base64Url(args.rootKey))throw new Error('Backup Restore RootWrapV6 readback failed.')
+    }
+    await validateStoredWriterDeviceKeyV2(args.writerKey,args.state.diary_id,args.state.epoch_id)
+    if(args.writerKey.writer_device_id!==args.state.writer_device_id||args.writerKey.writer_signing_key_id!==args.state.writer_signing_key_id)throw new Error('Backup Restore local WriterDeviceKeyV2 identity mismatch.')
+
+    const wrapBytes=new TextDecoder().decode(canonicalBytes(args.rootWrap as never))
+    const stateTag=await localStateTagV6(args.rootKey,args.epochSalt,args.state)
+    const db=await openDatabase(),readTx=db.transaction([STORES.rootWraps,STORES.rootWrappingKeys,STORES.writerKeys,STORES.states],'readonly')
+    const existing=await Promise.all([
+      requestResult<unknown>(readTx.objectStore(STORES.rootWraps).get(args.state.epoch_id)),
+      requestResult<unknown>(readTx.objectStore(STORES.rootWrappingKeys).get(args.rootWrap.wrap_id)),
+      requestResult<unknown>(readTx.objectStore(STORES.writerKeys).get(args.writerKey.writer_signing_key_id)),
+      requestResult<unknown>(readTx.objectStore(STORES.states).get(args.state.epoch_id)),
+    ])
+    await transactionDone(readTx)
+    if(existing.some(value=>value!==undefined))throw new Error('Backup Restore local bundle collides with existing v2 state.')
+    const tx=db.transaction([STORES.rootWraps,STORES.rootWrappingKeys,STORES.writerKeys,STORES.states],'readwrite')
+    tx.objectStore(STORES.rootWraps).add({id:args.state.epoch_id,wrap:structuredClone(args.rootWrap),bytes:wrapBytes})
+    if(args.bestEffortWrappingKey)tx.objectStore(STORES.rootWrappingKeys).add({id:args.rootWrap.wrap_id,key:args.bestEffortWrappingKey})
+    tx.objectStore(STORES.writerKeys).add(args.writerKey)
+    tx.objectStore(STORES.states).add({id:args.state.epoch_id,state:structuredClone(args.state),tag:stateTag})
+    await transactionDone(tx)
+    const [state,writer,wrap]=await Promise.all([
+      this.loadState(args.rootKey,args.epochSalt,args.state.epoch_id),
+      this.loadWriterKey(args.writerKey.writer_signing_key_id,args.state.diary_id,args.state.epoch_id),
+      this.loadRootWrapV6(args.state.epoch_id),
+    ])
+    if(state.epoch_status!=='offline_restored'||state.writer_status!=='read_only'||!writer||wrap.wrap.wrap_id!==args.rootWrap.wrap_id)throw new Error('Backup Restore local bundle readback failed.')
   }
 
   async persistReadOnlyJoinBundle(args:{
@@ -1563,6 +1671,82 @@ export class IndexedDbV2LocalSecurityStore {
       await transactionDone(tx)
       await this.verifyLocalJournal(rootKey,epochSalt,finalState.epoch_id)
       return this.loadState(rootKey,epochSalt,finalState.epoch_id)
+    })
+  }
+
+  async persistRestoredQuarantineRows(
+    rootKey:Uint8Array,
+    epochSalt:Uint8Array,
+    epochId:string,
+    rows:ReadonlyArray<readonly[string,string,string]>,
+  ):Promise<EpochLocalSecurityStateV6>{
+    if(!rows.length)return this.loadState(rootKey,epochSalt,epochId)
+    return withDiaryLockV2((await this.loadState(rootKey,epochSalt,epochId)).diary_id,async()=>{
+      await this.verifyLocalJournal(rootKey,epochSalt,epochId)
+      const current=await this.loadState(rootKey,epochSalt,epochId)
+      if(current.epoch_status!=='offline_restored'||current.writer_status!=='read_only'||current.remote_binding!==null)throw new Error('Only an offline read-only Backup Restore may import quarantined rows.')
+      const [storedEnvelopes,storedOutbox]=await Promise.all([this.envelopes(epochId),this.outbox(rootKey,epochSalt,epochId)])
+      const envelopeById=new Map(storedEnvelopes.map(envelope=>[envelope.envelopeId,envelope]))
+      const outboxById=new Map(storedOutbox.map(entry=>[entry.envelope_id,entry]))
+      const seen=new Map<string,readonly[string,string,string]>()
+      let sequence=current.local_journal_count,journalHash=current.local_journal_hash
+      const imported:Array<{envelope:PersistedEnvelopeV6;reservation:EnvelopeReservationV6;outbox:V2OutboxEntry}>=[]
+      for(const raw of rows){
+        if(raw.length!==3)throw new Error('Backup Restore quarantine row shape is invalid.')
+        const row=[raw[0],raw[1],raw[2]] as const
+        const priorInput=seen.get(row[0])
+        if(priorInput){
+          if(priorInput[1]!==row[1]||priorInput[2]!==row[2])throw new Error('Backup Restore quarantine contains conflicting immutable envelope bytes.')
+          continue
+        }
+        seen.set(row[0],row)
+        const existing=envelopeById.get(row[0])
+        if(existing){
+          if(existing.iv!==row[1]||existing.ciphertext!==row[2])throw new Error('Backup Restore quarantine collides with different local envelope bytes.')
+          const outbox=outboxById.get(row[0])
+          if(!outbox||outbox.status!=='stale_writer_pending')throw new Error('Backup Restore quarantine row exists without terminal stale-writer quarantine.')
+          continue
+        }
+        const envelope:PreparedEnvelope={
+          envelopeId:row[0],iv:row[1],ciphertext:row[2],
+          bytesHash:base64Url(await sha256(canonicalBytes(row as never))),
+        }
+        const revision=await openRevisionEnvelopeV2(rootKey,epochSalt,{diaryId:current.diary_id,epochId},envelope)
+        const authority:PreparedEnvelopeAuthorityV2|null=revision.record_schema==='writer-grant-sw-v2'
+          ?null
+          :revision.writer_context
+            ?{writer_generation:revision.writer_context.writer_generation,writer_grant_id:revision.writer_context.writer_grant_id,writer_device_id:revision.writer_context.writer_device_id,writer_key_id:revision.writer_context.writer_key_id}
+            :null
+        if(revision.record_schema!=='writer-grant-sw-v2'&&authority===null)throw new Error('Backup Restore quarantined envelope lacks Writer provenance.')
+        sequence+=1
+        journalHash=await localJournalNextV2(journalHash,sequence,envelope)
+        const id=`${epochId}:${row[0]}`,core:V2OutboxEntryCore={id,epoch_id:epochId,envelope_id:row[0],status:'stale_writer_pending',authority}
+        imported.push({
+          envelope:{...envelope,id,epoch_id:epochId,local_sequence:sequence},
+          reservation:{id,epoch_id:epochId,envelope_id:row[0],iv:row[1],state:'sealed'},
+          outbox:{...core,tag:await outboxTag(rootKey,epochSalt,core)},
+        })
+      }
+      if(!imported.length)return current
+      const next:EpochLocalSecurityStateV6={
+        ...current,
+        operation_generation:current.operation_generation+1,
+        local_journal_count:sequence,
+        local_journal_hash:journalHash,
+        stale_writer_pending_count:storedOutbox.filter(entry=>entry.status==='stale_writer_pending').length+imported.length,
+      }
+      validateEpochLocalSecurityStateV6(next)
+      const tag=await localStateTagV6(rootKey,epochSalt,next),db=await openDatabase()
+      const tx=db.transaction([STORES.reservations,STORES.envelopes,STORES.outbox,STORES.states],'readwrite')
+      for(const item of imported){
+        tx.objectStore(STORES.reservations).add(item.reservation)
+        tx.objectStore(STORES.envelopes).add(item.envelope)
+        tx.objectStore(STORES.outbox).add(item.outbox)
+      }
+      tx.objectStore(STORES.states).put({id:epochId,state:structuredClone(next),tag})
+      await transactionDone(tx)
+      await this.verifyLocalJournal(rootKey,epochSalt,epochId)
+      return this.loadState(rootKey,epochSalt,epochId)
     })
   }
 
