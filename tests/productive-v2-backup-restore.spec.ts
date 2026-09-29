@@ -98,6 +98,41 @@ for (const crashPoint of RESTORE_POINTS) {
   })
 }
 
+test('rejects BackupV6 import into an unrelated active diary without persisting restore ownership', async ({ browser }) => {
+  test.setTimeout(420_000)
+  const harness = new MultiDeviceHarness(browser)
+  const source = await harness.device('backup-restore-existing-profile-source')
+  const target = await harness.device('backup-restore-existing-profile-target')
+  try {
+    await Promise.all([source.page.goto('/'), target.page.goto('/')])
+    await harness.authenticate(source, 'backup_restore_foreign_source_auth_00001')
+    const sourceLifecycle = await harness.establishProductiveV2(source)
+    const backup = await harness.productiveActivatedBackup(source)
+    await harness.authenticate(target, 'backup_restore_foreign_target_auth_00001')
+    const targetLifecycle = await harness.establishProductiveV2(target)
+    expect(targetLifecycle.epochId).not.toBe(sourceLifecycle.epochId)
+    const targetRemoteBefore = harness.snapshotRemoteProtocolRows(targetLifecycle.remoteId)
+    const sourceRemoteBefore = harness.snapshotRemoteProtocolRows(sourceLifecycle.remoteId)
+
+    await expect(harness.runProductiveBackupRestore(target, backup, sourceLifecycle.recoveryKey))
+      .rejects.toThrow(/fresh browser profile|already-selected restore operation/i)
+    await expect(harness.productiveBackupRestoreCheckpointChain(target, backup, sourceLifecycle.recoveryKey))
+      .rejects.toThrow(/plan is missing/i)
+
+    expect(await harness.productiveV2SessionStatus(target)).toMatchObject({
+      profile: 'v2', writerStatus: 'writer_active',
+    })
+    expect(await harness.readProductivePain(target)).toBe(targetLifecycle.painCount)
+    expect(harness.snapshotRemoteProtocolRows(targetLifecycle.remoteId)).toEqual(targetRemoteBefore)
+    expect(harness.snapshotRemoteProtocolRows(sourceLifecycle.remoteId)).toEqual(sourceRemoteBefore)
+    expect(await harness.writeProductivePain(target, 'existing-writer-unaffected-by-rejected-restore'))
+      .toMatchObject({ writerStatus: 'writer_active' })
+    expect((await harness.verifyProductiveV2Remote(target)).kind).toBe('canonical_full')
+  } finally {
+    await harness.close()
+  }
+})
+
 test('rejects wrong-key, tampered and structurally truncated BackupV6 before local selection', async ({ browser }) => {
   test.setTimeout(300_000)
   const harness = new MultiDeviceHarness(browser)
