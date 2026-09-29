@@ -35,6 +35,7 @@ test('imports a genuine productive BackupV6 through Recovery UI as local read-on
       profile: 'v2', mode: 'local_offline', writerStatus: 'read_only', remoteResourceId: null,
     })
     expect(await harness.readProductivePain(restored)).toBe(1)
+    expect(await harness.verifyRestoredRecoveryArtifact(restored, backup, lifecycle.recoveryKey)).toBe(true)
     await expect(harness.writeProductivePain(restored, 'offline-restore-must-not-write')).rejects.toThrow()
     expect(harness.snapshotRemoteProtocolRows(lifecycle.remoteId)).toEqual(remoteBefore)
   } finally {
@@ -81,6 +82,7 @@ for (const crashPoint of RESTORE_POINTS) {
         profile: 'v2', mode: 'local_offline', writerStatus: 'read_only', remoteResourceId: null,
       })
       expect(await harness.readProductivePain(target)).toBe(1)
+      expect(await harness.verifyRestoredRecoveryArtifact(target, backup, lifecycle.recoveryKey)).toBe(true)
       await expect(harness.writeProductivePain(target, `restore-${crashPoint}-must-not-write`)).rejects.toThrow()
       expect(harness.snapshotRemoteProtocolRows(lifecycle.remoteId)).toEqual(remoteBefore)
 
