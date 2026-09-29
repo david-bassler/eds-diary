@@ -12,6 +12,9 @@ on:
       - src/data/syncManager.ts
       - src/test/v2ApplicationRuntime.test.ts
       - src/test/syncManager.test.ts
+      - src/data/localSecurityLifecycle.ts
+      - src/test/localSecurityLifecycle.test.ts
+      - src/features/settings/LocalSecuritySettings.tsx
   workflow_dispatch:
 
 permissions:
@@ -33,4 +36,4 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Focused authenticated-session and background-sync race regressions
-        run: npx vitest run src/test/v2ApplicationRuntime.test.ts src/test/syncManager.test.ts --reporter=dot
+        run: npx vitest run src/test/v2ApplicationRuntime.test.ts src/test/syncManager.test.ts src/test/localSecurityLifecycle.test.ts --reporter=dot
