@@ -166,3 +166,29 @@ test('refuses a second valid same-epoch BackupV6 after the first restore owns th
     await harness.close()
   }
 })
+
+
+test('rejects a tampered MAC-bound restore owner before resuming local apply', async ({ browser }) => {
+  test.setTimeout(300_000)
+  const harness = new MultiDeviceHarness(browser)
+  const source = await harness.device('backup-restore-owner-tamper-source')
+  const target = await harness.device('backup-restore-owner-tamper-target')
+  try {
+    await Promise.all([source.page.goto('/'), target.page.goto('/')])
+    await harness.authenticate(source, 'backup_restore_owner_tamper_source_001')
+    const lifecycle = await harness.establishProductiveV2(source)
+    const backup = await harness.productiveActivatedBackup(source)
+
+    await expect(harness.runProductiveBackupRestore(target, backup, lifecycle.recoveryKey, 'after-verified'))
+      .rejects.toThrow('persistent-crash:after-verified')
+    await harness.tamperBackupRestoreOwnerArtifact(target)
+    await expect(harness.runProductiveBackupRestore(target, backup, lifecycle.recoveryKey))
+      .rejects.toThrow(/MAC-bound v2 operation artifact integrity failed/i)
+
+    const selected = await target.page.evaluate(async () =>
+      (await import('/src/data/localDatabase.ts')).activeProtocolSelectionV2())
+    expect(selected).toBeNull()
+  } finally {
+    await harness.close()
+  }
+})
