@@ -53,6 +53,7 @@ function checkpointId(operationId:string,stage:BackupRestoreStageV2):string{
   return `backup-restore:${operationId}:checkpoint:${stage}`
 }
 function planId(operationId:string):string{return `backup-restore:${operationId}:plan`}
+function ownerId(epochId:string):string{return `backup-restore-owner:${epochId}`}
 
 export class ProductiveBackupRestoreV2Service {
   constructor(
@@ -91,11 +92,22 @@ export class ProductiveBackupRestoreV2Service {
     epochSalt:Uint8Array,
   ):Promise<string>{
     validateBackupRestorePlanV2(plan)
+    const encoded=new TextDecoder().decode(canonicalBytes(plan as never))
+    // Epoch-scoped ownership closes the gap between a durable verified plan and
+    // StateV6 persistence: no second valid backup may take over this local
+    // restore after any crash point.
+    const ownerKey=ownerId(plan.epoch_id)
+    const owner=await this.store.macBoundOperationArtifact<BackupRestorePlanV2>(ownerKey,rootKey,epochSalt)
+    if(owner){
+      validateBackupRestorePlanV2(owner)
+      if(new TextDecoder().decode(canonicalBytes(owner as never))!==encoded)throw new Error('A different BackupV6 already owns this local epoch restore.')
+    }else await this.store.putMacBoundOperationArtifact(ownerKey,plan,rootKey,epochSalt)
+
     const id=planId(plan.operation_id)
     const existing=await this.store.macBoundOperationArtifact<BackupRestorePlanV2>(id,rootKey,epochSalt)
     if(existing){
       validateBackupRestorePlanV2(existing)
-      if(new TextDecoder().decode(canonicalBytes(existing as never))!==new TextDecoder().decode(canonicalBytes(plan as never)))throw new Error('A different Backup Restore plan already owns this operation ID.')
+      if(new TextDecoder().decode(canonicalBytes(existing as never))!==encoded)throw new Error('A different Backup Restore plan already owns this operation ID.')
     }else await this.store.putMacBoundOperationArtifact(id,plan,rootKey,epochSalt)
     return backupRestorePlanHashV2(plan)
   }
