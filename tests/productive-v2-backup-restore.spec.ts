@@ -140,6 +140,51 @@ test('rejects BackupV6 import into an unrelated active diary without persisting 
   }
 })
 
+test('rejecting BackupV6 through the productive data layer preserves an existing Writer session', async ({ browser }) => {
+  test.setTimeout(360_000)
+  const harness = new MultiDeviceHarness(browser)
+  const device = await harness.device('backup-restore-rejected-wrapper-writer')
+  try {
+    await device.page.goto('/')
+    await harness.authenticate(device, 'backup_restore_rejected_wrapper_writer_001')
+    const lifecycle = await harness.establishProductiveV2(device)
+    const backup = await harness.productiveActivatedBackup(device)
+    const remoteBefore = harness.snapshotRemoteProtocolRows(lifecycle.remoteId)
+
+    // This is the real Recovery UI's data-layer boundary, not the lower-level
+    // restore service used by the IA-131 regression. Both imports are invalid
+    // on an active Writer and must leave its provider capability usable.
+    const importThroughProduct = async (recoveryKey: string) => device.page.evaluate(
+      async ({ value, encodedRecoveryKey }) => {
+        const [bytes, layer] = await Promise.all([
+          import('/src/security/crypto/bytes.ts'),
+          import('/src/data/initializeDataLayer.ts'),
+        ])
+        await layer.restoreV2BackupLocally(value as never, bytes.fromBase64Url(encodedRecoveryKey))
+      }, { value: backup, encodedRecoveryKey: recoveryKey },
+    )
+    await expect(importThroughProduct(lifecycle.recoveryKey))
+      .rejects.toThrow(/local bundle does not match the verified backup/i)
+    expect(harness.snapshotRemoteProtocolRows(lifecycle.remoteId)).toEqual(remoteBefore)
+    expect(await harness.writeProductivePain(device, 'same-epoch-rejected-import-preserved-session'))
+      .toMatchObject({ writerStatus: 'writer_active' })
+    const afterFirstWrite = harness.snapshotRemoteProtocolRows(lifecycle.remoteId)
+    expect(afterFirstWrite).not.toEqual(remoteBefore)
+
+    const wrongKey = Buffer.alloc(32, 211).toString('base64url')
+    await expect(importThroughProduct(wrongKey)).rejects.toThrow()
+    expect(harness.snapshotRemoteProtocolRows(lifecycle.remoteId)).toEqual(afterFirstWrite)
+    expect(await harness.writeProductivePain(device, 'wrong-key-rejected-import-preserved-session'))
+      .toMatchObject({ writerStatus: 'writer_active' })
+    expect(harness.snapshotRemoteProtocolRows(lifecycle.remoteId)).not.toEqual(afterFirstWrite)
+    expect((await harness.verifyProductiveV2Remote(device)).kind).toBe('canonical_full')
+    await expect(harness.productiveBackupRestoreCheckpointChain(device, backup, lifecycle.recoveryKey))
+      .rejects.toThrow(/plan is missing/i)
+  } finally {
+    await harness.close()
+  }
+})
+
 test('rejects wrong-key, tampered and structurally truncated BackupV6 before local selection', async ({ browser }) => {
   test.setTimeout(300_000)
   const harness = new MultiDeviceHarness(browser)

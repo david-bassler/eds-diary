@@ -233,8 +233,14 @@ export async function restoreV2BackupLocally(
   // The productive restore service owns the freshness/idempotence decision:
   // after an after-selection crash, the exact offline-restored selection already
   // exists and must remain resumable, while any foreign/active v2 state fails closed.
+  // Rejected imports must not tear down a live authenticated Writer session.
+  // The restore service verifies the backup and enforces fresh-profile/exact
+  // offline-resume preflight before any local transition (IA-137).
+  const restored=await restoreBackupV2Locally(backup,urs)
+  // A successful restore is necessarily offline/read-only and may not retain
+  // a provider capability from the previously selected profile.
   await disconnectCurrentSession()
-  return restoreBackupV2Locally(backup,urs)
+  return restored
 }
 
 export async function joinExistingV2Diary(

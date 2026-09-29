@@ -103,7 +103,7 @@ describe('v2 authenticated application-session generation fencing',()=>{
     const source=provider('early-logout'),wait=deferred<TransferableSingleWriterV2SyncService>()
     const result=fakeService()
     mocked.create.mockReturnValueOnce(wait.promise)
-    const installing=dataLayer.installAuthenticatedRemoteSession(source)
+    const installing=dataLayer.installAuthenticatedRemoteSession(source as Parameters<typeof dataLayer.installAuthenticatedRemoteSession>[0])
     await vi.waitFor(()=>expect(mocked.create).toHaveBeenCalledTimes(1))
     await dataLayer.clearAuthenticatedRemoteSession()
     wait.resolve(result)
