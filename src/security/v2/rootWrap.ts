@@ -19,6 +19,26 @@ export interface PrfRootWrapV6 extends RootWrapBaseV6 {mode:'prf';mode_metadata:
 export type RootWrapV6=BestEffortRootWrapV6|PassphraseRootWrapV6|PrfRootWrapV6
 export type RootWrapIdentityV6=Pick<RootWrapBaseV6,'diary_id'|'epoch_id'|'key_id'|'manifest_fingerprint'>
 
+// Test-only primitive-level diagnostic: unlike the application cache counter,
+// this includes direct native Source/Successor readbacks (and failed opens).
+// Do not retain or log passphrases, PRF outputs, roots or derived keys.
+let cryptographicOpens=0
+const cryptographicOpensByEpoch=new Map<string,number>()
+function recordCryptographicOpen(wrap:RootWrapV6):void{
+  if(import.meta.env.MODE!=='test')return
+  cryptographicOpens+=1
+  cryptographicOpensByEpoch.set(wrap.epoch_id,(cryptographicOpensByEpoch.get(wrap.epoch_id)??0)+1)
+}
+export function rootWrapCryptographicOpenCountForTesting(epochId?:string):number{
+  if(import.meta.env.MODE!=='test')throw new Error('RootWrap cryptographic-open diagnostics are test-only.')
+  return epochId===undefined?cryptographicOpens:cryptographicOpensByEpoch.get(epochId)??0
+}
+export function resetRootWrapCryptographicOpenCountForTesting():void{
+  if(import.meta.env.MODE!=='test')throw new Error('RootWrap cryptographic-open diagnostics are test-only.')
+  cryptographicOpens=0
+  cryptographicOpensByEpoch.clear()
+}
+
 const ZERO=new Uint8Array([0])
 const ROOT_KEYS=['local_wrap_version','mode','diary_id','epoch_id','key_id','manifest_fingerprint','wrap_id','wrap_iv','wrapped_root_key','mode_metadata'] as const
 function exact(value:object,keys:readonly string[],label:string):void{
@@ -86,6 +106,7 @@ export async function createBestEffortRootWrapV6(rootKey:Uint8Array,wrappingKey:
 export async function openBestEffortRootWrapV6(wrap:RootWrapV6,wrappingKey:CryptoKey):Promise<Uint8Array>{
   validateRootWrapV6(wrap);assertAesWrappingKey(wrappingKey)
   if(wrap.mode!=='best-effort')throw new Error('RootWrapV6 is not best-effort mode.')
+  recordCryptographicOpen(wrap)
   const root=new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv:arrayBuffer(fixedBase64Url(wrap.wrap_iv,12)),additionalData:arrayBuffer(aad(header(wrap))),tagLength:128},wrappingKey,arrayBuffer(fromBase64Url(wrap.wrapped_root_key))))
   assertRoot(root);return root
 }
@@ -100,6 +121,8 @@ export async function createPassphraseRootWrapV6(rootKey:Uint8Array,passphrase:s
 }
 export async function openPassphraseRootWrapV6(wrap:RootWrapV6,passphrase:string):Promise<Uint8Array>{
   validateRootWrapV6(wrap);if(wrap.mode!=='passphrase')throw new Error('RootWrapV6 is not passphrase mode.')
+  validatePassphrase(passphrase)
+  recordCryptographicOpen(wrap)
   const identity:RootWrapIdentityV6={diary_id:wrap.diary_id,epoch_id:wrap.epoch_id,key_id:wrap.key_id,manifest_fingerprint:wrap.manifest_fingerprint}
   const root=await aesGcmDecrypt(await passphraseKekV6(passphrase,fixedBase64Url(wrap.mode_metadata.passphrase_salt,16),identity),fromBase64Url(wrap.wrapped_root_key),aad(header(wrap)),fixedBase64Url(wrap.wrap_iv,12))
   assertRoot(root);return root
@@ -118,6 +141,8 @@ export async function openPrfRootWrapV6(wrap:RootWrapV6,assertedCredentialId:Uin
   validateRootWrapV6(wrap);if(wrap.mode!=='prf')throw new Error('RootWrapV6 is not PRF mode.')
   const expected=fromBase64Url(wrap.mode_metadata.credential_id)
   if(expected.byteLength!==assertedCredentialId.byteLength||expected.some((byte,index)=>byte!==assertedCredentialId[index]))throw new Error('WebAuthn credential does not match RootWrapV6.')
+  if(prfOutput.byteLength!==32)throw new Error('RootWrapV6 PRF output length mismatch.')
+  recordCryptographicOpen(wrap)
   const identity:RootWrapIdentityV6={diary_id:wrap.diary_id,epoch_id:wrap.epoch_id,key_id:wrap.key_id,manifest_fingerprint:wrap.manifest_fingerprint}
   const root=await aesGcmDecrypt(await prfKekV6(prfOutput,fixedBase64Url(wrap.mode_metadata.prf_wrap_salt,32),identity,expected),fromBase64Url(wrap.wrapped_root_key),aad(header(wrap)),fixedBase64Url(wrap.wrap_iv,12))
   assertRoot(root);return root
