@@ -1215,8 +1215,11 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     expect(v2.creates).toBe(2)
     expect((await activeProtocolSelectionV2())?.epoch_id).toBe(result.successor_epoch_id)
     // Productive rotation repeatedly requests both Source and Successor roots.
-    // Each distinct authenticated passphrase wrap incurs Argon2id exactly once;
-    // subsequent accesses are ordinary in-memory cache hits.
+    // These counters are deliberately scoped to the cache-bearing
+    // openSuccessorRootWrapV6WithActiveMode path. The native inheritance
+    // helper also performs direct Source/Successor readback KDFs, so this
+    // assertion MUST NOT be read as the total Argon2id invocation count.
+    // Repeated accesses through the cache-bearing path require no new KDF.
     expect(__localDatabaseTesting.v2CryptographicRootOpenCount()).toBe(2)
     expect(__localDatabaseTesting.v2CryptographicRootOpenCount(sourceEpochId)).toBe(1)
     expect(__localDatabaseTesting.v2CryptographicRootOpenCount(result.successor_epoch_id)).toBe(1)
@@ -1282,7 +1285,9 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     expect((await activeProtocolSelectionV2())?.epoch_id).toBe(result.successorEpochId)
 
     // This is the actual mandatory Recovery-Rekey Phase-B native rotation.
-    // Both independent passphrase wraps must be opened exactly once each.
+    // The cache-bearing Source/Successor openings are one each. Direct
+    // native-inheritance readback KDFs are outside this diagnostic; these
+    // assertions do not claim an exact whole-rotation Argon2id count.
     expect(__localDatabaseTesting.v2CryptographicRootOpenCount(sourceEpochId)).toBe(1)
     expect(__localDatabaseTesting.v2CryptographicRootOpenCount(result.successorEpochId!)).toBe(1)
     expect(__localDatabaseTesting.v2CryptographicRootOpenCount()).toBe(2)
