@@ -36,3 +36,28 @@ test('reconciles the complete browser provider unknown-outcome matrix without se
     await harness.close()
   }
 })
+
+test('retries the exact persisted envelope after repeated unresolved timeout and browser reload',async({browser})=>{
+  test.setTimeout(300_000)
+  const harness=new MultiDeviceHarness(browser),device=await harness.device('unknown-crash-reload')
+  try{
+    await device.page.goto('/')
+    await harness.authenticate(device,'unknown_crash_reload_initial_auth_001')
+    const lifecycle=await harness.establishProductiveV2(device),before=harness.snapshotRemoteProtocolRows(lifecycle.remoteId)
+    for(let attempt=0;attempt<8;attempt+=1)harness.enqueueProviderAppendFault({kind:'no_commit',note:`repeated-unresolved-${attempt}`})
+    await expect(harness.writeProductivePain(device,'unknown-crash-exact-envelope')).rejects.toThrow()
+    expect(harness.snapshotRemoteProtocolRows(lifecycle.remoteId)).toEqual(before)
+    const pending=await harness.pendingProductiveEnvelopeRow(device)
+    harness.clearProviderAppendFaults()
+
+    await harness.reloadAuthenticateUnlockAndRestoreProductiveRuntime(
+      device,lifecycle.passphrase,'unknown_crash_reload_resume_auth_0001',
+    )
+    await harness.synchronizeProductiveV2(device)
+    const after=harness.snapshotRemoteProtocolRows(lifecycle.remoteId)
+    expect(after.filter(row=>JSON.stringify(row)===JSON.stringify(pending.row))).toHaveLength(1)
+    expect(await harness.readProductivePain(device)).toBe(lifecycle.painCount+1)
+    expect(await harness.verifyProductiveV2Remote(device)).toMatchObject({kind:'canonical_full',writerStatus:'writer_active'})
+    expect(await harness.writeProductivePain(device,'unknown-after-exact-resume')).toMatchObject({writerStatus:'writer_active'})
+  }finally{await harness.close()}
+})

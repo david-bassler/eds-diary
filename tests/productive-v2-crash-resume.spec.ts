@@ -64,7 +64,15 @@ for (const crashPoint of POINTS) {
   })
 }
 
-const RECOVERY_REKEY_POINTS = ['after-transition-durable', 'before-phase-b'] as const
+const RECOVERY_REKEY_POINTS = [
+  'after-prepared-bundle',
+  'after-publish-attempt-fence',
+  'after-artifact-publish',
+  'after-transition-append',
+  'after-transition-durable',
+  'after-source-backup',
+  'before-phase-b',
+] as const
 for (const crashPoint of RECOVERY_REKEY_POINTS) {
   test(`restarts, unlocks and resumes productive Recovery-Rekey at ${crashPoint}`, async ({ browser }) => {
   test.setTimeout(900_000)
@@ -92,15 +100,20 @@ for (const crashPoint of RECOVERY_REKEY_POINTS) {
       restart: async () => harness.reloadLockedProductiveV2(device!, `recovery_rekey_restart_action_${String(index).padStart(8, '0')}`),
       unlock: async () => harness.unlockProductiveRootThroughUi(device!, seed!.passphrase),
       resume: async () => {
-        const painPrompt = device!.page.getByRole('dialog', { name: 'Sind diese Schmerzen noch aktuell?' })
-        const painPromptVisible = await painPrompt.waitFor({ state: 'visible', timeout: 30_000 }).then(() => true, () => false)
-        if (painPromptVisible) {
-          await runResumeStep(crashPoint, 'dismiss-pain-prompt', () => painPrompt.getByRole('button', { name: 'Ja, noch aktuell' }).click({ timeout: 10_000 }))
-          await expect(painPrompt).toBeHidden({ timeout: 10_000 })
+        const transitionMayBeCanonical = ![
+          'after-prepared-bundle', 'after-publish-attempt-fence', 'after-artifact-publish',
+        ].includes(crashPoint)
+        if(transitionMayBeCanonical){
+          const painPrompt = device!.page.getByRole('dialog', { name: 'Sind diese Schmerzen noch aktuell?' })
+          const painPromptVisible = await painPrompt.waitFor({ state: 'visible', timeout: 30_000 }).then(() => true, () => false)
+          if (painPromptVisible) {
+            await runResumeStep(crashPoint, 'dismiss-pain-prompt', () => painPrompt.getByRole('button', { name: 'Ja, noch aktuell' }).click({ timeout: 10_000 }))
+            await expect(painPrompt).toBeHidden({ timeout: 10_000 })
+          }
+          await runResumeStep(crashPoint, 'open-settings', () => device!.page.getByRole('navigation', { name: 'Hauptnavigation' }).getByRole('link', { name: 'Konfiguration' }).click({ timeout: 10_000 }))
+          await runResumeStep(crashPoint, 'wait-v2-settings', () => expect(device!.page.getByRole('region', { name: 'Mehrgeräte-Schreibzugriff (v2)' })).toBeVisible({ timeout: 60_000 }), 75_000)
+          await runResumeStep(crashPoint, 'verify-maintenance-ui', () => expect(device!.page.getByText('Recovery-Key-Wechsel ist noch nicht abgeschlossen. Normale Einträge bleiben gesperrt.')).toBeVisible({ timeout: 60_000 }), 75_000)
         }
-        await runResumeStep(crashPoint, 'open-settings', () => device!.page.getByRole('navigation', { name: 'Hauptnavigation' }).getByRole('link', { name: 'Konfiguration' }).click({ timeout: 10_000 }))
-        await runResumeStep(crashPoint, 'wait-v2-settings', () => expect(device!.page.getByRole('region', { name: 'Mehrgeräte-Schreibzugriff (v2)' })).toBeVisible({ timeout: 60_000 }), 75_000)
-        await runResumeStep(crashPoint, 'verify-maintenance-ui', () => expect(device!.page.getByText('Recovery-Key-Wechsel ist noch nicht abgeschlossen. Normale Einträge bleiben gesperrt.')).toBeVisible({ timeout: 60_000 }), 75_000)
         let stage: string
         try {
           stage = await runResumeStep(crashPoint, 'resume-phase-b', () => runWithDurableProgress(

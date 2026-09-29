@@ -155,6 +155,25 @@ test('executes the continuous replacement-device takeover and mandatory recovery
     expect((await harness.verifyProductiveV2Remote(deviceB)).coveredRowCount)
       .toBeGreaterThan(active.coveredRowCount)
     await expect(harness.writeProductivePain(deviceA, 'lost-a-after-rekey')).rejects.toThrow()
+
+    // Recovery authorization is distinct from operation resume: the original
+    // R1 can no longer bootstrap the canonical successor, while independently
+    // authenticated fresh devices can use R2 for a productive read-only Join.
+    const staleRecoveryDevice = await harness.device('continuous-takeover-stale-r1')
+    const currentRecoveryDevice = await harness.device('continuous-takeover-current-r2')
+    await Promise.all([staleRecoveryDevice.page.goto('/'), currentRecoveryDevice.page.goto('/')])
+    await harness.authenticate(staleRecoveryDevice, 'continuous_takeover_stale_r1_auth_0001')
+    await expect(harness.joinAndUnlockProductiveV2(staleRecoveryDevice, lifecycle)).rejects.toThrow()
+    await harness.authenticate(currentRecoveryDevice, 'continuous_takeover_current_r2_auth_001')
+    const recovered = await harness.joinAndUnlockProductiveV2(currentRecoveryDevice, {
+      ...lifecycle,
+      recoveryKey: seed.newRecoveryKey,
+    })
+    expect(recovered.writerStatus).toBe('read_only')
+    expect(recovered.notes).toContain('replacement-after-rekey-is-durable')
+    expect(await harness.verifyProductiveV2Remote(currentRecoveryDevice)).toMatchObject({
+      kind: 'canonical_full', writerStatus: 'read_only',
+    })
   } finally {
     await harness.close()
   }

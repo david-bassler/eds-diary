@@ -48,6 +48,16 @@ export interface V2ResumeSummary { writerStatus: string; painRevisionCount: numb
 export interface V2JoinSummary extends V2ResumeSummary { writerDeviceId: string; joined: boolean; repositoryPainCount: number; writeRejected: boolean }
 export interface V2HandoffSummary { stage: string; writerStatus: string; writerGeneration: number | null; remoteRows: number }
 export interface V2TakeoverSummary extends V2HandoffSummary { maintenanceOnly: boolean }
+export interface ProductiveV2LifecycleSummary {
+  diaryId:string
+  epochId:string
+  remoteId:string
+  recoveryKey:string
+  passphrase:string
+  writerStatus:string
+  painCount:number
+  coveredRowCount:number
+}
 
 const TEST_CREDENTIAL = 'multi-device-oauth-sentinel'
 const TEST_PERMISSION_ID = 'multi-device-provider-account'
@@ -215,6 +225,25 @@ export class MultiDeviceHarness {
   }
 
   enqueueProviderAppendFault(fault: AppendFault): void { this.appendFaults.push(fault) }
+  clearProviderAppendFaults():void{this.appendFaults.length=0}
+
+  async pendingProductiveEnvelopeRow(device:VirtualDevice):Promise<{envelopeId:string;row:string[]}>{
+    return device.page.evaluate(async()=>{
+      const [localDatabase,persistence,envelopes]=await Promise.all([
+        import('/src/data/localDatabase.ts'),import('/src/security/v2/localPersistence.ts'),import('/src/security/v2/envelopes.ts'),
+      ])
+      const selection=await localDatabase.activeProtocolSelectionV2()
+      if(!selection)throw new Error('Pending-envelope inspection requires active v2 selection.')
+      const db=await persistence.__v2LocalPersistenceTesting.openDatabase(),stores=persistence.__v2LocalPersistenceTesting.STORES
+      const tx=db.transaction([stores.outbox,stores.envelopes],'readonly'),outboxRequest=tx.objectStore(stores.outbox).index('byEpoch').getAll(selection.epoch_id)
+      const read=<T,>(request:IDBRequest<T>)=>new Promise<T>((resolve,reject)=>{request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error)})
+      const outbox=await read<Array<{envelope_id:string;status:string}>>(outboxRequest),pending=outbox.findLast(entry=>entry.status!=='durable')
+      if(!pending)throw new Error('Expected one unresolved productive envelope.')
+      const stored=await read<{envelopeId:string;iv:string;ciphertext:string;bytesHash:string}|undefined>(tx.objectStore(stores.envelopes).get(`${selection.epoch_id}:${pending.envelope_id}`))
+      if(!stored)throw new Error('Pending productive envelope bytes are missing.')
+      return{envelopeId:pending.envelope_id,row:[...envelopes.envelopeRowV2(stored)]}
+    })
+  }
 
   async scanBrowserPersistence(device: VirtualDevice, sentinels: readonly string[]): Promise<readonly string[]> {
     const persistenceHits = await device.page.evaluate(async ({ needles }) => {
@@ -550,7 +579,7 @@ export class MultiDeviceHarness {
     }, { expected: lifecycle })
   }
 
-  async joinAndUnlockProductiveV2(device: VirtualDevice, lifecycle: ProductiveV2LifecycleSummary): Promise<{ writerStatus: string; painCount: number; notes: string[] }> {
+  async joinAndUnlockProductiveV2(device: VirtualDevice, lifecycle: Pick<ProductiveV2LifecycleSummary,'recoveryKey'|'passphrase'>): Promise<{ writerStatus: string; painCount: number; notes: string[] }> {
     return device.page.evaluate(async ({ expected }) => {
       const state = window as typeof window & { multiDeviceAuth?: { provider: { getApiClient(): unknown } }; productiveV2Session?: unknown }
       const [bytes, dataLayer, v2Provider, localDatabase, painRepository] = await Promise.all([
@@ -615,6 +644,12 @@ export class MultiDeviceHarness {
       const session = provider.googleV2ProviderSessionFromAuthenticatedClient(state.multiDeviceAuth!.provider.getApiClient() as never)
       state.productiveV2Session = session
       await dataLayer.installAuthenticatedRemoteSession(session)
+    })
+  }
+
+  async synchronizeProductiveV2(device:VirtualDevice):Promise<void>{
+    await device.page.evaluate(async()=>{
+      await (await import('/src/data/initializeDataLayer.ts')).synchronizeDataLayer()
     })
   }
 
@@ -830,8 +865,10 @@ export class MultiDeviceHarness {
   }
 
   async close(): Promise<void> {
-    await Promise.all(this.devices.map(async (device) => device.context.close()))
+    const results=await Promise.allSettled(this.devices.map(async(device)=>device.context.close()))
     this.devices.length = 0
+    const unexpected=results.find(result=>result.status==='rejected'&&!/(?:Target page, context or browser has been closed|Failed to find context with id)/u.test(String(result.reason)))
+    if(unexpected?.status==='rejected')throw unexpected.reason
   }
 
   private async googleRoute(route: Route): Promise<void> {
