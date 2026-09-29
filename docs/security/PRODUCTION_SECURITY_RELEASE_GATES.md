@@ -209,41 +209,13 @@ kanonisch akzeptierten g+1-WriterGrant, Source-Demotion und Target-Adoption;
 A ist nach Reload read-only, B schreibt Writer-authorisiert weiter.
 Live Google bleibt separat offen.
 
-`GATE-E2E-03` ist als **vollständige kombinierte Browserkette OPEN**.
-Produktiver Forced Takeover auf dem Ersatzgerät, Fence des verlorenen Writers
-und dessen neuer Writer-Write sind browserseitig bewiesen. Die separaten
-Recovery-Rekey-Crash-Tests beweisen nun die nach Reload sichtbare durable
-Pending-Rekey-Maintenance und den Normal-Write-Fence vor Phase B. Die
-zusammenhängende Browsersequenz Forced Takeover -> RecoveryAuthorityTransition
--> Pending-Rekey -> Phase B -> neue normale Writer-Epoche mit kanonischer
-Verifikation nach jedem persistierten Schritt ist noch nachzuweisen.
-Service-/L2-Evidenz allein schließt diesen L3-Gesamtgate nicht.
+`GATE-E2E-03` ist für den **kontrollierten produktiven Browserpfad L3 geschlossen**. Die durchgehende A/B-Ersatzgeräte-Kette prüft den produktiven R1-authorisierten Forced Takeover mit kanonischem g+1 und Fence von A, die persistierte R1→R2 RecoveryAuthorityTransition, kanonisches Pending-Rekey mit unveränderten Remote-Bytes nach abgewiesenem normalem Write, Reload/UI-Unlock und sichtbare Maintenance, exakte Phase-B-Rotation und kanonischen neuen Writer in der neuen Epoche. B führt einen weiteren durablen Write aus; A bleibt geblockt, R1 kann keinen neuen Join mehr autorisieren und ein separat authentifiziertes R2-Gerät joint read-only. CI #1047 besteht den Fall in Security-E2E, Chromium und Mobile Chrome. Live Google bleibt ein externes Gate.
 
-`GATE-E2E-04` ist für die **beiden derzeit implementierten
-Recovery-Rekey-Crash-Zeitpunkte L3-validiert, als vollständige §13-Matrix
-weiter OPEN**. Nach `after-transition-durable` und `before-phase-b`
-bestehen Browser-Reload, Re-Auth, sichtbarer UI-Unlock, Pending-Rekey-
-Schreibsperre und Settings-Maintenance, Wiederaufnahme einschließlich
-Source Backup/Phase B, canonical_full, aktive WriterAuthority und ein
-anschließender produktiver durabler Write (Security Validation #1022 in
-Chromium und Mobile-Chrome). Produktive L2-Regressionen decken darüber
-hinaus R1→R2, Artefakt-/Backup-Verifikation und R1-Negativfälle ab.
-Alle §13-persistierten Fault Points und die vollständigen expliziten
-Browser-R1/R2-/Semantik-Assertions stehen noch aus.
+`GATE-E2E-04` hat **alle sieben produktiven Recovery-Rekey-Service-Fault-Points erfolgreich auf Chromium und Mobile Chrome** in CI #1047 durchlaufen, einschließlich Browser-Restart, Re-Auth/UI-Unlock, Schreibsperre, sichtbarer Pending-Rekey-UI nach kanonischer Transition, Phase B, canonical_full und produktivem Write. Der Service verifiziert R2 RecoveryArtifactV6 sowie BackupV6 durch read-only Test-Restore vor Phase B; der durchgehende Ersatzgeräte-Fall beweist R1-Denial und R2-Join. Die zusätzliche Prüfung derselben persistierten Recovery-Rekey-Operation und unveränderter Fachdaten für **jeden** Fault Point ist danach ergänzt worden und benötigt aktuelle CI. Bis dahin bleibt die vollständige §13-Gate-Schließung **OPEN**.
 
-`GATE-E2E-05` bleibt **OPEN**: Produktiver v1→v2-Service-Upgrade und
-Reload/Write/Join sind durch kontrolliertes Browser-L3 belegt, aber die
-explizite Migration über die V2-UI samt vollständiger §22-Assertions fehlt.
+`GATE-E2E-05` ist für den **kontrollierten Browser-/UI-Pfad L3 geschlossen** (CI #1047). Die echte v1-Domainbasis wird über die Settings-V2-UI mit zwei produktiven Popup/Bridge-Authentifizierungen migriert. Der Browser bestätigt sichtbaren Cutover, retired Source, aktive Successor-Auswahl, persistierte Recovery-/staged-/activated-Backup-Artefakte, unveränderte Fachdaten, negativen Legacy-Klartext-Sentinel-Scan, Reload/Authentifizierung/UI-Unlock, kanonischen Write und read-only Join eines zweiten Browserprofils. Ein separater direkter Service-Aufruf führt die UI-Migration nicht aus; Live Google und Deployment bleiben externe Gates.
 
-`GATE-E2E-06` bleibt **OPEN**: Ein wiederverwendbarer
-`runPersistentCrashScenario` führt benannte unabhängige Browser-Fault-
-Lifecycles für Profile Upgrade, Recovery-Rekey, Handoff, Forced Takeover und
-Join erfolgreich aus. Zwei benannte normale V2-Rotation-Crashfälle (nach Source-Freeze und
-Confirmation-Append) sind implementiert und müssen noch auf dem aktuellen
-Commit erfolgreich validiert werden. Weitere persistierte Rotationspunkte
-und die Backup-Restore-Browsermatrix fehlen im vollständigen
-§14-Sieben-Ceremony-Nachweis. IA-104/IA-106 sind als engere Harness-Defekte geschlossen,
-nicht als Erklärung, dass alle Crash-Gates schon vollständig wären.
+`GATE-E2E-06` bleibt **OPEN**, obwohl CI #1047 die benannten produktiven Browser-Crash-Lifecycles für Profile Upgrade, Recovery-Rekey (sieben Punkte), Handoff, Forced Takeover, Join und zwei normale V2-Rotation-Punkte (`after-source-freeze`, `after-confirmation-append`) auf Chromium und Mobile Chrome erfolgreich durchlaufen hat. Weitere persistierte Normalrotation-Punkte sowie die produktive Backup-Restore-Browsermatrix fehlen im vollständigen §14-Sieben-Ceremony-Nachweis. Neue exakte Recovery-Rekey-Operations-/Fachdaten-Assertions verlangen eine gesonderte aktuelle CI. IA-104/IA-106 bleiben als engere Harness-Defekte geschlossen.
 
 `GATE-E2E-07` besitzt validierte L2-/L3-**Teilnachweise**, bleibt als
 vollständige §15-Browsermatrix **OPEN**. Der produktive Browser-Providerpfad
@@ -260,13 +232,7 @@ Authority-Nutzung. Byte-identische physische Retries bleiben
 spezifikationsgemäß zulässig, werden aber semantisch nur einmal angewandt.
 Hostile-Grid-Verhalten bei echtem Google ist ein getrenntes Live-Gate.
 
-`GATE-E2E-09` bleibt **OPEN**. Fach- und Credential-Sentinels werden in
-DOM, IndexedDB-Objektwerten, Web Storage und Cache Storage geprüft; bisherige
-kontrollierte Assertions sind grün. Der Golden Path wertet jedoch die
-instrumentierbaren Diary-origin Requests, Logs und Fehlermeldungen noch nicht
-vollständig gegen diese Sentinels aus. Produktionslogs/Source Maps und
-opaque OS-Speicher sind zusätzliche externe Prüfungen, kein Grund, die
-intern instrumentierbaren Kanäle zu überspringen.
+`GATE-E2E-09` bleibt **OPEN**. Die ursprüngliche kombinierte Persistenz-/Telemetry-Suite und die synthetischen Positivkontrollen bestanden in CI #1047. Der Abschlussreview fand danach zwei zuvor unsichtbare Scanner-Blindstellen, dokumentiert als IA-122 (Diary-initiierte externe Request-Ziele) und IA-123 (DOM-Form-Werte/-Attribute, persistierte Schlüssel/Namen sowie nicht vollständig redigierte Identifier-Labels). Die Implementierung und adversariellen Canary-Tests sind ergänzt: initiatorgebundene externe URL/Header/Body-Erfassung, alle genannten DOM-/Storage-Flächen und ausschließlich ordinale Diagnose-Orte, mit Auth-Origin-Ausnahme. Die erweiterten Browser-/CI-Nachweise stehen auf dem aktuellen Head noch aus. Produktionslogs/Source Maps und opaque OS-Speicher bleiben zusätzliche externe Prüfungen.
 
 `GATE-E2E-10` ist auf L3 für den kontrollierten Auth-Provider
 geschlossen: der produktive Browser-Einstieg durchläuft Popup,
@@ -294,7 +260,7 @@ Auth-Origin-Prüfungen, echte WebAuthn-Geräte noch unabhängigen Audit.
 
 `SECURITY/DECISION: single-writer-v1 production hardening rationale frozen in EDS_SINGLE_WRITER_V1_HARDENING_DECISIONS.md`
 
-`TODO_INTERNAL: transferable-single-writer-v2 end-to-end assurance — complete the eight remaining internally actionable packages in V2_E2E_ASSURANCE_PLAN.md §33a (IN_PROGRESS #10/#11/#12/#13/#14/#16/#19; NOT_STARTED #24). Packages #2/#5 are now explicitly blocked on the live/deployed prerequisites shared with #21/#22 rather than misrepresented as repository-solvable historical attribution. IA-112 is closed by deterministic cryptographic-open call-count evidence. Packages #10/#16/#19 and the expanded Recovery-Rekey matrix have new local focused evidence but remain open pending final-head integrated CI; IA-121 updates Vitest tooling to 4.1.11 with a zero-vulnerability local high-severity audit; final-head CI is still required. The green configured PR-security CI does not close the other distinct DoDs.`
+`TODO_INTERNAL: transferable-single-writer-v2 end-to-end assurance — complete the six remaining internally actionable packages in V2_E2E_ASSURANCE_PLAN.md §33a (IN_PROGRESS #11/#13/#14/#16/#19; NOT_STARTED #24). The controlled-provider #10 Forced Takeover/Pending-Rekey and #12 UI migration gates are validated and closed by Security Validation #1047; this is not Live Google evidence. #11's additional exact-operation/data-preservation assertions and #16's IA-122/123 strengthened scanner tests require latest-head CI. #13 needs the remaining normal V2 Rotation/Backup Restore browser matrix, #14 competing-Writer unknown-outcome coverage, #19 model/SUT fidelity and #24 whole-system adversarial review. Packages #2/#5 remain genuinely BLOCKED on external #21/#22 historical real-provider/deployment reproduction; #23 physical WebAuthn and #25 external audit are also BLOCKED. IA-121's Vitest upgrade passed zero-vulnerability dependency audit and full #1047 CI. No PR is merge-authorized until all applicable release gates are satisfied.`
 
 `BLOCKED_EXTERNAL: Live-Google Parallel-Append-Gate requires a disposable dedicated Google test spreadsheet/account with credentials supplied outside source control. Its harness is implemented (npm run test:live-google-parallel-append); controlled-provider CI cannot satisfy the real-provider gate. Separate-origin deployment, physical WebAuthn and independent audit remain additional external gates.`
 

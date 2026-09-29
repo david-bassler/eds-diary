@@ -564,8 +564,8 @@ implementation head do not inherit a claim that their own GitHub runs passed.
 | IA-119 | Harness cleanup can obscure the primary Playwright timeout | Both failed UI-migration attempts reached the test deadline, after which Playwright had already disposed a BrowserContext. `MultiDeviceHarness.close()` then rejected on the already-closed context, adding a misleading cleanup error beside the actual authentication/test assertion failure. This weakens diagnostic attribution but does not affect product protocol state. | **Fixed.** Cleanup uses `Promise.allSettled()` so every device is attempted, ignores only Playwright's explicit already-closed/missing-context errors, and rethrows the first unexpected cleanup failure. No timeout was increased and primary test failures remain intact. Lint and a focused failing-cleanup regression review remain part of final validation. |
 | IA-120 | Unknown-outcome crash regression used a pull-only refresh to expect an outbox push | The first repeated-timeout/reload regression called `refreshProductiveV2()`, whose deliberate purpose is to install a fresh authenticated session and refresh the verified read model; installation calls `refreshVerifiedReadModel()` and does not push pending mutations. The test therefore observed no post-reload append and initially resembled a product resume defect. Network evidence showed only strict GET verification and no append attempt, classifying this as a wrong harness abstraction rather than blind-loss/product behavior. | **Fixed and locally validated.** The harness now has an explicit `synchronizeProductiveV2()` operation invoking productive `synchronizeDataLayer()` after ordinary runtime restoration. The regression retains exact encrypted-row/semantic-uniqueness assertions and passes 1/1 on Chromium in 1.7 minutes. Coordinator retry semantics and pull-only session installation were not changed; final-head CI remains required. |
 | IA-121 | Final dependency audit reports vulnerable Vitest tooling | `npm audit --audit-level=high` on the PR #66 continuation head reports Vitest 4.0.18 affected by GHSA-5xrq-8626-4rwp (critical arbitrary file read/execution when the UI server listens) and its `@vitest/mocker` by GHSA-82fw-gwwq-j7x9 (path traversal/file read). Vitest is development/test tooling rather than shipped application runtime, but CI/developer workstations and test fixtures are in scope for supply-chain assurance. Package #20 and the release dependency gate are affected. | **Fixed and closed locally.** The exact Vitest development dependency and lockfile now use 4.1.11, the first release `npm audit` identified as fixing both advisory ranges. `npm audit --audit-level=high` reports zero vulnerabilities; full unit passes 288/288, security-unit passes 84/84, generative passes 6/6, and the focused RootWrap suite passes 7/7 under Vitest 4.1.11. The initial normal npm install hit npm Arborist `edgesOut`; rerunning with `--legacy-peer-deps` completed, and a subsequent normal `npm install --package-lock-only` verified the lock graph without legacy mode. No production dependency changed. Final-head CI remains required. |
-| IA-122 | Browser scanner misses Diary-initiated requests to an external destination | While checking IA-114/GATE-E2E-09 for closure against successful CI #1047, the unified request collector was found to return whenever `new URL(request.url()).origin !== new URL(page.url()).origin`. That compares **destination** origin, not the browser frame that initiated the request. A Diary-origin fetch to an attacker-controlled external host carrying a synthetic credential/health sentinel in its URL or body would therefore be invisible, despite the gate requiring instrumentable requests **from** the Diary origin. Valid Auth-Origin iframe/provider requests remain a distinct allowed credential boundary; counting them as Diary leaks would also be incorrect. The existing positive test covers only same-origin `/__leak_probe`, so it did not detect this coverage gap. This is a test-evidence defect, not evidence that the productive application actually exfiltrates credentials or health data. INV-01/02, IA-114 and GATE-E2E-09 are affected. | **OPEN before fix.** Select requests using the actual initiating Diary page/frame, not only destination origin. Include Diary-initiated cross-origin request URLs, headers and bodies, while excluding requests provably initiated by the authorized Auth-Origin iframe and Auth popup. Keep only redacted location/index findings, never print sentinel bytes. Add a synthetic, safely routed cross-origin Diary-request positive control that the old scanner fails and the revised scanner detects; retain Auth-origin exclusion and all storage/log/error controls. Do not close IA-114 or package #16 until this sibling and integrated final-head CI pass. |
-| IA-123 | Browser leak-scan misses dynamic DOM/form fields and persisted names, and diagnostics can contain unredacted storage labels | During the GATE-E2E-09 closure review, `scanBrowserPersistence()` checked `document.documentElement.textContent` but did not inspect attributes or current input/textarea values. It checked Web Storage values but not keys, IndexedDB values but not database/store names or record keys, and Cache Storage responses/URLs but not cache names. A sensitive sentinel in these instrumentable DOM/persistence surfaces could therefore evade detection. Additionally, hit labels interpolated untrusted localStorage keys, database/store names and cache names directly into returned strings, so a sentinel embedded in a storage identifier could appear in failure diagnostics despite the claimed redacted `location:sentinel-index` format. This is a scanner assurance/diagnostic confidentiality defect; no product leak is proven. INV-01/02, IA-114 and GATE-E2E-09 are affected. | **OPEN before fix.** Inspect DOM attributes plus current form values, Web Storage keys and values, IndexedDB database/store/record keys and values, and Cache Storage names/requests/responses. Replace untrusted identifier fragments in hit labels with stable ordinal labels, retaining only surface and synthetic sentinel index. Add positive browser canaries for dynamic form values, DOM attributes and storage identifier/key surfaces, and assert the returned hit list never contains a synthetic sentinel even when it appears in a key/name. Preserve authorized ephemeral inputs and Auth-Origin exclusions when designing negative tests. Do not close IA-114 or #16 without green latest-head CI. |
+| IA-122 | Browser scanner misses Diary-initiated requests to an external destination | While checking IA-114/GATE-E2E-09 for closure against successful CI #1047, the unified request collector was found to return whenever `new URL(request.url()).origin !== new URL(page.url()).origin`. That compares **destination** origin, not the browser frame that initiated the request. A Diary-origin fetch to an attacker-controlled external host carrying a synthetic credential/health sentinel in its URL or body would therefore be invisible, despite the gate requiring instrumentable requests **from** the Diary origin. Valid Auth-Origin iframe/provider requests remain a distinct allowed credential boundary; counting them as Diary leaks would also be incorrect. The existing positive test covers only same-origin `/__leak_probe`, so it did not detect this coverage gap. This is a test-evidence defect, not evidence that the productive application actually exfiltrates credentials or health data. INV-01/02, IA-114 and GATE-E2E-09 are affected. | **IMPLEMENTED; final-head CI pending.** The browser scanner now classifies the requesting frame rather than restricting the destination origin. It scans Diary-initiated cross-origin URL/header/body telemetry, while excluding requests provably initiated by the simulated Auth iframe/popup. A dedicated routed `.invalid` cross-origin URL and POST-body positive control asserts both surfaces are actually detected without sending traffic to an external service; existing same-origin and Auth-origin siblings remain. A lint-only `no-useless-assignment` failure in interim #1050/#1053 was fixed at `c6d7863c…`. Do not close this finding until the strengthened test and latest-head integrated CI succeed; no productive exfiltration has been established. |
+| IA-123 | Browser leak-scan misses dynamic DOM/form fields and persisted names, and diagnostics can contain unredacted storage labels | During the GATE-E2E-09 closure review, `scanBrowserPersistence()` checked `document.documentElement.textContent` but did not inspect attributes or current input/textarea values. It checked Web Storage values but not keys, IndexedDB values but not database/store names or record keys, and Cache Storage responses/URLs but not cache names. A sensitive sentinel in these instrumentable DOM/persistence surfaces could therefore evade detection. Additionally, hit labels interpolated untrusted localStorage keys, database/store names and cache names directly into returned strings, so a sentinel embedded in a storage identifier could appear in failure diagnostics despite the claimed redacted `location:sentinel-index` format. This is a scanner assurance/diagnostic confidentiality defect; no product leak is proven. INV-01/02, IA-114 and GATE-E2E-09 are affected. | **IMPLEMENTED; final-head CI pending.** The scanner now inspects markup/attributes and current input/textarea/select values as well as text, Web Storage keys and values, IndexedDB database/store names, record keys and values, and Cache Storage names, request URL/headers and response text/headers. Diagnostics use stable ordinal surface identifiers and synthetic sentinel indices, not user-controlled storage names or canary values. The browser positive-control case injects form/property and DOM attribute canaries plus synthetic key/database/store/record/cache-name canaries and asserts both detection and redacted output. Await a green final-head integrated browser/CI run before closing IA-123, IA-114 and package #16. |
 
 ### 2026-09-29 PR #66 IA-112 review corrections
 
@@ -704,6 +704,62 @@ new assurance records rather than duplicating PR #66's shared changes.
 No PR was merged or closed. History rewrite and PR base change require
 fresh CI evidence for the current head; success on the original commits
 is not reported as CI success on the new SHA.
+
+### 2026-09-29 #1047 formal package closure and IA-122/123 follow-up
+
+Security Validation [#1047](https://github.com/david-bassler/eds-diary/actions/runs/36558642840)
+passed **all five jobs** at
+`27b0fe9b7f4f16a82453bd54d3d2d5343143b977`: 41/41
+named Chromium security E2E, Chromium 93 passed + 4 skipped,
+Mobile Chrome 97/97, full unit 288/288, security unit 84/84 and
+generative 6/6; configured build/lint/audit/Storybook also passed.
+The named suite executed the combined replacement-device takeover,
+seven Recovery-Rekey persisted crash points, two normal V2 rotation
+points, UI migration, unknown-outcome restart and scanner controls.
+
+**#10/GATE-E2E-03 closed at controlled-provider L3:** The continuous
+browser test verifies productive B read-only Join and R1 Forced Takeover,
+canonical g+1 and lost-A fence, R1→R2 transition and canonical
+Pending-Rekey, remote-byte-stable normal-write rejection, browser
+reload/UI unlock/visible maintenance, mandatory Phase B and canonical
+new-epoch Writer, post-rotation durable write and stale-R1 denial/fresh
+R2 read-only Join. Productive services preserve fresh canonical checks
+at each remote-persisted transition.
+
+**#12/GATE-E2E-05 closed at controlled-provider L3:** The Settings
+test initiates v1→v2 migration through the product UI and two real
+Popup/Bridge authentication handoffs. It asserts retirement and
+selection, stored R2 Recovery/Backup artifacts, preserved existing
+domain data, absent legacy-plaintext sentinel in the instrumented
+stores, reload/auth/UI unlock, fresh canonical Writer/write and B Join.
+The test only reconstructs the harness runtime *after* successful
+UI completion for independent canonical inspection; it does not
+perform migration by a direct service shortcut.
+
+**#11 remains IN_PROGRESS:** Seven productive Recovery-Rekey fault
+points pass #1047. The real service creates/cryptographically verifies
+the new RecoveryArtifactV6 and BackupV6 and requires successful
+read-only test-restore before Phase B; the combined browser path proves
+R1 denial and R2 read-only Join. Stronger per-point assertions now
+require preservation of the exact original Recovery-Rekey operation ID
+and unchanged domain count before a post-resume write. Those additions
+require the current implementation-head CI before full §13 closure.
+
+**#16 remains IN_PROGRESS:** The initial scanner suite passed #1047,
+but adversarial inspection before formal closure found IA-122
+(Diary-initiated cross-origin request destinations were omitted) and
+IA-123 (dynamic form/DOM and persistence keys/names were omitted and
+untrusted identifiers could appear in diagnostic labels). Both were
+documented OPEN before remediation. The follow-up now inspects those
+surfaces, preserves Auth-Origin isolation and emits ordinal-only
+diagnostic locations. The expanded positive/negative browser suite
+and final-head CI have not yet completed; do not close IA-114,
+IA-122/123 or GATE-E2E-09 prematurely. An intermediate static job
+reported a no-useless-assignment ESLint error; the initializing
+assignment was removed at `c6d7863c…` without relaxing the scanner.
+
+No claim here covers Live Google, separate HTTPS deployment, physical
+WebAuthn or an independent audit. No PR was merged.
 
 ## Reviewed points that are not findings
 
