@@ -521,6 +521,27 @@ export class MultiDeviceHarness {
     })
   }
 
+  async productiveStagedBackup(device: VirtualDevice): Promise<unknown> {
+    return device.page.evaluate(async () => {
+      const { __v2LocalPersistenceTesting } = await import('/src/security/v2/localPersistence.ts')
+      const db = await __v2LocalPersistenceTesting.openDatabase()
+      const tx = db.transaction(__v2LocalPersistenceTesting.STORES.operationArtifacts, 'readonly')
+      const request = tx.objectStore(__v2LocalPersistenceTesting.STORES.operationArtifacts).getAll()
+      const records = await new Promise<Array<{ id?: unknown; value?: unknown }>>((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result as Array<{ id?: unknown; value?: unknown }>)
+        request.onerror = () => reject(request.error)
+      })
+      const candidates = records.flatMap((record) => {
+        if (typeof record.id !== 'string' || !record.id.endsWith(':staged-backup')) return []
+        const value = record.value as { backup?: unknown } | undefined
+        const backup = value?.backup as { format?: unknown } | undefined
+        return backup?.format === 'sync-backup-v6' ? [backup] : []
+      })
+      if (candidates.length !== 1) throw new Error(`Expected exactly one productive staged BackupV6, found ${candidates.length}.`)
+      return structuredClone(candidates[0])
+    })
+  }
+
   async runProductiveBackupRestore(
     device: VirtualDevice,
     backup: unknown,
