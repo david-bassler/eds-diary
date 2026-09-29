@@ -116,13 +116,24 @@ export class MultiDeviceHarness {
       instrumentedPage.on('request', (request) => {
         const target = new URL(request.url())
         const diary = new URL(page.url())
-        if (target.origin !== diary.origin || target.pathname.startsWith('/google-auth/')) return
+        // The request *initiator*, not its destination, defines the Diary
+        // trust boundary. In particular, a Diary fetch to an external host
+        // must not escape credential/plaintext sentinel inspection.
+        let initiatedByDiary = false
         try {
-          if (new URL(request.frame().url()).pathname.startsWith('/google-auth/')) return
+          const initiator = new URL(request.frame().url())
+          initiatedByDiary = initiator.origin === diary.origin
+            && !initiator.pathname.startsWith('/google-auth/')
         } catch {
-          // Worker/navigation requests with no accessible frame still have to
-          // pass the exact Diary-origin/path check above.
+          // Frame-less/initial navigation requests are classifiable only by
+          // destination. Do not classify an unknown cross-origin initiator as
+          // the Diary, but retain same-origin navigations.
+          initiatedByDiary = target.origin === diary.origin
         }
+        if (!initiatedByDiary) return
+        // This is the dedicated Auth-origin boundary on our same-host test
+        // server, not an endpoint whose permitted credential flow is a leak.
+        if (target.origin === diary.origin && target.pathname.startsWith('/google-auth/')) return
         securityTelemetry.push({ location: 'request-url', value: request.url() })
         securityTelemetry.push({ location: 'request-headers', value: JSON.stringify(request.headers()) })
         const body = request.postData()
