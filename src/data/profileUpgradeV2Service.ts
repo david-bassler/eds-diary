@@ -805,7 +805,7 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
     const rows=verified.snapshot.rows.map(row=>[row[0]!,row[1]!,row[2]!] as Row),local=await this.backupRows(),result=canonical(verified)
     const backup=await createBackupV6({
       rootKey:ctx.rootKey,epochSalt:ctx.epochSalt,urs:this.urs,diaryId:ctx.plan.diary_id,epochId:ctx.plan.successor_epoch_id,keyId:ctx.plan.key_id,
-      epochManifestPublic:ctx.plan.manifest_cells,canonical:result,recoveryArtifact:activation.artifact.recovery_artifact,recordRows:rows,
+      epochManifestPublic:ctx.plan.manifest_cells,canonical:result,recoveryArtifact:activation.recovery_artifact,recordRows:rows,
       pendingOutboxRows:local.pending,staleWriterPendingRows:local.stale,activationState,createdAt:ctx.plan.created_at,
     })
     const restored=await testRestoreBackupV6({rootKey:ctx.rootKey,epochSalt:ctx.epochSalt,urs:this.urs,diaryId:ctx.plan.diary_id,epochId:ctx.plan.successor_epoch_id,keyId:ctx.plan.key_id},backup,new TransferableSingleWriterV2Verifier())
@@ -980,7 +980,7 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
     const activation=await this.artifact<ActivationArtifactV2>('activation')
     if(!activation)throw new Error('Profile-upgrade recovery artifact is missing.')
     const payload=(await import('../security/v2/recovery')).openRecoveryArtifactV6
-    const opened=(await payload(activation.artifact.recovery_artifact,this.urs)).payload
+    const opened=(await payload(activation.recovery_artifact,this.urs)).payload
     return result.source_epoch_sealed
       ||result.current_recovery.recovery_generation!==opened.recovery_generation
       ||result.current_recovery.recovery_urs_id!==opened.recovery_urs_id
