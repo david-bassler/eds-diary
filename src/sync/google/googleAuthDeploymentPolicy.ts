@@ -23,15 +23,15 @@ export function validateGoogleAuthEndpoint(args:{
   }else if(url.protocol!=='https:'){
     throw new Error('Google auth URL must use HTTPS except on a loopback development host.')
   }
-  const page=new URL(args.pageUrl),sameOrigin=url.origin===page.origin
-  if(args.production&&sameOrigin&&!args.allowSameOriginTest){
+  const page=new URL(args.pageUrl),sameOrigin=url.origin===page.origin,loopback=isLoopbackHost(url.hostname)
+  if(args.production&&sameOrigin&&!loopback&&!args.allowSameOriginTest){
     throw new Error('Same-origin Google authentication is test-only; production requires a separate Auth origin.')
   }
   return{
     url,
     authOrigin:url.origin,
     sameOrigin,
-    sameOriginTestException:args.production&&sameOrigin&&args.allowSameOriginTest,
+    sameOriginTestException:args.production&&sameOrigin&&!loopback&&args.allowSameOriginTest,
   }
 }
 
