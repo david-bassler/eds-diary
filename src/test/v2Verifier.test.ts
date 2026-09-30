@@ -117,6 +117,11 @@ describe('TransferableSingleWriterV2Verifier', () => {
         prefix_hash:id(13,32),
       },diary,epoch,rows)).rejects.toThrow(/covered_row_count/)
     }
+    await expect(assertExtendsAnchorV2({
+      anchor_profile:SINGLE_WRITER_V2_PROFILE,
+      covered_row_count:0,
+      prefix_hash:base64Url(new Uint8Array(31).fill(13)),
+    },diary,epoch,rows)).rejects.toThrow()
   })
 
   it('accepts the manifest genesis grant and deterministically rejects a concurrent stale g+1 claim', async () => {
@@ -550,6 +555,104 @@ describe('TransferableSingleWriterV2Verifier', () => {
     const row3=envelopeRowV2(await seal(root,rootKey,await signedRevision(root,transitionUnsigned,writer.privateKey),137))
     await expect(new TransferableSingleWriterV2Verifier().verifyCanonicalFull(root,rootKey,[row1,row2,row3]))
       .rejects.toMatchObject({code:'wrong_authority_anchor'})
+  })
+
+  it('keeps a semantically valid historical Recovery control nonfatal stale after seal',async()=>{
+    const {root,writer}=await trustRoot(),rootKey=bytes(23,32)
+    const genesis:WriterGrantV2={
+      grant_id:root.epoch_start_writer_grant_id,writer_generation:1,
+      writer_device_id:root.epoch_start_writer_device_id,writer_key_id:root.epoch_start_writer_key_id,
+      writer_public_key:root.epoch_start_writer_public_key,previous_grant_id:null,previous_writer_generation:0,
+      recovery_generation:0,reason:'initial',authority_anchor:await createAnchorV2(root.diary_id,root.epoch_id,[]),
+      authorization:{kind:'manifest_genesis',signer_key_id:null,signature:null},
+    }
+    const row1=envelopeRowV2(await seal(root,rootKey,grantRevision(genesis,160),161))
+    const rotation:RotationAnnouncementV2={
+      rotation_id:id(162,32),from_epoch_id:root.epoch_id,successor_epoch_id:id(163,16),
+      successor_creation_locator:id(164,16),successor_manifest_fingerprint:id(165,32),
+      rotation_kind:'normal',source_writer_generation:1,source_writer_grant_id:genesis.grant_id,
+      successor_recovery_generation:0,source_anchor_before_announcement:await createAnchorV2(root.diary_id,root.epoch_id,[row1]),
+      successor_staging_anchor:await createAnchorV2(id(166,16),id(167,16),[]),recovery_transition_id:null,
+    }
+    const rotationUnsigned:RevisionV2<RotationAnnouncementV2>={
+      record_type:'rotation_announcement',record_schema:'rotation-announcement-sw-v2',
+      record_id:id(168,16),revision_id:id(169,32),parent_revision_ids:[],record_status:'control',
+      record_data:rotation,migration_origin:null,protocol_created_at:createdAt,
+      writer_context:{writer_generation:1,writer_grant_id:genesis.grant_id,writer_device_id:genesis.writer_device_id,writer_key_id:genesis.writer_key_id},
+      writer_signature:null,
+    }
+    const row2=envelopeRowV2(await seal(root,rootKey,await signedRevision(root,rotationUnsigned,writer.privateKey),170))
+    const replacement=await generateRecoveryTakeoverKeyMaterialV2()
+    const transition:RecoveryAuthorityTransitionV2={
+      transition_id:id(171,32),transition_kind:'recovery_rekey',
+      from_recovery_generation:0,from_recovery_urs_id:root.recovery_urs_id,
+      from_recovery_takeover_key_id:root.recovery_takeover_key_id,to_recovery_generation:1,
+      to_recovery_urs_commitment:id(172,32),to_recovery_urs_id:id(173,32),
+      to_recovery_takeover_key_id:replacement.recoveryTakeoverKeyId,
+      to_recovery_takeover_public_key:base64Url(replacement.publicKeyRaw),
+      authority_anchor:await createAnchorV2(root.diary_id,root.epoch_id,[row1]),
+    }
+    const transitionUnsigned:RevisionV2<RecoveryAuthorityTransitionV2>={
+      record_type:'recovery_authority_transition',record_schema:'recovery-authority-transition-sw-v2',
+      record_id:id(174,16),revision_id:id(175,32),parent_revision_ids:[],record_status:'control',
+      record_data:transition,migration_origin:null,protocol_created_at:createdAt,
+      writer_context:{writer_generation:1,writer_grant_id:genesis.grant_id,writer_device_id:genesis.writer_device_id,writer_key_id:genesis.writer_key_id},
+      writer_signature:null,
+    }
+    const row3=envelopeRowV2(await seal(root,rootKey,await signedRevision(root,transitionUnsigned,writer.privateKey),176))
+    const result=await new TransferableSingleWriterV2Verifier().verifyCanonicalFull(root,rootKey,[row1,row2,row3])
+    expect(result.source_epoch_sealed).toBe(true)
+    expect(result.dispositions.find(item=>item.envelope_id===row3[0])?.disposition).toBe('stale_after_seal_rejected')
+    expect(result.current_recovery.recovery_generation).toBe(0)
+  })
+
+  it('keeps an epoch-profile-forbidden Migration fatal even when it is signed after seal',async()=>{
+    const {root,writer}=await trustRoot(),rootKey=bytes(24,32)
+    const genesis:WriterGrantV2={
+      grant_id:root.epoch_start_writer_grant_id,writer_generation:1,
+      writer_device_id:root.epoch_start_writer_device_id,writer_key_id:root.epoch_start_writer_key_id,
+      writer_public_key:root.epoch_start_writer_public_key,previous_grant_id:null,previous_writer_generation:0,
+      recovery_generation:0,reason:'initial',authority_anchor:await createAnchorV2(root.diary_id,root.epoch_id,[]),
+      authorization:{kind:'manifest_genesis',signer_key_id:null,signature:null},
+    }
+    const row1=envelopeRowV2(await seal(root,rootKey,grantRevision(genesis,180),181))
+    const rotation:RotationAnnouncementV2={
+      rotation_id:id(182,32),from_epoch_id:root.epoch_id,successor_epoch_id:id(183,16),
+      successor_creation_locator:id(184,16),successor_manifest_fingerprint:id(185,32),
+      rotation_kind:'normal',source_writer_generation:1,source_writer_grant_id:genesis.grant_id,
+      successor_recovery_generation:0,source_anchor_before_announcement:await createAnchorV2(root.diary_id,root.epoch_id,[row1]),
+      successor_staging_anchor:await createAnchorV2(id(186,16),id(187,16),[]),recovery_transition_id:null,
+    }
+    const rotationUnsigned:RevisionV2<RotationAnnouncementV2>={
+      record_type:'rotation_announcement',record_schema:'rotation-announcement-sw-v2',
+      record_id:id(188,16),revision_id:id(189,32),parent_revision_ids:[],record_status:'control',
+      record_data:rotation,migration_origin:null,protocol_created_at:createdAt,
+      writer_context:{writer_generation:1,writer_grant_id:genesis.grant_id,writer_device_id:genesis.writer_device_id,writer_key_id:genesis.writer_key_id},
+      writer_signature:null,
+    }
+    const row2=envelopeRowV2(await seal(root,rootKey,await signedRevision(root,rotationUnsigned,writer.privateKey),190))
+    const emptyHash=base64Url(await sha256(canonicalBytes([])))
+    const migration:EpochMigrationV2={
+      migration_id:id(191,32),migration_kind:'normal',
+      source:{
+        source_epoch_id:id(192,16),source_manifest_fingerprint:id(193,32),
+        source_anchor:await createAnchorV2(id(194,16),id(195,16),[]),
+        source_lineage_snapshot_hash:id(196,32),source_semantic_snapshot_hash:emptyHash,
+      },
+      result_semantic_snapshot_hash:emptyHash,active_head_count:0,tombstone_head_count:0,
+      source_writer_authority:{writer_generation:1,writer_grant_id:genesis.grant_id,writer_device_id:genesis.writer_device_id,writer_key_id:genesis.writer_key_id},
+      source_recovery_transition_id:null,
+    }
+    const migrationUnsigned:RevisionV2<EpochMigrationV2>={
+      record_type:'epoch_migration',record_schema:'epoch-migration-sw-v2',
+      record_id:id(197,16),revision_id:id(198,32),parent_revision_ids:[],record_status:'control',
+      record_data:migration,migration_origin:null,protocol_created_at:createdAt,
+      writer_context:{writer_generation:1,writer_grant_id:genesis.grant_id,writer_device_id:genesis.writer_device_id,writer_key_id:genesis.writer_key_id},
+      writer_signature:null,
+    }
+    const row3=envelopeRowV2(await seal(root,rootKey,await signedRevision(root,migrationUnsigned,writer.privateKey),199))
+    await expect(new TransferableSingleWriterV2Verifier().verifyCanonicalFull(root,rootKey,[row1,row2,row3]))
+      .rejects.toMatchObject({code:'schema_or_canonicalization_failure'})
   })
 
   it('rejects a post-seal WriterGrant whose own historical authority anchor is sealed',async()=>{

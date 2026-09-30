@@ -1089,6 +1089,30 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     expect(v2.remote).not.toBeNull()
   },90_000)
 
+  it('resumes a pre-readback Profile Upgrade Source race as source_race and durably retires the v1 Source',async()=>{
+    const createdAt='2026-09-23T14:15:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    let armed=false
+    await expect(new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt,point=>{
+      if(point==='after-staged_backup_verified'&&!armed){armed=true;throw new Error('armed-resume-source-race')}
+    }).upgrade()).rejects.toThrow('armed-resume-source-race')
+
+    // Insert a physical post-freeze row immediately before the prepared
+    // Announcement, then crash after append but before reconciliation.
+    const intervening=source.transport.snapshot.rows[0]!
+    source.transport.injectBeforeNextAppend=[intervening[0]!,intervening[1]!,intervening[2]!]
+    let crashed=false
+    await expect(new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt,point=>{
+      if(point==='after-source-append'&&!crashed){crashed=true;throw new Error('crash-before-source-race-readback')}
+    }).upgrade()).rejects.toThrow('crash-before-source-race-readback')
+
+    const result=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    expect(result.stage).toBe('stale')
+    const local=await new IndexedDbRotationRepository().verifiedActiveEpoch()
+    expect(local.state.epoch_status).toBe('retired')
+    expect(local.state.rotation_state_ref).toMatchObject({operation_id:result.operation_id,state:'profile_upgrade_source_race'})
+    expect(await activeProtocolSelectionV2()).toBeNull()
+  },90_000)
+
   it('accepts byte-identical physical profile-upgrade Announcement retries when the first post-freeze row is the prepared Announcement',async()=>{
     const createdAt='2026-09-23T14:30:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
     let armed=false

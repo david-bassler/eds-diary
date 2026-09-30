@@ -198,6 +198,28 @@ describe('productive v2 read-only Join',()=>{
       .toThrow(/incompatible activated v2 lineage/)
   })
 
+  it('accepts a sealed historical family member only when it belongs to the active activation lineage',async()=>{
+    const f=await nativeJoinFixture()
+    const sourceEpoch=id(70,16),sourceFingerprint=id(71,32)
+    const active={payload:{
+      diary_id:f.diaryId,epoch_id:f.epochId,manifest_fingerprint:f.fingerprint,
+      activation_lineage:[{
+        kind:'v2_rotation',
+        proof:{
+          source_epoch_id:sourceEpoch,source_manifest_fingerprint:sourceFingerprint,
+          successor_epoch_id:f.epochId,successor_manifest_fingerprint:f.fingerprint,
+        },
+      }],
+    }}
+    const historical={payload:{
+      diary_id:f.diaryId,epoch_id:sourceEpoch,manifest_fingerprint:sourceFingerprint,activation_lineage:[],
+    }}
+    expect(()=>assertRecoveryFamilyCompatibleForJoin(active as never,[historical as never,active as never])).not.toThrow()
+    const incompatible={payload:{...historical.payload,manifest_fingerprint:id(72,32)}}
+    expect(()=>assertRecoveryFamilyCompatibleForJoin(active as never,[historical as never,incompatible as never,active as never]))
+      .toThrow(/incompatible activated v2 lineage/)
+  })
+
   it('blocks a different pending read-only Join operation before creating another local bundle',async()=>{
     const f=await nativeJoinFixture(),calls={family:0},store=new IndexedDbV2LocalSecurityStore()
     await store.putImmutableOperationArtifact(`read-only-join:${id(98,32)}`,{synthetic:'pending-other-join'})
