@@ -342,6 +342,34 @@ export class MultiDeviceHarness {
     return [...persistenceHits, ...telemetryHits]
   }
 
+  async activeV1RootKeySentinel(device: VirtualDevice): Promise<string> {
+    return device.page.evaluate(async () => {
+      const [bytes, localDatabase] = await Promise.all([
+        import('/src/security/crypto/bytes.ts'),
+        import('/src/data/localDatabase.ts'),
+      ])
+      const db = await localDatabase.__localDatabaseTesting.openDatabase()
+      const loaded = await localDatabase.__localDatabaseTesting.loadEpoch(db)
+      return bytes.base64Url(loaded.rootKey)
+    })
+  }
+
+  async activeV2RootKeySentinel(device: VirtualDevice): Promise<string> {
+    return device.page.evaluate(async () => {
+      const [bytes, localDatabase, persistence] = await Promise.all([
+        import('/src/security/crypto/bytes.ts'),
+        import('/src/data/localDatabase.ts'),
+        import('/src/security/v2/localPersistence.ts'),
+      ])
+      const selection = await localDatabase.activeProtocolSelectionV2()
+      if (!selection) throw new Error('Active v2 selection is missing.')
+      const store = new persistence.IndexedDbV2LocalSecurityStore()
+      const prepared = await store.loadRootWrapV6(selection.epoch_id)
+      const rootKey = await localDatabase.openSuccessorRootWrapV6WithActiveMode(prepared)
+      return bytes.base64Url(rootKey)
+    })
+  }
+
   async establishProductiveV2(device: VirtualDevice): Promise<ProductiveV2LifecycleSummary> {
     return device.page.evaluate(async () => {
       const state = window as typeof window & { multiDeviceAuth?: { provider: { getApiClient(): unknown } }; productiveV2Session?: unknown }
