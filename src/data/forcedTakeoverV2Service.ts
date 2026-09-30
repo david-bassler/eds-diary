@@ -255,8 +255,19 @@ export class ProductiveForcedTakeoverV2Service {
     const rowPresent=fresh.verified.snapshot.rows.some(row=>row[0]===operation.prepared_envelope.envelope_id)
     if(fresh.verified.acceptedEnvelopeIds.has(operation.prepared_envelope.envelope_id)){
       const state=await this.refreshLocal(context,fresh,true)
-      if(state.writer_status!=='writer_active'||state.writer_device_id!==grant.writer_device_id||state.writer_signing_key_id!==grant.writer_key_id
-        ||state.writer_generation!==grant.writer_generation||state.writer_grant_id!==grant.grant_id)throw new Error('Canonical Forced Takeover did not promote the authenticated local WriterDeviceKeyV2.')
+      const grantStillCurrent=fresh.result.current_writer.writer_generation===grant.writer_generation
+        &&fresh.result.current_writer.writer_grant_id===grant.grant_id
+        &&fresh.result.current_writer.writer_device_id===grant.writer_device_id
+        &&fresh.result.current_writer.writer_key_id===grant.writer_key_id
+      if(grantStillCurrent&&(state.writer_status!=='writer_active'||state.writer_device_id!==grant.writer_device_id
+        ||state.writer_signing_key_id!==grant.writer_key_id||state.writer_generation!==grant.writer_generation
+        ||state.writer_grant_id!==grant.grant_id)){
+        throw new Error('Canonical Forced Takeover did not promote the authenticated local WriterDeviceKeyV2.')
+      }
+      // Canonical acceptance of the exact immutable Grant is the durability
+      // condition. A later valid g+1 authority may already have superseded it;
+      // the freshly reconciled StateV6 must reflect that newer authority, while
+      // this ceremony becomes terminal instead of permanently fencing writes.
       return this.markOperation(context,operation,'durable')
     }
     if(rowPresent){
