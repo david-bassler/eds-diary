@@ -153,22 +153,24 @@ export class ProductiveRecoveryRekeyV2Service {
   ):Promise<RecoveryRekeyOperationStateV2|null>{
     const ursId=await recoveryUrsIdV2(newUrs),selection=await activeProtocolSelectionV2()
     if(!selection)return null
-    const candidates=(await this.store.recoveryRekeyOperations()).filter(operation=>
+    const inventory=(await this.store.recoveryRekeyOperations()).filter(operation=>
       !['completed','stale','superseded'].includes(operation.stage)
       &&operation.to_recovery_urs_id===ursId
       &&(origin===undefined||operation.operation_origin===origin))
-    if(candidates.length>1)throw new Error('Multiple non-terminal Recovery-Rekey operations match this Recovery Key.')
-    const candidate=candidates[0]
-    if(!candidate)return null
-    // Inventory records are only a locator. Re-authorize resume through the
-    // MAC-bound Source StateV6 reference before any remote operation.
-    const rootKey=await openSuccessorRootWrapV6WithActiveMode(await this.store.loadRootWrapV6(candidate.epoch_id))
-    const epochSalt=await deriveEpochSaltV2(fixedBase64Url(selection.diary_id,16),fixedBase64Url(candidate.epoch_id,16))
-    const bound=await this.store.loadBoundRecoveryRekeyOperation(rootKey,epochSalt,candidate.epoch_id)
-    if(!bound||bound.operation_id!==candidate.operation_id){
-      throw new Error('Persisted Recovery-Rekey operation is not bound by authenticated Source StateV6.')
+    const boundMatches:RecoveryRekeyOperationStateV2[]=[]
+    for(const candidate of inventory){
+      // Inventory records are only locators. An intentionally cleared old
+      // binding (remote Pending-Rekey adoption/device-loss recovery) is not
+      // resumable and must not block a new canonically authorized adoption.
+      let rootKey:Uint8Array
+      try{rootKey=await openSuccessorRootWrapV6WithActiveMode(await this.store.loadRootWrapV6(candidate.epoch_id))}
+      catch{continue}
+      const epochSalt=await deriveEpochSaltV2(fixedBase64Url(selection.diary_id,16),fixedBase64Url(candidate.epoch_id,16))
+      const bound=await this.store.loadBoundRecoveryRekeyOperation(rootKey,epochSalt,candidate.epoch_id)
+      if(bound?.operation_id===candidate.operation_id)boundMatches.push(bound)
     }
-    return bound
+    if(boundMatches.length>1)throw new Error('Multiple authenticated non-terminal Recovery-Rekey operations match this Recovery Key.')
+    return boundMatches[0]??null
   }
 
   private async prepareLocal(newUrs:Uint8Array):Promise<RecoveryRekeyOperationStateV2>{
