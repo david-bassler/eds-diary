@@ -504,7 +504,7 @@ export interface ProfileUpgradeOrchestratorV2Dependencies {
   persistLineageAndReverifyBeforeSwitch(state:RotationOperationStateV2):Promise<'ready'|'superseded'>
   switchLocally(state:RotationOperationStateV2):Promise<void>
   orphanPreAnnouncementSuccessor(state:RotationOperationStateV2):Promise<void>
-  markSourceRace(state:RotationOperationStateV2):Promise<void>
+  markSourceRace(state:RotationOperationStateV2):Promise<RotationOperationStateV2>
 }
 
 function withStage(state:RotationOperationStateV2,stage:RotationOperationStageV2,patch:Partial<RotationOperationStateV2>={}):RotationOperationStateV2{
@@ -589,9 +589,11 @@ export async function runProfileUpgradeStateMachineV2(
           return stale
         }
         if(outcome.kind==='source_race'){
-          const raced=await transitionProfileUpgrade(deps,state,withStage(state,'stale'))
-          await deps.markSourceRace(raced)
-          return raced
+          const raced=withStage(state,'stale')
+          // Persist terminal operation + local Source retirement atomically.
+          // A terminal operation may never exist without its Source-race marker.
+          advanceRotationOperationStateV2(state,raced)
+          return deps.markSourceRace(raced)
         }
         await transitionProfileUpgrade(deps,state,withStage(state,'announcement_durable'))
         continue

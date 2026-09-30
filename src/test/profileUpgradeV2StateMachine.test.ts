@@ -93,7 +93,11 @@ class Harness implements ProfileUpgradeOrchestratorV2Dependencies {
   async persistLineageAndReverifyBeforeSwitch(){this.calls.push('lineage-final');return this.finalVerify}
   async switchLocally(){this.calls.push('switch');this.switched=true}
   async orphanPreAnnouncementSuccessor(){this.calls.push('orphan');this.orphaned=true}
-  async markSourceRace(){this.calls.push('source-race');this.sourceRace=true}
+  async markSourceRace(state:RotationOperationStateV2){
+    this.calls.push('source-race');this.sourceRace=true
+    this.state=structuredClone(state)
+    return structuredClone(this.state)
+  }
 }
 
 describe('ProfileUpgradeV2 state machine',()=>{
@@ -131,6 +135,8 @@ describe('ProfileUpgradeV2 state machine',()=>{
     const sourceRace=new Harness();sourceRace.announcement='source_race'
     await expect(runProfileUpgradeStateMachineV2(sourceRace)).resolves.toMatchObject({stage:'stale'})
     expect(sourceRace.sourceRace).toBe(true)
+    expect(sourceRace.calls).toContain('source-race')
+    expect(sourceRace.calls).not.toContain('persist:stale')
 
     const cutover=new Harness();cutover.confirmation='cutover_race'
     await expect(runProfileUpgradeStateMachineV2(cutover)).resolves.toMatchObject({stage:'cutover_race'})
