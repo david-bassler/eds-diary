@@ -1,5 +1,6 @@
 import { GOOGLE_DRIVE_SHEETS_PROVIDER, type AuthProvider, type IdentityBinding } from '../core/contracts'
 import type { GoogleApiClient } from './GoogleSheetsSingleWriterTransport'
+import { currentGoogleAuthEndpointPolicy } from './googleAuthDeploymentPolicy'
 
 const AUTHENTICATED_CLIENTS = new WeakSet<GoogleApiClient>()
 const HANDOFF_TIMEOUT_MS = 120_000
@@ -127,12 +128,9 @@ export class GoogleAuthProvider implements AuthProvider {
   }
 
   async authenticate(actionId: string): Promise<IdentityBinding> {
-    if (!this.authUrl) throw new Error('Google auth URL is not configured.')
-    const popupUrl = new URL(this.authUrl, window.location.href)
-    if (popupUrl.protocol !== 'https:' && popupUrl.protocol !== 'http:') {
-      throw new Error('Google auth URL must use HTTP or HTTPS.')
-    }
-    const authOrigin = popupUrl.origin
+    const endpoint=currentGoogleAuthEndpointPolicy(this.authUrl)
+    const popupUrl=new URL(endpoint.url.toString())
+    const authOrigin=endpoint.authOrigin
     if (!/^[A-Za-z0-9_-]{32,128}$/.test(actionId)) throw new Error('Invalid auth action binding.')
     await this.disconnect()
 

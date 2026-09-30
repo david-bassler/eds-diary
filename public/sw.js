@@ -1,4 +1,17 @@
 const CACHE_NAME = 'eds-diary-shell-v34'
+const SCOPE_ROOT_URL = new URL('./', self.location.href)
+const DIARY_ROOT_PATH = SCOPE_ROOT_URL.pathname
+const AUTH_ROOT_PATH = new URL('./google-auth/', self.location.href).pathname
+const AUTH_ROOT_WITHOUT_SLASH = AUTH_ROOT_PATH.endsWith('/') ? AUTH_ROOT_PATH.slice(0, -1) : AUTH_ROOT_PATH
+
+function isGoogleAuthPath(pathname) {
+  return pathname === AUTH_ROOT_WITHOUT_SLASH || pathname.startsWith(AUTH_ROOT_PATH)
+}
+
+function isDiaryRootNavigation(pathname) {
+  return pathname === DIARY_ROOT_PATH || pathname === `${DIARY_ROOT_PATH}index.html`
+}
+
 const APP_SHELL = [
   './',
   './manifest.webmanifest',
@@ -63,19 +76,23 @@ self.addEventListener('fetch', (event) => {
 
   const requestUrl = new URL(request.url)
   if (requestUrl.origin !== self.location.origin) return
+  // The same-origin GitHub Pages test topology places /google-auth/ under the
+  // Diary service-worker scope. Never let the Diary worker intercept, cache or
+  // substitute Auth-origin navigations; production uses a separate origin.
+  if (isGoogleAuthPath(requestUrl.pathname)) return
 
   if (request.mode === 'navigate') {
     event.respondWith(
       fetch(request)
         .then(async (networkResponse) => {
-          if (networkResponse.ok) {
+          if (networkResponse.ok && isDiaryRootNavigation(requestUrl.pathname)) {
             const cache = await caches.open(CACHE_NAME)
             await cache.put('./', networkResponse.clone())
-            return networkResponse
           }
+          if (networkResponse.ok) return networkResponse
 
-          const cachedPage = await caches.match('./')
-          return cachedPage ?? networkResponse
+          const cachedPage = await caches.match(request)
+          return cachedPage ?? caches.match('./') ?? networkResponse
         })
         .catch(async () => {
           const cachedPage = await caches.match(request)
