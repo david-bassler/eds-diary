@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { validateGoogleAuthEndpoint } from '../sync/google/googleAuthDeploymentPolicy'
+import { allowedSecureOrigin } from '../security/webOriginPolicy'
 
 describe('Google Auth deployment endpoint policy',()=>{
   it('requires HTTPS for every non-loopback Auth endpoint',()=>{
@@ -35,6 +36,14 @@ describe('Google Auth deployment endpoint policy',()=>{
       sameOriginTestException:true,
       authOrigin:'https://diary.example.test',
     })
+  })
+
+  it('accepts only HTTPS or loopback Diary return origins from an Auth-origin allowlist',()=>{
+    const configured=['https://diary.example.test','http://localhost:4173','http://diary-insecure.example.test']
+    expect(allowedSecureOrigin('https://diary.example.test',configured)).toBe('https://diary.example.test')
+    expect(allowedSecureOrigin('http://localhost:4173',configured)).toBe('http://localhost:4173')
+    expect(allowedSecureOrigin('http://diary-insecure.example.test',configured)).toBeNull()
+    expect(allowedSecureOrigin('https://other.example.test',configured)).toBeNull()
   })
 
   it('allows a separate HTTPS Auth origin without any test exception',()=>{

@@ -1,4 +1,5 @@
 import { assertAllowedGoogleApiRequest } from './googleAuthRpcPolicy'
+import { allowedSecureOrigin } from '../security/webOriginPolicy'
 
 interface TokenResponse { access_token?: string; error?: string; expires_in?: number }
 interface TokenClient { requestAccessToken(options?: { prompt?: string }): void }
@@ -24,11 +25,7 @@ let tokenClient: TokenClient | null = null
 
 function fail(message: string): void { status.textContent = message; login.hidden = true }
 function validOrigin(value: string): string | null {
-  try {
-    const origin = new URL(value).origin
-    if (origin !== value || !configuredOrigins.includes(origin)) return null
-    return origin
-  } catch { return null }
+  return allowedSecureOrigin(value,configuredOrigins)
 }
 function loadGoogleRuntime(): Promise<void> {
   return new Promise((resolve, reject) => {

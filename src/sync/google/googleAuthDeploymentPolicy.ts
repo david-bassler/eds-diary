@@ -1,13 +1,10 @@
+import { assertHttpsOrLoopbackUrl, isLoopbackHostname } from '../../security/webOriginPolicy'
+
 export interface GoogleAuthEndpointPolicy {
   url: URL
   authOrigin: string
   sameOrigin: boolean
   sameOriginTestException: boolean
-}
-
-function isLoopbackHost(hostname:string):boolean {
-  const normalized=hostname.toLowerCase()
-  return normalized==='localhost'||normalized==='127.0.0.1'||normalized==='[::1]'||normalized==='::1'
 }
 
 export function validateGoogleAuthEndpoint(args:{
@@ -18,12 +15,8 @@ export function validateGoogleAuthEndpoint(args:{
 }):GoogleAuthEndpointPolicy {
   if(!args.authUrl)throw new Error('Google auth URL is not configured.')
   const url=new URL(args.authUrl,args.pageUrl)
-  if(url.protocol==='http:'){
-    if(!isLoopbackHost(url.hostname))throw new Error('Google auth URL must use HTTPS except on a loopback development host.')
-  }else if(url.protocol!=='https:'){
-    throw new Error('Google auth URL must use HTTPS except on a loopback development host.')
-  }
-  const page=new URL(args.pageUrl),sameOrigin=url.origin===page.origin,loopback=isLoopbackHost(url.hostname)
+  assertHttpsOrLoopbackUrl(url,'Google auth URL')
+  const page=new URL(args.pageUrl),sameOrigin=url.origin===page.origin,loopback=isLoopbackHostname(url.hostname)
   if(args.production&&sameOrigin&&!loopback&&!args.allowSameOriginTest){
     throw new Error('Same-origin Google authentication is test-only; production requires a separate Auth origin.')
   }
