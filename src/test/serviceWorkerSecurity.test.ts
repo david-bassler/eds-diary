@@ -9,13 +9,13 @@ interface FetchEventLike {
 
 async function serviceWorkerHarness(){
   const source=await readFile(new URL('../../public/sw.js',import.meta.url),'utf8')
-  const handlers=new Map<string,(event:any)=>void>()
+  const handlers=new Map<string,(event:unknown)=>void>()
   const puts:Array<{key:unknown;response:unknown}>=[]
   const response={ok:true,clone(){return this}}
   const context={
     self:{
       location:{origin:'https://example.test',href:'https://example.test/eds-diary/sw.js'},
-      addEventListener(type:string,handler:(event:any)=>void){handlers.set(type,handler)},
+      addEventListener(type:string,handler:(event:unknown)=>void){handlers.set(type,handler)},
       skipWaiting(){return Promise.resolve()},
       clients:{claim(){return Promise.resolve()}},
     },
