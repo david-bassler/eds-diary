@@ -354,19 +354,39 @@ export class MultiDeviceHarness {
     })
   }
 
-  async activeV2RootKeySentinel(device: VirtualDevice): Promise<string> {
+  async activeV2RootKeySentinels(device: VirtualDevice): Promise<readonly string[]> {
     return device.page.evaluate(async () => {
-      const [bytes, localDatabase, persistence] = await Promise.all([
+      const [bytes, localDatabase, persistence, crypto, lineageCache] = await Promise.all([
         import('/src/security/crypto/bytes.ts'),
         import('/src/data/localDatabase.ts'),
         import('/src/security/v2/localPersistence.ts'),
+        import('/src/security/v2/crypto.ts'),
+        import('/src/security/v2/activationLineageCache.ts'),
       ])
       const selection = await localDatabase.activeProtocolSelectionV2()
       if (!selection) throw new Error('Active v2 selection is missing.')
       const store = new persistence.IndexedDbV2LocalSecurityStore()
       const prepared = await store.loadRootWrapV6(selection.epoch_id)
       const rootKey = await localDatabase.openSuccessorRootWrapV6WithActiveMode(prepared)
-      return bytes.base64Url(rootKey)
+      const sentinels = new Set<string>([bytes.base64Url(rootKey)])
+      const epochSalt = await crypto.deriveEpochSaltV2(
+        bytes.fromBase64Url(selection.diary_id),
+        bytes.fromBase64Url(selection.epoch_id),
+      )
+      const state = await store.loadState(rootKey, epochSalt, selection.epoch_id)
+      if (state.activation_lineage_cache_ref) {
+        const cache = await store.loadActivationLineageCache(rootKey, epochSalt, selection.epoch_id)
+        const lineage = await lineageCache.openActivationLineageCacheV2({
+          cache,
+          rootKey,
+          epochSalt,
+          diaryId: selection.diary_id,
+          epochId: selection.epoch_id,
+          manifestFingerprint: selection.manifest_fingerprint,
+        })
+        for (const entry of lineage) sentinels.add(entry.source_root_key)
+      }
+      return [...sentinels]
     })
   }
 
