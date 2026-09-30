@@ -392,3 +392,48 @@ describe('RecoveryArtifactV6 and SyncBackupV6',()=>{
     },{...backup,recovery_artifact:tampered},new TransferableSingleWriterV2Verifier())).rejects.toBeTruthy()
   })
 })
+
+describe('IA-163 v11 persistence scrub',()=>{
+  it('removes plaintext activation lineage from legacy operation artifacts while retaining encrypted recovery bytes',async()=>{
+    await __v2LocalPersistenceTesting.reset()
+    const sentinel='ia-163-historical-root-key-sentinel'
+    const recoveryArtifact={format:'opaque-recovery-artifact',wrapped_payload:'encrypted-only'}
+    const legacy=await new Promise<IDBDatabase>((resolve,reject)=>{
+      const request=indexedDB.open('eds-diary-v2-security',11)
+      request.onupgradeneeded=()=>request.result.createObjectStore('operationArtifactsV2',{keyPath:'id'})
+      request.onerror=()=>reject(request.error)
+      request.onsuccess=()=>resolve(request.result)
+    })
+    const tx=legacy.transaction('operationArtifactsV2','readwrite')
+    tx.objectStore('operationArtifactsV2').add({
+      id:'legacy:activation',
+      value:{entry:{source_root_key:sentinel},lineage:[{source_root_key:sentinel}],recovery_artifact:recoveryArtifact},
+      bytes:sentinel,hash:'legacy-hash',
+    })
+    tx.objectStore('operationArtifactsV2').add({
+      id:'legacy:native-rotation:source-freeze',
+      value:{format:'native-v2-source-freeze-v2',source_activation_lineage:[{source_root_key:sentinel}],source_activation_lineage_sha256:'bound-hash'},
+      bytes:sentinel,hash:'legacy-hash',
+    })
+    await new Promise<void>((resolve,reject)=>{
+      tx.oncomplete=()=>resolve()
+      tx.onerror=()=>reject(tx.error)
+      tx.onabort=()=>reject(tx.error)
+    })
+    legacy.close()
+
+    const store=new IndexedDbV2LocalSecurityStore()
+    expect(await store.operationArtifact('legacy:activation')).toEqual({recovery_artifact:recoveryArtifact})
+    expect(await store.operationArtifact<Record<string,unknown>>('legacy:native-rotation:source-freeze')).not.toHaveProperty('source_activation_lineage')
+
+    const upgraded=await __v2LocalPersistenceTesting.openDatabase()
+    const readTx=upgraded.transaction(__v2LocalPersistenceTesting.STORES.operationArtifacts,'readonly')
+    const records=await new Promise<unknown[]>((resolve,reject)=>{
+      const request=readTx.objectStore(__v2LocalPersistenceTesting.STORES.operationArtifacts).getAll()
+      request.onsuccess=()=>resolve(request.result)
+      request.onerror=()=>reject(request.error)
+    })
+    expect(JSON.stringify(records)).not.toContain(sentinel)
+  })
+})
+
