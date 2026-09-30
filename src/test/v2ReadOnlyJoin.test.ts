@@ -131,7 +131,7 @@ async function pendingRekeyJoinFixture(){
 function sessionFor(
   f:Awaited<ReturnType<typeof nativeJoinFixture>>,
   calls:{family:number},
-  options?:{verified?:()=>VerifiedRemoteState},
+  options?:{verified?:(canonical:VerifiedRemoteState)=>VerifiedRemoteState|Promise<VerifiedRemoteState>},
 ):TransferableSingleWriterV2ProviderSession{
   const remoteId='remote-native-v2'
   const transport={
@@ -143,7 +143,10 @@ function sessionFor(
     async authenticatedAccountBinding(){return f.accountBinding},
   }
   const realCodec=new GoogleSheetsTransferableSingleWriterV2ProfileCodec(f.diaryId,f.epochId,f.rootKey,f.accountBinding)
-  const codec={async verifyRemote(snapshot= f.snapshot):Promise<VerifiedRemoteState>{return options?.verified?.()??realCodec.verifyRemote(snapshot)}}
+  const codec={async verifyRemote(snapshot=f.snapshot):Promise<VerifiedRemoteState>{
+    const canonical=await realCodec.verifyRemote(snapshot)
+    return options?.verified?await options.verified(canonical):canonical
+  }}
   return{
     providerId:'google-drive-sheets-v1',
     profileId:SINGLE_WRITER_V2_PROFILE,
@@ -425,6 +428,42 @@ describe('productive v2 read-only Join',()=>{
     expect(canonical.current_writer.writer_device_id).toBe(joined.writerDeviceId)
     expect(canonical.current_writer.writer_key_id).toBe(joined.writerKeyId)
     expect(canonical.current_writer.writer_grant_id).toBe(result.expectedWriterGrantId)
+  })
+
+  it('terminalizes an exact accepted Forced Takeover even when later authority already superseded it',async()=>{
+    const f=await nativeJoinFixture(),calls={family:0},store=new IndexedDbV2LocalSecurityStore()
+    let superseded=false
+    const laterWriter=await generateWriterDeviceKeyV2()
+    const session=sessionFor(f,calls,{verified:canonical=>{
+      if(!superseded)return canonical
+      const result=canonical.profileState as Awaited<ReturnType<TransferableSingleWriterV2Verifier['verifyCanonicalFull']>>
+      return{
+        ...canonical,
+        profileState:{
+          ...result,
+          current_writer:{
+            ...result.current_writer,
+            writer_generation:result.current_writer.writer_generation+1,
+            writer_grant_id:id(96,32),
+            writer_device_id:id(97,16),
+            writer_key_id:laterWriter.writerKeyId,
+            writer_public_key:base64Url(laterWriter.publicKeyRaw),
+          },
+        },
+      }
+    }})
+    await new ProductiveReadOnlyJoinV2Service(session,store).join(f.urs)
+    let appendSeen=false
+    const result=await new ProductiveForcedTakeoverV2Service(session,store,()=>createdAt,async point=>{
+      if(point==='after-append-attempt'&&!appendSeen){appendSeen=true;superseded=true}
+    }).takeover(f.urs)
+    expect(result.stage).toBe('durable')
+    const operation=await store.loadBoundWriterGrantOperation(f.rootKey,f.epochSalt,f.epochId)
+    expect(operation?.stage).toBe('durable')
+    const state=await store.loadState(f.rootKey,f.epochSalt,f.epochId)
+    expect(state.writer_status).toBe('read_only')
+    expect(state.writer_grant_id).toBeNull()
+    expect(state.verified_writer_grant_id).toBe(id(96,32))
   })
 
   it('resumes an exact prepared Forced Takeover after crash without requiring the Recovery Key again',async()=>{
