@@ -1,6 +1,17 @@
 import { expect, test } from '@playwright/test'
 import { MultiDeviceHarness } from './support/multiDeviceHarness'
 
+test('rejects an invalid auth action binding before waiting for a popup', async ({ browser }) => {
+  const harness = new MultiDeviceHarness(browser)
+  const device = await harness.device('invalid-auth-action')
+  try {
+    await device.page.goto('/')
+    await expect(harness.authenticate(device, 'short')).rejects.toThrow(/32-128 character action binding/)
+  } finally {
+    await harness.close()
+  }
+})
+
 test('isolates local device state while sharing only simulated remote state', async ({ browser }) => {
   const harness = new MultiDeviceHarness(browser)
   const deviceA = await harness.device('A')

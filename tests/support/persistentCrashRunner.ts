@@ -20,7 +20,7 @@ export async function runPersistentCrashScenario<Point extends string>(
   scenario: PersistentCrashScenario<Point>,
 ): Promise<void> {
   const runStage = async (point: Point, stage: PersistentCrashStage, work: () => Promise<void>): Promise<void> => {
-    const budget = scenario.stageTimeoutMs?.[stage] ?? 240_000
+    const budget = scenario.stageTimeoutMs?.[stage] ?? 180_000
     if (!Number.isFinite(budget) || budget <= 0) throw new Error(`Invalid persistent crash stage budget: ${stage}.`)
     let timer: ReturnType<typeof setTimeout> | undefined
     try {

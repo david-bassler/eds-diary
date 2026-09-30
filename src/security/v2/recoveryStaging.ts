@@ -28,8 +28,10 @@ const VERIFIED_STAGING_TOKEN=Symbol('VerifiedRecoveryTakeoverStagingV2')
 
 export class VerifiedRecoveryTakeoverStagingV2 {
   private readonly brand=true
-  constructor(readonly staging:RecoveryTakeoverStagingV2,token:symbol){
+  readonly staging:RecoveryTakeoverStagingV2
+  constructor(staging:RecoveryTakeoverStagingV2,token:symbol){
     if(token!==VERIFIED_STAGING_TOKEN)throw new Error('VerifiedRecoveryTakeoverStagingV2 can only be created by the verifier.')
+    this.staging=Object.freeze(structuredClone(staging)) as RecoveryTakeoverStagingV2
     VERIFIED_STAGING.add(this)
   }
   _brandForModule():boolean{return this.brand}

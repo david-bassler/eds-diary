@@ -524,6 +524,26 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     expect(v2.recovery).not.toBeNull()
   },120_000)
 
+  it('backfills a missing role artifact from the already sealed one-shot envelope on resume',async()=>{
+    const createdAt='2026-09-23T12:20:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
+    let stopped=false
+    await expect(new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt,point=>{
+      if(point==='after-genesis-append'&&!stopped){stopped=true;throw new Error('after-genesis-local-durable')}
+    }).upgrade()).rejects.toThrow('after-genesis-local-durable')
+    const operation=await loadProfileUpgradeSourceOperationV2()
+    if(!operation)throw new Error('profile-upgrade operation missing after injected crash')
+    const db=await __v2LocalPersistenceTesting.openDatabase(),stores=__v2LocalPersistenceTesting.STORES
+    const tx=db.transaction(stores.operationArtifacts,'readwrite')
+    tx.objectStore(stores.operationArtifacts).delete(`${operation.operation_id}:envelope:genesis`)
+    await new Promise<void>((resolve,reject)=>{
+      tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error)
+    })
+    const resumed=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    expect(resumed.stage).toBe('switched')
+    const store=new IndexedDbV2LocalSecurityStore()
+    expect(await store.operationArtifact(`${operation.operation_id}:envelope:genesis`)).not.toBeNull()
+  },120_000)
+
   it('joins a fully activated productive v1->v2 successor read-only on a fresh second-device profile',async()=>{
     const createdAt='2026-09-23T12:30:00.000Z',urs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session()
     const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()

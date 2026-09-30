@@ -13,7 +13,7 @@ import {
 import { deriveEpochSaltV2 } from '../security/v2/crypto'
 import { __brandManifestTrustRootV2ForTests } from '../security/v2/manifest'
 import { envelopeRowV2, sealRevisionEnvelopeV2 } from '../security/v2/envelopes'
-import { createAnchorV2, prefixHashesV2 } from '../security/v2/prefix'
+import { assertExtendsAnchorV2, createAnchorV2, prefixHashesV2 } from '../security/v2/prefix'
 import type { EpochMigrationV2, RecoveryAuthorityTransitionV2, RevisionV2, RotationAnnouncementV2, WriterGrantV2 } from '../security/v2/types'
 import {
   TransferableSingleWriterV2Verifier,
@@ -105,6 +105,17 @@ describe('TransferableSingleWriterV2Verifier', () => {
       'fLdh57RNuYLt1D-dAAgG4JP_1yqGekfO8LFxfcxFHMs',
       'd9eUeyNh-uWnyuPATnED4E-F_l-LUNeqxE264YJGgVY',
     ])
+  })
+
+  it('rejects malformed RemoteAnchorV2 counts before prefix slicing', async () => {
+    const diary=id(11,16),epoch=id(12,16),rows=[] as readonly (readonly string[])[]
+    for(const covered of [-1,0.5,Number.MAX_SAFE_INTEGER+1]){
+      await expect(assertExtendsAnchorV2({
+        anchor_profile:SINGLE_WRITER_V2_PROFILE,
+        covered_row_count:covered,
+        prefix_hash:id(13,32),
+      },diary,epoch,rows)).rejects.toThrow(/covered_row_count/)
+    }
   })
 
   it('accepts the manifest genesis grant and deterministically rejects a concurrent stale g+1 claim', async () => {

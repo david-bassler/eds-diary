@@ -463,6 +463,7 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
     const stored=(await this.v2Store.envelopes(ctx.plan.successor_epoch_id)).find(value=>value.envelopeId===envelope.envelopeId)
     if(stored){
       if(!sameJson(asRow(stored),asRow(envelope)))throw new Error('Persisted V2 envelope differs from its one-shot plan.')
+      await this.putArtifact(`envelope:${role}`,asRow(stored))
       return stored
     }
     const state=await this.v2Store.loadState(ctx.rootKey,ctx.epochSalt,ctx.plan.successor_epoch_id)
@@ -861,8 +862,8 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
       sourceBefore=await this.verifySourceAtFrozenPrefix(true)
       successorBefore=await this.verifySuccessorAtStagingOrConfirmation()
     }catch(error){
+      if(error instanceof ProfileUpgradeSourceRaceError)return{kind:'source_race'}
       if(error instanceof ProfileUpgradePreCutoverStaleError
-        ||error instanceof ProfileUpgradeSourceRaceError
         ||error instanceof ProfileUpgradeSuccessorCutoverRaceError)return{kind:'stale'}
       throw error
     }

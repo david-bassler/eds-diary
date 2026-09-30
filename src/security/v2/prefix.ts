@@ -64,6 +64,8 @@ export async function assertExtendsAnchorV2(
 ): Promise<void> {
   if (!anchor) return
   if (anchor.anchor_profile !== SINGLE_WRITER_V2_PROFILE) throw new Error('RemoteAnchorV2 profile mismatch.')
+  if (!Number.isSafeInteger(anchor.covered_row_count) || anchor.covered_row_count < 0) throw new Error('RemoteAnchorV2 covered_row_count is invalid.')
+  fixedBase64Url(anchor.prefix_hash, 32, 'prefix_hash')
   if (rows.length < anchor.covered_row_count) throw new Error('rollback_against_persisted_anchor')
   const hash = await createAnchorV2(diaryId, epochId, rows.slice(0, anchor.covered_row_count))
   if (hash.prefix_hash !== anchor.prefix_hash) throw new Error('rollback_against_persisted_anchor')

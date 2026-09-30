@@ -342,23 +342,6 @@ export class MultiDeviceHarness {
     return [...persistenceHits, ...telemetryHits]
   }
 
-  async authenticate(device: VirtualDevice, actionId: string): Promise<void> {
-    await Promise.all(device.context.pages().filter((page) => page !== device.page).map(async (page) => page.close()))
-    const popupPromise = device.page.waitForEvent('popup')
-    await device.page.evaluate(async ({ action }) => {
-      const { GoogleAuthProvider } = await import('/src/sync/google/GoogleAuthProvider.ts')
-      const provider = new GoogleAuthProvider('/google-auth/')
-      const state = window as typeof window & { multiDeviceAuth?: { provider: InstanceType<typeof GoogleAuthProvider>; result: Promise<unknown> } }
-      state.multiDeviceAuth = { provider, result: provider.authenticate(action) }
-    }, { action: actionId })
-    const popup = await popupPromise
-    await popup.getByRole('button', { name: 'Mit Google anmelden' }).click()
-    await device.page.evaluate(async () => {
-      const state = window as typeof window & { multiDeviceAuth?: { result: Promise<unknown> } }
-      await state.multiDeviceAuth!.result
-    })
-  }
-
   async establishProductiveV2(device: VirtualDevice): Promise<ProductiveV2LifecycleSummary> {
     return device.page.evaluate(async () => {
       const state = window as typeof window & { multiDeviceAuth?: { provider: { getApiClient(): unknown } }; productiveV2Session?: unknown }
