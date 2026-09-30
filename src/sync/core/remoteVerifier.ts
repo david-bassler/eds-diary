@@ -48,7 +48,7 @@ function validateControl(revision: RevisionV1, currentEpochId: string): void {
     exact(['rotation_id','from_epoch_id','successor_epoch_id','successor_creation_locator','successor_manifest_fingerprint','rotation_kind'])
     id(data.rotation_id, 32, 'rotation_id'); id(data.from_epoch_id, 16, 'from_epoch_id'); if (data.from_epoch_id !== currentEpochId) throw new Error('Rotation announcement is not for the current epoch.'); id(data.successor_epoch_id, 16, 'successor_epoch_id')
     id(data.successor_creation_locator, 16, 'successor_creation_locator'); id(data.successor_manifest_fingerprint, 32, 'successor_manifest_fingerprint')
-    if (data.rotation_kind !== 'normal') throw new Error('Invalid rotation kind.')
+    if (data.rotation_kind !== 'normal' && data.rotation_kind !== 'profile_upgrade') throw new Error('Invalid rotation kind.')
   } else {
     if (revision.record_type !== 'epoch_migration') throw new Error('Migration control type mismatch.')
     exact(['migration_id','migration_kind','source','result_semantic_snapshot_hash','active_head_count','tombstone_head_count'])
@@ -174,6 +174,7 @@ export class RecoveryBootstrapVerifier {
       return{source:'authenticated-remote',verified,remoteBinding:{provider_id:SINGLE_WRITER_V1_PROFILE,remote_resource_id:authority.remoteResourceId!,remote_identity_binding:authority.authenticatedAccountBinding!}}
     }
     const backup=await authority.loadBackup(),epochSalt=await deriveEpochSalt(fixedBase64Url(p.diary_id,16),fixedBase64Url(p.epoch_id,16)),verifier=new SingleWriterV1RemoteVerifier({rootKey:candidate.rootKey,diaryId:p.diary_id,epochId:p.epoch_id,expectedManifestFingerprint:p.manifest_fingerprint,expectedKeyId:p.key_id,expectedRecoveryGeneration:p.recovery_generation,expectedRecoveryCommitment:candidate.recoveryCommitment,expectedGoogleAccountBinding:p.google_account_binding,schemas:this.options.schemas,oldAnchor:p.remote_anchor,localEnvelopes:[],localHeadRevisionIds:new Set()}),backupModule=await import('../../security/backup'),rows=await backupModule.testRestoreBackup({rootKey:candidate.rootKey,epochSalt,diaryId:p.diary_id,epochId:p.epoch_id,keyId:p.key_id,manifestFingerprint:p.manifest_fingerprint},backup,verifier),verified=await verifier.verify({manifest:backup.epoch_manifest_public,rows})
+    if(verified.retired)throw new Error('Verified backup refers to a retired epoch; normal recovery does not perform historical rollback.')
     return{source:'verified-backup',verified,remoteBinding:null}
   }
 }

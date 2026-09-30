@@ -3,7 +3,7 @@ import {
   LOCAL_STORES,
   putRecord,
   putRecords,
-} from '../../data/localDatabase'
+} from '../../data/applicationDataStore'
 import { markDirty } from '../../data/syncManager'
 import type {
   MedicationPrescription,

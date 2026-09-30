@@ -2,6 +2,7 @@ import type { PreparedEnvelope } from '../../security/envelopes'
 
 export const GOOGLE_DRIVE_SHEETS_PROVIDER = 'google-drive-sheets-v1' as const
 export const SINGLE_WRITER_V1_PROFILE = 'google-sheets-single-writer-v1' as const
+export const SINGLE_WRITER_V2_PROFILE = 'google-sheets-transferable-single-writer-v2' as const
 /** Backwards-compatible alias for existing v1 callers. New code should use SINGLE_WRITER_V1_PROFILE. */
 export const SINGLE_WRITER_PROFILE = SINGLE_WRITER_V1_PROFILE
 export type TransportErrorCode = 'auth_required' | 'permission_denied' | 'not_found' | 'conflict_or_unexpected_remote_change' | 'temporary_failure' | 'rate_limited' | 'unknown_outcome' | 'integrity_failure' | 'provider_incompatible'
@@ -55,10 +56,15 @@ export interface WriteAuthority {
   accessAfterReadback(verified: VerifiedRemoteState): Promise<WriteAccess> | WriteAccess
 }
 
+export interface CreationCandidateVerification {manifestFingerprint:string}
 export interface TransportProfileCodec {
   readonly profileId: string
   validate(snapshot: RemoteSnapshot): void
   verifyRemote(snapshot: RemoteSnapshot): Promise<VerifiedRemoteState>
+  /** Authority-free pre-binding verification used only by persistent resource
+   * creation. It may validate an immutable manifest before mandatory genesis or
+   * migration rows exist, but must never return a VerifiedRemoteState. */
+  verifyCreationCandidate?(snapshot:RemoteSnapshot):Promise<CreationCandidateVerification>
   row(envelope: PreparedEnvelope): readonly [string, string, string]
   createAnchor(diaryId:string,epochId:string,rows:ReadonlyArray<readonly string[]>):Promise<RemoteAnchorState>
   assertExtendsAnchor(anchor:RemoteAnchorState|null,diaryId:string,epochId:string,rows:ReadonlyArray<readonly string[]>):Promise<void>

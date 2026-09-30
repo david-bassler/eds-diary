@@ -10,6 +10,8 @@ import { PainPage } from './features/pain/PainPage'
 import { PainStatusPrompt } from './features/pain/PainStatusPrompt'
 import { QrShareButton } from './features/share/QrShareButton'
 import { GoogleSyncSettings } from './features/settings/GoogleSyncSettings'
+import { TransferableWriterV2Settings } from './features/settings/TransferableWriterV2Settings'
+import { V2WriteAccessBanner } from './features/settings/V2WriteAccessBanner'
 import { InstallAppSettings } from './features/settings/InstallAppSettings'
 import { LOCAL_SECURITY_CHANGED_EVENT, LocalSecuritySettings } from './features/settings/LocalSecuritySettings'
 import { RecoverySettings } from './features/settings/RecoverySettings'
@@ -129,6 +131,7 @@ export function App() {
               {page.description ? (
                 <p className="app__description">{page.description}</p>
               ) : null}
+              {activeSection!=='configuration'?<V2WriteAccessBanner />:null}
             </header>
 
             {activeSection === 'pain' ? <PainPage /> : null}
@@ -147,6 +150,7 @@ export function App() {
                 <InstallAppSettings />
                 <LocalSecuritySettings />
                 <GoogleSyncSettings />
+                <TransferableWriterV2Settings />
                 <ConflictResolutionSettings />
               </>
             ) : null}

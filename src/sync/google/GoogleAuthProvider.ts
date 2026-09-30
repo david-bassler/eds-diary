@@ -120,7 +120,11 @@ export class GoogleAuthProvider implements AuthProvider {
   private client: AuthOriginGoogleApiClient | null = null
   private bridgeFrame: HTMLIFrameElement | null = null
 
-  constructor(private readonly authUrl: string) {}
+  constructor(private readonly authUrl: string, private readonly handoffTimeoutMs = HANDOFF_TIMEOUT_MS) {
+    if (!Number.isSafeInteger(handoffTimeoutMs) || handoffTimeoutMs < 100 || handoffTimeoutMs > HANDOFF_TIMEOUT_MS) {
+      throw new Error('Google authentication handoff timeout is outside the supported bound.')
+    }
+  }
 
   async authenticate(actionId: string): Promise<IdentityBinding> {
     if (!this.authUrl) throw new Error('Google auth URL is not configured.')
@@ -191,6 +195,10 @@ export class GoogleAuthProvider implements AuthProvider {
         onRpcMessage = (portEvent: MessageEvent<unknown>) => {
           if (!portEvent.data || typeof portEvent.data !== 'object') return
           const bound = portEvent.data as Record<string, unknown>
+          if (bound.type === 'eds-diary/google-auth-failed/v2' && bound.action_id === actionId) {
+            fail(new Error('Google authentication bridge rejected the secure handoff.'))
+            return
+          }
           if (bound.type !== 'eds-diary/google-auth-bound/v2' || bound.action_id !== actionId) return
           complete(typeof bound.permission_id === 'string' ? bound.permission_id : '')
         }
@@ -230,7 +238,7 @@ export class GoogleAuthProvider implements AuthProvider {
       poll = window.setInterval(() => {
         if (popup.closed && !bindingStarted) fail(new Error('Google authentication window was closed before the secure handoff started.'))
       }, 500)
-      timeout = window.setTimeout(() => fail(new Error('Google authentication handoff timed out.')), HANDOFF_TIMEOUT_MS)
+      timeout = window.setTimeout(() => fail(new Error('Google authentication handoff timed out.')), this.handoffTimeoutMs)
     })
 
     AUTHENTICATED_CLIENTS.add(client)

@@ -3,12 +3,11 @@ import {
   enrollActivePassphraseRootWrap,
   enrollActivePrfRootWrap,
   localRootWrapStatus,
-  lockActiveRoot,
   unlockActiveRootWithPassphrase,
   unlockActiveRootWithPrf,
   type LocalRootWrapStatus,
 } from '../../data/localDatabase'
-import { clearAuthenticatedRemoteSession } from '../../data/initializeDataLayer'
+import { lockLocalRootAndDisconnectSession } from '../../data/localSecurityLifecycle'
 import { ensurePersistentStorage, type StorageDurabilityStatus } from '../../data/storageDurability'
 import { fromBase64Url } from '../../security/crypto/bytes'
 import { assertWebAuthnPrf, enrollWebAuthnPrf } from '../../security/webauthnPrf'
@@ -41,7 +40,13 @@ export function LocalSecuritySettings({unlockOnly=false}:LocalSecuritySettingsPr
   async function run(operation:()=>Promise<void>,success:string):Promise<void>{
     setBusy(true);setMessage('')
     try{await operation();await refresh();setPassphrase('');setConfirmation('');setMessage(success);window.dispatchEvent(new Event(LOCAL_SECURITY_CHANGED_EVENT))}
-    catch(cause){setMessage(publicError(cause))}
+    catch(cause){
+      // The local lock can already have succeeded even if the provider's
+      // asynchronous disconnect failed. Never leave the UI visibly unlocked.
+      try{await refresh()}catch{/* Preserve the original security error. */}
+      window.dispatchEvent(new Event(LOCAL_SECURITY_CHANGED_EVENT))
+      setMessage(publicError(cause))
+    }
     finally{setBusy(false)}
   }
 
@@ -56,7 +61,7 @@ export function LocalSecuritySettings({unlockOnly=false}:LocalSecuritySettingsPr
   }
 
   async function activatePrf():Promise<void>{await run(async()=>enrollActivePrfRootWrap(await enrollWebAuthnPrf()),'WebAuthn-PRF-Schutz wurde aktiviert und verifiziert.')}
-  async function lock():Promise<void>{await run(async()=>{await clearAuthenticatedRemoteSession();await lockActiveRoot()},'Lokales Tagebuch wurde gesperrt; die Google-Sitzung ist getrennt.')}
+  async function lock():Promise<void>{await run(lockLocalRootAndDisconnectSession,'Lokales Tagebuch wurde gesperrt; die Google-Sitzung ist getrennt.')}
 
   const content=(
     <div className="local-security-settings__content">

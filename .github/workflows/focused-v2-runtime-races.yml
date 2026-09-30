@@ -1,0 +1,39 @@
+name: Focused V2 Runtime Races
+
+on:
+  push:
+    branches:
+      - codex/continue-v2-end-to-end-assurance-program-2fpbao
+    paths:
+      - .github/workflows/focused-v2-runtime-races.yml
+      - src/data/v2ApplicationRuntime.ts
+      - src/data/transferableSingleWriterV2SyncService.ts
+      - src/data/initializeDataLayer.ts
+      - src/data/syncManager.ts
+      - src/test/v2ApplicationRuntime.test.ts
+      - src/test/syncManager.test.ts
+      - src/data/localSecurityLifecycle.ts
+      - src/test/localSecurityLifecycle.test.ts
+      - src/features/settings/LocalSecuritySettings.tsx
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  runtime-race:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Focused authenticated-session and background-sync race regressions
+        run: npx vitest run src/test/v2ApplicationRuntime.test.ts src/test/syncManager.test.ts src/test/localSecurityLifecycle.test.ts --reporter=dot

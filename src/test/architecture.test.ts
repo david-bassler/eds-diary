@@ -5,7 +5,7 @@ async function files(root:string):Promise<string[]>{const result:string[]=[];for
 describe('provider and leakage architecture',()=>{it('keeps Google wire details outside provider-neutral core',async()=>{for(const file of await files('src/sync/core'))expect(await readFile(file,'utf8'),file).not.toMatch(/googleapis|spreadsheetId|access_token|Sheets!/i)});it('forbids the Values append endpoint in the secure adapter',async()=>expect(await readFile('src/sync/google/GoogleSheetsSingleWriterTransport.ts','utf8')).not.toMatch(/values\/.+:append|values\.append/));it('has no health-data localStorage writer',async()=>{for(const file of await files('src'))expect(await readFile(file,'utf8'),file).not.toMatch(/localStorage\.setItem/)});it('loads no Google runtime script on the sensitive main origin',async()=>expect(await readFile('index.html','utf8')).not.toMatch(/accounts\.google\.com\/gsi/));it('keeps bearer credentials out of every main-origin provider module',async()=>{for(const file of ['src/sync/google/GoogleAuthProvider.ts','src/data/googleSheets.ts']){const source=await readFile(file,'utf8');expect(source,file).not.toMatch(/Bearer\s+[A-Za-z0-9._~-]|access[_-]?token\s*[:=]|(?:headers\.)?set\(\s*['"`]authorization['"`]|['"`]Authorization['"`]\s*:/i)}expect(await readFile('src/sync/google/GoogleAuthProvider.ts','utf8')).toMatch(/MessageChannel/)});it('keeps the legacy table transport fail-closed',async()=>{const source=await readFile('src/data/googleSheets.ts','utf8');expect(source).toContain('Legacy plaintext Google-Sheets synchronization is disabled');expect(source).not.toMatch(/fetch\(|sheets\.googleapis\.com|docs\.google\.com/)})})
 describe('google auth bridge architecture',()=>{it('moves the bearer credential from the popup into an auth-origin bridge instead of keeping the popup as the API proxy',async()=>{const main=await readFile('src/sync/google/GoogleAuthProvider.ts','utf8'),auth=await readFile('src/auth/googleAuthOrigin.ts','utf8');expect(main).toMatch(/mode', 'bridge'/);expect(main).toMatch(/google-auth-bridge-bind\/v2/);expect(main).not.toMatch(/access_token/);expect(auth).toMatch(/google-auth-token-transfer\/v2/);expect(auth).toMatch(/google-auth-bridge-ready\/v2/);expect(auth).toMatch(/Google-API-Bridge ist aktiv/)})})
 describe('provider boundaries',()=>{it('keeps product data services independent of Google adapters',async()=>{for(const file of ['src/data/initializeDataLayer.ts','src/data/singleWriterSyncService.ts','src/data/artifactExports.ts','src/data/productiveRotationService.ts'])expect(await readFile(file,'utf8'),file).not.toMatch(/sync\/google|GoogleSheets|GoogleAuth|epochLocator|authenticatedAccountBinding/)});it('keeps rotation dependent only on provider-neutral session contracts',async()=>{const source=await readFile('src/data/productiveRotationService.ts','utf8');expect(source).toMatch(/SingleWriterProviderSession/);expect(source).toMatch(/RemoteTransport/);expect(source).not.toMatch(/GoogleSheetsSingleWriterTransport|GoogleSheetsSingleWriterProfileCodec|epochLocator/)})})
-describe('protocol architecture',()=>{it('has one manifest fingerprint implementation',async()=>{const matches:string[]=[];for(const file of await files('src')){if(file.includes('/test/'))continue;const source=await readFile(file,'utf8');if(/function manifestFingerprint/.test(source))matches.push(file)}expect(matches).toEqual(['src/security/manifest.ts'])});it('keeps the test verifier explicitly outside production modules',async()=>expect(await readFile('src/sync/google/GoogleSheetsSingleWriterProfileCodec.ts','utf8')).not.toMatch(/TestRemoteVerifier|verifyCryptographicState/))})
+describe('protocol architecture',()=>{it('has exactly one manifest fingerprint implementation per frozen wire version',async()=>{const matches:string[]=[];for(const file of await files('src')){if(file.includes('/test/'))continue;const source=await readFile(file,'utf8');if(/function manifestFingerprint/.test(source))matches.push(file)}expect(matches.sort()).toEqual(['src/security/manifest.ts','src/security/v2/manifest.ts'].sort())});it('keeps the test verifier explicitly outside production modules',async()=>expect(await readFile('src/sync/google/GoogleSheetsSingleWriterProfileCodec.ts','utf8')).not.toMatch(/TestRemoteVerifier|verifyCryptographicState/))})
 
 describe('versioned protocol boundaries',()=>{it('keeps current persisted formats explicitly frozen as v1/v5',async()=>{const revisions=await readFile('src/security/revisions.ts','utf8'),state=await readFile('src/security/localState.ts','utf8'),manifest=await readFile('src/security/manifest.ts','utf8');expect(revisions).toMatch(/interface RevisionV1/);expect(revisions).toMatch(/validateRevisionV1/);expect(state).toMatch(/interface EpochLocalSecurityStateV5/);expect(state).toMatch(/local_state_version:5/);expect(manifest).toMatch(/interface ProtectedManifestV1/);expect(manifest).toMatch(/SINGLE_WRITER_V1_SCHEMA_ALLOWLIST/)})
 it('keeps verifier and write authority profile-polymorphic while v1 remains explicit',async()=>{const contracts=await readFile('src/sync/core/contracts.ts','utf8'),verifier=await readFile('src/sync/core/remoteVerifier.ts','utf8'),coordinator=await readFile('src/sync/core/coordinator.ts','utf8'),provider=await readFile('src/sync/core/provider.ts','utf8');expect(contracts).toMatch(/interface RemoteProfileVerifier/);expect(contracts).toMatch(/interface WriteAuthority/);expect(verifier).toMatch(/class SingleWriterV1RemoteVerifier implements RemoteProfileVerifier/);expect(coordinator).toMatch(/writeAuthority:WriteAuthority/);expect(provider).not.toMatch(/WriteAuthority|writeAuthority\(/)})
@@ -16,14 +16,106 @@ describe('v1 anchor boundary',()=>{it('freezes the persisted remote anchor as v1
 describe('profile-neutral coordinator boundaries',()=>{it('delegates anchor semantics to the profile codec rather than importing v1 prefix helpers',async()=>{const coordinator=await readFile('src/sync/core/coordinator.ts','utf8'),contracts=await readFile('src/sync/core/contracts.ts','utf8'),codec=await readFile('src/sync/google/GoogleSheetsSingleWriterProfileCodec.ts','utf8');expect(coordinator).not.toMatch(/from '.\/prefix'/);expect(coordinator).not.toMatch(/singleWriterV1WriteAuthority/);expect(coordinator).toMatch(/codec\.assertExtendsAnchor/);expect(coordinator).toMatch(/codec\.createAnchor/);expect(contracts).toMatch(/interface RemoteAnchorState/);expect(contracts).toMatch(/createAnchor\(diaryId:string,epochId:string/);expect(contracts).toMatch(/assertExtendsAnchor\(anchor:RemoteAnchorState\|null/);expect(codec).toMatch(/createAnchorV1/);expect(codec).toMatch(/assertExtendsAnchorV1/)})})
 
 
+describe('v1 production hardening boundaries',()=>{
+  it('keeps the repo-wide v1 adversarial decisions in an explicit anti-churn ledger',async()=>{
+    const ledger=await readFile('docs/security/EDS_SINGLE_WRITER_V1_HARDENING_DECISIONS.md','utf8')
+    for(const id of ['V1-H-001','V1-H-002','V1-H-003','V1-H-004','V1-H-005','V1-H-006','V1-H-007'])expect(ledger).toContain(id)
+    expect(ledger).toMatch(/Rejected alternative/)
+    expect(ledger).toMatch(/fail-stop/i)
+    expect(ledger).toMatch(/schema fence/i)
+  })
+  it('keeps staged v1 recovery local until the source announcement is durable',async()=>{
+    const rotation=await readFile('src/data/productiveRotationService.ts','utf8')
+    const staged=rotation.indexOf("if(state.migrationKind==='remote_enablement')await this.session.publishRecoveryArtifact")
+    const prepared=rotation.indexOf("else await this.session.prepareRecoveryArtifactSlot(this.urs,artifact)")
+    const announcement=rotation.indexOf("await this.session.publishRecoveryArtifact(this.urs,recovery)")
+    expect(staged).toBeGreaterThan(-1)
+    expect(prepared).toBeGreaterThan(staged)
+    expect(announcement).toBeGreaterThan(prepared)
+    expect(rotation).toMatch(/prepareRecoveryArtifactSlot\(this\.urs,recovery\).*transport\.append/s)
+    expect(rotation).toMatch(/Source changed around the rotation announcement/)
+    expect(rotation).toMatch(/verifySourceStillAtAnnouncement/)
+  })
+  it('destroys and schema-fences plaintext legacy stores only after verified cutover',async()=>{
+    const local=await readFile('src/data/localDatabase.ts','utf8')
+    expect(local).toMatch(/SECURE_DATABASE_VERSION_FLOOR = 9/)
+    expect(local).toMatch(/SECURE_DATABASE_VERSION_CEILING = 10/)
+    expect(local).toMatch(/created by a newer app version and cannot be opened safely/)
+    expect(local).toMatch(/Math\.max\(current\.version\+1,SECURE_DATABASE_VERSION_FLOOR\)/)
+    expect(local).toMatch(/sealLegacyPlaintextStorage/)
+    expect(local).toMatch(/phase:'cutover',verified:true.*sealLegacyPlaintextStorage/s)
+    expect(local).toMatch(/deleteObjectStore/)
+    expect(local).toMatch(/Legacy plaintext storage sealing is blocked by another open app tab/)
+    expect(local).toMatch(/if\(!legacyStores\.length\)return/)
+  })
+  it('does not treat a retired v1 epoch as a normal current backup or recovery point',async()=>{
+    const exports=await readFile('src/data/artifactExports.ts','utf8')
+    const verifier=await readFile('src/sync/core/remoteVerifier.ts','utf8')
+    expect(exports).toMatch(/verified\.retired.*current backup/s)
+    expect(verifier).toMatch(/verified\.retired.*historical rollback/s)
+  })
+  it('uses the secure database floor in recovery persistence without recreating legacy plaintext stores',async()=>{
+    const recovery=await readFile('src/data/recoveryProfile.ts','utf8')
+    expect(recovery).toMatch(/SECURE_DATABASE_VERSION_FLOOR = 9/)
+    expect(recovery).toMatch(/SECURE_DATABASE_VERSION_CEILING = 10/)
+    expect(recovery).toMatch(/created by a newer app version and cannot be opened safely/)
+    expect(recovery).toMatch(/recoveryBootstrapSchemaOnly/)
+    expect(recovery).toMatch(/existing legacy or foreign database schema is present/)
+    expect(recovery).not.toMatch(/deleteObjectStore\('revisions'\)/)
+    expect(recovery).not.toMatch(/for\(const store of LEGACY_PLAINTEXT_STORES\).*createObjectStore/s)
+    expect(recovery).toMatch(/LEGACY_PLAINTEXT_STORES\.filter\(name=>db\.objectStoreNames\.contains\(name\)\)/)
+  })
+  it('keeps same-generation recovery rollback protection while deriving a monotonic artifact timestamp',async()=>{
+    const rotation=await readFile('src/data/productiveRotationService.ts','utf8')
+    const store=await readFile('src/sync/google/GoogleRecoveryArtifactStore.ts','utf8')
+    const provider=await readFile('src/sync/core/provider.ts','utf8')
+    expect(rotation).toMatch(/recoveryArtifactCreatedAt/)
+    expect(rotation).toMatch(/findRecoveryArtifact\(this\.urs\)/)
+    expect(rotation).not.toMatch(/No remote recovery artifact/)
+    expect(rotation).toMatch(/monotonicIsoAfter\(local,payload\.created_at\)/)
+    expect(rotation).toMatch(/Current remote recovery artifact does not match the rotation source/)
+    expect(provider).toMatch(/prepareRecoveryArtifactSlot\(secret:Uint8Array,artifact:RecoveryArtifact\):Promise<void>/)
+    expect(provider).toMatch(/findRecoveryArtifact\(secret:Uint8Array\):Promise<RecoveryArtifact\|null>/)
+    expect(store).toMatch(/async prepare\(secret:Uint8Array,artifact:RecoveryArtifact\):Promise<void>/)
+    expect(store).toMatch(/verifyReplacement\(secret,artifact,await this\.readArtifactText\(remoteId\)\)/)
+    expect(store).toMatch(/async find\(secret:Uint8Array\):Promise<RecoveryArtifact\|null>/)
+    expect(store).toMatch(/if\(!text\)return null/)
+    expect(store).toMatch(/recovery_generation===previous\.payload\.recovery_generation&&next\.payload\.created_at<=previous\.payload\.created_at/)
+  })
+})
+
+describe('v2 post-selection RootWrap opener boundary',()=>{it('keeps the placeholder-diary Join opener out of post-selection ceremonies',async()=>{
+  for(const file of ['src/data/writerHandoffV2Service.ts','src/data/forcedTakeoverV2Service.ts','src/data/recoveryRekeyV2Service.ts','src/data/nativeRotationV2Service.ts']){
+    expect(await readFile(file,'utf8'),file).not.toMatch(/openReadOnlyJoinRootWrapV6WithActiveMode/)
+  }
+  expect(await readFile('src/data/readOnlyJoinV2Service.ts','utf8')).toMatch(/openReadOnlyJoinRootWrapV6WithActiveMode/)
+})})
+
+describe('v2 active local-protection ordering',()=>{it('keeps strong-v2 status fail-closed until any retained same-diary best-effort source catches up',async()=>{
+  const source=await readFile('src/data/localDatabase.ts','utf8')
+  const statusFence=source.indexOf('return !await retainedV1NeedsStrongCatchup')
+  const passV2=source.indexOf('await v2.store.replaceRootWrapV6')
+  const passCatchup=source.indexOf('await strengthenRetainedV1WithPassphraseIfNeeded',passV2)
+  const prfV2=source.indexOf('await v2.store.replaceRootWrapV6',passV2+1)
+  const prfCatchup=source.indexOf('await strengthenRetainedV1WithPrfIfNeeded',prfV2)
+  expect(statusFence).toBeGreaterThan(-1)
+  expect(passV2).toBeGreaterThan(-1);expect(passCatchup).toBeGreaterThan(passV2)
+  expect(prfV2).toBeGreaterThan(passV2);expect(prfCatchup).toBeGreaterThan(prfV2)
+})})
+
 describe('v2 pre-implementation hardening boundaries',()=>{
   it('keeps security rationale in an explicit anti-churn decision ledger',async()=>{
     const ledger=await readFile('docs/security/EDS_TRANSFERABLE_SINGLE_WRITER_V2_DECISIONS.md','utf8')
     for(const id of ['D-001','D-002','D-003','D-004','D-005','D-006','D-007','D-008','D-009','D-010'])expect(ledger).toContain(id)
     expect(ledger).toMatch(/Rejected alternative/)
     expect(ledger).toMatch(/Revisit only if/)
-    expect(ledger).toMatch(/Implementation status at this review/)
-    expect(ledger).toMatch(/canPrepareDomainWrite.*intentionally not wired/s)
+    expect(ledger).toMatch(/Historical implementation snapshot at the V2-03 review/)
+    expect(ledger).toMatch(/Historical implementation status at V2-03 review/)
+    expect(ledger).not.toMatch(/\| Decision \| Current implementation status \|/)
+    expect(ledger).toMatch(/not the current implementation inventory/)
+    expect(ledger).toContain('EDS_TRANSFERABLE_SINGLE_WRITER_V2_IMPLEMENTATION_AUDIT.md')
+    expect(ledger).toContain('PRODUCTION_SECURITY_RELEASE_GATES.md')
+    expect(ledger).toMatch(/D-005.*V2-03 core implemented.*FreshCanonicalV2Source\.verifyNow\(\).*V2-04.*real provider read \+ canonical_full/s)
   })
   it('records artifact publish attempt before the recovery rekey point of no return',async()=>{
     const protocol=await readFile('docs/security/EDS_TRANSFERABLE_SINGLE_WRITER_V2_EXACT_PROTOCOL.md','utf8')
@@ -80,6 +172,24 @@ describe('v2 pre-implementation hardening boundaries',()=>{
     expect(contracts).toMatch(/canonical-full only/)
     expect(contracts).toMatch(/must never manufacture VerifiedRemoteState/)
     expect(protocol).toMatch(/staged_incomplete, \*\*kein\*\* kanonischer\s+VerifiedRemoteState/)
+  })
+  it('keeps V2 manifest provenance and fresh-read capabilities on fail-closed production paths',async()=>{
+    const manifest=await readFile('src/security/v2/manifest.ts','utf8')
+    const verifier=await readFile('src/security/v2/verifier.ts','utf8')
+    const codec=await readFile('src/sync/google/GoogleSheetsTransferableSingleWriterV2ProfileCodec.ts','utf8')
+    const provider=await readFile('src/sync/google/GoogleTransferableSingleWriterV2Provider.ts','utf8')
+    expect(manifest).toMatch(/openManifestTrustRootV6/)
+    expect(manifest).not.toMatch(/export async function manifestTrustRootV6\(/)
+    expect(verifier).toMatch(/isVerifiedManifestTrustRootV6\(trustRoot\)/)
+    expect(codec).toMatch(/openManifestTrustRootV6/)
+    expect(provider).toMatch(/freshCanonicalSource/)
+    expect(provider).toMatch(/verifyNow:async\(\)=>\{[\s\S]*transportForEpoch[\s\S]*codec\.verifyRemote\(await transport\.read\(remoteId\)\)/s)
+    for(const file of await files('src')){
+      if(file.includes('/test/'))continue
+      const source=await readFile(file,'utf8')
+      if(file.endsWith('security/v2/manifest.ts'))continue
+      expect(source,file).not.toMatch(/__brandManifestTrustRootV2ForTests/)
+    }
   })
   it('keeps valid post-activation lifecycle advancement from producing a stale cutover backup or switch',async()=>{
     const protocol=await readFile('docs/security/EDS_TRANSFERABLE_SINGLE_WRITER_V2_EXACT_PROTOCOL.md','utf8')

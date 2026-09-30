@@ -1,6 +1,6 @@
 # Transferable Single Writer v2 – Security Decision Ledger
 
-Stand: 21.09.2026
+Stand: 22.09.2026
 
 Status: **NORMATIVE RATIONALE / ANTI-CHURN COMPANION** to
 `EDS_TRANSFERABLE_SINGLE_WRITER_V2_EXACT_PROTOCOL.md`.
@@ -323,27 +323,40 @@ without requiring the staged Artifact to remain current.
 
 ---
 
-## Implementation status at this review
+## Historical implementation snapshot at the V2-03 review
 
-This ledger separates **decision stability** from **implementation status**.
-A recorded decision may be normative before its v2 runtime exists.
+This section is a **historical implementation snapshot from the V2-03 review**,
+not the current implementation inventory. Current status is maintained in
+`EDS_TRANSFERABLE_SINGLE_WRITER_V2_IMPLEMENTATION_AUDIT.md` and
+`PRODUCTION_SECURITY_RELEASE_GATES.md`. The decision rationale below remains
+normative unless explicitly superseded.
 
-| Decision | Status after PR #47 |
+This ledger separates **decision stability** from the implementation status that
+was observed at that review point. A recorded decision may be normative before
+its v2 runtime exists.
+
+Implementation stack at that historical review: `feat/transferable-single-writer-v2` (V2-01) -> `feat/transferable-single-writer-v2-verifier` (V2-02) -> `feat/transferable-single-writer-v2-local-state` (V2-03). Detailed implementation-review history is recorded in `EDS_TRANSFERABLE_SINGLE_WRITER_V2_IMPLEMENTATION_AUDIT.md`.
+
+At that historical review point, the first three implementation layers were present: frozen v2 wire/control types, strict validators, Ed25519/KDF/ID and EnvelopeV6 primitives, the exact v2 schema registry, RemoteAnchorV2 hashing, the product-neutral canonical replay verifier including the separately typed `rotation_resume` path, and the V2-03 local StateV6/WriterDeviceKeyV2/normal-domain write-gate core. The following sentence records the historical boundary at that review point and must not be read as current status: ManifestV6/Google v2 storage, RootWrapV6 product bootstrap, cross-epoch activation, recovery services, migration orchestration, join, cooperative handoff, forced-takeover product flow and UI were not yet complete at that time.
+
+| Decision | Historical implementation status at V2-03 review |
 | --- | --- |
-| D-001 | Protocol/schema specified; v2 runtime verifier/artifact implementation still pending. |
-| D-002 | Protocol/operation-state semantics specified; v2 runtime still pending. |
-| D-003 | Shared coordinator retry path implemented and tested; v2 policy implementation still pending. |
-| D-004 | Shared semantic disposition contract implemented; current IndexedDB store remains explicitly v1-only, v2 store/quarantine persistence still pending. |
-| D-005 | Shared WriteAuthority contract and push/retry/readback gates implemented. **The v2 domain-write preparation path does not exist yet**, so `canPrepareDomainWrite` is intentionally not wired into current v1 local writes. Wiring it is a v2 implementation requirement, not completed work in this PR. |
+| D-001 | Stable URS-/takeover-key identifiers and diary-wide `recovery_credential_history` replay/freshness enforcement are implemented in V2-01/V2-02. Secret-aware URS recomputation and Artifact enforcement remain V2-04+/recovery-service work. |
+| D-002 | Protocol/operation-state semantics specified; v2 recovery-rekey runtime still pending. |
+| D-003 | Shared coordinator retry path is implemented and tested; V2-03 now supplies the normal-domain v2 `WriteAuthority` policy for initial push and freshly verified unknown-outcome retry. Provider-backed `canonical_full` wiring remains V2-04. |
+| D-004 | **V2-03 implemented.** The v2 CoordinatorStore persists semantic dispositions: only verifier-accepted envelopes become durable; stale-writer envelopes enter authenticated `stale_writer_pending` quarantine and increment StateV6 `stale_writer_pending_count`. Physical row presence alone is never treated as semantic durability. |
+| D-005 | **V2-03 core implemented.** Normal v2 domain preparation owns an explicit `FreshCanonicalV2Source.verifyNow()` call on every attempt, reconciles StateV6, validates the local WriterDeviceKeyV2 and persists the immutable envelope only after authority passes. `verifyBeforePush` additionally binds the exact persisted prepared-envelope Writer provenance to the freshly verified current authority. V2-04 must wire `verifyNow()` to the real provider read + canonical_full codec; until then this path is not product-reachable. |
 | D-006 | Protocol/architecture specified; v2 rotation runtime pending. |
-| D-007 | Protocol/architecture specified; v2 recovery/rotation runtime pending. |
+| D-007 | Recovery-takeover key generation/import/keypair-check primitives exist; operation-bound staging and v2 recovery/rotation runtime remain pending. |
 | D-008 | Provider/profile identity split implemented in shared contracts and v1 adapters; v2 adapter pending. |
-| D-009 | Shared canonical-only verifier boundary documented in contracts; separate v2 rotation-resume API/result type still pending with the v2 verifier implementation. |
+| D-009 | Implemented in V2-02: `canonical_full` and operation-bound `rotation_resume` are separate APIs/result types; `rotation_resume` exposes no normal Writer/Recovery authority and now also enforces the exact Migration staging suffix. |
 | D-010 | Protocol/operation-state and backup semantics specified for post-activation lifecycle supersession; v2 runtime pending. |
 
-A future review should not report an item in the “pending” column as a newly
-discovered protocol flaw unless the implementation stack claims that item is
-already complete.
+The table below is likewise historical for implementation status; consult the
+current implementation audit before interpreting any `pending` entry. A future
+review should not report an item that was pending at this snapshot as a newly
+discovered protocol flaw unless the current implementation stack claims that
+item is now complete.
 
 ---
 

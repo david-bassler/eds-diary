@@ -194,6 +194,87 @@ synthetic data only, and clean up persisted state when a test creates it.
 - Do not bypass lint or test failures. Fix the underlying issue or clearly report
   a genuine environmental limitation.
 
+## Long-horizon work: completion discipline
+
+For repository-wide plans, security programs, migrations, multi-milestone work, or
+any task whose specification defines multiple phases/gates, **finishing one
+milestone is not finishing the task**.
+
+Use the repository's durable plan/status documents as the source of truth. For the
+V2 end-to-end assurance program, `docs/security/V2_E2E_ASSURANCE_PLAN.md` is the
+binding plan. Do not replace its full scope with a smaller interpretation of the
+latest prompt.
+
+Before implementation on long-horizon work:
+
+1. Identify the authoritative plan/specification and its complete milestone/gate
+   set.
+2. Record or update a durable status ledger in the relevant plan/status document:
+   every milestone must be explicitly `NOT_STARTED`, `IN_PROGRESS`, `BLOCKED`, or
+   `DONE`.
+3. Treat unchecked, `NOT_STARTED`, `IN_PROGRESS`, or internally actionable
+   `BLOCKED` items as remaining work. Do not infer completion from a green subset
+   of tests or from completion of the current milestone.
+
+During implementation:
+
+- Work milestone by milestone and validate each milestone before marking it
+  `DONE`.
+- After a milestone passes, update the durable ledger and **continue to the next
+  internally actionable milestone in the same assigned scope**. Do not stop merely
+  to announce progress or because a coherent subset now works.
+- A milestone may be marked `DONE` only when its stated acceptance criteria and
+  required validation commands have actually passed. Partial implementation,
+  scaffolding, mocks, TODOs, skipped tests, or unexecuted validations are not
+  `DONE`.
+- If validation fails, keep the milestone open, repair the failure, and rerun the
+  validation before proceeding.
+- When new work is discovered, add it to the durable ledger before fixing it so it
+  cannot disappear from later context.
+- For security findings, follow the repository's finding lifecycle: document the
+  finding before the fix, add a regression that demonstrates the failure when
+  technically possible, fix it, run adversarial sibling checks, then record closure
+  evidence.
+- Do not weaken tests, invariants, protocol semantics, security boundaries, or
+  acceptance criteria to obtain a green result. Escalate a genuine normative
+  conflict instead.
+
+### Completion truth table
+
+Use these terms literally in status reporting:
+
+- **Milestone complete**: only that milestone is `DONE`; more plan work may remain.
+- **Implementation complete**: all internally implementable milestones in the
+  assigned plan are `DONE`; only explicitly external gates may remain.
+- **Task complete / done**: every item in the user-assigned scope is `DONE`, or the
+  only remaining items are genuine external gates that cannot be executed in the
+  current environment and are individually named with evidence of why they are
+  external.
+- **Production ready / production secure**: never infer this from implementation
+  completion. It requires every production release gate designated by the security
+  documentation, including external gates, to be closed.
+
+Before writing a final response that uses words such as `done`, `complete`,
+`finished`, `implemented`, `ready`, or equivalent claims about the overall task,
+perform a **completion audit** against the authoritative plan:
+
+1. Enumerate the full assigned milestone/gate set from the plan, not from memory.
+2. Verify the ledger status and evidence for every item.
+3. Search changed files and relevant plan areas for unresolved `TODO`, `FIXME`,
+   skipped/disabled tests, placeholders, temporary bypasses, and unclosed findings.
+4. Run the plan's aggregate validation command(s), when available.
+5. Inspect the final diff and test output for scope omissions.
+6. If any internally actionable item remains, the overall task is **not complete**:
+   continue working rather than emitting a completion response.
+7. If work cannot continue because of a genuine external dependency, report
+   **BLOCKED**, name each remaining gate precisely, state what was completed, and
+   do not describe the overall task as complete.
+
+A final response for long-horizon work must include a compact accounting such as
+`DONE X/Y; BLOCKED A/B; remaining internally actionable: N`. The denominator is
+always the complete assigned plan, never only the milestones attempted in the
+current turn. If `remaining internally actionable > 0`, do not claim completion.
+
 ## Definition of done
 
 Before considering a change complete:

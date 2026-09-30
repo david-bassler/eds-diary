@@ -1,0 +1,65 @@
+name: Focused V2 Final Hardening
+
+on:
+  push:
+    branches:
+      - codex/continue-v2-end-to-end-assurance-program-2fpbao
+    paths:
+      - .github/workflows/focused-v2-final-hardening.yml
+      - src/security/v2/prefix.ts
+      - src/security/v2/verifier.ts
+      - src/security/v2/recoveryStaging.ts
+      - src/security/v2/profileUpgrade.ts
+      - src/security/v2/localPersistence.ts
+      - src/data/profileUpgradeV2Service.ts
+      - src/data/readOnlyJoinV2Service.ts
+      - src/data/forcedTakeoverV2Service.ts
+      - src/data/recoveryRekeyV2Service.ts
+      - src/test/v2Verifier.test.ts
+      - src/test/v2RecoveryStaging.test.ts
+      - src/test/profileUpgradeV2StateMachine.test.ts
+      - src/test/v2ReadOnlyJoin.test.ts
+      - src/test/profileUpgradeV2Service.test.ts
+      - tests/support/multiDeviceHarness.ts
+      - tests/support/persistentCrashRunner.ts
+      - tests/multi-device-harness.spec.ts
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-hardening:
+    name: Final hardening unit/regression set
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Verifier / Join / state-machine regressions
+        run: npx vitest run src/test/v2Verifier.test.ts src/test/v2RecoveryStaging.test.ts src/test/profileUpgradeV2StateMachine.test.ts src/test/v2ReadOnlyJoin.test.ts --reporter=dot
+      - name: Recovery-Rekey public resume regressions
+        run: npx vitest run src/test/profileUpgradeV2Service.test.ts -t "resumes public Recovery-Rekey|resumes the exact bound remote Pending-Rekey adoption|backfills a missing role artifact" --reporter=dot
+
+  browser-harness:
+    name: Bounded multi-device auth harness
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Multi-device harness regressions
+        run: npx playwright test tests/multi-device-harness.spec.ts --project=chromium --workers=1 --retries=0 --reporter=line
