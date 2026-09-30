@@ -468,6 +468,11 @@ async function verifyGrant(
     return 'accepted'
   }
 
+  // A grant may become nonfatally stale only when its bound decision prefix
+  // still represented unsealed Writer authority. Anchoring at/after the seal
+  // is semantically impossible and must remain fatal (IA-146).
+  if(anchorAuthority.source_epoch_sealed)fail('wrong_authority_anchor','WriterGrant authority anchor is already sealed.')
+
   if (grant.previous_grant_id !== anchorAuthority.writer_grant_id
     || grant.previous_writer_generation !== anchorAuthority.writer_generation
     || grant.writer_generation !== anchorAuthority.writer_generation + 1) fail('wrong_predecessor_on_candidate_current_transition')
@@ -591,6 +596,35 @@ function handleConfirmation(
     || !anchorEquals(confirmation.successor_staging_anchor, anchorAt(prefixHashes, beforeCount))) fail('activation_confirmation_mismatch')
   state.acceptedConfirmation = confirmation
   return 'accepted'
+}
+
+async function validateSealedNonGrantControl(
+  state:ReplayState,
+  root:VerifiedManifestTrustRootV2,
+  revision:RevisionV2,
+  prefixHashes:readonly Uint8Array[],
+  beforeCount:number,
+):Promise<void>{
+  // The sealed epoch remains immutable, so run semantic validation against an
+  // isolated replay snapshot and discard any accepted-state mutation. This
+  // prevents malformed signed controls from being laundered as merely stale.
+  const probe=structuredClone(state) as ReplayState
+  switch(revision.record_schema){
+    case 'recovery-authority-transition-sw-v2':
+      await handleRecoveryTransition(probe,revision.record_data as RecoveryAuthorityTransitionV2,prefixHashes,beforeCount)
+      return
+    case 'rotation-announcement-sw-v2':
+      handleRotation(probe,root,revision.record_data as RotationAnnouncementV2,prefixHashes,beforeCount)
+      return
+    case 'epoch-migration-sw-v2':
+      await handleMigration(probe,revision.record_data as EpochMigrationV2)
+      return
+    case 'successor-activation-confirmation-sw-v2':
+      handleConfirmation(probe,root,revision.record_data as SuccessorActivationConfirmationV2,prefixHashes,beforeCount)
+      return
+    default:
+      return
+  }
 }
 
 function assertPreMigrationControlFreeze(state: ReplayState, revision: RevisionV2): void {
@@ -737,6 +771,9 @@ async function replay(
       } else {
         const authorityClass = await verifyRevisionAuthority(state, trustRoot, revision)
         if (state.sealed) {
+          if(revision.record_status==='control'){
+            await validateSealedNonGrantControl(state,trustRoot,revision,prefixHashes,index)
+          }
           disposition = 'stale_after_seal_rejected'
         } else if (authorityClass === 'historical') {
           disposition = 'stale_writer_rejected'

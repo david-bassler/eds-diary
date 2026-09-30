@@ -501,6 +501,94 @@ describe('TransferableSingleWriterV2Verifier', () => {
     await expect(new TransferableSingleWriterV2Verifier().verifyCanonicalFull(root, rootKey, [row1, row2])).rejects.toMatchObject({ code: 'protocol_id_collision' })
   })
 
+  it('keeps semantically impossible signed controls fatal after the epoch is sealed',async()=>{
+    const {root,writer}=await trustRoot(),rootKey=bytes(21,32)
+    const genesis:WriterGrantV2={
+      grant_id:root.epoch_start_writer_grant_id,writer_generation:1,
+      writer_device_id:root.epoch_start_writer_device_id,writer_key_id:root.epoch_start_writer_key_id,
+      writer_public_key:root.epoch_start_writer_public_key,previous_grant_id:null,previous_writer_generation:0,
+      recovery_generation:0,reason:'initial',authority_anchor:await createAnchorV2(root.diary_id,root.epoch_id,[]),
+      authorization:{kind:'manifest_genesis',signer_key_id:null,signature:null},
+    }
+    const row1=envelopeRowV2(await seal(root,rootKey,grantRevision(genesis,120),121))
+    const sealControl:RotationAnnouncementV2={
+      rotation_id:id(122,32),from_epoch_id:root.epoch_id,successor_epoch_id:id(123,16),
+      successor_creation_locator:id(124,16),successor_manifest_fingerprint:id(125,32),
+      rotation_kind:'normal',source_writer_generation:1,source_writer_grant_id:genesis.grant_id,
+      successor_recovery_generation:0,
+      source_anchor_before_announcement:await createAnchorV2(root.diary_id,root.epoch_id,[row1]),
+      successor_staging_anchor:await createAnchorV2(id(126,16),id(127,16),[]),recovery_transition_id:null,
+    }
+    const sealUnsigned:RevisionV2<RotationAnnouncementV2>={
+      record_type:'rotation_announcement',record_schema:'rotation-announcement-sw-v2',
+      record_id:id(128,16),revision_id:id(129,32),parent_revision_ids:[],record_status:'control',
+      record_data:sealControl,migration_origin:null,protocol_created_at:createdAt,
+      writer_context:{writer_generation:1,writer_grant_id:genesis.grant_id,writer_device_id:genesis.writer_device_id,writer_key_id:genesis.writer_key_id},
+      writer_signature:null,
+    }
+    const row2=envelopeRowV2(await seal(root,rootKey,await signedRevision(root,sealUnsigned,writer.privateKey),130))
+    const replacement=await generateRecoveryTakeoverKeyMaterialV2()
+    const transition:RecoveryAuthorityTransitionV2={
+      transition_id:id(131,32),transition_kind:'recovery_rekey',
+      from_recovery_generation:0,from_recovery_urs_id:root.recovery_urs_id,
+      from_recovery_takeover_key_id:root.recovery_takeover_key_id,to_recovery_generation:1,
+      to_recovery_urs_commitment:id(132,32),to_recovery_urs_id:id(133,32),
+      to_recovery_takeover_key_id:replacement.recoveryTakeoverKeyId,
+      to_recovery_takeover_public_key:base64Url(replacement.publicKeyRaw),
+      // Deliberately future: generic signature authority is valid, semantic
+      // control validation must still reject it after seal.
+      authority_anchor:{anchor_profile:SINGLE_WRITER_V2_PROFILE,covered_row_count:4,prefix_hash:id(134,32)},
+    }
+    const transitionUnsigned:RevisionV2<RecoveryAuthorityTransitionV2>={
+      record_type:'recovery_authority_transition',record_schema:'recovery-authority-transition-sw-v2',
+      record_id:id(135,16),revision_id:id(136,32),parent_revision_ids:[],record_status:'control',
+      record_data:transition,migration_origin:null,protocol_created_at:createdAt,
+      writer_context:{writer_generation:1,writer_grant_id:genesis.grant_id,writer_device_id:genesis.writer_device_id,writer_key_id:genesis.writer_key_id},
+      writer_signature:null,
+    }
+    const row3=envelopeRowV2(await seal(root,rootKey,await signedRevision(root,transitionUnsigned,writer.privateKey),137))
+    await expect(new TransferableSingleWriterV2Verifier().verifyCanonicalFull(root,rootKey,[row1,row2,row3]))
+      .rejects.toMatchObject({code:'wrong_authority_anchor'})
+  })
+
+  it('rejects a post-seal WriterGrant whose own historical authority anchor is sealed',async()=>{
+    const {root,writer}=await trustRoot(),rootKey=bytes(22,32)
+    const genesis:WriterGrantV2={
+      grant_id:root.epoch_start_writer_grant_id,writer_generation:1,
+      writer_device_id:root.epoch_start_writer_device_id,writer_key_id:root.epoch_start_writer_key_id,
+      writer_public_key:root.epoch_start_writer_public_key,previous_grant_id:null,previous_writer_generation:0,
+      recovery_generation:0,reason:'initial',authority_anchor:await createAnchorV2(root.diary_id,root.epoch_id,[]),
+      authorization:{kind:'manifest_genesis',signer_key_id:null,signature:null},
+    }
+    const row1=envelopeRowV2(await seal(root,rootKey,grantRevision(genesis,140),141))
+    const rotation:RotationAnnouncementV2={
+      rotation_id:id(142,32),from_epoch_id:root.epoch_id,successor_epoch_id:id(143,16),
+      successor_creation_locator:id(144,16),successor_manifest_fingerprint:id(145,32),
+      rotation_kind:'normal',source_writer_generation:1,source_writer_grant_id:genesis.grant_id,
+      successor_recovery_generation:0,source_anchor_before_announcement:await createAnchorV2(root.diary_id,root.epoch_id,[row1]),
+      successor_staging_anchor:await createAnchorV2(id(146,16),id(147,16),[]),recovery_transition_id:null,
+    }
+    const rotationUnsigned:RevisionV2<RotationAnnouncementV2>={
+      record_type:'rotation_announcement',record_schema:'rotation-announcement-sw-v2',
+      record_id:id(148,16),revision_id:id(149,32),parent_revision_ids:[],record_status:'control',
+      record_data:rotation,migration_origin:null,protocol_created_at:createdAt,
+      writer_context:{writer_generation:1,writer_grant_id:genesis.grant_id,writer_device_id:genesis.writer_device_id,writer_key_id:genesis.writer_key_id},
+      writer_signature:null,
+    }
+    const row2=envelopeRowV2(await seal(root,rootKey,await signedRevision(root,rotationUnsigned,writer.privateKey),150))
+    const target=await generateWriterDeviceKeyV2()
+    const grant:WriterGrantV2={
+      grant_id:id(151,32),writer_generation:2,writer_device_id:id(152,16),writer_key_id:target.writerKeyId,
+      writer_public_key:base64Url(target.publicKeyRaw),previous_grant_id:genesis.grant_id,previous_writer_generation:1,
+      recovery_generation:0,reason:'handoff',authority_anchor:await createAnchorV2(root.diary_id,root.epoch_id,[row1,row2]),
+      authorization:{kind:'writer_handoff',signer_key_id:writer.writerKeyId,signature:null},
+    }
+    grant.authorization.signature=await signEd25519V2(writer.privateKey,writerGrantSigningBytesV2(root.diary_id,root.epoch_id,grant))
+    const row3=envelopeRowV2(await seal(root,rootKey,grantRevision(grant,153),154))
+    await expect(new TransferableSingleWriterV2Verifier().verifyCanonicalFull(root,rootKey,[row1,row2,row3]))
+      .rejects.toMatchObject({code:'wrong_authority_anchor'})
+  })
+
   it('rejects rotation_resume when any non-retry row extends the migration staging prefix', async () => {
     const { root, writer } = await trustRoot(true)
     const rootKey = bytes(18, 32)
