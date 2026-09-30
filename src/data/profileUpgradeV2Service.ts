@@ -233,7 +233,7 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
   private artifact<T>(suffix:string):Promise<T|null>{return this.v2Store.operationArtifact<T>(this.artifactId(suffix))}
   private async putArtifact(suffix:string,value:unknown):Promise<void>{await this.v2Store.putImmutableOperationArtifact(this.artifactId(suffix),value)}
   private async activationArtifact():Promise<OpenedActivationArtifactV2|null>{
-    const artifact=await this.activationArtifact()
+    const artifact=await this.artifact<ActivationArtifactV2>('activation')
     if(!artifact)return null
     const opened=await openRecoveryArtifactV6(artifact.recovery_artifact,this.urs)
     const lineage=opened.payload.activation_lineage
