@@ -29,6 +29,7 @@ for (const crashPoint of POINTS) {
   const harness = new MultiDeviceHarness(browser)
   let device: VirtualDevice | null = null
   let seed: ProductiveV1CrashSeed | null = null
+  let sourceRootKeySentinel: string | null = null
   let index = 0
   try {
     await runPersistentCrashScenario({
@@ -39,9 +40,11 @@ for (const crashPoint of POINTS) {
         await device.page.goto('/')
         await harness.authenticate(device, `productive_crash_prepare_${String(index).padStart(8, '0')}`)
         seed = await harness.establishProductiveRemoteV1(device)
+        sourceRootKeySentinel = await harness.activeV1RootKeySentinel(device)
       },
       crash: async (point) => {
         await expect(harness.runProductiveProfileUpgrade(device!, seed!, point)).rejects.toThrow(`persistent-crash:${point}`)
+        expect(await harness.scanBrowserPersistence(device!, [sourceRootKeySentinel!])).toEqual([])
       },
       restart: async () => {
         await device!.page.reload()
@@ -53,6 +56,7 @@ for (const crashPoint of POINTS) {
       },
       verify: async () => {
         expect(await harness.verifyProductiveV2Remote(device!)).toMatchObject({ kind: 'canonical_full', writerStatus: 'writer_active' })
+        expect(await harness.scanBrowserPersistence(device!, [sourceRootKeySentinel!])).toEqual([])
         await device!.close()
       },
       finish: async () => {},
@@ -80,6 +84,7 @@ for (const crashPoint of RECOVERY_REKEY_POINTS) {
   let device: VirtualDevice | null = null
   let lifecycle: Awaited<ReturnType<MultiDeviceHarness['establishProductiveV2']>> | null = null
   let seed: ProductiveRecoveryRekeySeed | null = null
+  let sourceRootKeySentinels: readonly string[] = []
   let persistedRecoveryOperationId: string | null = null
   let index = 0
   try {
@@ -92,6 +97,8 @@ for (const crashPoint of RECOVERY_REKEY_POINTS) {
         await device.page.goto('/')
         await harness.authenticate(device, `recovery_rekey_prepare_action_${String(index).padStart(8, '0')}`)
         lifecycle = await harness.establishProductiveV2(device)
+        sourceRootKeySentinels = await harness.activeV2RootKeySentinels(device)
+        expect(sourceRootKeySentinels.length).toBeGreaterThan(1)
         seed = { newRecoveryKey: Buffer.alloc(32, 40 + index).toString('base64url'), passphrase: lifecycle.passphrase }
       },
       crash: async (point) => {
@@ -99,6 +106,7 @@ for (const crashPoint of RECOVERY_REKEY_POINTS) {
         const ids = await harness.productiveRecoveryRekeyOperationIds(device!)
         expect(ids).toHaveLength(1)
         persistedRecoveryOperationId = ids[0]!
+        expect(await harness.scanBrowserPersistence(device!, sourceRootKeySentinels)).toEqual([])
         await expect(harness.writeProductivePain(device!, 'pending-rekey-write-must-not-persist')).rejects.toThrow(/rekey|maintenance|authority|writer/i)
         expect(await harness.readProductivePain(device!)).toBe(lifecycle!.painCount)
       },
@@ -156,6 +164,7 @@ for (const crashPoint of RECOVERY_REKEY_POINTS) {
           .toMatchObject({ writerStatus: 'writer_active', painCount: lifecycle!.painCount + 1 })
         expect((await harness.verifyProductiveV2Remote(device!)).coveredRowCount)
           .toBeGreaterThan(verified.coveredRowCount)
+        expect(await harness.scanBrowserPersistence(device!, sourceRootKeySentinels)).toEqual([])
         await device!.close()
       },
       finish: async () => {},
@@ -196,6 +205,7 @@ for (const crashPoint of NORMAL_ROTATION_POINTS) {
     const harness = new MultiDeviceHarness(browser)
     const device = await harness.device(`normal-native-rotation-${crashPoint}`)
     let lifecycle: Awaited<ReturnType<MultiDeviceHarness['establishProductiveV2']>> | null = null
+    let sourceRootKeySentinels: readonly string[] = []
     let persistedOperationId: string | null = null
     let successorEpochId: string | null = null
     try {
@@ -206,6 +216,8 @@ for (const crashPoint of NORMAL_ROTATION_POINTS) {
           await device.page.goto('/')
           await harness.authenticate(device, `native_rotation_prepare_${crashPoint.replaceAll('-', '_')}_0001`)
           lifecycle = await harness.establishProductiveV2(device)
+          sourceRootKeySentinels = await harness.activeV2RootKeySentinels(device)
+          expect(sourceRootKeySentinels.length).toBeGreaterThan(1)
           expect(await harness.productiveNormalRotationIds(device)).toEqual([])
           expect(await harness.readProductivePain(device)).toBe(lifecycle.painCount)
         },
@@ -215,6 +227,7 @@ for (const crashPoint of NORMAL_ROTATION_POINTS) {
           const operations = await harness.productiveNormalRotationIds(device)
           expect(operations).toHaveLength(1)
           persistedOperationId = operations[0]!
+          expect(await harness.scanBrowserPersistence(device, sourceRootKeySentinels)).toEqual([])
         },
         restart: async () => harness.reloadLockedProductiveV2(
           device, `native_rotation_restart_${crashPoint.replaceAll('-', '_')}_0001`,
@@ -255,6 +268,7 @@ for (const crashPoint of NORMAL_ROTATION_POINTS) {
             .toMatchObject({ writerStatus: 'writer_active', painCount: lifecycle!.painCount + 1 })
           expect((await harness.verifyProductiveV2Remote(device)).coveredRowCount)
             .toBeGreaterThan(before.coveredRowCount)
+          expect(await harness.scanBrowserPersistence(device, sourceRootKeySentinels)).toEqual([])
         },
         finish: async () => {},
         verifyFinished: async () => {},

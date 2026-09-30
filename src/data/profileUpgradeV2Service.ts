@@ -151,8 +151,6 @@ interface SuccessorPlanArtifactV2 {
 }
 interface SuccessorRemoteArtifactV2 {remote_id:string}
 interface ActivationArtifactV2 {
-  entry:ProfileUpgradeActivationEntryV2
-  lineage:[ProfileUpgradeActivationEntryV2]
   recovery_artifact:RecoveryArtifactV6
 }
 interface BackupArtifactV2 {backup:SyncBackupV6;anchor:{anchor_profile:string;covered_row_count:number;prefix_hash:string}}
@@ -228,6 +226,14 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
   private artifactId(suffix:string):string{return`${this.requireOperationId()}:${suffix}`}
   private artifact<T>(suffix:string):Promise<T|null>{return this.v2Store.operationArtifact<T>(this.artifactId(suffix))}
   private async putArtifact(suffix:string,value:unknown):Promise<void>{await this.v2Store.putImmutableOperationArtifact(this.artifactId(suffix),value)}
+  private async activationMaterial():Promise<{artifact:ActivationArtifactV2;entry:ProfileUpgradeActivationEntryV2;lineage:[ProfileUpgradeActivationEntryV2]}>{
+    const artifact=await this.artifact<ActivationArtifactV2>('activation')
+    if(!artifact)throw new Error('Profile-upgrade activation artifact is missing.')
+    const opened=await openRecoveryArtifactV6(artifact.recovery_artifact,this.urs)
+    const entry=opened.payload.activation_lineage[0]
+    if(opened.payload.activation_lineage.length!==1||!entry||entry.kind!=='profile_upgrade')throw new Error('Profile-upgrade encrypted activation lineage is invalid.')
+    return{artifact,entry,lineage:[entry]}
+  }
 
   private async sourceVerifier(material:VerifiedEpochMaterial,anchor:RemoteAnchorV1|null):Promise<SingleWriterV1RemoteVerifier>{
     const binding=material.state.remote_binding
@@ -632,15 +638,15 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
   }>{
     const existing=await this.artifact<ActivationArtifactV2>('activation')
     if(existing){
-      const plan=await this.plan()
+      const plan=await this.plan(),activation=await this.activationMaterial()
       return{
-        announcementEnvelope:structuredClone(existing.entry.announcement_envelope),
-        confirmationEnvelope:structuredClone(existing.entry.successor_confirmation_envelope),
-        activationEvidenceSha256:await profileUpgradeActivationEvidenceHashV2(existing.entry),
-        activationLineageSha256:await activationLineageHashV2(existing.lineage),
-        recoveryArtifactId:existing.recovery_artifact.recovery_artifact_id,
+        announcementEnvelope:structuredClone(activation.entry.announcement_envelope),
+        confirmationEnvelope:structuredClone(activation.entry.successor_confirmation_envelope),
+        activationEvidenceSha256:await profileUpgradeActivationEvidenceHashV2(activation.entry),
+        activationLineageSha256:await activationLineageHashV2(activation.lineage),
+        recoveryArtifactId:activation.artifact.recovery_artifact.recovery_artifact_id,
         recoveryArtifactLocator:await recoveryArtifactLocatorV6(this.urs,plan.diary_id,plan.successor_epoch_id),
-        recoveryArtifactSha256:await recoveryArtifactHashV6(existing.recovery_artifact),
+        recoveryArtifactSha256:await recoveryArtifactHashV6(activation.artifact.recovery_artifact),
       }
     }
     const operation=await this.load(),plan=await this.plan(),ctx=await this.successorContext(),source=await this.frozenSource()
@@ -679,7 +685,7 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
       created_at:plan.created_at,
     },this.urs,fromBase64Url(artifactId))
     stagingMaterial.privateKeyPkcs8.fill(0)
-    await this.putArtifact('activation',{entry,lineage,recovery_artifact:artifact} satisfies ActivationArtifactV2)
+    await this.putArtifact('activation',{recovery_artifact:artifact} satisfies ActivationArtifactV2)
     await this.fault?.('after-activation-artifact')
     const persisted=await this.v2Store.persistRecoveryArtifactV6(this.urs,plan.diary_id,plan.successor_epoch_id,artifact)
     return{
@@ -691,12 +697,11 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
   }
 
   async publishAndVerifyRecoveryArtifact():Promise<void>{
-    const plan=await this.plan(),activation=await this.artifact<ActivationArtifactV2>('activation')
-    if(!activation)throw new Error('Profile-upgrade activation artifact is missing.')
-    const persisted=await this.v2Store.persistRecoveryArtifactV6(this.urs,plan.diary_id,plan.successor_epoch_id,activation.recovery_artifact)
+    const plan=await this.plan(),activation=await this.activationMaterial()
+    const persisted=await this.v2Store.persistRecoveryArtifactV6(this.urs,plan.diary_id,plan.successor_epoch_id,activation.artifact.recovery_artifact)
     await this.successorSession.publishRecoveryArtifact(this.urs,persisted)
     const readback=await this.successorSession.loadRecoveryArtifact(this.urs,plan.diary_id,plan.successor_epoch_id)
-    if(!sameJson(readback,activation.recovery_artifact))throw new Error('Profile-upgrade RecoveryArtifactV6 remote readback differs from persisted one-shot bytes.')
+    if(!sameJson(readback,activation.artifact.recovery_artifact))throw new Error('Profile-upgrade RecoveryArtifactV6 remote readback differs from persisted one-shot bytes.')
 
     // §18 step 6 requires an actual staged Recovery test here; remote readback
     // alone is insufficient. Re-derive RK/takeover authority from the published
@@ -943,8 +948,8 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
   }
 
   private async verifyActivationBoundary(verified:VerifiedRemoteState,result:CanonicalFullResultV2):Promise<{verified:VerifiedRemoteState;result:CanonicalFullResultV2;activationAnchor:CanonicalFullResultV2['remote_anchor']}>{
-    const operation=await this.load(),source=await this.frozenSource(),activation=await this.artifact<ActivationArtifactV2>('activation')
-    if(!activation||!operation.successor_staging_anchor)throw new Error('Profile-upgrade activation evidence is missing.')
+    const operation=await this.load(),source=await this.frozenSource(),activation=await this.activationMaterial()
+    if(!operation.successor_staging_anchor)throw new Error('Profile-upgrade activation evidence is missing.')
     const sourceRemote=await this.verifySourceAtFrozenPrefix(true)
     if(sourceRemote.announcementCount<1)throw new Error('Profile-upgrade activation lacks a durable immediate Source Announcement.')
     const successorRemote=await this.verifySuccessorAtStagingOrConfirmation()
@@ -996,8 +1001,8 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
   }
 
   async persistLineageAndReverifyBeforeSwitch():Promise<'ready'|'superseded'>{
-    const ctx=await this.successorContext(),activation=await this.artifact<ActivationArtifactV2>('activation'),backup=await this.artifact<BackupArtifactV2>('activated-backup')
-    if(!activation||!backup)throw new Error('Profile-upgrade final activation artifacts are incomplete.')
+    const ctx=await this.successorContext(),activation=await this.activationMaterial(),backup=await this.artifact<BackupArtifactV2>('activated-backup')
+    if(!backup)throw new Error('Profile-upgrade final activation artifacts are incomplete.')
     const state=await this.v2Store.loadState(ctx.rootKey,ctx.epochSalt,ctx.plan.successor_epoch_id)
     if(state.activation_lineage_cache_ref===null){
       const cache=await createActivationLineageCacheV2({
