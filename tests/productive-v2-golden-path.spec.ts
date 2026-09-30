@@ -66,56 +66,61 @@ test('runs the productive v1→v2 lifecycle, unlock, durable writes and read-onl
 })
 
 
-test('scrubs legacy plaintext activation lineage artifacts from IndexedDB', async ({ browser }) => {
+test('scrubs legacy plaintext activation lineage artifacts during the v11 to v12 database upgrade', async ({ browser }) => {
   const harness = new MultiDeviceHarness(browser)
   const device = await harness.device('ia-163-legacy-scrub')
   const rootKeySentinel = 'ia-163-synthetic-source-root-key-sentinel'
   try {
     await device.page.goto('/')
     await device.page.evaluate(async (needle) => {
-      const { __v2LocalPersistenceTesting } = await import('/src/security/v2/localPersistence.ts')
-      const db = await __v2LocalPersistenceTesting.openDatabase()
-      const tx = db.transaction(__v2LocalPersistenceTesting.STORES.operationArtifacts, 'readwrite')
-      const store = tx.objectStore(__v2LocalPersistenceTesting.STORES.operationArtifacts)
-      store.put({
-        id: 'ia-163-profile:activation',
-        value: {
-          entry: { source_root_key: needle },
-          lineage: [{ kind: 'profile_upgrade', source_root_key: needle }],
-          recovery_artifact: { format: 'synthetic-encrypted-recovery-artifact', ciphertext: 'opaque' },
-        },
-        bytes: 'legacy-plaintext-profile',
-        hash: 'legacy-profile-hash',
-      })
-      store.put({
-        id: 'ia-163-native:native-rotation:source-freeze',
-        value: {
-          format: 'native-v2-source-freeze-v2',
-          source_activation_lineage: [{ kind: 'v2_rotation', source_root_key: needle }],
-          source_activation_lineage_sha256: 'synthetic-lineage-hash',
-        },
-        bytes: 'legacy-plaintext-native',
-        hash: 'legacy-native-hash',
+      const databaseName = 'eds-diary-v2-security'
+      await new Promise<void>((resolve, reject) => {
+        const request = indexedDB.deleteDatabase(databaseName)
+        request.onsuccess = () => resolve()
+        request.onerror = () => reject(request.error)
+        request.onblocked = () => reject(new Error('Synthetic v11 database reset was blocked.'))
       })
       await new Promise<void>((resolve, reject) => {
-        tx.oncomplete = () => resolve()
-        tx.onerror = () => reject(tx.error)
-        tx.onabort = () => reject(tx.error)
+        const request = indexedDB.open(databaseName, 11)
+        request.onupgradeneeded = () => request.result.createObjectStore('operationArtifactsV2', { keyPath: 'id' })
+        request.onerror = () => reject(request.error)
+        request.onsuccess = () => {
+          const db = request.result
+          const tx = db.transaction('operationArtifactsV2', 'readwrite')
+          const store = tx.objectStore('operationArtifactsV2')
+          store.put({
+            id: 'ia-163-profile:activation',
+            value: {
+              entry: { source_root_key: needle },
+              lineage: [{ kind: 'profile_upgrade', source_root_key: needle }],
+              recovery_artifact: { format: 'synthetic-encrypted-recovery-artifact', ciphertext: 'opaque' },
+            },
+            bytes: 'legacy-plaintext-profile',
+            hash: 'legacy-profile-hash',
+          })
+          store.put({
+            id: 'ia-163-native:native-rotation:source-freeze',
+            value: {
+              format: 'native-v2-source-freeze-v2',
+              source_activation_lineage: [{ kind: 'v2_rotation', source_root_key: needle }],
+              source_activation_lineage_sha256: 'synthetic-lineage-hash',
+            },
+            bytes: 'legacy-plaintext-native',
+            hash: 'legacy-native-hash',
+          })
+          tx.oncomplete = () => { db.close(); resolve() }
+          tx.onerror = () => reject(tx.error)
+          tx.onabort = () => reject(tx.error)
+        }
       })
     }, rootKeySentinel)
 
     expect((await harness.scanBrowserPersistence(device, [rootKeySentinel])).length).toBeGreaterThan(0)
 
-    await device.page.evaluate(async () => {
-      const { __v2LocalPersistenceTesting } = await import('/src/security/v2/localPersistence.ts')
-      const db = await __v2LocalPersistenceTesting.openDatabase()
-      await __v2LocalPersistenceTesting.scrubSensitiveOperationArtifacts(db)
-    })
-
-    expect(await harness.scanBrowserPersistence(device, [rootKeySentinel])).toEqual([])
     const scrubbed = await device.page.evaluate(async () => {
       const { __v2LocalPersistenceTesting } = await import('/src/security/v2/localPersistence.ts')
       const db = await __v2LocalPersistenceTesting.openDatabase()
+      if (db.version !== 12) throw new Error(`Expected migrated v2 security database version 12, got ${db.version}.`)
       const tx = db.transaction(__v2LocalPersistenceTesting.STORES.operationArtifacts, 'readonly')
       const request = tx.objectStore(__v2LocalPersistenceTesting.STORES.operationArtifacts).getAll()
       return new Promise<Array<{ id: string; value: Record<string, unknown> }>>((resolve, reject) => {
@@ -123,6 +128,8 @@ test('scrubs legacy plaintext activation lineage artifacts from IndexedDB', asyn
         request.onerror = () => reject(request.error)
       })
     })
+
+    expect(await harness.scanBrowserPersistence(device, [rootKeySentinel])).toEqual([])
     const profile = scrubbed.find((record) => record.id === 'ia-163-profile:activation')
     const native = scrubbed.find((record) => record.id === 'ia-163-native:native-rotation:source-freeze')
     expect(profile?.value).toEqual({
@@ -133,7 +140,6 @@ test('scrubs legacy plaintext activation lineage artifacts from IndexedDB', asyn
     await harness.close()
   }
 })
-
 
 test('detects redacted synthetic Diary request, console and error leaks but excludes Auth-origin logs', async ({ browser }) => {
   const harness = new MultiDeviceHarness(browser)
