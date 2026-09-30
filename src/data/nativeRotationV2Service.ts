@@ -800,7 +800,7 @@ export class ProductiveNativeRotationV2Service implements ProfileUpgradeOrchestr
     if(state.epoch_status==='orphaned')return
     await this.store.replaceState(ctx.rootKey,ctx.epochSalt,state.operation_generation,{...state,epoch_status:'orphaned',writer_status:'read_only',writer_generation:null,writer_grant_id:null,operation_generation:state.operation_generation+1})
   }
-  async markSourceRace():Promise<void>{throw new Error('Native v2 rotation reports pre-announcement Source races as stale, not profile-upgrade source_race.')}
+  async markSourceRace(_state:RotationOperationStateV2):Promise<RotationOperationStateV2>{throw new Error('Native v2 rotation reports pre-announcement Source races as stale, not profile-upgrade source_race.')}
 
   private async completeBoundRecoveryRekey(rotation:RotationOperationStateV2):Promise<void>{
     const source=await this.sourceContext(),state=await this.store.loadState(source.rootKey,source.epochSalt,rotation.source_epoch_id),ref=state.recovery_operation_state_ref

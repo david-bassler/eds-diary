@@ -1003,6 +1003,12 @@ export class IndexedDbV2LocalSecurityStore {
     const result:RecoveryRekeyOperationStateV2[]=[]
     for(const record of records){
       if(!record.id.startsWith('recovery-rekey:'))continue
+      // Operation-scoped auxiliary artifacts use the same prefix with a
+      // suffix (for example ":source-backup"). Only the exact
+      // recovery-rekey:<32-byte-operation-id> record is an operation state.
+      const operationId=record.id.slice('recovery-rekey:'.length)
+      if(operationId.includes(':'))continue
+      try{fixedBase64Url(operationId,32,'operation_id')}catch{continue}
       const value=record.value as RecoveryRekeyOperationStateV2
       validateRecoveryRekeyOperationStateV2(value)
       if(epochId!==undefined&&value.epoch_id!==epochId)continue

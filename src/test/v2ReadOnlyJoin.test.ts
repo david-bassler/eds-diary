@@ -186,9 +186,15 @@ async function idbResult<T>(request:IDBRequest<T>):Promise<T>{
 describe('productive v2 read-only Join',()=>{
   it('rejects an activated Recovery-family member outside the active leaf lineage',async()=>{
     const f=await nativeJoinFixture()
-    const active={payload:f.payload}
-    const incompatible={payload:{...f.payload,diary_id:id(99,16)}}
-    expect(()=>assertRecoveryFamilyCompatibleForJoin(active,[active,incompatible]))
+    const payload={
+      diary_id:f.diaryId,
+      epoch_id:f.epochId,
+      manifest_fingerprint:f.fingerprint,
+      activation_lineage:[],
+    }
+    const active={payload}
+    const incompatible={payload:{...payload,diary_id:id(99,16)}}
+    expect(()=>assertRecoveryFamilyCompatibleForJoin(active as never,[active,incompatible] as never))
       .toThrow(/incompatible activated v2 lineage/)
   })
 

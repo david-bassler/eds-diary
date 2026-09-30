@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { SINGLE_WRITER_V2_PROFILE } from '../sync/core/contracts'
 import { base64Url, fromBase64Url } from '../security/crypto/bytes'
 import { canonicalBytes } from '../security/crypto/canonical'
 import { sha256 } from '../security/crypto/core'
