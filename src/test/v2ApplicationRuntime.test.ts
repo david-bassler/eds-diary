@@ -28,11 +28,11 @@ function provider(label:string):TransferableWriterV2RuntimeSession{
     disconnect:vi.fn(async()=>undefined),
   } as unknown as TransferableWriterV2RuntimeSession
 }
-function fakeService(){
+function fakeService(refresh:()=>Promise<void>=async()=>undefined){
   return{
-    close:vi.fn(async(_disconnectProvider=true)=>undefined),
+    close:vi.fn(async(disconnectProvider=true)=>{void disconnectProvider}),
     synchronize:vi.fn(async()=>undefined),
-    refreshVerifiedReadModel:vi.fn(async()=>undefined),
+    refreshVerifiedReadModel:vi.fn(refresh),
   } as unknown as TransferableSingleWriterV2SyncService
 }
 
@@ -80,7 +80,7 @@ describe('v2 authenticated application-session generation fencing',()=>{
     expect(runtime.activeV2SyncService()).toBe(serviceB)
   })
 
-  it('does not disconnect a newer installation that reuses the same provider',async()=>{
+  it('does not disconnect a newer in-flight install that reuses the same provider',async()=>{
     const first=deferred<TransferableSingleWriterV2SyncService>()
     const second=deferred<TransferableSingleWriterV2SyncService>()
     const source=provider('shared'),serviceA=fakeService(),serviceB=fakeService()
@@ -89,13 +89,65 @@ describe('v2 authenticated application-session generation fencing',()=>{
     await vi.waitFor(()=>expect(mocked.create).toHaveBeenCalledTimes(1))
     const pendingB=runtime.installAuthenticatedV2RemoteSession(source)
     await vi.waitFor(()=>expect(mocked.create).toHaveBeenCalledTimes(2))
-    second.resolve(serviceB)
-    await pendingB
+
+    // Older A completes first *after* B has claimed desired ownership but
+    // before B has published. A must not disconnect B's shared provider.
     first.resolve(serviceA)
     await expect(pendingA).rejects.toThrow('V2 provider session changed during installation.')
     expect(serviceA.close).toHaveBeenCalledWith(false)
-    expect(serviceB.close).not.toHaveBeenCalled()
+    expect(runtime.activeV2SyncService()).toBeNull()
+
+    second.resolve(serviceB)
+    await expect(pendingB).resolves.toBe(serviceB)
+    expect(serviceB.refreshVerifiedReadModel).toHaveBeenCalledTimes(1)
+    expect(runtime.activeV2ProviderSession()).toBe(source)
     expect(runtime.activeV2SyncService()).toBe(serviceB)
+  })
+
+  it('does not publish a candidate until initial full remote verification succeeds',async()=>{
+    const source=provider('verification-pending')
+    const verify=deferred<void>(),candidate=fakeService(()=>verify.promise)
+    mocked.create.mockResolvedValueOnce(candidate)
+    const installing=runtime.installAuthenticatedV2RemoteSession(source)
+    await vi.waitFor(()=>expect(candidate.refreshVerifiedReadModel).toHaveBeenCalledTimes(1))
+    expect(runtime.activeV2ProviderSession()).toBeNull()
+    expect(runtime.activeV2SyncService()).toBeNull()
+    verify.resolve()
+    await expect(installing).resolves.toBe(candidate)
+    expect(runtime.activeV2ProviderSession()).toBe(source)
+    expect(runtime.activeV2SyncService()).toBe(candidate)
+  })
+
+  it('rejects failed initial verification without publishing its provider capability',async()=>{
+    const source=provider('verification-failed')
+    const candidate=fakeService(async()=>{throw new Error('synthetic canonical verification failure')})
+    mocked.create.mockResolvedValueOnce(candidate)
+    await expect(runtime.installAuthenticatedV2RemoteSession(source)).rejects.toThrow('synthetic canonical verification failure')
+    expect(candidate.close).toHaveBeenCalledWith(true)
+    expect(runtime.activeV2ProviderSession()).toBeNull()
+    expect(runtime.activeV2SyncService()).toBeNull()
+  })
+
+  it('preserves a prior verified runtime when a replacement fails verification',async()=>{
+    const sourceA=provider('verified-A'),sourceB=provider('bad-B')
+    const serviceA=fakeService(),serviceB=fakeService(async()=>{throw new Error('replacement verification failed')})
+    mocked.create.mockResolvedValueOnce(serviceA).mockResolvedValueOnce(serviceB)
+    await expect(runtime.installAuthenticatedV2RemoteSession(sourceA)).resolves.toBe(serviceA)
+    await expect(runtime.installAuthenticatedV2RemoteSession(sourceB)).rejects.toThrow('replacement verification failed')
+    expect(serviceA.close).not.toHaveBeenCalled()
+    expect(serviceB.close).toHaveBeenCalledWith(true)
+    expect(runtime.activeV2ProviderSession()).toBe(sourceA)
+    expect(runtime.activeV2SyncService()).toBe(serviceA)
+  })
+
+  it('freshly verifies a same-session reinstallation before reporting success',async()=>{
+    const source=provider('same-session'),candidate=fakeService()
+    mocked.create.mockResolvedValueOnce(candidate)
+    await runtime.installAuthenticatedV2RemoteSession(source)
+    expect(candidate.refreshVerifiedReadModel).toHaveBeenCalledTimes(1)
+    await runtime.installAuthenticatedV2RemoteSession(source)
+    expect(candidate.refreshVerifiedReadModel).toHaveBeenCalledTimes(2)
+    expect(mocked.create).toHaveBeenCalledTimes(1)
   })
 
   it('invalidates an initial data-layer V2 install before activeProviderSession is assigned',async()=>{

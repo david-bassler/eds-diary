@@ -109,7 +109,6 @@ export async function installAuthenticatedRemoteSession(session:AuthenticatedPro
     activeProviderSession=session
     secureSync=service
     installSecureSynchronizer(()=>service.synchronize())
-    await service.refreshVerifiedReadModel()
     assertCurrentSession(generation)
     return
   }
