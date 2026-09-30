@@ -1984,6 +1984,4 @@ export const __v2LocalPersistenceTesting={
   },
   STORES,
   openDatabase,
-  scrubSensitiveOperationArtifacts,
-  scrubSensitiveOperationArtifactValue,
 }
