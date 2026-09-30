@@ -16,11 +16,13 @@ function restoreDesiredAfterFailure(generation:number,value:TransferableWriterV2
 async function discardCandidate(
   candidate:TransferableSingleWriterV2SyncService,
   value:TransferableWriterV2RuntimeSession,
+  generation:number,
 ):Promise<void>{
-  // A newer install may own the exact same provider object before it has
-  // published. In that case only discard this coordinator, not the shared
-  // provider capability (IA-141).
-  await candidate.close(desiredSession!==value)
+  // Only a *newer* install or an already-published runtime may own the exact
+  // same provider. The current failing candidate still owns its provider and
+  // must disconnect it (IA-140/141).
+  const sharedWithNewer=(generation!==sessionGeneration&&desiredSession===value)||session===value
+  await candidate.close(!sharedWithNewer)
 }
 async function disconnectUnownedProviderAfterConstructionFailure(
   generation:number,
@@ -52,7 +54,7 @@ export async function installAuthenticatedV2RemoteSession(value:TransferableWrit
     const next=await TransferableSingleWriterV2SyncService.createAuthenticated(value)
     candidateCreated=true
     if(generation!==sessionGeneration){
-      await discardCandidate(next,value)
+      await discardCandidate(next,value,generation)
       throw staleInstall()
     }
 
@@ -61,11 +63,11 @@ export async function installAuthenticatedV2RemoteSession(value:TransferableWrit
     try{
       await next.refreshVerifiedReadModel()
     }catch(error){
-      await discardCandidate(next,value)
+      await discardCandidate(next,value,generation)
       throw error
     }
     if(generation!==sessionGeneration){
-      await discardCandidate(next,value)
+      await discardCandidate(next,value,generation)
       throw staleInstall()
     }
 
@@ -78,11 +80,11 @@ export async function installAuthenticatedV2RemoteSession(value:TransferableWrit
         // teardown then fails, do not leave a closed runtime globally usable
         // and do not publish the candidate as a hidden partial success.
         if(service===prior){service=null;session=null}
-        await discardCandidate(next,value)
+        await discardCandidate(next,value,generation)
         throw error
       }
       if(generation!==sessionGeneration){
-        await discardCandidate(next,value)
+        await discardCandidate(next,value,generation)
         throw staleInstall()
       }
     }
