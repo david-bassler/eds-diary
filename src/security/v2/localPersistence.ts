@@ -16,7 +16,7 @@ import type { CreationPersistence, CreationState } from '../../sync/core/creatio
 import type { RecoveryAuthorityTransitionV2, WriterGrantV2 } from './types'
 
 const DATABASE_NAME='eds-diary-v2-security'
-const DATABASE_VERSION=11
+const DATABASE_VERSION=12
 const STORES={states:'epochSecurityStateV6',writerKeys:'writerDeviceKeysV2',reservations:'envelopeReservationsV6',envelopes:'envelopesV6',outbox:'outboxV6',recoveryStaging:'recoveryTakeoverStagingV2',recoveryArtifacts:'recoveryArtifactsV6',rotationOperations:'rotationOperationsV2',writerGrantOperations:'writerGrantOperationsV2',lineageCaches:'activationLineageCachesV2',rootWraps:'rootWrapsV6',rootWrappingKeys:'rootWrappingKeysV6',creationOperations:'creationOperationsV2',operationArtifacts:'operationArtifactsV2',readModels:'verifiedReadModelsV2'} as const
 
 const TERMINAL_ROTATION_OPERATION_STATES_V2=new Set(['switched','stale','cutover_race','post_activation_superseded'])
@@ -131,6 +131,50 @@ function transactionDone(tx:IDBTransaction):Promise<void>{
     tx.addEventListener('error',()=>reject(tx.error??new Error('IndexedDB transaction failed.')),{once:true})
   })
 }
+interface StoredOperationArtifactRecordV2 {
+  id:string
+  value:unknown
+  bytes:string
+  hash:string
+  tag?:string
+}
+
+function scrubSensitiveOperationArtifactValue(id:string,value:unknown):{changed:boolean;value:unknown}{
+  if(typeof value!=='object'||value===null||Array.isArray(value))return{changed:false,value}
+  const record=value as Record<string,unknown>
+  if(id.endsWith(':native-rotation:source-freeze')&&Object.hasOwn(record,'source_activation_lineage')){
+    const next={...record}
+    delete next.source_activation_lineage
+    return{changed:true,value:next}
+  }
+  if(id.endsWith(':activation')
+    &&Object.hasOwn(record,'recovery_artifact')
+    &&(Object.hasOwn(record,'entry')||Object.hasOwn(record,'lineage')||Object.hasOwn(record,'proof'))){
+    return{changed:true,value:{recovery_artifact:structuredClone(record.recovery_artifact)}}
+  }
+  return{changed:false,value}
+}
+
+async function scrubSensitiveOperationArtifacts(db:IDBDatabase):Promise<void>{
+  if(!db.objectStoreNames.contains(STORES.operationArtifacts))return
+  const readTx=db.transaction(STORES.operationArtifacts,'readonly')
+  const stored=await requestResult<StoredOperationArtifactRecordV2[]>(readTx.objectStore(STORES.operationArtifacts).getAll())
+  await transactionDone(readTx)
+  const rewrites:StoredOperationArtifactRecordV2[]=[]
+  for(const record of stored){
+    const scrubbed=scrubSensitiveOperationArtifactValue(record.id,record.value)
+    if(!scrubbed.changed)continue
+    if(record.tag!==undefined)throw new Error('Sensitive operation artifact unexpectedly uses a MAC-only record; refusing unsafe migration.')
+    const bytes=new TextDecoder().decode(canonicalBytes(scrubbed.value as never))
+    const hash=base64Url(await sha256(canonicalBytes(scrubbed.value as never)))
+    rewrites.push({id:record.id,value:structuredClone(scrubbed.value),bytes,hash})
+  }
+  if(!rewrites.length)return
+  const writeTx=db.transaction(STORES.operationArtifacts,'readwrite')
+  for(const record of rewrites)writeTx.objectStore(STORES.operationArtifacts).put(record)
+  await transactionDone(writeTx)
+}
+
 let databasePromise:Promise<IDBDatabase>|null=null
 async function openDatabase():Promise<IDBDatabase>{
   if(databasePromise)return databasePromise
@@ -164,7 +208,11 @@ async function openDatabase():Promise<IDBDatabase>{
     request.addEventListener('success',()=>{
       const db=request.result
       db.addEventListener('versionchange',()=>{db.close();databasePromise=null})
-      resolve(db)
+      void scrubSensitiveOperationArtifacts(db).then(()=>resolve(db)).catch(error=>{
+        db.close()
+        databasePromise=null
+        reject(error)
+      })
     },{once:true})
     request.addEventListener('error',()=>{databasePromise=null;reject(request.error??new Error('V2 security database open failed.'))},{once:true})
   })
@@ -1936,4 +1984,6 @@ export const __v2LocalPersistenceTesting={
   },
   STORES,
   openDatabase,
+  scrubSensitiveOperationArtifacts,
+  scrubSensitiveOperationArtifactValue,
 }
