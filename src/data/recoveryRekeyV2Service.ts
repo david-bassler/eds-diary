@@ -147,6 +147,30 @@ export class ProductiveRecoveryRekeyV2Service {
     return{context,verified,result,state,writer,lineage}
   }
 
+  private async persistedBoundResume(
+    newUrs:Uint8Array,
+    origin?:RecoveryRekeyOperationStateV2['operation_origin'],
+  ):Promise<RecoveryRekeyOperationStateV2|null>{
+    const ursId=await recoveryUrsIdV2(newUrs),selection=await activeProtocolSelectionV2()
+    if(!selection)return null
+    const candidates=(await this.store.recoveryRekeyOperations()).filter(operation=>
+      !['completed','stale','superseded'].includes(operation.stage)
+      &&operation.to_recovery_urs_id===ursId
+      &&(origin===undefined||operation.operation_origin===origin))
+    if(candidates.length>1)throw new Error('Multiple non-terminal Recovery-Rekey operations match this Recovery Key.')
+    const candidate=candidates[0]
+    if(!candidate)return null
+    // Inventory records are only a locator. Re-authorize resume through the
+    // MAC-bound Source StateV6 reference before any remote operation.
+    const rootKey=await openSuccessorRootWrapV6WithActiveMode(await this.store.loadRootWrapV6(candidate.epoch_id))
+    const epochSalt=await deriveEpochSaltV2(fixedBase64Url(selection.diary_id,16),fixedBase64Url(candidate.epoch_id,16))
+    const bound=await this.store.loadBoundRecoveryRekeyOperation(rootKey,epochSalt,candidate.epoch_id)
+    if(!bound||bound.operation_id!==candidate.operation_id){
+      throw new Error('Persisted Recovery-Rekey operation is not bound by authenticated Source StateV6.')
+    }
+    return bound
+  }
+
   private async prepareLocal(newUrs:Uint8Array):Promise<RecoveryRekeyOperationStateV2>{
     if(newUrs.byteLength!==32)throw new Error('Recovery-Rekey new URS must contain 32 bytes.')
     const fresh=await this.fresh(),currentRef=fresh.state.recovery_operation_state_ref
@@ -349,12 +373,18 @@ export class ProductiveRecoveryRekeyV2Service {
 
   async rekey(newUrs:Uint8Array):Promise<RecoveryRekeyV2Result>{
     if(newUrs.byteLength!==32)throw new Error('Recovery-Rekey requires a 32-byte new URS.')
-    const fresh=await this.fresh(),bound=await this.store.loadBoundRecoveryRekeyOperation(fresh.context.rootKey,fresh.context.epochSalt,fresh.state.epoch_id),newId=await recoveryUrsIdV2(newUrs)
-    let operation:RecoveryRekeyOperationStateV2
-    if(bound&&!['completed','stale','superseded'].includes(bound.stage)&&bound.to_recovery_urs_id===newId)operation=bound
-    else if(fresh.result.current_recovery.recovery_rekey_rotation_required&&fresh.result.current_recovery.recovery_urs_id===newId){
-      operation=await this.adoptPendingInternal(newUrs,fresh)
-    }else operation=await this.prepareLocal(newUrs)
+    // Resume an authenticated persisted operation before requiring the Source
+    // to still be the active unsealed selection. Phase B can legitimately have
+    // sealed/switched it already (IA-154).
+    let operation=await this.persistedBoundResume(newUrs)
+    if(!operation){
+      const fresh=await this.fresh(),newId=await recoveryUrsIdV2(newUrs)
+      const bound=await this.store.loadBoundRecoveryRekeyOperation(fresh.context.rootKey,fresh.context.epochSalt,fresh.state.epoch_id)
+      if(bound&&!['completed','stale','superseded'].includes(bound.stage)&&bound.to_recovery_urs_id===newId)operation=bound
+      else if(fresh.result.current_recovery.recovery_rekey_rotation_required&&fresh.result.current_recovery.recovery_urs_id===newId){
+        operation=await this.adoptPendingInternal(newUrs,fresh)
+      }else operation=await this.prepareLocal(newUrs)
+    }
     operation=await this.resume(operation,newUrs)
     return{operationId:operation.operation_id,transitionId:operation.transition_id,stage:operation.stage,toRecoveryGeneration:operation.to_recovery_generation,toRecoveryUrsId:operation.to_recovery_urs_id,successorEpochId:operation.completed_successor_epoch_id}
   }
@@ -382,7 +412,9 @@ export class ProductiveRecoveryRekeyV2Service {
   }
 
   async adoptPending(currentUrs:Uint8Array):Promise<RecoveryRekeyV2Result>{
-    const operation=await this.adoptPendingInternal(currentUrs)
+    if(currentUrs.byteLength!==32)throw new Error('Pending Recovery-Rekey adoption requires a 32-byte Recovery Key.')
+    const operation=await this.persistedBoundResume(currentUrs,'remote_pending_rekey_adoption')
+      ??await this.adoptPendingInternal(currentUrs)
     const resumed=await this.resume(operation,currentUrs)
     return{operationId:resumed.operation_id,transitionId:resumed.transition_id,stage:resumed.stage,toRecoveryGeneration:resumed.to_recovery_generation,toRecoveryUrsId:resumed.to_recovery_urs_id,successorEpochId:resumed.completed_successor_epoch_id}
   }

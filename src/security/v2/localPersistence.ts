@@ -996,7 +996,7 @@ export class IndexedDbV2LocalSecurityStore {
     return operation
   }
 
-  private async recoveryOperationsForEpoch(epochId:string):Promise<RecoveryRekeyOperationStateV2[]>{
+  async recoveryRekeyOperations(epochId?:string):Promise<RecoveryRekeyOperationStateV2[]>{
     const db=await openDatabase(),tx=db.transaction(STORES.operationArtifacts,'readonly')
     const records=await requestResult<Array<{id:string;value:unknown;bytes:string;hash:string}>>(tx.objectStore(STORES.operationArtifacts).getAll())
     await transactionDone(tx)
@@ -1005,7 +1005,7 @@ export class IndexedDbV2LocalSecurityStore {
       if(!record.id.startsWith('recovery-rekey:'))continue
       const value=record.value as RecoveryRekeyOperationStateV2
       validateRecoveryRekeyOperationStateV2(value)
-      if(value.epoch_id!==epochId)continue
+      if(epochId!==undefined&&value.epoch_id!==epochId)continue
       const bytes=new TextDecoder().decode(canonicalBytes(value as never)),hash=await recoveryRekeyOperationStateHashV2(value)
       if(bytes!==record.bytes||hash!==record.hash)throw new Error('RecoveryRekeyOperationStateV2 stored integrity failed.')
       result.push(structuredClone(value))
@@ -1107,7 +1107,7 @@ export class IndexedDbV2LocalSecurityStore {
       const writes:Array<{id:string;value:RecoveryRekeyOperationStateV2;bytes:string;hash:string}>=[]
 
       if(next.stage==='transition_durable'&&operation.supersedes_transition_id!==null){
-        const priorOps=await this.recoveryOperationsForEpoch(epochId)
+        const priorOps=await this.recoveryRekeyOperations(epochId)
         const old=priorOps.find(item=>item.operation_id!==operation.operation_id&&item.transition_id===operation.supersedes_transition_id&&!TERMINAL_RECOVERY_OPERATION_STATES_V2.has(item.stage))
         if(old){
           const superseded=advanceRecoveryRekeyOperationStateV2(old,{...old,stage:'superseded',superseded_by_transition_id:operation.transition_id})
@@ -1117,7 +1117,7 @@ export class IndexedDbV2LocalSecurityStore {
       }
 
       if(next.stage==='stale'&&operation.supersedes_transition_id!==null&&current.recovery_rekey_rotation_required&&current.recovery_rekey_transition_id===operation.supersedes_transition_id){
-        const priorOps=await this.recoveryOperationsForEpoch(epochId)
+        const priorOps=await this.recoveryRekeyOperations(epochId)
         const old=priorOps.find(item=>item.operation_id!==operation.operation_id&&item.transition_id===operation.supersedes_transition_id&&!TERMINAL_RECOVERY_OPERATION_STATES_V2.has(item.stage))
         if(old){
           const oldHash=await recoveryRekeyOperationStateHashV2(old)
