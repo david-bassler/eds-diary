@@ -139,6 +139,21 @@ interface StoredOperationArtifactRecordV2 {
   tag?:string
 }
 
+function assertNoPlaintextLineageKeyMaterial(value:unknown):void{
+  const pending:unknown[]=[value]
+  const seen=new Set<object>()
+  while(pending.length){
+    const current=pending.pop()
+    if(typeof current!=='object'||current===null||seen.has(current))continue
+    seen.add(current)
+    if(Array.isArray(current)){pending.push(...current);continue}
+    for(const [key,nested] of Object.entries(current as Record<string,unknown>)){
+      if(key==='source_root_key'||key==='source_activation_lineage')throw new Error('Plaintext ActivationLineage root material is forbidden in operationArtifactsV2.')
+      pending.push(nested)
+    }
+  }
+}
+
 function scrubSensitiveOperationArtifactValue(id:string,value:unknown):{changed:boolean;value:unknown}{
   if(typeof value!=='object'||value===null||Array.isArray(value))return{changed:false,value}
   const record=value as Record<string,unknown>
@@ -267,6 +282,7 @@ export class IndexedDbV2LocalSecurityStore {
 
   async putImmutableOperationArtifact(id:string,value:unknown):Promise<string>{
     if(!id)throw new Error('V2 operation artifact ID is required.')
+    assertNoPlaintextLineageKeyMaterial(value)
     const bytes=new TextDecoder().decode(canonicalBytes(value as never)),hash=base64Url(await sha256(canonicalBytes(value as never))),db=await openDatabase()
     const readTx=db.transaction(STORES.operationArtifacts,'readonly')
     const existing=await requestResult<{id:string;value:unknown;bytes:string;hash:string}|undefined>(readTx.objectStore(STORES.operationArtifacts).get(id))
@@ -307,6 +323,7 @@ export class IndexedDbV2LocalSecurityStore {
 
   async putMacBoundOperationArtifact(id:string,value:unknown,rootKey:Uint8Array,epochSalt:Uint8Array):Promise<string>{
     if(!id)throw new Error('MAC-bound v2 operation artifact ID is required.')
+    assertNoPlaintextLineageKeyMaterial(value)
     const bytes=new TextDecoder().decode(canonicalBytes(value as never))
     const hash=base64Url(await sha256(canonicalBytes(value as never)))
     const tag=base64Url(await hmacSha256(
@@ -383,6 +400,7 @@ export class IndexedDbV2LocalSecurityStore {
     state:EpochLocalSecurityStateV6
   }):Promise<void>{
     if(!args.artifactId)throw new Error('Profile-upgrade plan artifact ID is required.')
+    assertNoPlaintextLineageKeyMaterial(args.artifactValue)
     validateRootWrapV6(args.rootWrap)
     validateEpochLocalSecurityStateV6(args.state)
     if(args.rootWrap.epoch_id!==args.state.epoch_id
@@ -461,6 +479,7 @@ export class IndexedDbV2LocalSecurityStore {
     state:EpochLocalSecurityStateV6
   }):Promise<void>{
     if(!args.artifactId)throw new Error('Native v2 rotation plan artifact ID is required.')
+    assertNoPlaintextLineageKeyMaterial(args.artifactValue)
     validateRootWrapV6(args.rootWrap);validateEpochLocalSecurityStateV6(args.state)
     if(args.state.epoch_status!=='local_offline'||args.state.writer_status!=='read_only'||args.state.remote_binding!==null||args.state.remote_anchor!==null)throw new Error('Native v2 rotation Successor must start local_offline/read_only and unbound.')
     if(args.rootWrap.epoch_id!==args.state.epoch_id||args.rootWrap.diary_id!==args.state.diary_id||args.rootWrap.key_id!==args.state.key_id||args.rootWrap.manifest_fingerprint!==args.state.manifest_fingerprint)throw new Error('Native v2 rotation RootWrapV6/StateV6 binding mismatch.')
@@ -572,6 +591,7 @@ export class IndexedDbV2LocalSecurityStore {
     lineageCache:ActivationLineageCacheV2|null
   }):Promise<void>{
     if(!args.artifactId)throw new Error('Read-only Join plan artifact ID is required.')
+    assertNoPlaintextLineageKeyMaterial(args.artifactValue)
     validateRootWrapV6(args.rootWrap)
     validateEpochLocalSecurityStateV6(args.state)
     if(args.state.epoch_status!=='active'||args.state.writer_status!=='read_only'
@@ -1201,6 +1221,7 @@ export class IndexedDbV2LocalSecurityStore {
     validateRotationOperationStateV2(args.operation)
     if(args.operation.rotation_kind==='profile_upgrade'||args.operation.stage!=='source_frozen_verified')throw new Error('Native Source rotation bundle must start at source_frozen_verified.')
     if(!args.artifactId)throw new Error('Native Source rotation freeze artifact ID is required.')
+    assertNoPlaintextLineageKeyMaterial(args.artifactValue)
     return withDiaryLockV2((await this.loadState(args.rootKey,args.epochSalt,args.operation.source_epoch_id)).diary_id,async()=>{
       await this.verifyLocalJournal(args.rootKey,args.epochSalt,args.operation.source_epoch_id)
       const current=await this.loadState(args.rootKey,args.epochSalt,args.operation.source_epoch_id)
