@@ -44,7 +44,7 @@ for (const crashPoint of POINTS) {
       },
       crash: async (point) => {
         await expect(harness.runProductiveProfileUpgrade(device!, seed!, point)).rejects.toThrow(`persistent-crash:${point}`)
-        expect(await harness.scanBrowserPersistence(device!, sourceRootKeySentinels)).toEqual([])
+        expect(await harness.scanBrowserPersistence(device!, [sourceRootKeySentinel!])).toEqual([])
       },
       restart: async () => {
         await device!.page.reload()
@@ -56,7 +56,7 @@ for (const crashPoint of POINTS) {
       },
       verify: async () => {
         expect(await harness.verifyProductiveV2Remote(device!)).toMatchObject({ kind: 'canonical_full', writerStatus: 'writer_active' })
-        expect(await harness.scanBrowserPersistence(device!, sourceRootKeySentinels)).toEqual([])
+        expect(await harness.scanBrowserPersistence(device!, [sourceRootKeySentinel!])).toEqual([])
         await device!.close()
       },
       finish: async () => {},
