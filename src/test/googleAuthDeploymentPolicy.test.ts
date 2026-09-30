@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises'
 import { describe, expect, it } from 'vitest'
 import { validateGoogleAuthEndpoint } from '../sync/google/googleAuthDeploymentPolicy'
 import { allowedSecureOrigin } from '../security/webOriginPolicy'
@@ -44,6 +45,12 @@ describe('Google Auth deployment endpoint policy',()=>{
     expect(allowedSecureOrigin('http://localhost:4173',configured)).toBe('http://localhost:4173')
     expect(allowedSecureOrigin('http://diary-insecure.example.test',configured)).toBeNull()
     expect(allowedSecureOrigin('https://other.example.test',configured)).toBeNull()
+  })
+
+  it('pins the GitHub Pages same-origin deployment as an explicit test-only exception',async()=>{
+    const workflow=await readFile(new URL('../../.github/workflows/deploy-pages.yml',import.meta.url),'utf8')
+    expect(workflow).toContain('VITE_GOOGLE_AUTH_ORIGIN: https://david-bassler.github.io/eds-diary/google-auth/')
+    expect(workflow).toContain('VITE_ALLOW_SAME_ORIGIN_AUTH_TEST_ONLY: "true"')
   })
 
   it('allows a separate HTTPS Auth origin without any test exception',()=>{
