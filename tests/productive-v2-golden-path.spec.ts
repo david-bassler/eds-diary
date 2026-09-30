@@ -66,6 +66,31 @@ test('runs the productive v1→v2 lifecycle, unlock, durable writes and read-onl
 })
 
 
+test('keeps historical Root Keys out of browser persistence across native rotation crash/resume', async ({ browser }) => {
+  test.setTimeout(480_000)
+  const harness = new MultiDeviceHarness(browser)
+  const device = await harness.device('ia-163-native-rotation')
+  try {
+    await device.page.goto('/')
+    await harness.authenticate(device, 'ia_163_native_rotation_auth_000001')
+    const lifecycle = await harness.establishProductiveV2(device)
+    const historicalRoots = await harness.activeV2HistoricalRootKeySentinels(device, lifecycle.recoveryKey)
+    const sourceRoot = await harness.activeV2RootKeySentinel(device)
+    expect(historicalRoots.length).toBeGreaterThan(0)
+
+    await expect(harness.runProductiveNormalV2Rotation(device, lifecycle.recoveryKey, 'after-source-freeze'))
+      .rejects.toThrow('persistent-crash:after-source-freeze')
+    expect(await harness.scanBrowserPersistence(device, historicalRoots)).toEqual([])
+
+    const resumed = await harness.runProductiveNormalV2Rotation(device, lifecycle.recoveryKey)
+    expect(resumed.stage).toBe('switched')
+    expect(await harness.scanBrowserPersistence(device, [...historicalRoots, sourceRoot])).toEqual([])
+  } finally {
+    await harness.close()
+  }
+})
+
+
 test('detects redacted synthetic Diary request, console and error leaks but excludes Auth-origin logs', async ({ browser }) => {
   const harness = new MultiDeviceHarness(browser)
   const device = await harness.device('browser-security-sentinel-probe')
