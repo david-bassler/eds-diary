@@ -95,7 +95,9 @@ export async function installAuthenticatedRemoteSession(session:AuthenticatedPro
   assertCurrentSession(generation)
   if(v2){
     if(!isV2Session(session))throw new Error('An active v2 diary requires a transferable-single-writer v2 provider session.')
-    if(activeProviderSession&&activeProviderSession!==session)await disconnectCurrentSession(false)
+    // The V2 runtime performs two-phase replacement: the prior verified runtime
+    // remains active until the candidate passes its first full remote verify.
+    // Pre-disconnecting here would defeat IA-140 on the actual UI path.
     assertCurrentSession(generation)
     const service=await installAuthenticatedV2RemoteSession(session)
     if(generation!==sessionGeneration){

@@ -190,6 +190,25 @@ describe('v2 authenticated application-session generation fencing',()=>{
     expect(mocked.create).toHaveBeenCalledTimes(1)
   })
 
+  it('public data-layer replacement preserves the prior verified V2 runtime when the candidate fails',async()=>{
+    const dataLayer=await import('../data/initializeDataLayer')
+    const sourceA=provider('data-layer-A'),sourceB=provider('data-layer-B')
+    const serviceA=fakeService(),serviceB=fakeService(async()=>{throw new Error('candidate remote verification failed')})
+    mocked.create.mockResolvedValueOnce(serviceA).mockResolvedValueOnce(serviceB)
+    try{
+      await dataLayer.installAuthenticatedRemoteSession(sourceA as Parameters<typeof dataLayer.installAuthenticatedRemoteSession>[0])
+      expect(runtime.activeV2SyncService()).toBe(serviceA)
+      await expect(dataLayer.installAuthenticatedRemoteSession(
+        sourceB as Parameters<typeof dataLayer.installAuthenticatedRemoteSession>[0],
+      )).rejects.toThrow('candidate remote verification failed')
+      expect(serviceA.close).not.toHaveBeenCalled()
+      expect(runtime.activeV2ProviderSession()).toBe(sourceA)
+      expect(runtime.activeV2SyncService()).toBe(serviceA)
+    }finally{
+      await dataLayer.clearAuthenticatedRemoteSession()
+    }
+  })
+
   it('invalidates an initial data-layer V2 install before activeProviderSession is assigned',async()=>{
     const dataLayer=await import('../data/initializeDataLayer')
     const source=provider('early-logout'),wait=deferred<TransferableSingleWriterV2SyncService>()
