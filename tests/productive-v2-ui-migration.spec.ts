@@ -10,6 +10,7 @@ test('migrates productive v1 through the Settings UI and remains usable across r
     await Promise.all([source.page.goto('/'),joining.page.goto('/')])
     await harness.authenticate(source,'ui_migration_source_initial_auth_0001')
     const v1=await harness.establishProductiveRemoteV1(source)
+    const sourceRootKey=await harness.activeV1RootKeySentinel(source)
     expect(await harness.readProductivePain(source)).toBe(1)
     await Promise.all(source.context.pages().filter(page=>page!==source.page).map(page=>page.close()))
 
@@ -72,7 +73,7 @@ test('migrates productive v1 through the Settings UI and remains usable across r
     // inspection; this happens only after the UI ceremony has completed.
     await harness.restoreProductiveRuntimeAfterCeremony(source,v1.passphrase)
     expect(await harness.verifyProductiveV2Remote(source)).toMatchObject({kind:'canonical_full',writerStatus:'writer_active'})
-    expect(await harness.scanBrowserPersistence(source,['productive-crash-source'])).toEqual([])
+    expect(await harness.scanBrowserPersistence(source,['productive-crash-source',sourceRootKey])).toEqual([])
 
     await harness.reloadAuthenticateUnlockAndRestoreProductiveRuntime(
       source,v1.passphrase,'ui_migration_source_reload_auth_00001',

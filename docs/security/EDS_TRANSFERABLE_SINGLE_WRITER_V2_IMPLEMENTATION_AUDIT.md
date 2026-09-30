@@ -977,6 +977,8 @@ No protocol or backup wire format was changed.
 
 | IA-162 | Auth-Origin allowlist accepts configured cleartext non-loopback Diary return origins | `googleAuthOrigin.ts` validates `return_origin` by exact membership in `VITE_DIARY_ORIGINS`, but does not independently require HTTPS or loopback HTTP. A separately HTTPS-hosted Auth-Origin can therefore be misconfigured to hand the token/RPC channel to a Diary page served over cleartext non-loopback HTTP. The allowlist prevents arbitrary caller origins, but it does not make an unsafe configured origin safe. | **CLOSED by post-merge remediation on exact code HEAD `36d477c8` with Security Validation #1162 fully green (all five jobs; 72/72 named security E2E; full configured browser matrix 252 passed + 4 configured skips; 10/10 seeded generative; complete static/unit/type/build/lint/Storybook gates).** Historical remediation criterion was: Share the HTTPS-or-loopback transport policy between Diary→Auth and Auth→Diary validation; reject configured non-loopback HTTP return origins before popup/bridge binding. Add pure regression coverage for HTTPS, loopback HTTP, and rejected cleartext non-loopback origins. |
 
+| IA-163 | Plaintext ActivationLineage/root-key duplication in generic operation artifacts | Productive profile upgrade persisted `{entry,lineage,recovery_artifact}`, while native v2 rotation persisted both `source_activation_lineage` in the Source-freeze artifact and `{lineage,proof,recovery_artifact}` in the activation artifact. Generic `operationArtifactsV2` stores values and canonical bytes without confidentiality, so historical `source_root_key` values were duplicated outside the two §10c-permitted encrypted containers. The browser leak scanner did inspect IndexedDB, but existing negative tests did not use the dynamically generated Root Keys themselves as sentinels. | **CLOSED by post-final-review remediation on implementation HEAD `770cdf6350233dd2de0669f22bef915e47b59d5b`; Security Validation #1176 (run 36726305200) completed all five jobs successfully.** Profile-upgrade/native activation artifacts now persist only the exact one-shot URS-encrypted `RecoveryArtifactV6`; lineage/proof are opened transiently after URS authentication. Native Source-freeze persists only `source_activation_lineage_sha256` and rebinds the freshly opened Source RecoveryArtifact lineage to that hash. Local security DB v12 scrubs affected v11 plaintext operation artifacts while preserving encrypted RecoveryArtifact bytes and repairs the non-secret artifact hash metadata on first normal read. Regression coverage scans the actual retired v1 Source RK, historical lineage RKs at a native Source-freeze crash, and the pensioned v2 Source RK after resume; a dedicated v11→v12 unit migration plants and proves removal of a historical-RK sentinel. No wire-format or protocol rule changed. |
+
 ### 2026-09-30 post-merge deployment/auth review closure
 
 A separate post-merge review was performed directly on the merged `main`
@@ -1010,6 +1012,39 @@ IA-158–IA-162 are therefore **CLOSED for repository-controlled evidence**.
 The GitHub Pages topology remains deliberately test-only; separate production
 Auth-Origin deployment/headers, Live Google, physical WebAuthn/PRF and
 independent audit remain external release gates.
+
+### 2026-09-30 IA-163 post-final-review persistence closure
+
+A subsequent adversarial pass against the actually merged `main` revisited the
+local persistence confidentiality boundary rather than relying on sentinel-only
+negative scans. It found IA-163: decrypted ActivationLineageV2 objects, including
+historical `source_root_key` values, were duplicated in generic plaintext
+`operationArtifactsV2` even though Exact Protocol §10c permits those keys only
+inside the URS-encrypted `RecoveryArtifactV6` or the RK-encrypted
+`ActivationLineageCacheV2`.
+
+The remediation deliberately did **not** create a third secret container.
+Profile Upgrade and native Rotation persist only the already one-shot encrypted
+RecoveryArtifact as crash evidence and reconstruct lineage/proof transiently
+after Recovery-key authentication. Native Source-freeze retains only the
+lineage hash and verifies freshly opened Source RecoveryArtifact lineage against
+it before use. Database version 12 removes the legacy plaintext lineage fields
+from version-11 operation artifacts while preserving the encrypted artifact
+needed for resumability.
+
+Security Validation #1176
+(https://github.com/david-bassler/eds-diary/actions/runs/36726305200)
+is green on exact implementation HEAD
+`770cdf6350233dd2de0669f22bef915e47b59d5b`: static/unit, named security E2E,
+both configured browser shards and the seeded generative gate all succeeded.
+The browser regressions use the actual generated Root Keys as leak sentinels,
+including crash/resume, rather than a synthetic stand-in.
+
+The earlier package-#24 statement below remains an exact-head historical record
+for `82adaafa`; IA-163 temporarily invalidated its broader “no additional
+technical finding” conclusion until this remediation. For the repository-
+controlled scope, IA-163 is now closed. The external production gates are
+unchanged.
 
 ### 2026-09-30 final adversarial whole-system review #24 closure
 

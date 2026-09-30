@@ -257,6 +257,53 @@ export class MultiDeviceHarness {
     })
   }
 
+  async activeV1RootKeySentinel(device:VirtualDevice):Promise<string>{
+    return device.page.evaluate(async()=>{
+      const [bytes,localDatabase]=await Promise.all([
+        import('/src/security/crypto/bytes.ts'),
+        import('/src/data/localDatabase.ts'),
+      ])
+      const db=await localDatabase.__localDatabaseTesting.openDatabase()
+      const loaded=await localDatabase.__localDatabaseTesting.loadEpoch(db)
+      return bytes.base64Url(loaded.rootKey)
+    })
+  }
+
+  async activeV2RootKeySentinel(device:VirtualDevice):Promise<string>{
+    return device.page.evaluate(async()=>{
+      const [bytes,localDatabase,persistence]=await Promise.all([
+        import('/src/security/crypto/bytes.ts'),
+        import('/src/data/localDatabase.ts'),
+        import('/src/security/v2/localPersistence.ts'),
+      ])
+      const selection=await localDatabase.activeProtocolSelectionV2()
+      if(!selection)throw new Error('No active v2 selection for root-key leak sentinel.')
+      const store=new persistence.IndexedDbV2LocalSecurityStore()
+      const prepared=await store.loadRootWrapV6(selection.epoch_id)
+      const rootKey=await localDatabase.openSuccessorRootWrapV6WithActiveMode(prepared)
+      return bytes.base64Url(rootKey)
+    })
+  }
+
+  async activeV2HistoricalRootKeySentinels(device:VirtualDevice,recoveryKey:string):Promise<string[]>{
+    return device.page.evaluate(async({encodedRecoveryKey})=>{
+      const state=window as typeof window&{multiDeviceAuth?:{provider:{getApiClient():unknown}}}
+      const [bytes,localDatabase,provider,recovery]=await Promise.all([
+        import('/src/security/crypto/bytes.ts'),
+        import('/src/data/localDatabase.ts'),
+        import('/src/sync/google/GoogleTransferableSingleWriterV2Provider.ts'),
+        import('/src/security/v2/recovery.ts'),
+      ])
+      const selection=await localDatabase.activeProtocolSelectionV2()
+      if(!selection)throw new Error('No active v2 selection for historical root-key leak sentinels.')
+      const session=provider.googleV2ProviderSessionFromAuthenticatedClient(state.multiDeviceAuth!.provider.getApiClient() as never)
+      const urs=bytes.fromBase64Url(encodedRecoveryKey)
+      const artifact=await session.loadRecoveryArtifact(urs,selection.diary_id,selection.epoch_id)
+      const opened=await recovery.openRecoveryArtifactV6(artifact,urs)
+      return opened.payload.activation_lineage.map(entry=>entry.source_root_key)
+    },{encodedRecoveryKey:recoveryKey})
+  }
+
   async scanBrowserPersistence(device: VirtualDevice, sentinels: readonly string[]): Promise<readonly string[]> {
     const persistenceHits = await device.page.evaluate(async ({ needles }) => {
       const hits: string[] = []

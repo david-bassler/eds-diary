@@ -151,9 +151,13 @@ interface SuccessorPlanArtifactV2 {
 }
 interface SuccessorRemoteArtifactV2 {remote_id:string}
 interface ActivationArtifactV2 {
+  // Persist only the URS-encrypted artifact. Decrypted ActivationLineageV2
+  // (which contains source_root_key) must never enter generic operation storage.
+  recovery_artifact:RecoveryArtifactV6
+}
+type OpenedActivationArtifactV2=ActivationArtifactV2&{
   entry:ProfileUpgradeActivationEntryV2
   lineage:[ProfileUpgradeActivationEntryV2]
-  recovery_artifact:RecoveryArtifactV6
 }
 interface BackupArtifactV2 {backup:SyncBackupV6;anchor:{anchor_profile:string;covered_row_count:number;prefix_hash:string}}
 
@@ -228,6 +232,15 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
   private artifactId(suffix:string):string{return`${this.requireOperationId()}:${suffix}`}
   private artifact<T>(suffix:string):Promise<T|null>{return this.v2Store.operationArtifact<T>(this.artifactId(suffix))}
   private async putArtifact(suffix:string,value:unknown):Promise<void>{await this.v2Store.putImmutableOperationArtifact(this.artifactId(suffix),value)}
+  private async activationArtifact():Promise<OpenedActivationArtifactV2|null>{
+    const artifact=await this.artifact<ActivationArtifactV2>('activation')
+    if(!artifact)return null
+    const opened=await openRecoveryArtifactV6(artifact.recovery_artifact,this.urs)
+    const lineage=opened.payload.activation_lineage
+    const entry=lineage[0]
+    if(lineage.length!==1||!entry||entry.kind!=='profile_upgrade')throw new Error('Profile-upgrade persisted RecoveryArtifactV6 has invalid activation lineage.')
+    return{...artifact,entry,lineage:[entry]}
+  }
 
   private async sourceVerifier(material:VerifiedEpochMaterial,anchor:RemoteAnchorV1|null):Promise<SingleWriterV1RemoteVerifier>{
     const binding=material.state.remote_binding
@@ -630,7 +643,7 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
     activationEvidenceSha256:string;activationLineageSha256:string
     recoveryArtifactId:string;recoveryArtifactLocator:string;recoveryArtifactSha256:string
   }>{
-    const existing=await this.artifact<ActivationArtifactV2>('activation')
+    const existing=await this.activationArtifact()
     if(existing){
       const plan=await this.plan()
       return{
@@ -679,7 +692,7 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
       created_at:plan.created_at,
     },this.urs,fromBase64Url(artifactId))
     stagingMaterial.privateKeyPkcs8.fill(0)
-    await this.putArtifact('activation',{entry,lineage,recovery_artifact:artifact} satisfies ActivationArtifactV2)
+    await this.putArtifact('activation',{recovery_artifact:artifact} satisfies ActivationArtifactV2)
     await this.fault?.('after-activation-artifact')
     const persisted=await this.v2Store.persistRecoveryArtifactV6(this.urs,plan.diary_id,plan.successor_epoch_id,artifact)
     return{
@@ -691,7 +704,7 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
   }
 
   async publishAndVerifyRecoveryArtifact():Promise<void>{
-    const plan=await this.plan(),activation=await this.artifact<ActivationArtifactV2>('activation')
+    const plan=await this.plan(),activation=await this.activationArtifact()
     if(!activation)throw new Error('Profile-upgrade activation artifact is missing.')
     const persisted=await this.v2Store.persistRecoveryArtifactV6(this.urs,plan.diary_id,plan.successor_epoch_id,activation.recovery_artifact)
     await this.successorSession.publishRecoveryArtifact(this.urs,persisted)
@@ -795,7 +808,7 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
     return{pending,stale}
   }
   private async createBackup(activationState:'staged'|'activated',verified:VerifiedRemoteState):Promise<{backup:SyncBackupV6;anchor:CanonicalFullResultV2['remote_anchor']}>{
-    const ctx=await this.successorContext(),activation=await this.artifact<ActivationArtifactV2>('activation')
+    const ctx=await this.successorContext(),activation=await this.activationArtifact()
     if(!activation)throw new Error('Profile-upgrade activation artifact is missing.')
     const rows=verified.snapshot.rows.map(row=>[row[0]!,row[1]!,row[2]!] as Row),local=await this.backupRows(),result=canonical(verified)
     const backup=await createBackupV6({
@@ -943,7 +956,7 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
   }
 
   private async verifyActivationBoundary(verified:VerifiedRemoteState,result:CanonicalFullResultV2):Promise<{verified:VerifiedRemoteState;result:CanonicalFullResultV2;activationAnchor:CanonicalFullResultV2['remote_anchor']}>{
-    const operation=await this.load(),source=await this.frozenSource(),activation=await this.artifact<ActivationArtifactV2>('activation')
+    const operation=await this.load(),source=await this.frozenSource(),activation=await this.activationArtifact()
     if(!activation||!operation.successor_staging_anchor)throw new Error('Profile-upgrade activation evidence is missing.')
     const sourceRemote=await this.verifySourceAtFrozenPrefix(true)
     if(sourceRemote.announcementCount<1)throw new Error('Profile-upgrade activation lacks a durable immediate Source Announcement.')
@@ -972,7 +985,7 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
   }
 
   private async recoveryAdvancedBeyondArtifact(result:CanonicalFullResultV2):Promise<boolean>{
-    const activation=await this.artifact<ActivationArtifactV2>('activation')
+    const activation=await this.activationArtifact()
     if(!activation)throw new Error('Profile-upgrade recovery artifact is missing.')
     const payload=(await import('../security/v2/recovery')).openRecoveryArtifactV6
     const opened=(await payload(activation.recovery_artifact,this.urs)).payload
@@ -996,7 +1009,7 @@ export class ProductiveProfileUpgradeV2Service implements ProfileUpgradeOrchestr
   }
 
   async persistLineageAndReverifyBeforeSwitch():Promise<'ready'|'superseded'>{
-    const ctx=await this.successorContext(),activation=await this.artifact<ActivationArtifactV2>('activation'),backup=await this.artifact<BackupArtifactV2>('activated-backup')
+    const ctx=await this.successorContext(),activation=await this.activationArtifact(),backup=await this.artifact<BackupArtifactV2>('activated-backup')
     if(!activation||!backup)throw new Error('Profile-upgrade final activation artifacts are incomplete.')
     const state=await this.v2Store.loadState(ctx.rootKey,ctx.epochSalt,ctx.plan.successor_epoch_id)
     if(state.activation_lineage_cache_ref===null){

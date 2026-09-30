@@ -109,7 +109,6 @@ interface NativeSourceFreezeArtifactV2 {
   source_recovery:CanonicalFullResultV2['current_recovery']
   recovery_credential_history:CanonicalFullResultV2['recovery_credential_history']
   source_recovery_artifact_sha256:string
-  source_activation_lineage:ActivationLineageV2
   source_activation_lineage_sha256:string
   source_semantic_snapshot_hash:string
   source_lineage_snapshot_hash:string
@@ -147,10 +146,15 @@ interface NativeSuccessorPlanArtifactV2 {
   created_at:string
 }
 interface NativeSuccessorRemoteArtifactV2 {remote_id:string}
+type NativeActivationProofV2=Extract<ActivationLineageV2[number],{kind:'v2_rotation'}>['proof']
 interface NativeActivationArtifactV2 {
-  lineage:ActivationLineageV2
-  proof:ActivationLineageV2[number] extends infer T ? T extends {kind:'v2_rotation';proof:infer P}?P:never:never
+  // Persist only the URS-encrypted artifact. Decrypted lineage/root keys are
+  // reconstructed after Recovery-key authentication and never stored here.
   recovery_artifact:RecoveryArtifactV6
+}
+type OpenedNativeActivationArtifactV2=NativeActivationArtifactV2&{
+  lineage:ActivationLineageV2
+  proof:NativeActivationProofV2
 }
 interface NativeBackupArtifactV2 {backup:SyncBackupV6;anchor:CanonicalFullResultV2['remote_anchor']}
 
@@ -206,6 +210,15 @@ export class ProductiveNativeRotationV2Service implements ProfileUpgradeOrchestr
   private requireOperationId():string{if(!this.operationId)throw new Error('Native v2 rotation operation is not initialized.');return this.operationId}
   private artifact<T>(suffix:string):Promise<T|null>{return this.store.operationArtifact<T>(this.artifactId(suffix))}
   private async putArtifact(suffix:string,value:unknown):Promise<void>{await this.store.putImmutableOperationArtifact(this.artifactId(suffix),value)}
+  private async activationArtifact():Promise<OpenedNativeActivationArtifactV2|null>{
+    const artifact=await this.artifact<NativeActivationArtifactV2>('activation')
+    if(!artifact)return null
+    const opened=await openRecoveryArtifactV6(artifact.recovery_artifact,this.urs)
+    const lineage=opened.payload.activation_lineage
+    const entry=lineage.at(-1)
+    if(!entry||entry.kind!=='v2_rotation')throw new Error('Native v2 persisted RecoveryArtifactV6 has invalid activation lineage.')
+    return{...artifact,lineage,proof:entry.proof}
+  }
   private async hit(stage:RotationOperationStageV2|NativeRotationV2FaultPoint):Promise<void>{await this.fault?.(String(stage).startsWith('after-')?stage as NativeRotationV2FaultPoint:`after-${stage}` as NativeRotationV2FaultPoint)}
 
   private async rootForEpoch(epochId:string):Promise<Uint8Array>{
@@ -236,6 +249,7 @@ export class ProductiveNativeRotationV2Service implements ProfileUpgradeOrchestr
     if(await recoveryArtifactHashV6(artifact)!==context.freeze.source_recovery_artifact_sha256)throw new Error('Native v2 Source RecoveryArtifactV6 changed after freeze.')
     const opened=await openRecoveryArtifactV6(artifact,this.urs)
     if(base64Url(opened.rootKey)!==base64Url(context.rootKey))throw new Error('Native v2 Source RecoveryArtifactV6 root changed.')
+    if(await activationLineageHashV2(opened.payload.activation_lineage)!==context.freeze.source_activation_lineage_sha256)throw new Error('Native v2 Source activation lineage changed after freeze.')
     return{artifact,payload:opened.payload}
   }
 
@@ -300,8 +314,7 @@ export class ProductiveNativeRotationV2Service implements ProfileUpgradeOrchestr
       format:'native-v2-source-freeze-v2',operation_id:base64Url(new Uint8Array(32)),rotation_kind:kind,recovery_transition_id:transitionId,
       diary_id:state.diary_id,source_epoch_id:state.epoch_id,source_manifest_fingerprint:state.manifest_fingerprint,source_remote_id:binding.remote_resource_id,
       source_account_binding:binding.remote_identity_binding,source_anchor:result.remote_anchor,source_writer:result.current_writer,source_recovery:result.current_recovery,
-      recovery_credential_history:result.recovery_credential_history,source_recovery_artifact_sha256:base64Url(new Uint8Array(32)),source_activation_lineage:[],
-      source_activation_lineage_sha256:base64Url(new Uint8Array(32)),source_semantic_snapshot_hash:base64Url(new Uint8Array(32)),source_lineage_snapshot_hash:base64Url(new Uint8Array(32)),
+      recovery_credential_history:result.recovery_credential_history,source_recovery_artifact_sha256:base64Url(new Uint8Array(32)),source_activation_lineage_sha256:base64Url(new Uint8Array(32)),source_semantic_snapshot_hash:base64Url(new Uint8Array(32)),source_lineage_snapshot_hash:base64Url(new Uint8Array(32)),
       source_active_head_count:0,source_tombstone_head_count:0,source_head_revision_ids:[],created_at:this.now(),
     },state,rootKey,epochSalt,transport,codec},snapshot,verified,result,announcementCount:0})
     if(state.writer_status!=='writer_active'||state.writer_generation!==result.current_writer.writer_generation||state.writer_grant_id!==result.current_writer.writer_grant_id
@@ -331,7 +344,7 @@ export class ProductiveNativeRotationV2Service implements ProfileUpgradeOrchestr
       source_remote_id:binding.remote_resource_id,source_account_binding:binding.remote_identity_binding,
       source_anchor:{...result.remote_anchor},source_writer:{...result.current_writer},source_recovery:{...result.current_recovery},
       recovery_credential_history:result.recovery_credential_history.map(entry=>({...entry})),source_recovery_artifact_sha256:await recoveryArtifactHashV6(artifact),
-      source_activation_lineage:structuredClone(opened.payload.activation_lineage),source_activation_lineage_sha256:await activationLineageHashV2(opened.payload.activation_lineage),
+      source_activation_lineage_sha256:await activationLineageHashV2(opened.payload.activation_lineage),
       source_semantic_snapshot_hash:sourceSnapshot.semantic_snapshot_hash,source_lineage_snapshot_hash:sourceSnapshot.lineage_snapshot_hash,
       source_active_head_count:sourceSnapshot.active_head_count,source_tombstone_head_count:sourceSnapshot.tombstone_head_count,
       source_head_revision_ids:sourceSnapshot.heads.map(head=>head.revision_id),created_at:createdAt,
@@ -575,14 +588,14 @@ export class ProductiveNativeRotationV2Service implements ProfileUpgradeOrchestr
   async copyAndVerifySuccessor():Promise<{stagingAnchor:CanonicalFullResultV2['remote_anchor']}>{return{stagingAnchor:(await this.plannedStagingRows()).canonical.remote_anchor}}
 
   async prepareActivation():Promise<{announcementEnvelope:{envelope_id:string;iv:string;ciphertext:string};confirmationEnvelope:{envelope_id:string;iv:string;ciphertext:string};activationEvidenceSha256:string;activationLineageSha256:string;recoveryArtifactId:string;recoveryArtifactLocator:string;recoveryArtifactSha256:string}>{
-    const existing=await this.artifact<NativeActivationArtifactV2>('activation'),plan=await this.plan()
+    const existing=await this.activationArtifact(),plan=await this.plan()
     if(existing)return{
       announcementEnvelope:{...existing.proof.announcement_envelope},confirmationEnvelope:{...existing.proof.successor_confirmation_envelope},
       activationEvidenceSha256:await recoveryActivationProofHashV2(existing.proof),activationLineageSha256:await activationLineageHashV2(existing.lineage),
       recoveryArtifactId:existing.recovery_artifact.recovery_artifact_id,recoveryArtifactLocator:await recoveryArtifactLocatorV6(this.urs,plan.diary_id,plan.successor_epoch_id),
       recoveryArtifactSha256:await recoveryArtifactHashV6(existing.recovery_artifact),
     }
-    const operation=await this.load(),source=await this.sourceSnapshot(),ctx=await this.successorContext()
+    const operation=await this.load(),source=await this.sourceSnapshot(),ctx=await this.successorContext(),sourceArtifact=await this.sourceArtifact(source.context)
     if(!operation.successor_staging_anchor)throw new Error('Native v2 Successor staging anchor is missing.')
     const stagedSnapshot=await ctx.transport.read(ctx.remoteId),staged=canonical(await ctx.codec.verifyRemote(stagedSnapshot))
     if(!same(staged.remote_anchor,operation.successor_staging_anchor)||staged.accepted_activation_confirmation!==null)throw new NativeRotationPreCutoverStaleError('Native v2 Successor changed after staging freeze.')
@@ -602,7 +615,7 @@ export class ProductiveNativeRotationV2Service implements ProfileUpgradeOrchestr
     const proof=await createRecoveryActivationProofV2({sourceEpochId:source.freeze.source_epoch_id,sourceManifestFingerprint:source.freeze.source_manifest_fingerprint,sourceAnchor:source.freeze.source_anchor,
       successorStagingAnchor:operation.successor_staging_anchor,sourceWriter:source.result.current_writer,successorEpochId:plan.successor_epoch_id,successorManifestFingerprint:plan.manifest_fingerprint,
       successorRecoveryGeneration:plan.recovery_generation,rotationKind:plan.rotation_kind,recoveryTransitionId:plan.recovery_transition_id,announcementEnvelope:announcement,confirmationEnvelope:confirmation,sourceWriterPrivateKey:writer.private_key})
-    const lineage=extendActivationLineageV2(source.context.rootKey,source.freeze.source_activation_lineage,proof)
+    const lineage=extendActivationLineageV2(source.context.rootKey,sourceArtifact.payload.activation_lineage,proof)
     const staging=await this.store.loadRecoveryTakeoverStagingMaterial({epochId:plan.successor_epoch_id,recoveryGeneration:plan.recovery_generation,recoveryTakeoverKeyId:plan.recovery_takeover_key_id,manifestFingerprint:plan.manifest_fingerprint,urs:this.urs})
     const artifact=await createRecoveryArtifactV6({diary_id:plan.diary_id,epoch_id:plan.successor_epoch_id,key_id:plan.key_id,RK_epoch:base64Url(ctx.rootKey),manifest_fingerprint:plan.manifest_fingerprint,
       remote_anchor:operation.successor_staging_anchor,google_account_binding:plan.google_account_binding,recovery_generation:plan.recovery_generation,recovery_urs_commitment:plan.recovery_urs_commitment,
@@ -610,7 +623,7 @@ export class ProductiveNativeRotationV2Service implements ProfileUpgradeOrchestr
       recovery_takeover_public_key:plan.recovery_takeover_public_key,recovery_takeover_private_key_pkcs8:base64Url(staging.privateKeyPkcs8),activation_lineage:lineage,
       recovery_authority_transition_proof:null,created_at:plan.created_at},this.urs,await deterministicBytes(operation.operation_id,'recovery-artifact-id',16))
     staging.privateKeyPkcs8.fill(0)
-    await this.putArtifact('activation',{lineage,proof,recovery_artifact:artifact} satisfies NativeActivationArtifactV2)
+    await this.putArtifact('activation',{recovery_artifact:artifact} satisfies NativeActivationArtifactV2)
     const persisted=await this.store.persistRecoveryArtifactV6(this.urs,plan.diary_id,plan.successor_epoch_id,artifact)
     return{announcementEnvelope:{envelope_id:announcement.envelopeId,iv:announcement.iv,ciphertext:announcement.ciphertext},confirmationEnvelope:{envelope_id:confirmation.envelopeId,iv:confirmation.iv,ciphertext:confirmation.ciphertext},
       activationEvidenceSha256:await recoveryActivationProofHashV2(proof),activationLineageSha256:await activationLineageHashV2(lineage),
@@ -618,7 +631,7 @@ export class ProductiveNativeRotationV2Service implements ProfileUpgradeOrchestr
   }
 
   async publishAndVerifyRecoveryArtifact():Promise<void>{
-    const plan=await this.plan(),activation=await this.artifact<NativeActivationArtifactV2>('activation')
+    const plan=await this.plan(),activation=await this.activationArtifact()
     if(!activation)throw new Error('Native v2 activation artifact is missing.')
     const persisted=await this.store.persistRecoveryArtifactV6(this.urs,plan.diary_id,plan.successor_epoch_id,activation.recovery_artifact)
     await this.session.publishRecoveryArtifact(this.urs,persisted)
@@ -640,7 +653,7 @@ export class ProductiveNativeRotationV2Service implements ProfileUpgradeOrchestr
     return{pending,stale}
   }
   private async createBackup(activationState:'staged'|'activated',verified:VerifiedRemoteState):Promise<{backup:SyncBackupV6;anchor:CanonicalFullResultV2['remote_anchor']}>{
-    const ctx=await this.successorContext(),activation=await this.artifact<NativeActivationArtifactV2>('activation')
+    const ctx=await this.successorContext(),activation=await this.activationArtifact()
     if(!activation)throw new Error('Native v2 activation artifact is missing for BackupV6.')
     const result=canonical(verified),rows=verified.snapshot.rows.map(row=>[row[0]!,row[1]!,row[2]!] as Row),local=await this.backupRows()
     const backup=await createBackupV6({rootKey:ctx.rootKey,epochSalt:ctx.epochSalt,urs:this.urs,diaryId:ctx.plan.diary_id,epochId:ctx.plan.successor_epoch_id,keyId:ctx.plan.key_id,
@@ -706,7 +719,7 @@ export class ProductiveNativeRotationV2Service implements ProfileUpgradeOrchestr
   }
 
   private async verifyActivatedCandidate(value:Awaited<ReturnType<ProductiveNativeRotationV2Service['successorAtStagingOrConfirmation']>>):Promise<ActiveCandidateV2>{
-    const ctx=await this.successorContext(),activation=await this.artifact<NativeActivationArtifactV2>('activation')
+    const ctx=await this.successorContext(),activation=await this.activationArtifact()
     if(!activation)throw new Error('Native v2 activation artifact is missing.')
     const manifest=await openManifestV6(ctx.rootKey,ctx.epochSalt,{diaryId:ctx.plan.diary_id,epochId:ctx.plan.successor_epoch_id},parseManifestCellsV6(value.verified.snapshot.manifest))
     const candidate:ActiveCandidateV2={artifact:activation.recovery_artifact,artifactSha256:await recoveryArtifactHashV6(activation.recovery_artifact),rootKey:ctx.rootKey,
@@ -756,7 +769,7 @@ export class ProductiveNativeRotationV2Service implements ProfileUpgradeOrchestr
   }
 
   private async recoveryAdvanced(result:CanonicalFullResultV2):Promise<boolean>{
-    const activation=await this.artifact<NativeActivationArtifactV2>('activation');if(!activation)throw new Error('Native v2 RecoveryArtifactV6 is missing.')
+    const activation=await this.activationArtifact();if(!activation)throw new Error('Native v2 RecoveryArtifactV6 is missing.')
     const payload=(await openRecoveryArtifactV6(activation.recovery_artifact,this.urs)).payload
     return result.source_epoch_sealed||result.current_recovery.recovery_generation!==payload.recovery_generation||result.current_recovery.recovery_urs_id!==payload.recovery_urs_id
       ||result.current_recovery.recovery_takeover_key_id!==payload.recovery_takeover_key_id||result.current_recovery.recovery_rekey_rotation_required
@@ -773,7 +786,7 @@ export class ProductiveNativeRotationV2Service implements ProfileUpgradeOrchestr
   }
 
   async persistLineageAndReverifyBeforeSwitch():Promise<'ready'|'superseded'>{
-    const ctx=await this.successorContext(),activation=await this.artifact<NativeActivationArtifactV2>('activation'),backup=await this.artifact<NativeBackupArtifactV2>('activated-backup')
+    const ctx=await this.successorContext(),activation=await this.activationArtifact(),backup=await this.artifact<NativeBackupArtifactV2>('activated-backup')
     if(!activation||!backup)throw new Error('Native v2 final activation artifacts are incomplete.')
     const state=await this.store.loadState(ctx.rootKey,ctx.epochSalt,ctx.plan.successor_epoch_id)
     if(state.activation_lineage_cache_ref===null){
