@@ -209,6 +209,31 @@ describe('v2 authenticated application-session generation fencing',()=>{
     }
   })
 
+  it('clears public connected state when prior teardown fails during a verified replacement',async()=>{
+    const [dataLayer,syncManager]=await Promise.all([
+      import('../data/initializeDataLayer'),
+      import('../data/syncManager'),
+    ])
+    const sourceA=provider('teardown-A'),sourceB=provider('teardown-B')
+    const serviceA=fakeService(),serviceB=fakeService()
+    mocked.create.mockResolvedValueOnce(serviceA).mockResolvedValueOnce(serviceB)
+    try{
+      await dataLayer.installAuthenticatedRemoteSession(sourceA as Parameters<typeof dataLayer.installAuthenticatedRemoteSession>[0])
+      expect(syncManager.getSyncSnapshot().connected).toBe(true)
+      vi.mocked(serviceA.close).mockRejectedValueOnce(new Error('synthetic provider teardown failure'))
+      await expect(dataLayer.installAuthenticatedRemoteSession(
+        sourceB as Parameters<typeof dataLayer.installAuthenticatedRemoteSession>[0],
+      )).rejects.toThrow('synthetic provider teardown failure')
+      expect(runtime.activeV2ProviderSession()).toBeNull()
+      expect(runtime.activeV2SyncService()).toBeNull()
+      expect(syncManager.getSyncSnapshot()).toMatchObject({connected:false})
+      await expect(dataLayer.synchronizeDataLayer()).rejects.toThrow(/not authenticated/i)
+      expect(serviceB.close).toHaveBeenCalledWith(true)
+    }finally{
+      await dataLayer.clearAuthenticatedRemoteSession()
+    }
+  })
+
   it('invalidates an initial data-layer V2 install before activeProviderSession is assigned',async()=>{
     const dataLayer=await import('../data/initializeDataLayer')
     const source=provider('early-logout'),wait=deferred<TransferableSingleWriterV2SyncService>()

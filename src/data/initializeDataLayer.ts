@@ -99,7 +99,22 @@ export async function installAuthenticatedRemoteSession(session:AuthenticatedPro
     // remains active until the candidate passes its first full remote verify.
     // Pre-disconnecting here would defeat IA-140 on the actual UI path.
     assertCurrentSession(generation)
-    const service=await installAuthenticatedV2RemoteSession(session)
+    let service
+    try{
+      service=await installAuthenticatedV2RemoteSession(session)
+    }catch(error){
+      // If replacement teardown revoked the prior runtime but provider close
+      // then failed, the data layer must not keep advertising that closed slot
+      // as connected (IA-143). A prior runtime that survived candidate
+      // verification failure remains authoritative and is deliberately kept.
+      if(generation===sessionGeneration&&activeV2SyncService()===null){
+        activeProviderSession=null
+        desiredProviderSession=null
+        secureSync=null
+        clearSecureSynchronizer()
+      }
+      throw error
+    }
     if(generation!==sessionGeneration){
       // Newer installation using the same provider is responsible for it.
       // A distinct session cannot survive as an authenticated runtime slot.
