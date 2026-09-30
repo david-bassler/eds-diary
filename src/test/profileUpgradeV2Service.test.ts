@@ -534,14 +534,14 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     if(!operation)throw new Error('profile-upgrade operation missing after injected crash')
     const db=await __v2LocalPersistenceTesting.openDatabase(),stores=__v2LocalPersistenceTesting.STORES
     const tx=db.transaction(stores.operationArtifacts,'readwrite')
-    tx.objectStore(stores.operationArtifacts).delete(`${operation.operation_id}:envelope:genesis`)
+    tx.objectStore(stores.operationArtifacts).delete(`${operation.operation_id}:envelope:genesis-grant`)
     await new Promise<void>((resolve,reject)=>{
       tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error)
     })
     const resumed=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
     expect(resumed.stage).toBe('switched')
     const store=new IndexedDbV2LocalSecurityStore()
-    expect(await store.operationArtifact(`${operation.operation_id}:envelope:genesis`)).not.toBeNull()
+    expect(await store.operationArtifact(`${operation.operation_id}:envelope:genesis-grant`)).not.toBeNull()
   },120_000)
 
   it('joins a fully activated productive v1->v2 successor read-only on a fresh second-device profile',async()=>{
