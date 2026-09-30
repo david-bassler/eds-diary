@@ -112,7 +112,13 @@ npm run build-storybook
 ## GitHub Pages
 
 Die App wird bei jedem Push auf `main` automatisch über GitHub Actions gebaut
-und als GitHub Pages Site veröffentlicht:
+und als GitHub Pages Site veröffentlicht. **Diese Pages-Bereitstellung ist eine
+Testbereitstellung und keine Produktionsfreigabe**: Diary und Google-Auth teilen
+dort absichtlich denselben Origin; der Build setzt dafür ausdrücklich
+`VITE_ALLOW_SAME_ORIGIN_AUTH_TEST_ONLY=true`. Eine freigegebene Bereitstellung
+benötigt einen separaten HTTPS-Auth-Origin und die externen Security-Gates.
+
+Die Test-Site liegt unter:
 
 ```text
 https://david-bassler.github.io/eds-diary/

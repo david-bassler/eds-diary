@@ -969,6 +969,48 @@ The pre-existing new Backup Restore suite itself is also pending
 integrated CI. Retain #13/GATE-E2E-06 IN_PROGRESS until both pass.
 No protocol or backup wire format was changed.
 
+| IA-158 | GitHub-Pages same-origin Service Worker cross-contaminates Diary and Google-Auth navigation caches | The production-build service worker is scoped to the whole `/eds-diary/` subtree, which includes `/eds-diary/google-auth/` on the current GitHub Pages test deployment. Its generic navigation handler caches **every** successful navigation response under the single key `./`. Visiting the Auth page can therefore overwrite the Diary shell fallback with Auth HTML; conversely an offline/failed Auth navigation can fall back to the Diary shell. The normal Playwright dev-server suites do not register the production service worker, so the fully green V2 browser matrix cannot detect this deployment-only confusion. The separate-origin production topology would avoid this scope overlap, but the repository currently deploys the same-origin test topology on every `main` push. | **CLOSED by post-merge remediation on exact code HEAD `36d477c8` with Security Validation #1162 fully green (all five jobs; 72/72 named security E2E; full configured browser matrix 252 passed + 4 configured skips; 10/10 seeded generative; complete static/unit/type/build/lint/Storybook gates).** Historical remediation criterion was: Exclude the entire `google-auth` subtree from Diary service-worker fetch handling and only refresh the `./` shell cache from the actual Diary-root navigation. Add a deterministic service-worker simulation proving Auth navigations are never intercepted/cached/fallback-substituted and non-root navigations cannot replace the root shell. Keep separate-origin deployment as the production boundary. |
+| IA-159 | GoogleAuthProvider accepts arbitrary cleartext HTTP Auth origins | `GoogleAuthProvider.authenticate()` currently accepts both `http:` and `https:` for any configured Auth URL. Local Playwright/development requires loopback HTTP, but the production architecture and release gate require HTTPS. A deployment misconfiguration could therefore deliberately or accidentally route the OAuth bridge/RPC capability over cleartext HTTP to a non-loopback host instead of failing closed. | **CLOSED by post-merge remediation on exact code HEAD `36d477c8` with Security Validation #1162 fully green (all five jobs; 72/72 named security E2E; full configured browser matrix 252 passed + 4 configured skips; 10/10 seeded generative; complete static/unit/type/build/lint/Storybook gates).** Historical remediation criterion was: Permit HTTP only for loopback development hosts (localhost/127.0.0.1/::1); require HTTPS otherwise. Pin the policy with unit/browser regression coverage and keep the existing local test topology functional. |
+| IA-160 | Same-origin GitHub Pages Auth topology is deployed with real Google controls but is not visibly/test-explicitly marked in the product | `.github/workflows/deploy-pages.yml` builds `main` with `VITE_GOOGLE_AUTH_ORIGIN=https://david-bassler.github.io/eds-diary/google-auth/`, i.e. the Auth page shares the exact origin with Diary code, while the release document explicitly says this is only the GitHub-Pages test topology and production requires a separately deployed Auth origin plus headers/audit. The settings UI nevertheless exposes the complete Google/v2 ceremonies without a visible test-topology warning, and the auth runtime itself has no explicit opt-in proving that a same-origin production build is intentional. This does not make the current build "production secure"; it risks operationally treating the public test deployment as if the external Auth-Origin gate had been satisfied. | **CLOSED by post-merge remediation on exact code HEAD `36d477c8` with Security Validation #1162 fully green (all five jobs; 72/72 named security E2E; full configured browser matrix 252 passed + 4 configured skips; 10/10 seeded generative; complete static/unit/type/build/lint/Storybook gates).** Historical remediation criterion was: Require an explicit build-time `VITE_ALLOW_SAME_ORIGIN_AUTH_TEST_ONLY=true` opt-in for a production-mode same-origin Auth endpoint, set it only in the Pages test workflow, and surface a persistent configuration warning identifying that deployment as non-production. Separate-origin HTTPS production builds must work without that exception. |
+
+| IA-161 | Release-gate summary still says internal V2 browser/E2E assurance is incomplete after the final 19/25 closure | The top `Transferable Single Writer v2` row in `PRODUCTION_SECURITY_RELEASE_GATES.md` still says the complete Browser/End-to-End assurance is incomplete and refers readers to open internal packages, even though package #24 is DONE and the authoritative ledger now says 19 DONE / 0 IN_PROGRESS / 6 BLOCKED_EXTERNAL / 0 internally actionable. That stale high-level boundary can make a later reviewer infer missing repository implementation that no longer exists, or conversely distrust the final ledger. | **CLOSED by post-merge remediation on exact code HEAD `36d477c8` with Security Validation #1162 fully green (all five jobs; 72/72 named security E2E; full configured browser matrix 252 passed + 4 configured skips; 10/10 seeded generative; complete static/unit/type/build/lint/Storybook gates).** Historical remediation criterion was: Update the release-gate summary/date to state that repository-internal/instrumentable-browser assurance is complete while the six external provider/deployment/hardware/audit gates remain blocking production release. Preserve the distinction between internal completion and production approval. |
+
+| IA-162 | Auth-Origin allowlist accepts configured cleartext non-loopback Diary return origins | `googleAuthOrigin.ts` validates `return_origin` by exact membership in `VITE_DIARY_ORIGINS`, but does not independently require HTTPS or loopback HTTP. A separately HTTPS-hosted Auth-Origin can therefore be misconfigured to hand the token/RPC channel to a Diary page served over cleartext non-loopback HTTP. The allowlist prevents arbitrary caller origins, but it does not make an unsafe configured origin safe. | **CLOSED by post-merge remediation on exact code HEAD `36d477c8` with Security Validation #1162 fully green (all five jobs; 72/72 named security E2E; full configured browser matrix 252 passed + 4 configured skips; 10/10 seeded generative; complete static/unit/type/build/lint/Storybook gates).** Historical remediation criterion was: Share the HTTPS-or-loopback transport policy between Diary→Auth and Auth→Diary validation; reject configured non-loopback HTTP return origins before popup/bridge binding. Add pure regression coverage for HTTPS, loopback HTTP, and rejected cleartext non-loopback origins. |
+
+### 2026-09-30 post-merge deployment/auth review closure
+
+A separate post-merge review was performed directly on the merged `main`
+tree and deployed-PWA/auth boundaries rather than repeating only the v2
+protocol review. It found IA-158–IA-162 before remediation: Diary service
+worker/Auth-page cache cross-contamination on the same-origin Pages topology,
+cleartext non-loopback Auth endpoints, missing explicit same-origin
+test-deployment opt-in/warning, release-gate status drift, and cleartext
+non-loopback Diary return origins from the Auth bridge.
+
+The fixes isolate the complete `/google-auth/` subtree from Diary
+service-worker handling, rotate the shell cache to `v35`, restrict shell
+refresh to the Diary-root navigation, enforce a shared HTTPS-or-loopback
+transport policy in both directions of the Auth handoff, require
+`VITE_ALLOW_SAME_ORIGIN_AUTH_TEST_ONLY=true` for non-loopback same-origin
+production-mode builds, visibly label the GitHub Pages topology as a
+non-production test deployment, and synchronize the release-gate summary with
+the final 19/25 internal ledger.
+
+**Exact-head evidence:** [Security Validation #1162](https://github.com/david-bassler/eds-diary/actions/runs/36696970511)
+passed all five jobs on code HEAD
+`36d477c88bf91669f1908d5d815cda64c0fd1327`: named security E2E
+**72/72**, full configured browser matrix **252 passed + four configured
+skips**, seeded generative **10/10**, and complete static/unit/type/security/
+provider/build/lint/Storybook/whitespace gates. The security-unit gate now
+includes deterministic deployment-policy and service-worker simulations, and
+the browser suite verifies that a non-loopback cleartext Auth endpoint is
+rejected before opening a popup.
+
+IA-158–IA-162 are therefore **CLOSED for repository-controlled evidence**.
+The GitHub Pages topology remains deliberately test-only; separate production
+Auth-Origin deployment/headers, Live Google, physical WebAuthn/PRF and
+independent audit remain external release gates.
+
 ### 2026-09-30 final adversarial whole-system review #24 closure
 
 The final cumulative review was repeated against the **exact code HEAD

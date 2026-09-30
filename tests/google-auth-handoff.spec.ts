@@ -113,6 +113,30 @@ async function persistentText(page: Page): Promise<string> {
 }
 
 test.describe('productive Auth-Origin handoff', () => {
+  test('rejects a non-loopback cleartext Auth origin before opening a popup', async ({ page }) => {
+    await page.goto('/')
+    const result = await page.evaluate(async ({ actionId }) => {
+      const { GoogleAuthProvider } = await import('/src/sync/google/GoogleAuthProvider.ts')
+      let opened = false
+      const originalOpen = window.open
+      window.open = (...args) => {
+        opened = true
+        return originalOpen(...args)
+      }
+      try {
+        const message = await new GoogleAuthProvider('http://auth.example.test/google-auth/').authenticate(actionId)
+          .then(() => 'allowed', (error) => error instanceof Error ? error.message : 'rejected')
+        return { message, opened }
+      } finally {
+        window.open = originalOpen
+      }
+    }, { actionId: ACTION_ID })
+    expect(result).toEqual({
+      message: 'Google auth URL must use HTTPS except on a loopback development host.',
+      opened: false,
+    })
+  })
+
   test('drives the Auth-Origin handoff through the real settings UI', async ({ context, page }) => {
     await installProviderSimulator(context)
     await page.goto('/')

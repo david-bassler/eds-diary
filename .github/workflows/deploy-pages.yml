@@ -38,6 +38,7 @@ jobs:
         env:
           VITE_BASE_PATH: /eds-diary/
           VITE_GOOGLE_AUTH_ORIGIN: https://david-bassler.github.io/eds-diary/google-auth/
+          VITE_ALLOW_SAME_ORIGIN_AUTH_TEST_ONLY: "true"
           VITE_DIARY_ORIGINS: https://david-bassler.github.io
           VITE_GOOGLE_CLIENT_ID: 708446377117-vhj86jrhngsj0i289vffdl4q1nfri7c3.apps.googleusercontent.com
         run: npm run build
