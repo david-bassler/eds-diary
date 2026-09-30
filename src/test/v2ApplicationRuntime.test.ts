@@ -104,6 +104,46 @@ describe('v2 authenticated application-session generation fencing',()=>{
     expect(runtime.activeV2SyncService()).toBe(serviceB)
   })
 
+  it('disconnects an unowned provider when service construction fails before a candidate exists',async()=>{
+    const source=provider('construction-failed')
+    mocked.create.mockRejectedValueOnce(new Error('synthetic service construction failure'))
+    await expect(runtime.installAuthenticatedV2RemoteSession(source)).rejects.toThrow('synthetic service construction failure')
+    expect(source.disconnect).toHaveBeenCalledTimes(1)
+    expect(runtime.activeV2ProviderSession()).toBeNull()
+    expect(runtime.activeV2SyncService()).toBeNull()
+  })
+
+  it('does not disconnect a shared provider when an older construction fails after a newer same-session install starts',async()=>{
+    const source=provider('shared-construction')
+    const first=deferred<TransferableSingleWriterV2SyncService>()
+    const second=deferred<TransferableSingleWriterV2SyncService>()
+    const serviceB=fakeService()
+    mocked.create.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+    const pendingA=runtime.installAuthenticatedV2RemoteSession(source)
+    await vi.waitFor(()=>expect(mocked.create).toHaveBeenCalledTimes(1))
+    const pendingB=runtime.installAuthenticatedV2RemoteSession(source)
+    await vi.waitFor(()=>expect(mocked.create).toHaveBeenCalledTimes(2))
+    first.reject(new Error('older construction failed'))
+    await expect(pendingA).rejects.toThrow('older construction failed')
+    expect(source.disconnect).not.toHaveBeenCalled()
+    second.resolve(serviceB)
+    await expect(pendingB).resolves.toBe(serviceB)
+    expect(runtime.activeV2ProviderSession()).toBe(source)
+  })
+
+  it('eventually disconnects an unpublished provider when logout occurs during failed construction',async()=>{
+    const source=provider('construction-logout')
+    const creating=deferred<TransferableSingleWriterV2SyncService>()
+    mocked.create.mockReturnValueOnce(creating.promise)
+    const installing=runtime.installAuthenticatedV2RemoteSession(source)
+    await vi.waitFor(()=>expect(mocked.create).toHaveBeenCalledTimes(1))
+    await runtime.disconnectAuthenticatedV2RemoteSession()
+    creating.reject(new Error('construction failed after logout'))
+    await expect(installing).rejects.toThrow('construction failed after logout')
+    expect(source.disconnect).toHaveBeenCalledTimes(1)
+    expect(runtime.activeV2ProviderSession()).toBeNull()
+  })
+
   it('does not publish a candidate until initial full remote verification succeeds',async()=>{
     const source=provider('verification-pending')
     const verify=deferred<void>(),candidate=fakeService(()=>verify.promise)

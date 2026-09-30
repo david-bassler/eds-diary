@@ -22,10 +22,19 @@ async function discardCandidate(
   // provider capability (IA-141).
   await candidate.close(desiredSession!==value)
 }
+async function disconnectUnownedProviderAfterConstructionFailure(
+  generation:number,
+  value:TransferableWriterV2RuntimeSession,
+):Promise<void>{
+  const newerSameInstall=generation!==sessionGeneration&&desiredSession===value
+  const publishedSameSession=session===value
+  if(!newerSameInstall&&!publishedSameSession)await value.disconnect()
+}
 
 export async function installAuthenticatedV2RemoteSession(value:TransferableWriterV2RuntimeSession):Promise<TransferableSingleWriterV2SyncService>{
   const generation=++sessionGeneration
   desiredSession=value
+  let candidateCreated=false
   try{
     if(!await activeProtocolSelectionV2())throw new Error('Cannot install a v2 provider session without an active v2 selection.')
     if(generation!==sessionGeneration)throw staleInstall()
@@ -41,6 +50,7 @@ export async function installAuthenticatedV2RemoteSession(value:TransferableWrit
     }
 
     const next=await TransferableSingleWriterV2SyncService.createAuthenticated(value)
+    candidateCreated=true
     if(generation!==sessionGeneration){
       await discardCandidate(next,value)
       throw staleInstall()
@@ -82,6 +92,13 @@ export async function installAuthenticatedV2RemoteSession(value:TransferableWrit
     desiredSession=value
     return next
   }catch(error){
+    // createAuthenticated() can reject before a service exists. In that case
+    // the runtime has no coordinator whose close() can revoke the freshly
+    // authenticated provider capability (IA-142).
+    if(!candidateCreated){
+      try{await disconnectUnownedProviderAfterConstructionFailure(generation,value)}
+      catch{/* Never publish merely because provider teardown itself failed. */}
+    }
     restoreDesiredAfterFailure(generation,value)
     throw error
   }
