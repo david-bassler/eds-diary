@@ -247,6 +247,16 @@ export class IndexedDbV2LocalSecurityStore {
     return structuredClone(stored.value)
   }
 
+  async operationArtifactIdsWithPrefix(prefix:string):Promise<string[]>{
+    if(!prefix)throw new Error('V2 operation artifact prefix is required.')
+    const db=await openDatabase(),tx=db.transaction(STORES.operationArtifacts,'readonly')
+    const keys=await requestResult<IDBValidKey[]>(tx.objectStore(STORES.operationArtifacts).getAllKeys(
+      IDBKeyRange.bound(prefix,`${prefix}\uffff`),
+    ))
+    await transactionDone(tx)
+    return keys.filter((key):key is string=>typeof key==='string'&&key.startsWith(prefix)).sort()
+  }
+
   async putMacBoundOperationArtifact(id:string,value:unknown,rootKey:Uint8Array,epochSalt:Uint8Array):Promise<string>{
     if(!id)throw new Error('MAC-bound v2 operation artifact ID is required.')
     const bytes=new TextDecoder().decode(canonicalBytes(value as never))

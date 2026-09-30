@@ -341,12 +341,39 @@ export async function verifyActivationForJoin(session:TransferableSingleWriterV2
     activationLineage:candidate.payload.activation_lineage,
   })
 }
+export function assertRecoveryFamilyCompatibleForJoin(
+  active:Pick<ActiveCandidateV2,'payload'>,
+  family:ReadonlyArray<Pick<ActiveCandidateV2,'payload'>>,
+):void{
+  const allowed=new Map<string,string>()
+  const add=(epochId:string,fingerprint:string)=>{
+    const prior=allowed.get(epochId)
+    if(prior!==undefined&&prior!==fingerprint)throw new Error('Recovery family activation lineage reuses an epoch with a different manifest.')
+    allowed.set(epochId,fingerprint)
+  }
+  add(active.payload.epoch_id,active.payload.manifest_fingerprint)
+  for(const entry of active.payload.activation_lineage){
+    if(entry.kind==='profile_upgrade'){
+      add(entry.successor_epoch_id,entry.successor_manifest_fingerprint)
+    }else{
+      add(entry.proof.source_epoch_id,entry.proof.source_manifest_fingerprint)
+      add(entry.proof.successor_epoch_id,entry.proof.successor_manifest_fingerprint)
+    }
+  }
+  for(const candidate of family){
+    if(candidate.payload.diary_id!==active.payload.diary_id
+      ||allowed.get(candidate.payload.epoch_id)!==candidate.payload.manifest_fingerprint){
+      throw new Error('Recovery family contains an incompatible activated v2 lineage.')
+    }
+  }
+}
+
 async function discoverActiveCandidate(session:TransferableSingleWriterV2ProviderSession,urs:Uint8Array):Promise<{familyLocator:string;candidate:ActiveCandidateV2}>{
   const familyLocator=await recoveryFamilyLocatorV6(urs)
   if(!session.discoverRecoveryFamilyArtifacts)throw new Error('Recovery-family discovery is unavailable for read-only Join.')
   const artifacts=await session.discoverRecoveryFamilyArtifacts(urs)
   if(!artifacts.length)throw new Error('No RecoveryArtifactV6 family matches this Recovery Key.')
-  const active:ActiveCandidateV2[]=[]
+  const active:ActiveCandidateV2[]=[],activatedFamily:ActiveCandidateV2[]=[]
   for(const discovered of artifacts){
     const opened=await openRecoveryArtifactV6(discovered.artifact,urs),payload=opened.payload
     const transport=await session.transportForEpoch(payload.diary_id,payload.epoch_id)
@@ -370,12 +397,17 @@ async function discoverActiveCandidate(session:TransferableSingleWriterV2Provide
       rootKey:opened.rootKey,
       payload,manifest,snapshot,verified,result,remoteId,accountBinding,
     }
-    if(result.source_epoch_sealed||result.activation_state==='staged_confirmation_missing')continue
+    if(result.activation_state==='staged_confirmation_missing')continue
+    // Lineage is a family property, not merely an active-leaf property. A
+    // sealed but cryptographically valid artifact must not be discarded before
+    // proving it belongs to the same activation chain (IA-151).
     await verifyCurrentRecoveryTransitionForJoin(candidate)
     await verifyActivationForJoin(session,candidate)
-    active.push(candidate)
+    activatedFamily.push(candidate)
+    if(!result.source_epoch_sealed)active.push(candidate)
   }
   if(active.length!==1)throw new Error(active.length?'Recovery family has multiple unretired canonical v2 leaves.':'Recovery family has no fully activated unretired canonical v2 leaf.')
+  assertRecoveryFamilyCompatibleForJoin(active[0]!,activatedFamily)
   return{familyLocator,candidate:active[0]!}
 }
 
@@ -444,6 +476,10 @@ export class ProductiveReadOnlyJoinV2Service {
     const {familyLocator,candidate}=await discoverActiveCandidate(this.session,urs)
     const joinId=base64Url(await sha256(canonicalBytes(['eds-diary/read-only-join/v2',familyLocator,candidate.payload.diary_id,candidate.payload.epoch_id] as never)))
     const artifactId=`read-only-join:${joinId}`
+    const pendingJoinArtifacts=await this.store.operationArtifactIdsWithPrefix('read-only-join:')
+    if(pendingJoinArtifacts.some(id=>id!==artifactId)){
+      throw new Error('A different crash-persisted read-only Join already owns this fresh local profile.')
+    }
     const existing=await this.store.operationArtifact<ReadOnlyJoinPlanV2>(artifactId)
     const epochSalt=await deriveEpochSaltV2(fixedBase64Url(candidate.payload.diary_id,16),fixedBase64Url(candidate.payload.epoch_id,16))
 

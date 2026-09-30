@@ -24,7 +24,7 @@ import { googleAccountBindingV2 } from '../sync/google/GoogleSheetsTransferableS
 import { SINGLE_WRITER_V2_PROFILE, type VerifiedRemoteState } from '../sync/core/contracts'
 import type { TransferableSingleWriterV2ProviderSession } from '../sync/google/GoogleTransferableSingleWriterV2Provider'
 import { IndexedDbV2LocalSecurityStore, __v2LocalPersistenceTesting } from '../security/v2/localPersistence'
-import { ProductiveReadOnlyJoinV2Service } from '../data/readOnlyJoinV2Service'
+import { ProductiveReadOnlyJoinV2Service, assertRecoveryFamilyCompatibleForJoin } from '../data/readOnlyJoinV2Service'
 import { ProductiveWriterHandoffV2Service } from '../data/writerHandoffV2Service'
 import { ProductiveForcedTakeoverV2Service } from '../data/forcedTakeoverV2Service'
 import { verifyTransferDescriptorV2 } from '../security/v2/validators'
@@ -181,6 +181,23 @@ async function idbResult<T>(request:IDBRequest<T>):Promise<T>{
 }
 
 describe('productive v2 read-only Join',()=>{
+  it('rejects an activated Recovery-family member outside the active leaf lineage',async()=>{
+    const f=await nativeJoinFixture()
+    const active={payload:f.payload}
+    const incompatible={payload:{...f.payload,diary_id:id(99,16)}}
+    expect(()=>assertRecoveryFamilyCompatibleForJoin(active,[active,incompatible]))
+      .toThrow(/incompatible activated v2 lineage/)
+  })
+
+  it('blocks a different pending read-only Join operation before creating another local bundle',async()=>{
+    const f=await nativeJoinFixture(),calls={family:0},store=new IndexedDbV2LocalSecurityStore()
+    await store.putImmutableOperationArtifact(`read-only-join:${id(98,32)}`,{synthetic:'pending-other-join'})
+    await expect(new ProductiveReadOnlyJoinV2Service(sessionFor(f,calls),store).join(f.urs))
+      .rejects.toThrow(/different crash-persisted read-only Join/)
+    expect(await activeProtocolSelectionV2()).toBeNull()
+    await expect(store.loadState(f.rootKey,f.epochSalt,f.epochId)).rejects.toThrow(/missing/)
+  })
+
   it('bootstraps a native v2 leaf into active/read_only with a fresh non-authorized local WriterDeviceKeyV2',async()=>{
     const f=await nativeJoinFixture(),calls={family:0},service=new ProductiveReadOnlyJoinV2Service(sessionFor(f,calls))
     const joined=await service.join(f.urs)
