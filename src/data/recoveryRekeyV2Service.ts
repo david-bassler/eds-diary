@@ -46,7 +46,7 @@ import { TransferableSingleWriterV2Verifier } from '../security/v2/verifier'
 import { createBackupV6, testRestoreBackupV6, type SyncBackupV6 } from '../security/v2/backup'
 import { activeProtocolSelectionV2, openSuccessorRootWrapV6WithActiveMode } from './localDatabase'
 import { verifyActivationLineageForCanonicalEpoch } from './readOnlyJoinV2Service'
-import { ProductiveNativeRotationV2Service } from './nativeRotationV2Service'
+import { ProductiveNativeRotationV2Service, type NativeRotationV2FaultPoint } from './nativeRotationV2Service'
 
 type Row=readonly[string,string,string]
 
@@ -58,6 +58,7 @@ export type RecoveryRekeyV2FaultPoint=
   | 'after-transition-durable'
   | 'after-source-backup'
   | 'before-phase-b'
+  | `phase-b:${NativeRotationV2FaultPoint}`
 
 export interface RecoveryRekeyV2Result {
   operationId:string
@@ -357,7 +358,10 @@ export class ProductiveRecoveryRekeyV2Service {
     if(current.stage==='source_backup_verified')current=await this.transitionOperation(current,{...current,stage:'successor_rotation_required'},newUrs)
     if(current.stage!=='successor_rotation_required')return current
     await this.fault?.('before-phase-b')
-    await new ProductiveNativeRotationV2Service(this.session,newUrs,this.store,this.now).rotate('recovery_rekey',current.transition_id)
+    await new ProductiveNativeRotationV2Service(
+      this.session,newUrs,this.store,this.now,
+      point=>this.fault?.(`phase-b:${point}`),
+    ).rotate('recovery_rekey',current.transition_id)
     return this.store.loadRecoveryRekeyOperation(current.operation_id)
   }
 

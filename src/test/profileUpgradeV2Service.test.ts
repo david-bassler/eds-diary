@@ -1300,6 +1300,29 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     expect((await activeProtocolSelectionV2())?.epoch_id).toBe(resumed.successor_epoch_id)
   },120_000)
 
+  it('resumes public Recovery-Rekey after Phase-B already switched the active selection',async()=>{
+    const createdAt='2026-09-25T07:28:00.000Z',urs=randomBytes(32),newUrs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    let crashed=false
+    await expect(new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt,async point=>{
+      if(point==='phase-b:after-active-selection-switch'&&!crashed){crashed=true;throw new Error('rekey-crash:after-phase-b-selection-switch')}
+    }).rekey(newUrs)).rejects.toThrow('rekey-crash:after-phase-b-selection-switch')
+    const selectedAfterCrash=await activeProtocolSelectionV2()
+    expect(selectedAfterCrash?.epoch_id).not.toBe(upgraded.successor_epoch_id)
+
+    const sourceArtifact=await v2.loadRecoveryArtifact(newUrs,source.diaryId,upgraded.successor_epoch_id)
+    const sourceOpened=await openRecoveryArtifactV6(sourceArtifact,newUrs)
+    const sourceSalt=await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(upgraded.successor_epoch_id))
+    const bound=await store.loadBoundRecoveryRekeyOperation(sourceOpened.rootKey,sourceSalt,upgraded.successor_epoch_id)
+    if(!bound)throw new Error('Recovery-Rekey operation missing after Phase-B selection-switch crash')
+    expect(bound.stage).toBe('successor_rotation_required')
+
+    const resumed=await new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt).rekey(newUrs)
+    expect(resumed.operationId).toBe(bound.operation_id)
+    expect(resumed.stage).toBe('completed')
+    expect(resumed.successorEpochId).toBe(selectedAfterCrash?.epoch_id)
+  },120_000)
+
   it('uses the same strict-read transport instance during mandatory Recovery-Rekey successor rotation',async()=>{
     const createdAt='2026-09-25T07:30:00.000Z',urs=randomBytes(32),newUrs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
     const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
@@ -1529,6 +1552,36 @@ describe('ProductiveProfileUpgradeV2Service',()=>{
     expect((await activeProtocolSelectionV2())?.epoch_id).toBe(adopted.successorEpochId)
   },120_000)
 
+
+  it('resumes the exact bound remote Pending-Rekey adoption instead of creating a second operation',async()=>{
+    const createdAt='2026-09-25T08:08:00.000Z',urs=randomBytes(32),newUrs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
+    const upgraded=await new ProductiveProfileUpgradeV2Service(source.session,source.transport,v2,urs,()=>createdAt).upgrade()
+    let initialCrash=false
+    await expect(new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt,async point=>{
+      if(point==='after-transition-durable'&&!initialCrash){initialCrash=true;throw new Error('rekey-crash:make-remote-pending')}
+    }).rekey(newUrs)).rejects.toThrow('rekey-crash:make-remote-pending')
+
+    const newArtifact=await v2.loadRecoveryArtifact(newUrs,source.diaryId,upgraded.successor_epoch_id),opened=await openRecoveryArtifactV6(newArtifact,newUrs)
+    const salt=await deriveEpochSaltV2(fromBase64Url(source.diaryId),fromBase64Url(upgraded.successor_epoch_id))
+    const pending=await store.loadState(opened.rootKey,salt,upgraded.successor_epoch_id)
+    // Simulate loss of the original local-rekey operation binding so the
+    // canonical remote Pending-Rekey is adopted as a new local ceremony.
+    await store.replaceState(opened.rootKey,salt,pending.operation_generation,{...pending,operation_generation:pending.operation_generation+1,recovery_operation_state_ref:null})
+
+    let adoptionCrash=false
+    const adopting=new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt,async point=>{
+      if(point==='after-source-backup'&&!adoptionCrash){adoptionCrash=true;throw new Error('adoption-crash:source-backup')}
+    })
+    await expect(adopting.adoptPending(newUrs)).rejects.toThrow('adoption-crash:source-backup')
+    const adoptedBound=await store.loadBoundRecoveryRekeyOperation(opened.rootKey,salt,upgraded.successor_epoch_id)
+    if(!adoptedBound)throw new Error('bound remote adoption operation missing')
+    expect(adoptedBound.operation_origin).toBe('remote_pending_rekey_adoption')
+    expect(adoptedBound.stage).toBe('source_backup_verified')
+
+    const resumed=await new ProductiveRecoveryRekeyV2Service(v2,store,()=>createdAt).adoptPending(newUrs)
+    expect(resumed.operationId).toBe(adoptedBound.operation_id)
+    expect(resumed.stage).toBe('completed')
+  },120_000)
 
   it('completes Pending-Rekey after full device loss via fresh Join, Forced Takeover, adoption and Phase B',async()=>{
     const createdAt='2026-09-25T08:10:00.000Z',urs=randomBytes(32),newUrs=randomBytes(32),source=await seedV1Source(urs,createdAt),v2=new V2Session(),store=new IndexedDbV2LocalSecurityStore();v2.registerV1Epoch(source.sourceEpochId,source.transport)
