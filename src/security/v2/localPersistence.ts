@@ -16,7 +16,7 @@ import type { CreationPersistence, CreationState } from '../../sync/core/creatio
 import type { RecoveryAuthorityTransitionV2, WriterGrantV2 } from './types'
 
 const DATABASE_NAME='eds-diary-v2-security'
-const DATABASE_VERSION=11
+const DATABASE_VERSION=12
 const STORES={states:'epochSecurityStateV6',writerKeys:'writerDeviceKeysV2',reservations:'envelopeReservationsV6',envelopes:'envelopesV6',outbox:'outboxV6',recoveryStaging:'recoveryTakeoverStagingV2',recoveryArtifacts:'recoveryArtifactsV6',rotationOperations:'rotationOperationsV2',writerGrantOperations:'writerGrantOperationsV2',lineageCaches:'activationLineageCachesV2',rootWraps:'rootWrapsV6',rootWrappingKeys:'rootWrappingKeysV6',creationOperations:'creationOperationsV2',operationArtifacts:'operationArtifactsV2',readModels:'verifiedReadModelsV2'} as const
 
 const TERMINAL_ROTATION_OPERATION_STATES_V2=new Set(['switched','stale','cutover_race','post_activation_superseded'])
@@ -160,6 +160,36 @@ async function openDatabase():Promise<IDBDatabase>{
       if(!db.objectStoreNames.contains(STORES.creationOperations))db.createObjectStore(STORES.creationOperations,{keyPath:'id'})
       if(!db.objectStoreNames.contains(STORES.operationArtifacts))db.createObjectStore(STORES.operationArtifacts,{keyPath:'id'})
       if(!db.objectStoreNames.contains(STORES.readModels))db.createObjectStore(STORES.readModels,{keyPath:'epoch_id'})
+      // IA-163: v11 operation artifacts could duplicate decrypted ActivationLineageV2
+      // (and therefore historical source_root_key values) in plaintext. Scrub
+      // those fields during schema upgrade. The marker lets the first normal
+      // read recompute the non-secret integrity hash outside the upgrade tx.
+      if(request.oldVersion<12&&db.objectStoreNames.contains(STORES.operationArtifacts)){
+        const store=request.transaction!.objectStore(STORES.operationArtifacts),cursor=store.openCursor()
+        cursor.addEventListener('success',()=>{
+          const current=cursor.result
+          if(!current)return
+          const record=current.value as {id?:unknown;value?:unknown;bytes?:unknown;hash?:unknown;[key:string]:unknown}
+          const value=record.value
+          let sanitized:unknown=null
+          if(value&&typeof value==='object'&&!Array.isArray(value)){
+            const object=value as Record<string,unknown>
+            if(object.format==='native-v2-source-freeze-v2'&&'source_activation_lineage' in object){
+              const {source_activation_lineage:_,...safe}=object
+              void _
+              sanitized=safe
+            }else if(record.id&&typeof record.id==='string'&&record.id.endsWith(':activation')
+              &&object.recovery_artifact&&typeof object.recovery_artifact==='object'
+              &&('lineage' in object||'entry' in object||'proof' in object)){
+              sanitized={recovery_artifact:object.recovery_artifact}
+            }
+          }
+          if(sanitized!==null){
+            current.update({...record,value:sanitized,bytes:new TextDecoder().decode(canonicalBytes(sanitized as never)),hash:'ia-163-migrated-v12'})
+          }
+          current.continue()
+        })
+      }
     })
     request.addEventListener('success',()=>{
       const db=request.result
@@ -224,7 +254,14 @@ export class IndexedDbV2LocalSecurityStore {
     const existing=await requestResult<{id:string;value:unknown;bytes:string;hash:string}|undefined>(readTx.objectStore(STORES.operationArtifacts).get(id))
     await transactionDone(readTx)
     if(existing){
-      if(existing.bytes!==bytes||existing.hash!==hash)throw new Error('V2 immutable operation artifact collision.')
+      if(existing.bytes!==bytes)throw new Error('V2 immutable operation artifact collision.')
+      if(existing.hash==='ia-163-migrated-v12'){
+        const repair=db.transaction(STORES.operationArtifacts,'readwrite')
+        repair.objectStore(STORES.operationArtifacts).put({...existing,hash})
+        await transactionDone(repair)
+        return hash
+      }
+      if(existing.hash!==hash)throw new Error('V2 immutable operation artifact collision.')
       return hash
     }
     const tx=db.transaction(STORES.operationArtifacts,'readwrite')
@@ -243,7 +280,12 @@ export class IndexedDbV2LocalSecurityStore {
     await transactionDone(tx)
     if(!stored)return null
     const bytes=new TextDecoder().decode(canonicalBytes(stored.value as never)),hash=base64Url(await sha256(canonicalBytes(stored.value as never)))
-    if(bytes!==stored.bytes||hash!==stored.hash)throw new Error('V2 operation artifact integrity failed.')
+    if(bytes!==stored.bytes)throw new Error('V2 operation artifact integrity failed.')
+    if(stored.hash==='ia-163-migrated-v12'){
+      const repair=db.transaction(STORES.operationArtifacts,'readwrite')
+      repair.objectStore(STORES.operationArtifacts).put({...stored,hash})
+      await transactionDone(repair)
+    }else if(hash!==stored.hash)throw new Error('V2 operation artifact integrity failed.')
     return structuredClone(stored.value)
   }
 
