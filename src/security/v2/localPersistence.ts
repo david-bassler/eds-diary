@@ -136,8 +136,8 @@ async function openDatabase():Promise<IDBDatabase>{
   if(databasePromise)return databasePromise
   databasePromise=new Promise((resolve,reject)=>{
     const request=indexedDB.open(DATABASE_NAME,DATABASE_VERSION)
-    request.addEventListener('upgradeneeded',()=>{
-      const db=request.result
+    request.addEventListener('upgradeneeded',(event)=>{
+      const db=request.result,oldVersion=(event as IDBVersionChangeEvent).oldVersion
       if(!db.objectStoreNames.contains(STORES.states))db.createObjectStore(STORES.states,{keyPath:'id'})
       if(!db.objectStoreNames.contains(STORES.writerKeys))db.createObjectStore(STORES.writerKeys,{keyPath:'writer_signing_key_id'})
       if(!db.objectStoreNames.contains(STORES.reservations)){
@@ -164,7 +164,7 @@ async function openDatabase():Promise<IDBDatabase>{
       // (and therefore historical source_root_key values) in plaintext. Scrub
       // those fields during schema upgrade. The marker lets the first normal
       // read recompute the non-secret integrity hash outside the upgrade tx.
-      if(request.oldVersion<12&&db.objectStoreNames.contains(STORES.operationArtifacts)){
+      if(oldVersion<12&&db.objectStoreNames.contains(STORES.operationArtifacts)){
         const store=request.transaction!.objectStore(STORES.operationArtifacts),cursor=store.openCursor()
         cursor.addEventListener('success',()=>{
           const current=cursor.result
