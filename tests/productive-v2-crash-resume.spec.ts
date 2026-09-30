@@ -98,6 +98,7 @@ for (const crashPoint of RECOVERY_REKEY_POINTS) {
         await harness.authenticate(device, `recovery_rekey_prepare_action_${String(index).padStart(8, '0')}`)
         lifecycle = await harness.establishProductiveV2(device)
         sourceRootKeySentinels = await harness.activeV2RootKeySentinels(device)
+        expect(sourceRootKeySentinels.length).toBeGreaterThan(1)
         seed = { newRecoveryKey: Buffer.alloc(32, 40 + index).toString('base64url'), passphrase: lifecycle.passphrase }
       },
       crash: async (point) => {
@@ -216,6 +217,7 @@ for (const crashPoint of NORMAL_ROTATION_POINTS) {
           await harness.authenticate(device, `native_rotation_prepare_${crashPoint.replaceAll('-', '_')}_0001`)
           lifecycle = await harness.establishProductiveV2(device)
           sourceRootKeySentinels = await harness.activeV2RootKeySentinels(device)
+        expect(sourceRootKeySentinels.length).toBeGreaterThan(1)
           expect(await harness.productiveNormalRotationIds(device)).toEqual([])
           expect(await harness.readProductivePain(device)).toBe(lifecycle.painCount)
         },
