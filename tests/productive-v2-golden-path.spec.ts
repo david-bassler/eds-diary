@@ -136,6 +136,20 @@ test('scrubs legacy plaintext activation lineage artifacts during the v11 to v12
       recovery_artifact: { format: 'synthetic-encrypted-recovery-artifact', ciphertext: 'opaque' },
     })
     expect(native?.value).not.toHaveProperty('source_activation_lineage')
+
+    const boundaryRejected = await device.page.evaluate(async (needle) => {
+      const { IndexedDbV2LocalSecurityStore } = await import('/src/security/v2/localPersistence.ts')
+      try {
+        await new IndexedDbV2LocalSecurityStore().putImmutableOperationArtifact(
+          'ia-163-boundary-probe',
+          { nested: { source_root_key: needle } },
+        )
+        return false
+      } catch (error) {
+        return error instanceof Error && /forbidden.*operationArtifactsV2/i.test(error.message)
+      }
+    }, rootKeySentinel)
+    expect(boundaryRejected).toBe(true)
   } finally {
     await harness.close()
   }
