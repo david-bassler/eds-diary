@@ -29,17 +29,17 @@ const PAGE_COPY: Record<
   { eyebrow: string; title: string; description: string }
 > = {
   pain: {
-    eyebrow: 'Schmerztagebuch',
+    eyebrow: 'Diary',
     title: 'Schmerzen',
     description: '',
   },
   medication: {
-    eyebrow: 'Schmerztagebuch',
+    eyebrow: 'Diary',
     title: 'Medikamente',
     description: '',
   },
   activity: {
-    eyebrow: 'Schmerztagebuch',
+    eyebrow: 'Diary',
     title: 'Aktivitäten',
     description: '',
   },

@@ -13,8 +13,8 @@ test('exposes an installable web app manifest', async ({ page, request }) => {
 
   const manifest = await manifestResponse.json()
   expect(manifest).toMatchObject({
-    name: 'EDS Schmerztagebuch',
-    short_name: 'EDS Tagebuch',
+    name: 'Diary',
+    short_name: 'Diary',
     display: 'standalone',
     start_url: './',
   })
