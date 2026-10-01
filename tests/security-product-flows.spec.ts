@@ -141,3 +141,25 @@ test('auto-locks strong local protection after 30 seconds in the background',asy
   await expect(page.getByRole('button',{name:'Entsperren'})).toBeVisible()
   await expect(page.getByRole('heading',{level:1,name:'Konfiguration'})).toHaveCount(0)
 })
+
+
+test('hides diary content immediately from background app previews',async({page})=>{
+  await page.goto('/schmerzen')
+  await expect(page.getByRole('heading',{level:1,name:'Schmerzen'})).toBeVisible()
+
+  await page.evaluate(()=>{
+    window.dispatchEvent(new PageTransitionEvent('pagehide',{persisted:true}))
+  })
+
+  await expect(page.locator('html')).toHaveAttribute('data-app-privacy-shield','active')
+  await expect(page.locator('#root')).toHaveCSS('visibility','hidden')
+  await expect(page.getByRole('heading',{level:1,name:'Schmerzen'})).toBeHidden()
+
+  await page.evaluate(()=>{
+    window.dispatchEvent(new PageTransitionEvent('pageshow',{persisted:true}))
+  })
+
+  await expect(page.locator('html')).not.toHaveAttribute('data-app-privacy-shield','active')
+  await expect(page.locator('#root')).toHaveCSS('visibility','visible')
+  await expect(page.getByRole('heading',{level:1,name:'Schmerzen'})).toBeVisible()
+})
