@@ -17,7 +17,9 @@ import { InstallAppSettings } from './features/settings/InstallAppSettings'
 import { LOCAL_SECURITY_CHANGED_EVENT, LocalSecuritySettings } from './features/settings/LocalSecuritySettings'
 import { RecoverySettings } from './features/settings/RecoverySettings'
 import { ConflictResolutionSettings } from './features/settings/ConflictResolutionSettings'
-import { localRootWrapStatus } from './data/localDatabase'
+import { localRootWrapStatus, type LocalRootWrapStatus } from './data/localDatabase'
+import { lockLocalRootAndDisconnectSession } from './data/localSecurityLifecycle'
+import { createAppAutoLockController, installAppAutoLock } from './data/appAutoLock'
 import {
   pathForSection,
   sectionFromPathname,
@@ -53,6 +55,7 @@ const PAGE_COPY: Record<
 export function App() {
   const recoveryMode = new URLSearchParams(window.location.search).get('mode') === 'recovery'
   const [localRootLocked,setLocalRootLocked]=useState<boolean|null>(null)
+  const localSecurityStatusRef=useRef<LocalRootWrapStatus|null>(null)
   const [activeSection, setActiveSection] = useState<AppSection>(() =>
     sectionFromPathname(window.location.pathname),
   )
@@ -61,9 +64,39 @@ export function App() {
 
   useEffect(()=>{
     if(recoveryMode)return
-    const refresh=()=>{void localRootWrapStatus().then(status=>setLocalRootLocked(status.initialized&&status.locked)).catch(()=>setLocalRootLocked(true))}
-    refresh();window.addEventListener(LOCAL_SECURITY_CHANGED_EVENT,refresh)
-    return()=>window.removeEventListener(LOCAL_SECURITY_CHANGED_EVENT,refresh)
+    let active=true
+    const refresh=()=>{
+      void localRootWrapStatus()
+        .then(status=>{
+          if(!active)return
+          localSecurityStatusRef.current=status
+          setLocalRootLocked(status.initialized&&status.locked)
+        })
+        .catch(()=>{
+          if(!active)return
+          localSecurityStatusRef.current=null
+          setLocalRootLocked(true)
+        })
+    }
+    const gate=()=>{
+      const status=localSecurityStatusRef.current
+      if(status)localSecurityStatusRef.current={...status,locked:true}
+      setLocalRootLocked(true)
+    }
+    const controller=createAppAutoLockController({
+      getStatus:()=>localSecurityStatusRef.current,
+      gate,
+      lock:lockLocalRootAndDisconnectSession,
+    })
+    const uninstallAutoLock=installAppAutoLock(controller)
+
+    refresh()
+    window.addEventListener(LOCAL_SECURITY_CHANGED_EVENT,refresh)
+    return()=>{
+      active=false
+      uninstallAutoLock()
+      window.removeEventListener(LOCAL_SECURITY_CHANGED_EVENT,refresh)
+    }
   },[recoveryMode])
 
   useEffect(() => {

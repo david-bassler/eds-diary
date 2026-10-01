@@ -111,3 +111,33 @@ test.describe('security product flows',()=>{
     await expect(page.getByRole('button',{name:'Mit Google anmelden'})).toBeHidden()
   })
 })
+
+
+test('auto-locks strong local protection after 30 seconds in the background',async({page})=>{
+  await page.goto('/konfiguration')
+  const localSecurity=page.locator('details.local-security-settings')
+  await localSecurity.getByText('Lokale Sicherheit').click()
+
+  await localSecurity.getByLabel('Neue Passphrase').fill('synthetic-auto-lock-passphrase')
+  await localSecurity.getByLabel('Passphrase bestätigen').fill('synthetic-auto-lock-passphrase')
+  await localSecurity.getByRole('button',{name:'Passphrase aktivieren'}).click()
+  await expect(localSecurity).toContainText('Modus: Passphrase')
+  await expect(localSecurity).toContainText('Status: entsperrt')
+
+  await page.evaluate(()=>{
+    const testWindow=window as typeof window&{__autoLockClockOffset?:number}
+    const realNow=Date.now.bind(Date)
+    testWindow.__autoLockClockOffset=0
+    Date.now=()=>realNow()+(testWindow.__autoLockClockOffset??0)
+    window.dispatchEvent(new PageTransitionEvent('pagehide',{persisted:true}))
+  })
+  await page.evaluate(()=>{
+    const testWindow=window as typeof window&{__autoLockClockOffset?:number}
+    testWindow.__autoLockClockOffset=31_000
+    window.dispatchEvent(new PageTransitionEvent('pageshow',{persisted:true}))
+  })
+
+  await expect(page.getByRole('heading',{name:'Lokales Tagebuch gesperrt'})).toBeVisible()
+  await expect(page.getByRole('button',{name:'Entsperren'})).toBeVisible()
+  await expect(page.getByRole('heading',{level:1,name:'Konfiguration'})).toHaveCount(0)
+})
