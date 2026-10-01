@@ -38,6 +38,13 @@ describe('app privacy shield',()=>{
     expect(target.attributes.get(APP_PRIVACY_SHIELD_ATTRIBUTE)).toBe(APP_PRIVACY_SHIELD_ACTIVE)
   })
 
+  it('covers window blur before the page is necessarily hidden',()=>{
+    const target=fixture()
+    installAppPrivacyShield(target.documentTarget,target.windowTarget)
+    target.windowListeners.get('blur')?.()
+    expect(target.attributes.get(APP_PRIVACY_SHIELD_ATTRIBUTE)).toBe(APP_PRIVACY_SHIELD_ACTIVE)
+  })
+
   it('covers pagehide even if visibility state has not changed yet',()=>{
     const target=fixture()
     installAppPrivacyShield(target.documentTarget,target.windowTarget)
@@ -67,6 +74,8 @@ describe('app privacy shield',()=>{
     cleanup()
 
     expect(removeDocument).toHaveBeenCalledWith('visibilitychange',expect.any(Function))
+    expect(removeWindow).toHaveBeenCalledWith('blur',expect.any(Function))
+    expect(removeWindow).toHaveBeenCalledWith('focus',expect.any(Function))
     expect(removeWindow).toHaveBeenCalledWith('pagehide',expect.any(Function))
     expect(removeWindow).toHaveBeenCalledWith('pageshow',expect.any(Function))
     expect(target.attributes.has(APP_PRIVACY_SHIELD_ATTRIBUTE)).toBe(false)
