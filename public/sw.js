@@ -1,4 +1,4 @@
-const CACHE_NAME = 'eds-diary-shell-v35'
+const CACHE_NAME = 'eds-diary-shell-v36'
 const SCOPE_ROOT_URL = new URL('./', self.location.href)
 const DIARY_ROOT_PATH = SCOPE_ROOT_URL.pathname
 const AUTH_ROOT_PATH = new URL('./google-auth/', self.location.href).pathname

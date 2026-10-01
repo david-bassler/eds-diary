@@ -1,14 +1,14 @@
 {
   "id": "./",
-  "name": "EDS Schmerztagebuch",
-  "short_name": "EDS Tagebuch",
-  "description": "Ein persönliches Schmerztagebuch für Menschen mit Ehlers-Danlos-Syndrom.",
+  "name": "Diary",
+  "short_name": "Diary",
+  "description": "Privates Tagebuch.",
   "lang": "de-DE",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#edf2ef",
-  "theme_color": "#f5f3f7",
+  "background_color": "#28313b",
+  "theme_color": "#28313b",
   "icons": [
     {
       "src": "icons/app-icon-192.png",

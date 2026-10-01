@@ -13,11 +13,17 @@ test('exposes an installable web app manifest', async ({ page, request }) => {
 
   const manifest = await manifestResponse.json()
   expect(manifest).toMatchObject({
-    name: 'EDS Schmerztagebuch',
-    short_name: 'EDS Tagebuch',
+    name: 'Diary',
+    short_name: 'Diary',
+    description: 'Privates Tagebuch.',
     display: 'standalone',
     start_url: './',
   })
+  expect(await page.title()).toBe('Diary')
+  expect(
+    await page.locator('meta[name="description"]').getAttribute('content'),
+  ).toBe('Privates Tagebuch.')
+
   expect(manifest.icons).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
