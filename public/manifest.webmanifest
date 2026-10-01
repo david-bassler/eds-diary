@@ -1,8 +1,8 @@
 {
   "id": "./",
-  "name": "EDS Schmerztagebuch",
-  "short_name": "EDS Tagebuch",
-  "description": "Ein persönliches Schmerztagebuch für Menschen mit Ehlers-Danlos-Syndrom.",
+  "name": "Diary",
+  "short_name": "Diary",
+  "description": "Ein privates Tagebuch für persönliche Notizen und Einträge.",
   "lang": "de-DE",
   "start_url": "./",
   "scope": "./",
