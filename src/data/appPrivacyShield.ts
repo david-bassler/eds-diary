@@ -25,12 +25,16 @@ export function installAppPrivacyShield(
   const sync=()=>documentTarget.visibilityState==='hidden'?hide():show()
 
   documentTarget.addEventListener('visibilitychange',sync)
+  windowTarget.addEventListener('blur',hide)
+  windowTarget.addEventListener('focus',sync)
   windowTarget.addEventListener('pagehide',hide)
   windowTarget.addEventListener('pageshow',sync)
   sync()
 
   return()=>{
     documentTarget.removeEventListener('visibilitychange',sync)
+    windowTarget.removeEventListener('blur',hide)
+    windowTarget.removeEventListener('focus',sync)
     windowTarget.removeEventListener('pagehide',hide)
     windowTarget.removeEventListener('pageshow',sync)
     show()
