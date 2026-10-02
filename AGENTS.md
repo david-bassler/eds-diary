@@ -194,6 +194,36 @@ synthetic data only, and clean up persisted state when a test creates it.
 - Do not bypass lint or test failures. Fix the underlying issue or clearly report
   a genuine environmental limitation.
 
+## Effort estimates for agent-driven work
+
+Assume repository implementation is carried out by a capable coding agent unless
+the user explicitly asks for a human-team estimate.
+
+Do not default to person-days, developer-days, or calendar-time estimates. Those
+units are misleading for this project because implementation, test creation,
+refactoring, and repository inspection are normally executed by an AI coding
+agent.
+
+When estimating work, describe it primarily in terms of:
+
+- **scope**: approximate number of existing files/layers affected and whether new
+  files or migrations are required;
+- **risk**: low / medium / high, based especially on security, persistence,
+  protocol, migration, concurrency, and compatibility impact;
+- **validation cost**: expected unit, browser, security, CI, and adversarial review
+  passes;
+- **iteration count**: likely number of implementation → CI/review → fix cycles;
+- **external dependencies**: any human interaction, provider setup, hardware,
+  credentials, live-service gates, or other work the agent cannot complete alone.
+
+Use compact labels such as `small`, `medium`, or `large` when useful, but
+always explain the concrete repository impact behind the label.
+
+Only translate an estimate into human engineering days when the user explicitly
+asks for that comparison. If a time estimate is still useful, clearly distinguish
+**agent execution effort** from **human engineering effort** and do not present
+human person-days as the expected elapsed time for the agent.
+
 ## Long-horizon work: completion discipline
 
 For repository-wide plans, security programs, migrations, multi-milestone work, or
